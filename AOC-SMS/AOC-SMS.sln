@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.8.34408.163
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AOC-SMS", "AOC-SMS.csproj", "{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3D153D3A-D07F-46C8-BDC6-033253B472C9}
+	EndGlobalSection
+EndGlobal
