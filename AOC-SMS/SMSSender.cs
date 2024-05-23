@@ -55,7 +55,7 @@ namespace AOC_SMS
 
 
                 var message = MessageResource.Create(messageOptions);
-                Console.WriteLine(message.Status);
+                Console.WriteLine($"{recipient.PhoneNumber}: {message.Status}");
             }
         }
     }
