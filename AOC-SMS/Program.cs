@@ -1,9 +1,9 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using AOC_SMS;
 
-var message = @"AOC is excited to start a text message communication service! We will use this channel for important notifications only, ensuring you don’t miss any new events or announcements.
+var message = @"Just a reminder that Comedy Night with Ashot Ghazaryan is only 3 days away! Tickets are almost sold out, so make sure to buy yours before the sale ends! For tickets, visit https://armeniansofcolorado.org/events/ashot-ghazaryan/
 
-Thank you for being part of our community!
+Looking forward to seeing you there!
 
 Best regards,
 AOC
