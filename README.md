@@ -87,7 +87,7 @@ FirstName,LastName,PhoneNumber
 Example:
 
 ```
-Vardan,Hovsepyan,(323) 630-0201
+Michael Humphrey,(323) 660-3202
 ```
 
 ### Event recipients
@@ -99,8 +99,8 @@ Example:
 `Gala_Phone_Numbers.csv` format:
 
 ```
-720-383-2388
-303-918-8410
+720-345-2355
+303-939-2939
 ...
 ```
 
