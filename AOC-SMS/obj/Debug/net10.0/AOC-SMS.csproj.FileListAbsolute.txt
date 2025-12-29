@@ -1,0 +1,39 @@
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/AOC-SMS
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/AOC-SMS.deps.json
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/AOC-SMS.runtimeconfig.json
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Microsoft.IdentityModel.Abstractions.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Microsoft.IdentityModel.JsonWebTokens.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Microsoft.IdentityModel.Logging.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Microsoft.IdentityModel.Tokens.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Newtonsoft.Json.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/System.IdentityModel.Tokens.Jwt.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Twilio.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Twilio.AspNet.Common.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/bin/Debug/net10.0/Twilio.AspNet.Core.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.csproj.AssemblyReference.cache
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.GeneratedMSBuildEditorConfig.editorconfig
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.AssemblyInfoInputs.cache
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.AssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.csproj.CoreCompileInputs.cache
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.sourcelink.json
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.csproj.Up2Date
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/refint/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/AOC-SMS.genruntimeconfig.cache
+/Users/magasiev/Desktop/AOC-SMS/AOC-SMS/obj/Debug/net10.0/ref/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.csproj.AssemblyReference.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.GeneratedMSBuildEditorConfig.editorconfig
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.AssemblyInfoInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.AssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.csproj.CoreCompileInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.sourcelink.json
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Debug/net10.0/AOC-SMS.deps.json
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Debug/net10.0/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Debug/net10.0/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/refint/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Debug/net10.0/ref/AOC-SMS.dll

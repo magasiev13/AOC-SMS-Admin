@@ -1,0 +1,13 @@
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Release/net10.0/linux-x64/AOC-SMS.deps.json
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Release/net10.0/linux-x64/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/bin/Release/net10.0/linux-x64/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.csproj.AssemblyReference.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.GeneratedMSBuildEditorConfig.editorconfig
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.AssemblyInfoInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.AssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.csproj.CoreCompileInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.sourcelink.json
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/refint/AOC-SMS.dll
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/AOC-SMS.pdb
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/obj/Release/net10.0/linux-x64/ref/AOC-SMS.dll

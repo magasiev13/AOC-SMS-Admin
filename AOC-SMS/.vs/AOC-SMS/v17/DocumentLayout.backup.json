@@ -1,0 +1,109 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|c:\\users\\vartan\\source\\repos\\vardanho\\aoc-sms\\aoc-sms\\app_data\\gala_phone_numbers.csv||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|solutionrelative:app_data\\gala_phone_numbers.csv||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|c:\\users\\vartan\\source\\repos\\vardanho\\aoc-sms\\aoc-sms\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|solutionrelative:program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|c:\\users\\vartan\\source\\repos\\vardanho\\aoc-sms\\aoc-sms\\eventsmssender.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|solutionrelative:eventsmssender.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|c:\\users\\vartan\\source\\repos\\vardanho\\aoc-sms\\aoc-sms\\smssender.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|solutionrelative:smssender.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|c:\\users\\vartan\\source\\repos\\vardanho\\aoc-sms\\aoc-sms\\app_data\\aoc_phone_numbers.csv||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{4BC58B0C-D813-451E-862C-AF35EF1C6FD8}|AOC-SMS.csproj|solutionrelative:app_data\\aoc_phone_numbers.csv||{8B382828-6202-11D1-8870-0000F87579D2}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 3,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "EventSMSSender.cs",
+              "DocumentMoniker": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\EventSMSSender.cs",
+              "RelativeDocumentMoniker": "EventSMSSender.cs",
+              "ToolTip": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\EventSMSSender.cs",
+              "RelativeToolTip": "EventSMSSender.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-11-14T02:08:59.02Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "SMSSender.cs",
+              "DocumentMoniker": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\SMSSender.cs",
+              "RelativeDocumentMoniker": "SMSSender.cs",
+              "ToolTip": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\SMSSender.cs",
+              "RelativeToolTip": "SMSSender.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-11-14T02:07:09.643Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Gala_Phone_Numbers.csv",
+              "DocumentMoniker": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\App_Data\\Gala_Phone_Numbers.csv",
+              "RelativeDocumentMoniker": "App_Data\\Gala_Phone_Numbers.csv",
+              "ToolTip": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\App_Data\\Gala_Phone_Numbers.csv",
+              "RelativeToolTip": "App_Data\\Gala_Phone_Numbers.csv",
+              "ViewState": "AgIAAF4AAAAAAAAAAAAAwIwAAAAMAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002120|",
+              "WhenOpened": "2025-11-14T02:07:01.618Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "AOC_Phone_Numbers.csv",
+              "DocumentMoniker": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\App_Data\\AOC_Phone_Numbers.csv",
+              "RelativeDocumentMoniker": "App_Data\\AOC_Phone_Numbers.csv",
+              "ToolTip": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\App_Data\\AOC_Phone_Numbers.csv",
+              "RelativeToolTip": "App_Data\\AOC_Phone_Numbers.csv",
+              "ViewState": "AgIAAKgAAAAAAAAAAAAAAJ0AAAAeAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.002120|",
+              "WhenOpened": "2024-12-11T02:46:05.114Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Program.cs",
+              "DocumentMoniker": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\Program.cs",
+              "RelativeDocumentMoniker": "Program.cs",
+              "ToolTip": "C:\\Users\\Vartan\\source\\repos\\vardanho\\AOC-SMS\\AOC-SMS\\Program.cs",
+              "RelativeToolTip": "Program.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABIAAAAwAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2024-05-12T19:35:35.915Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.csproj.AssemblyReference.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/rpswa.dswa.cache.json
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.GeneratedMSBuildEditorConfig.editorconfig
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.AssemblyInfoInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.AssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.csproj.CoreCompileInputs.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.MvcApplicationPartsAssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.MvcApplicationPartsAssemblyInfo.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.RazorAssemblyInfo.cache
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.RazorAssemblyInfo.cs
+/Users/magasiev/Desktop/AOC-SMS - Test/AOC-SMS/AOC-SMS.UI/obj/Release/net10.0/linux-x64/AOC-SMS.UI.sourcelink.json

@@ -1,0 +1,69 @@
+html {
+  font-size: 14px;
+}
+
+@media (min-width: 768px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+}
+
+html {
+  position: relative;
+  min-height: 100%;
+}
+
+body {
+  margin-bottom: 60px;
+}
+
+.aoc-hero {
+  background: linear-gradient(135deg, rgba(37,140,251,0.12), rgba(13,110,253,0.04));
+  border: 1px solid rgba(13,110,253,0.12);
+  border-radius: 16px;
+  padding: 28px;
+}
+
+.aoc-hero-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.aoc-hero-subtitle {
+  margin-top: 6px;
+}
+
+.aoc-page-header {
+  padding: 18px 20px;
+  border-radius: 16px;
+  border: 1px solid rgba(0,0,0,0.08);
+  background: #fff;
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .04);
+}
+
+.card {
+  border-radius: 16px;
+}
+
+.form-control,
+.form-select {
+  border-radius: 12px;
+}
+
+.btn {
+  border-radius: 12px;
+}
+
+.form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
+  color: var(--bs-secondary-color);
+  text-align: end;
+}
+
+.form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
+  text-align: start;
+}

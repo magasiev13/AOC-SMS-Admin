@@ -1,0 +1,100 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+
+<div class="aoc-hero mb-4">
+    <div class="row g-4 align-items-center">
+        <div class="col-12 col-lg-8">
+            <div class="aoc-hero-title">AOC SMS Console</div>
+            <div class="aoc-hero-subtitle text-muted">
+                Send community-wide announcements and event-specific texts with confidence.
+            </div>
+        </div>
+        <div class="col-12 col-lg-4 text-lg-end">
+            <div class="d-grid gap-2 d-lg-inline-flex">
+                <a class="btn btn-primary btn-lg" asp-page="/Sms/Community">Community SMS</a>
+                <a class="btn btn-outline-primary btn-lg" asp-page="/Sms/Event">Event SMS</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        (function () {
+            const communityEl = document.getElementById('dashboardCommunityCount');
+            const eventEl = document.getElementById('dashboardEventCount');
+            const infoUrl = '@Url.Page("/Index", "DashboardInfo")';
+
+            if (!communityEl || !eventEl) {
+                return;
+            }
+
+            async function refreshDashboard() {
+                try {
+                    const url = new URL(infoUrl, window.location.origin);
+                    url.searchParams.set('_', Date.now().toString());
+
+                    const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+                    if (!res.ok) {
+                        return;
+                    }
+
+                    const data = await res.json();
+                    if (data && data.communityRecipientCount != null) {
+                        communityEl.textContent = data.communityRecipientCount;
+                    }
+                    if (data && data.eventFileCount != null) {
+                        eventEl.textContent = data.eventFileCount;
+                    }
+                } catch {
+                }
+            }
+
+            window.addEventListener('focus', refreshDashboard);
+            refreshDashboard();
+        })();
+    </script>
+}
+
+<div class="row g-4">
+    <div class="col-12 col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <div class="text-muted small">Community recipients</div>
+                <div id="dashboardCommunityCount" class="display-6 fw-semibold">@Model.CommunityRecipientCount</div>
+                <div class="mt-3">
+                    <a class="btn btn-sm btn-primary" asp-page="/Sms/Community">Send to community</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <div class="text-muted small">Available events</div>
+                <div id="dashboardEventCount" class="display-6 fw-semibold">@Model.EventFileCount</div>
+                <div class="text-muted small">(CSV files in App_Data)</div>
+                <div class="mt-3">
+                    <a class="btn btn-sm btn-outline-primary" asp-page="/Sms/Event">Send to an event</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-lg-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body p-4">
+                <div class="text-muted small">Notes</div>
+                <div class="fw-semibold">Safety first</div>
+                <div class="small text-muted mt-2">
+                    The send pages require you to type <span class="fw-semibold">SEND</span> before a message is sent.
+                </div>
+                <div class="small text-muted mt-2">
+                    Event recipients are loaded from CSV files in <span class="fw-semibold">App_Data</span>.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

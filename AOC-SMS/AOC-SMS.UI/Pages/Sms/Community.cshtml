@@ -1,0 +1,217 @@
+@page
+@model AOC_SMS.UI.Pages.Sms.CommunityModel
+@{
+    ViewData["Title"] = "Community SMS";
+}
+
+<div class="aoc-page-header mb-4">
+    <div class="d-flex flex-column flex-md-row align-items-md-end justify-content-between gap-3">
+        <div>
+            <h1 class="h3 mb-1">Community SMS</h1>
+            <div class="text-muted">Send a message to all Armenians of Colorado community members.</div>
+        </div>
+        <div class="text-md-end">
+            <div class="small text-muted">Recipients</div>
+            <div class="h5 mb-0 d-flex align-items-center justify-content-md-end gap-2">
+                <span id="communityRecipientCountBadge" class="badge text-bg-primary">@Model.RecipientCount</span>
+                <button id="refreshCommunityInfoBtn" type="button" class="btn btn-outline-primary btn-sm">Refresh</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.ResultMessage))
+{
+    <div class="alert @(Model.ResultIsSuccess ? "alert-success" : "alert-danger")" role="alert">
+        <div class="fw-semibold">@Model.ResultTitle</div>
+        <div>@Model.ResultMessage</div>
+        @if (Model.Receipts.Count > 0)
+        {
+            <div class="mt-2">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#communityReceiptsModal">View receipts</button>
+            </div>
+        }
+    </div>
+}
+
+@if (Model.Receipts.Count > 0)
+{
+    <div class="modal fade" id="communityReceiptsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Send receipts</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Phone</th>
+                                    <th>Accepted</th>
+                                    <th>Status</th>
+                                    <th>SID</th>
+                                    <th>Error</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in Model.Receipts)
+                                {
+                                    var name = $"{r.FirstName} {r.LastName}".Trim();
+                                    <tr>
+                                        <td>@(string.IsNullOrWhiteSpace(name) ? "-" : name)</td>
+                                        <td>@r.PhoneNumber</td>
+                                        <td>
+                                            @if (r.Accepted)
+                                            {
+                                                <span class="badge text-bg-success">Accepted</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge text-bg-danger">Not accepted</span>
+                                            }
+                                        </td>
+                                        <td>@(string.IsNullOrWhiteSpace(r.Status) ? "-" : r.Status)</td>
+                                        <td class="text-muted">@(string.IsNullOrWhiteSpace(r.MessageSid) ? "-" : r.MessageSid)</td>
+                                        <td>
+                                            @if (!string.IsNullOrWhiteSpace(r.ErrorMessage))
+                                            {
+                                                <span class="text-danger">@r.ErrorMessage</span>
+                                                @if (r.ErrorCode is not null)
+                                                {
+                                                    <span class="text-muted">(@r.ErrorCode)</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="row g-4">
+    <div class="col-12 col-lg-8">
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-4">
+                <form method="post">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" asp-for="Input.Message"></label>
+                        <textarea class="form-control" asp-for="Input.Message" rows="8" placeholder="Type your message..."></textarea>
+                        <div class="form-text">Keep it concise. Consider including a link and a clear call-to-action.</div>
+                        <span class="text-danger" asp-validation-for="Input.Message"></span>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" asp-for="Input.IncludeOptOut" />
+                        <label class="form-check-label" asp-for="Input.IncludeOptOut"></label>
+                    </div>
+
+                    <div class="row g-3 align-items-end">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label fw-semibold" asp-for="Input.Confirm"></label>
+                            <input class="form-control" asp-for="Input.Confirm" placeholder="Type SEND" autocomplete="off" />
+                            <div class="form-text">Type <span class="fw-semibold">SEND</span> to confirm this broadcast.</div>
+                            <span class="text-danger" asp-validation-for="Input.Confirm"></span>
+                        </div>
+                        <div class="col-12 col-md-6 text-md-end">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                Send to Community
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-12 col-lg-4">
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-4">
+                <div class="fw-semibold mb-2">Quick checklist</div>
+                <div class="small text-muted">
+                    <div class="mb-2">Make sure your message includes:</div>
+                    <ul class="mb-0">
+                        <li>What the update is</li>
+                        <li>When it’s happening</li>
+                        <li>Where to register / learn more</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mt-4">
+            <div class="card-body p-4">
+                <div class="fw-semibold mb-2">Footer preview</div>
+                <div class="small text-muted">
+                    @(Model.Input?.IncludeOptOut == true ? "Reply STOP to unsubscribe" : "(No opt-out footer)")
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+
+    <script>
+        (function () {
+            const badge = document.getElementById('communityRecipientCountBadge');
+            const refreshBtn = document.getElementById('refreshCommunityInfoBtn');
+            const infoUrl = '@Url.Page("/Sms/Community", "CommunityInfo")';
+
+            if (!badge) {
+                return;
+            }
+
+            async function refreshCommunityInfo() {
+                try {
+                    const url = new URL(infoUrl, window.location.origin);
+                    url.searchParams.set('_', Date.now().toString());
+
+                    const res = await fetch(url.toString(), { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+                    if (res.ok) {
+                        const data = await res.json();
+                        badge.textContent = (data && data.recipientCount != null) ? data.recipientCount : '0';
+                    }
+                } catch {
+                }
+            }
+
+            if (refreshBtn) {
+                refreshBtn.addEventListener('click', refreshCommunityInfo);
+            }
+
+            window.addEventListener('focus', refreshCommunityInfo);
+            refreshCommunityInfo();
+        })();
+    </script>
+
+    <script>
+        (function () {
+            const modalEl = document.getElementById('communityReceiptsModal');
+            if (!modalEl || !window.bootstrap) {
+                return;
+            }
+
+            try {
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+            } catch {
+            }
+        })();
+    </script>
+}
