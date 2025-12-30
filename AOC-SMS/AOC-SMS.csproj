@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="Twilio.AspNet.Core" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.0" />
   </ItemGroup>
 
 </Project>

@@ -9,6 +9,12 @@ namespace AOC_SMS.UI.Pages.Sms;
 public class CommunityModel : PageModel
 {
     private const string OptOutFooter = "Reply STOP to unsubscribe";
+    private readonly SMSSender _smsSender;
+
+    public CommunityModel(SMSSender smsSender)
+    {
+        _smsSender = smsSender;
+    }
 
     [BindProperty]
     public InputModel Input { get; set; } = new();
@@ -54,11 +60,9 @@ public class CommunityModel : PageModel
             return Page();
         }
 
-        var sender = new SMSSender();
-
         try
         {
-            Receipts = sender.SendSMSWithReceipts(BuildFinalMessage(Input.Message, Input.IncludeOptOut));
+            Receipts = _smsSender.SendSMSWithReceipts(BuildFinalMessage(Input.Message, Input.IncludeOptOut));
 
             ResultIsSuccess = true;
             ResultTitle = "Send started";
@@ -87,11 +91,11 @@ public class CommunityModel : PageModel
             : $"{trimmed}\n\n{OptOutFooter}";
     }
 
-    private static int SafeGetRecipientCount()
+    private int SafeGetRecipientCount()
     {
         try
         {
-            return new SMSSender().GetRecipients().Count;
+            return _smsSender.GetRecipients().Count;
         }
         catch
         {
