@@ -145,6 +145,8 @@ namespace AOC_SMS
             }
 
             return receipts;
+        }
+
         private static void EnsureTwilioConfigured(TwilioSettings settings)
         {
             if (string.IsNullOrWhiteSpace(settings.AccountSid)
