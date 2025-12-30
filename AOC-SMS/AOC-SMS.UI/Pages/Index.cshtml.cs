@@ -7,6 +7,13 @@ namespace AOC_SMS.UI.Pages;
 
 public class IndexModel : PageModel
 {
+    private readonly SMSSender _smsSender;
+
+    public IndexModel(SMSSender smsSender)
+    {
+        _smsSender = smsSender;
+    }
+
     public int CommunityRecipientCount { get; private set; }
 
     public int EventFileCount { get; private set; }
@@ -29,11 +36,11 @@ public class IndexModel : PageModel
         });
     }
 
-    private static int SafeGetCommunityCount()
+    private int SafeGetCommunityCount()
     {
         try
         {
-            return new SMSSender().GetRecipients().Count;
+            return _smsSender.GetRecipients().Count;
         }
         catch
         {

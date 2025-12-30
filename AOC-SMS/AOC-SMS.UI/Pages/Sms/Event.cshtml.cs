@@ -10,6 +10,12 @@ namespace AOC_SMS.UI.Pages.Sms;
 public class EventModel : PageModel
 {
     private const string OptOutFooter = "Reply STOP to unsubscribe";
+    private readonly EventSMSSender _smsSender;
+
+    public EventModel(EventSMSSender smsSender)
+    {
+        _smsSender = smsSender;
+    }
 
     [BindProperty]
     public InputModel Input { get; set; } = new();
@@ -100,11 +106,9 @@ public class EventModel : PageModel
             return Page();
         }
 
-        var sender = new EventSMSSender();
-
         try
         {
-            Receipts = sender.SendSMSWithReceipts(BuildFinalMessage(Input.Message, Input.IncludeOptOut), Input.EventFile);
+            Receipts = _smsSender.SendSMSWithReceipts(BuildFinalMessage(Input.Message, Input.IncludeOptOut), Input.EventFile);
 
             ResultIsSuccess = true;
             ResultTitle = "Send started";
@@ -212,7 +216,7 @@ public class EventModel : PageModel
             : $"{trimmed}\n\n{OptOutFooter}";
     }
 
-    private static int SafeGetRecipientCount(string? csvFileName)
+    private int SafeGetRecipientCount(string? csvFileName)
     {
         try
         {
@@ -221,7 +225,7 @@ public class EventModel : PageModel
                 return 0;
             }
 
-            return new EventSMSSender().GetRecipients(csvFileName).Count;
+            return _smsSender.GetRecipients(csvFileName).Count;
         }
         catch
         {

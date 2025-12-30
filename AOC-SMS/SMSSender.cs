@@ -1,4 +1,5 @@
 ﻿using AOC_SMS.Models;
+using Microsoft.Extensions.Options;
 using System.Linq;
 using Twilio;
 using Twilio.Rest.Api.V2010.Account;
@@ -8,9 +9,11 @@ namespace AOC_SMS
 {
     public class SMSSender
     {
-        public SMSSender()
+        private readonly TwilioSettings _settings;
+
+        public SMSSender(IOptions<TwilioSettings> options)
         {
-            
+            _settings = options.Value ?? new TwilioSettings();
         }
 
         //read the csv file from the App_Data folder
@@ -101,9 +104,8 @@ namespace AOC_SMS
 
             try
             {
-                var accountSid = "AC8a22ae65eb76f569be174c31c2255b6f";
-                var authToken = "fd9bf45f27b66e9a985d72aa1f390e55";
-                TwilioClient.Init(accountSid, authToken);
+                EnsureTwilioConfigured(_settings);
+                TwilioClient.Init(_settings.AccountSid, _settings.AuthToken);
             }
             catch (Exception ex)
             {
@@ -122,7 +124,7 @@ namespace AOC_SMS
                 {
                     var messageOptions = new CreateMessageOptions(new PhoneNumber(receipt.PhoneNumber))
                     {
-                        MessagingServiceSid = "MGabf6500f6dbb920fe2b8a42221996a7f",
+                        MessagingServiceSid = _settings.MessagingServiceSid,
                         Body = messageBody
                     };
 
@@ -143,6 +145,15 @@ namespace AOC_SMS
             }
 
             return receipts;
+        private static void EnsureTwilioConfigured(TwilioSettings settings)
+        {
+            if (string.IsNullOrWhiteSpace(settings.AccountSid)
+                || string.IsNullOrWhiteSpace(settings.AuthToken)
+                || string.IsNullOrWhiteSpace(settings.MessagingServiceSid))
+            {
+                throw new InvalidOperationException(
+                    "Twilio configuration is missing. Set Twilio:AccountSid, Twilio:AuthToken, and Twilio:MessagingServiceSid.");
+            }
         }
     }
 }
