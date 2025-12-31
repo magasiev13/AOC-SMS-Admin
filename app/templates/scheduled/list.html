@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block title %}Scheduled Messages - SMS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4><i class="bi bi-clock-history me-2"></i>Scheduled Messages</h4>
+    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg me-1"></i>Schedule New
+    </a>
+</div>
+
+{% if pending %}
+<div class="card mb-4">
+    <div class="card-header bg-warning-subtle">
+        <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Scheduled For</th>
+                    <th>Target</th>
+                    <th>Message</th>
+                    <th width="150">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for msg in pending %}
+                <tr>
+                    <td>
+                        <strong>{{ msg.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</strong>
+                    </td>
+                    <td>
+                        {% if msg.test_mode %}
+                        <span class="badge bg-warning text-dark">TEST</span>
+                        {% elif msg.target == 'community' %}
+                        <span class="badge bg-primary">Community</span>
+                        {% else %}
+                        <span class="badge bg-info">Event: {{ msg.event.title if msg.event else 'Unknown' }}</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline-warning"
+                                data-bs-toggle="modal" data-bs-target="#actionModal"
+                                data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </button>
+                        <form id="cancel-scheduled-{{ msg.id }}" method="POST" 
+                              action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;"></form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info mb-4">
+    <i class="bi bi-info-circle me-2"></i>No pending scheduled messages. 
+    <a href="{{ url_for('main.dashboard') }}">Schedule one now</a>.
+</div>
+{% endif %}
+
+{% if pending %}
+<div class="alert alert-light mb-3">
+    <small class="text-muted">
+        <i class="bi bi-arrow-repeat me-1"></i>
+        Watching for status changes...
+    </small>
+</div>
+{% endif %}
+
+{% if past %}
+<div class="card">
+    <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Past Scheduled Messages</h6>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Scheduled For</th>
+                    <th>Status</th>
+                    <th>Target</th>
+                    <th>Message</th>
+                    <th width="100">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for msg in past %}
+                <tr>
+                    <td>{{ msg.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>
+                        {% if msg.status == 'sent' %}
+                        <span class="badge bg-success">Sent</span>
+                        {% if msg.message_log and msg.message_log.id %}
+                        <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
+                        {% endif %}
+                        {% elif msg.status == 'failed' %}
+                        <span class="badge bg-danger" title="{{ msg.error_message }}">Failed</span>
+                        {% elif msg.status == 'expired' %}
+                        <span class="badge bg-warning text-dark" title="{{ msg.error_message }}">Expired</span>
+                        {% elif msg.status == 'cancelled' %}
+                        <span class="badge bg-secondary">Cancelled</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if msg.target == 'community' %}
+                        <span class="badge bg-primary">Community</span>
+                        {% else %}
+                        <span class="badge bg-info">Event</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline-danger"
+                                data-bs-toggle="modal" data-bs-target="#actionModal"
+                                data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        <form id="delete-scheduled-{{ msg.id }}" method="POST" 
+                              action="{{ url_for('main.scheduled_delete', scheduled_id=msg.id) }}" style="display:none;"></form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Action Confirmation Modal -->
+<div class="modal fade" id="actionModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="actionModalTitle">Confirm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <span id="actionModalText">Are you sure?</span>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button>
+                <button type="button" class="btn btn-danger" id="confirmActionBtn">Yes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Modal handling for delete/cancel actions
+    let formToSubmit = null;
+    const actionModal = document.getElementById('actionModal');
+    
+    if (actionModal) {
+        actionModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const action = button.getAttribute('data-action') || 'Delete';
+            const formId = button.getAttribute('data-form-id');
+            
+            document.getElementById('actionModalTitle').textContent = 'Confirm ' + action;
+            document.getElementById('actionModalText').textContent = action + ' this scheduled message?';
+            formToSubmit = document.getElementById(formId);
+        });
+        
+        document.getElementById('confirmActionBtn').addEventListener('click', function() {
+            if (formToSubmit) {
+                formToSubmit.submit();
+            }
+        });
+    }
+    
+    {% if pending %}
+    // Track current pending message IDs for auto-refresh
+    let currentPendingIds = [{% for msg in pending %}{{ msg.id }}{% if not loop.last %}, {% endif %}{% endfor %}];
+    
+    async function checkStatus() {
+        try {
+            const response = await fetch('/scheduled/status');
+            if (!response.ok) return;
+            const data = await response.json();
+            
+            const currentSorted = currentPendingIds.slice().sort((a,b) => a-b).join(',');
+            const newSorted = data.pending_ids.slice().sort((a,b) => a-b).join(',');
+            
+            if (currentSorted !== newSorted) {
+                location.reload();
+            }
+        } catch (e) {
+            console.error('Status check failed:', e);
+        }
+    }
+    
+    setTimeout(() => setInterval(checkStatus, 3000), 1000);
+    {% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,95 @@
+from datetime import datetime as dt, timezone
+from app import db
+
+
+def utc_now():
+    return dt.now(timezone.utc)
+
+
+class CommunityMember(db.Model):
+    """Recipients for community-wide SMS blasts."""
+    __tablename__ = 'community_members'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=True)
+    phone = db.Column(db.String(20), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    def __repr__(self):
+        return f'<CommunityMember {self.phone}>'
+
+
+class Event(db.Model):
+    """Event definitions."""
+    __tablename__ = 'events'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    date = db.Column(db.Date, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    registrations = db.relationship('EventRegistration', back_populates='event', cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<Event {self.title}>'
+
+
+class EventRegistration(db.Model):
+    """Recipients registered for a specific event (separate from community members)."""
+    __tablename__ = 'event_registrations'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=True)
+    phone = db.Column(db.String(20), nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    event = db.relationship('Event', back_populates='registrations')
+    
+    __table_args__ = (db.UniqueConstraint('event_id', 'phone', name='unique_event_phone'),)
+    
+    def __repr__(self):
+        return f'<EventRegistration event={self.event_id} phone={self.phone}>'
+
+
+class MessageLog(db.Model):
+    """Log of sent SMS blasts."""
+    __tablename__ = 'message_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    message_body = db.Column(db.Text, nullable=False)
+    target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
+    total_recipients = db.Column(db.Integer, default=0)
+    success_count = db.Column(db.Integer, default=0)
+    failure_count = db.Column(db.Integer, default=0)
+    details = db.Column(db.Text, nullable=True)  # JSON string of per-recipient results
+    
+    event = db.relationship('Event')
+    
+    def __repr__(self):
+        return f'<MessageLog {self.id} target={self.target}>'
+
+
+class ScheduledMessage(db.Model):
+    """Scheduled SMS blasts for future sending."""
+    __tablename__ = 'scheduled_messages'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    scheduled_at = db.Column(db.DateTime, nullable=False)
+    message_body = db.Column(db.Text, nullable=False)
+    target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
+    status = db.Column(db.String(20), default='pending')  # 'pending', 'sent', 'failed', 'cancelled'
+    test_mode = db.Column(db.Boolean, default=False)  # If true, send only to admin test phone
+    sent_at = db.Column(db.DateTime, nullable=True)
+    error_message = db.Column(db.Text, nullable=True)
+    message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id'), nullable=True)
+    
+    event = db.relationship('Event')
+    message_log = db.relationship('MessageLog')
+    
+    def __repr__(self):
+        return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'

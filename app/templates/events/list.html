@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Events - SMS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4><i class="bi bi-calendar-event me-2"></i>Events</h4>
+    <a href="{{ url_for('main.event_add') }}" class="btn btn-primary">
+        <i class="bi bi-plus-lg me-1"></i>Create Event
+    </a>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Title</th>
+                    <th>Date</th>
+                    <th>Registrations</th>
+                    <th>Created</th>
+                    <th width="120">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if events %}
+                    {% for event in events %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="text-decoration-none">
+                                {{ event.title }}
+                            </a>
+                        </td>
+                        <td>{{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</td>
+                        <td>
+                            <span class="badge bg-secondary">{{ event.registrations|length }}</span>
+                        </td>
+                        <td>{{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('main.event_detail', event_id=event.id) }}" 
+                                   class="btn btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <a href="{{ url_for('main.event_edit', event_id=event.id) }}" 
+                                   class="btn btn-outline-secondary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <form method="POST" action="{{ url_for('main.event_delete', event_id=event.id) }}" 
+                                      class="d-inline" onsubmit="return confirm('Delete this event and all registrations?');">
+                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            No events found. <a href="{{ url_for('main.event_add') }}">Create one</a>.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if events %}
+    <div class="card-footer text-muted">
+        Showing {{ events|length }} event(s)
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

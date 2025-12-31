@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Community Members - SMS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4><i class="bi bi-people me-2"></i>Community Members</h4>
+    <div>
+        <a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary me-2">
+            <i class="bi bi-upload me-1"></i>Import CSV
+        </a>
+        <a href="{{ url_for('main.community_add') }}" class="btn btn-primary">
+            <i class="bi bi-plus-lg me-1"></i>Add Member
+        </a>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-10">
+                <input type="text" class="form-control" name="search" placeholder="Search by name or phone..." 
+                       value="{{ search }}">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-secondary w-100">
+                    <i class="bi bi-search me-1"></i>Search
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Added</th>
+                    <th width="120">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if members %}
+                    {% for member in members %}
+                    <tr>
+                        <td>{{ member.name or '-' }}</td>
+                        <td><code>{{ member.phone }}</code></td>
+                        <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</td>
+                        <td class="text-nowrap">
+                            <a href="{{ url_for('main.community_edit', member_id=member.id) }}" 
+                               class="btn btn-sm btn-outline-secondary me-1" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                    data-bs-toggle="modal" data-bs-target="#deleteModal" 
+                                    data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                            <form id="delete-member-{{ member.id }}" method="POST" 
+                                  action="{{ url_for('main.community_delete', member_id=member.id) }}" style="display:none;"></form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-4">
+                            No community members found.
+                            <a href="{{ url_for('main.community_add') }}">Add one</a> or 
+                            <a href="{{ url_for('main.community_import') }}">import from CSV</a>.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if members %}
+    <div class="card-footer text-muted">
+        Showing {{ members|length }} member(s)
+    </div>
+    {% endif %}
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                Delete <strong id="deleteMemberName"></strong>?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let formToSubmit = null;
+    const deleteModal = document.getElementById('deleteModal');
+    
+    deleteModal.addEventListener('show.bs.modal', function(event) {
+        const button = event.relatedTarget;
+        const memberName = button.getAttribute('data-member-name') || 'this member';
+        const formId = button.getAttribute('data-form-id');
+        
+        document.getElementById('deleteMemberName').textContent = memberName;
+        formToSubmit = document.getElementById(formId);
+    });
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (formToSubmit) {
+            formToSubmit.submit();
+        }
+    });
+</script>
+{% endblock %}

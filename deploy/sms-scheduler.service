@@ -1,0 +1,17 @@
+[Unit]
+Description=SMS Admin Scheduler Service
+After=network.target
+
+[Service]
+User=smsadmin
+Group=smsadmin
+WorkingDirectory=/opt/sms-admin
+Environment="PATH=/opt/sms-admin/venv/bin"
+Environment="SCHEDULER_ENABLED=1"
+EnvironmentFile=/opt/sms-admin/.env
+ExecStart=/opt/sms-admin/venv/bin/python -m app.scheduler_runner
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

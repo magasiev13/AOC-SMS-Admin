@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if event else 'Create' }} Event - SMS Admin{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-calendar-event me-2"></i>{{ 'Edit' if event else 'Create' }} Event
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Event Title <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="title" name="title" required
+                               value="{{ event.title if event else '' }}"
+                               placeholder="Community Meeting">
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="date" class="form-label">Date (optional)</label>
+                        <input type="date" class="form-control" id="date" name="date"
+                               value="{{ event.date.strftime('%Y-%m-%d') if event and event.date else '' }}">
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>{{ 'Update' if event else 'Create' }} Event
+                        </button>
+                        <a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

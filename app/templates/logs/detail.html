@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Log Details - SMS Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4><i class="bi bi-journal-text me-2"></i>Message Log Details</h4>
+    <a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Logs
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-lg-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">Summary</h6>
+            </div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>Sent At</dt>
+                    <dd>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if log.created_at else '-' }}</dd>
+                    
+                    <dt>Target</dt>
+                    <dd>
+                        <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
+                            {{ log.target }}
+                        </span>
+                        {% if log.event %}
+                        <br>{{ log.event.title }}
+                        {% endif %}
+                    </dd>
+                    
+                    <dt>Total Recipients</dt>
+                    <dd>{{ log.total_recipients }}</dd>
+                    
+                    <dt>Results</dt>
+                    <dd>
+                        <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} sent</span>
+                        <br>
+                        <span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ log.failure_count }} failed</span>
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8 mb-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h6 class="mb-0">Message</h6>
+            </div>
+            <div class="card-body">
+                <pre class="mb-0" style="white-space: pre-wrap;">{{ log.message_body }}</pre>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0">Recipient Details</h6>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Phone</th>
+                            <th>Status</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if details %}
+                        {% for d in details %}
+                        <tr class="{{ 'table-danger' if not d.success else '' }}">
+                            <td>{{ d.name or '-' }}</td>
+                            <td><code>{{ d.phone }}</code></td>
+                            <td>
+                                {% if d.success %}
+                                <span class="badge bg-success">Sent</span>
+                                {% else %}
+                                <span class="badge bg-danger">Failed</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if d.error %}
+                                <small class="text-danger">{{ d.error }}</small>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">No details available.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

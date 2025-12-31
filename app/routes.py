@@ -1,0 +1,560 @@
+import json
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask_login import login_required, current_user
+from app import db
+from app.models import CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage
+from app.utils import normalize_phone, validate_phone, parse_recipients_csv, parse_phones_csv
+
+bp = Blueprint('main', __name__)
+
+
+# Health check endpoint
+@bp.route('/health')
+def health():
+    return 'OK', 200
+
+
+# Redirect root to dashboard
+@bp.route('/')
+@login_required
+def index():
+    return redirect(url_for('main.dashboard'))
+
+
+# Dashboard - Send Messages
+@bp.route('/dashboard', methods=['GET', 'POST'])
+@login_required
+def dashboard():
+    from flask import current_app
+    events = Event.query.order_by(Event.date.desc()).all()
+    admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
+    
+    if request.method == 'POST':
+        from datetime import datetime
+        message_body = request.form.get('message_body', '').strip()
+        target = request.form.get('target', 'community')
+        event_id = request.form.get('event_id', type=int)
+        test_mode = request.form.get('test_mode') == 'on'
+        include_unsubscribe = request.form.get('include_unsubscribe') == 'on'
+        schedule_later = request.form.get('schedule_later') == 'on'
+        schedule_date = request.form.get('schedule_date', '').strip()
+        schedule_time = request.form.get('schedule_time', '').strip()
+        
+        if not message_body:
+            flash('Message body is required.', 'error')
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+        
+        if target == 'event' and not event_id:
+            flash('Please select an event.', 'error')
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+        
+        # Handle scheduled message
+        if schedule_later:
+            if not schedule_date or not schedule_time:
+                flash('Schedule date and time are required.', 'error')
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+            
+            try:
+                scheduled_dt = datetime.strptime(f'{schedule_date} {schedule_time}', '%Y-%m-%d %H:%M')
+                
+                if scheduled_dt <= datetime.now():
+                    flash('Scheduled time must be in the future.', 'error')
+                    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+                
+                # Append unsubscribe text if option is checked
+                final_message = message_body
+                if include_unsubscribe:
+                    final_message = message_body + "\n\nReply STOP to unsubscribe."
+                
+                scheduled = ScheduledMessage(
+                    message_body=final_message,
+                    target=target,
+                    event_id=event_id if target == 'event' else None,
+                    scheduled_at=scheduled_dt,
+                    test_mode=test_mode
+                )
+                db.session.add(scheduled)
+                db.session.commit()
+                
+                flash(f'Message scheduled for {scheduled_dt.strftime("%Y-%m-%d %H:%M")}.', 'success')
+                return redirect(url_for('main.scheduled_list'))
+                
+            except ValueError as e:
+                flash(f'Invalid date/time format: {e}', 'error')
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+        
+        # Immediate send
+        # Test mode: send only to admin phone
+        if test_mode:
+            if not admin_test_phone:
+                flash('ADMIN_TEST_PHONE not configured. Add it to your .env file.', 'error')
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+            recipient_data = [{'phone': admin_test_phone, 'name': 'Admin Test'}]
+        else:
+            # Get recipients based on target
+            if target == 'community':
+                members = CommunityMember.query.all()
+                recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]
+            else:
+                # Get registrations for the event (they store phone/name directly)
+                registrations = EventRegistration.query.filter_by(event_id=event_id).all()
+                recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
+        
+        if not recipient_data:
+            flash('No recipients found for the selected target.', 'error')
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+        
+        # Send messages
+        try:
+            from app.services.twilio_service import get_twilio_service
+            twilio = get_twilio_service()
+            
+            # Append unsubscribe text if option is checked
+            final_message = message_body
+            if include_unsubscribe:
+                final_message = message_body + "\n\nReply STOP to unsubscribe."
+            
+            result = twilio.send_bulk(recipient_data, final_message)
+            
+            # Log the send (store the final message with unsubscribe text if included)
+            log = MessageLog(
+                message_body=final_message,
+                target=target,
+                event_id=event_id if target == 'event' else None,
+                total_recipients=result['total'],
+                success_count=result['success_count'],
+                failure_count=result['failure_count'],
+                details=json.dumps(result['details'])
+            )
+            db.session.add(log)
+            db.session.commit()
+            
+            if result['failure_count'] == 0:
+                flash(f'Successfully sent {result["success_count"]} messages!', 'success')
+            else:
+                flash(f'Sent {result["success_count"]} messages. {result["failure_count"]} failed.', 'warning')
+            
+            return redirect(url_for('main.log_detail', log_id=log.id))
+            
+        except ValueError as e:
+            flash(f'Twilio configuration error: {str(e)}', 'error')
+        except Exception as e:
+            flash(f'Error sending messages: {str(e)}', 'error')
+    
+    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+
+
+# Community Members Management
+@bp.route('/community')
+@login_required
+def community_list():
+    search = request.args.get('search', '').strip()
+    
+    query = CommunityMember.query
+    
+    if search:
+        query = query.filter(
+            db.or_(
+                CommunityMember.name.ilike(f'%{search}%'),
+                CommunityMember.phone.ilike(f'%{search}%')
+            )
+        )
+    
+    members = query.order_by(CommunityMember.name, CommunityMember.phone).all()
+    return render_template('community/list.html', members=members, search=search)
+
+
+@bp.route('/community/add', methods=['GET', 'POST'])
+@login_required
+def community_add():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip() or None
+        phone = request.form.get('phone', '').strip()
+        
+        if not phone:
+            flash('Phone number is required.', 'error')
+            return render_template('community/form.html', member=None)
+        
+        phone = normalize_phone(phone)
+        if not validate_phone(phone):
+            flash('Invalid phone number format.', 'error')
+            return render_template('community/form.html', member=None)
+        
+        # Check for duplicate
+        existing = CommunityMember.query.filter_by(phone=phone).first()
+        if existing:
+            flash('A member with this phone number already exists.', 'error')
+            return render_template('community/form.html', member=None)
+        
+        member = CommunityMember(name=name, phone=phone)
+        db.session.add(member)
+        db.session.commit()
+        
+        flash('Community member added successfully.', 'success')
+        return redirect(url_for('main.community_list'))
+    
+    return render_template('community/form.html', member=None)
+
+
+@bp.route('/community/<int:member_id>/edit', methods=['GET', 'POST'])
+@login_required
+def community_edit(member_id):
+    member = CommunityMember.query.get_or_404(member_id)
+    
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip() or None
+        phone = request.form.get('phone', '').strip()
+        
+        if not phone:
+            flash('Phone number is required.', 'error')
+            return render_template('community/form.html', member=member)
+        
+        phone = normalize_phone(phone)
+        if not validate_phone(phone):
+            flash('Invalid phone number format.', 'error')
+            return render_template('community/form.html', member=member)
+        
+        # Check for duplicate (excluding current)
+        existing = CommunityMember.query.filter(
+            CommunityMember.phone == phone,
+            CommunityMember.id != member_id
+        ).first()
+        if existing:
+            flash('A member with this phone number already exists.', 'error')
+            return render_template('community/form.html', member=member)
+        
+        member.name = name
+        member.phone = phone
+        db.session.commit()
+        
+        flash('Community member updated successfully.', 'success')
+        return redirect(url_for('main.community_list'))
+    
+    return render_template('community/form.html', member=member)
+
+
+@bp.route('/community/<int:member_id>/delete', methods=['POST'])
+@login_required
+def community_delete(member_id):
+    member = CommunityMember.query.get_or_404(member_id)
+    db.session.delete(member)
+    db.session.commit()
+    flash('Community member deleted.', 'success')
+    return redirect(url_for('main.community_list'))
+
+
+@bp.route('/community/import', methods=['GET', 'POST'])
+@login_required
+def community_import():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash('No file uploaded.', 'error')
+            return render_template('community/import.html')
+        
+        file = request.files['file']
+        if file.filename == '':
+            flash('No file selected.', 'error')
+            return render_template('community/import.html')
+        
+        try:
+            content = file.read().decode('utf-8')
+            parsed = parse_recipients_csv(content)
+            
+            if not parsed:
+                flash('No valid members found in CSV.', 'error')
+                return render_template('community/import.html')
+            
+            added = 0
+            skipped = 0
+            
+            for rec in parsed:
+                existing = CommunityMember.query.filter_by(phone=rec['phone']).first()
+                if existing:
+                    skipped += 1
+                    continue
+                
+                member = CommunityMember(
+                    name=rec['name'],
+                    phone=rec['phone']
+                )
+                db.session.add(member)
+                added += 1
+            
+            db.session.commit()
+            flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
+            return redirect(url_for('main.community_list'))
+            
+        except Exception as e:
+            flash(f'Error processing CSV: {str(e)}', 'error')
+    
+    return render_template('community/import.html')
+
+
+# Events Management
+@bp.route('/events')
+@login_required
+def events_list():
+    events = Event.query.order_by(Event.date.desc()).all()
+    return render_template('events/list.html', events=events)
+
+
+@bp.route('/events/add', methods=['GET', 'POST'])
+@login_required
+def event_add():
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        date_str = request.form.get('date', '').strip()
+        
+        if not title:
+            flash('Event title is required.', 'error')
+            return render_template('events/form.html', event=None)
+        
+        from datetime import datetime
+        event_date = None
+        if date_str:
+            try:
+                event_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                flash('Invalid date format.', 'error')
+                return render_template('events/form.html', event=None)
+        
+        event = Event(title=title, date=event_date)
+        db.session.add(event)
+        db.session.commit()
+        
+        flash('Event created successfully.', 'success')
+        return redirect(url_for('main.event_detail', event_id=event.id))
+    
+    return render_template('events/form.html', event=None)
+
+
+@bp.route('/events/<int:event_id>')
+@login_required
+def event_detail(event_id):
+    event = Event.query.get_or_404(event_id)
+    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
+    return render_template('events/detail.html', event=event, registrations=registrations)
+
+
+@bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
+@login_required
+def event_edit(event_id):
+    event = Event.query.get_or_404(event_id)
+    
+    if request.method == 'POST':
+        title = request.form.get('title', '').strip()
+        date_str = request.form.get('date', '').strip()
+        
+        if not title:
+            flash('Event title is required.', 'error')
+            return render_template('events/form.html', event=event)
+        
+        from datetime import datetime
+        event_date = None
+        if date_str:
+            try:
+                event_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                flash('Invalid date format.', 'error')
+                return render_template('events/form.html', event=event)
+        
+        event.title = title
+        event.date = event_date
+        db.session.commit()
+        
+        flash('Event updated successfully.', 'success')
+        return redirect(url_for('main.event_detail', event_id=event.id))
+    
+    return render_template('events/form.html', event=event)
+
+
+@bp.route('/events/<int:event_id>/delete', methods=['POST'])
+@login_required
+def event_delete(event_id):
+    event = Event.query.get_or_404(event_id)
+    db.session.delete(event)
+    db.session.commit()
+    flash('Event deleted.', 'success')
+    return redirect(url_for('main.events_list'))
+
+
+@bp.route('/events/<int:event_id>/register', methods=['POST'])
+@login_required
+def event_register(event_id):
+    event = Event.query.get_or_404(event_id)
+    name = request.form.get('name', '').strip() or None
+    phone = request.form.get('phone', '').strip()
+    
+    if not phone:
+        flash('Phone number is required.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+    
+    phone = normalize_phone(phone)
+    if not validate_phone(phone):
+        flash('Invalid phone number format.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+    
+    # Check if already registered for this event
+    existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
+    if existing:
+        flash('This phone number is already registered for this event.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+    
+    registration = EventRegistration(event_id=event_id, name=name, phone=phone)
+    db.session.add(registration)
+    db.session.commit()
+    
+    flash('Registration added.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event_id))
+
+
+@bp.route('/events/<int:event_id>/unregister/<int:registration_id>', methods=['POST'])
+@login_required
+def event_unregister(event_id, registration_id):
+    registration = EventRegistration.query.get_or_404(registration_id)
+    db.session.delete(registration)
+    db.session.commit()
+    flash('Registration removed.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event_id))
+
+
+@bp.route('/events/<int:event_id>/import', methods=['POST'])
+@login_required
+def event_import_registrations(event_id):
+    event = Event.query.get_or_404(event_id)
+    
+    if 'file' not in request.files:
+        flash('No file uploaded.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+    
+    file = request.files['file']
+    if file.filename == '':
+        flash('No file selected.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+    
+    try:
+        content = file.read().decode('utf-8')
+        parsed = parse_recipients_csv(content)
+        
+        if not parsed:
+            flash('No valid entries found in CSV.', 'error')
+            return redirect(url_for('main.event_detail', event_id=event_id))
+        
+        added = 0
+        already_registered = 0
+        
+        for rec in parsed:
+            # Check if already registered for this event
+            existing = EventRegistration.query.filter_by(event_id=event_id, phone=rec['phone']).first()
+            if existing:
+                already_registered += 1
+                continue
+            
+            registration = EventRegistration(event_id=event_id, name=rec['name'], phone=rec['phone'])
+            db.session.add(registration)
+            added += 1
+        
+        db.session.commit()
+        
+        msg = f'Added {added} registrations.'
+        if already_registered:
+            msg += f' {already_registered} already registered.'
+        
+        flash(msg, 'success' if added > 0 else 'warning')
+        
+    except Exception as e:
+        flash(f'Error processing CSV: {str(e)}', 'error')
+    
+    return redirect(url_for('main.event_detail', event_id=event_id))
+
+
+# Message Logs
+@bp.route('/logs')
+@login_required
+def logs_list():
+    logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    return render_template('logs/list.html', logs=logs)
+
+
+@bp.route('/logs/<int:log_id>')
+@login_required
+def log_detail(log_id):
+    log = MessageLog.query.get_or_404(log_id)
+    details = json.loads(log.details) if log.details else []
+    return render_template('logs/detail.html', log=log, details=details)
+
+
+# Scheduled Messages
+@bp.route('/scheduled')
+@login_required
+def scheduled_list():
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    pending = ScheduledMessage.query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
+    past = ScheduledMessage.query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
+    return render_template('scheduled/list.html', pending=pending, past=past, now=now)
+
+
+@bp.route('/scheduled/<int:scheduled_id>/cancel', methods=['POST'])
+@login_required
+def scheduled_cancel(scheduled_id):
+    scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
+    
+    if scheduled.status != 'pending':
+        flash('Only pending messages can be cancelled.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+    
+    scheduled.status = 'cancelled'
+    db.session.commit()
+    flash('Scheduled message cancelled.', 'success')
+    return redirect(url_for('main.scheduled_list'))
+
+
+@bp.route('/scheduled/<int:scheduled_id>/delete', methods=['POST'])
+@login_required
+def scheduled_delete(scheduled_id):
+    scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
+    db.session.delete(scheduled)
+    db.session.commit()
+    flash('Scheduled message deleted.', 'success')
+    return redirect(url_for('main.scheduled_list'))
+
+
+@bp.route('/scheduled/status')
+@login_required
+def scheduled_status():
+    """API endpoint for polling scheduled message status changes."""
+    pending = ScheduledMessage.query.filter_by(status='pending').all()
+    pending_ids = [m.id for m in pending]
+    pending_count = len(pending_ids)
+    
+    # Return current state for comparison
+    return jsonify({
+        'pending_count': pending_count,
+        'pending_ids': pending_ids
+    })
+
+
+@bp.route('/logs/clear', methods=['POST'])
+@login_required
+def logs_clear():
+    """Clear all message logs - requires admin password confirmation."""
+    from flask import current_app
+    
+    admin_password = request.form.get('admin_password', '')
+    expected_password = current_app.config.get('ADMIN_PASSWORD')
+    
+    if not expected_password:
+        flash('ADMIN_PASSWORD not configured in .env file.', 'error')
+        return redirect(url_for('main.logs_list'))
+    
+    if admin_password != expected_password:
+        flash('Invalid admin password.', 'error')
+        return redirect(url_for('main.logs_list'))
+    
+    # Clear all logs
+    deleted_count = MessageLog.query.delete()
+    db.session.commit()
+    
+    flash(f'Successfully cleared {deleted_count} log(s).', 'success')
+    return redirect(url_for('main.logs_list'))
