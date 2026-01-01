@@ -10,6 +10,8 @@
     </a>
 </div>
 
+<div id="pendingIdsContainer" data-pending-ids='{{ pending_ids|tojson }}'></div>
+
 {% if pending %}
 <div class="card mb-4">
     <div class="card-header bg-warning-subtle">
@@ -29,7 +31,7 @@
                 {% for msg in pending %}
                 <tr>
                     <td>
-                        <strong>{{ msg.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</strong>
+                        <strong>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</strong>
                     </td>
                     <td>
                         {% if msg.test_mode %}
@@ -91,7 +93,7 @@
             <tbody>
                 {% for msg in past %}
                 <tr>
-                    <td>{{ msg.scheduled_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</td>
                     <td>
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
@@ -175,9 +177,15 @@
         });
     }
     
-    {% if pending %}
-    // Track current pending message IDs for auto-refresh
-    let currentPendingIds = [{% for msg in pending %}{{ msg.id }}{% if not loop.last %}, {% endif %}{% endfor %}];
+    const pendingIdsContainer = document.getElementById('pendingIdsContainer');
+    let currentPendingIds = [];
+    if (pendingIdsContainer && pendingIdsContainer.dataset && pendingIdsContainer.dataset.pendingIds) {
+        try {
+            currentPendingIds = JSON.parse(pendingIdsContainer.dataset.pendingIds);
+        } catch (e) {
+            currentPendingIds = [];
+        }
+    }
     
     async function checkStatus() {
         try {
@@ -196,7 +204,8 @@
         }
     }
     
-    setTimeout(() => setInterval(checkStatus, 3000), 1000);
-    {% endif %}
+    if (Array.isArray(currentPendingIds) && currentPendingIds.length > 0) {
+        setTimeout(() => setInterval(checkStatus, 3000), 1000);
+    }
 </script>
 {% endblock %}

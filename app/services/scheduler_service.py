@@ -17,7 +17,7 @@ def send_scheduled_messages(app):
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
         from app.services.twilio_service import get_twilio_service
         
-        now = datetime.now()
+        now = datetime.utcnow()
         # Messages older than 5 minutes are considered expired
         expiry_threshold = now - timedelta(minutes=5)
         

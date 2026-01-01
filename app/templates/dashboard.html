@@ -11,6 +11,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" id="sendForm">
+                    <input type="hidden" name="client_timezone" id="client_timezone">
                     <div class="mb-3">
                         <label for="message_body" class="form-label">Message</label>
                         <textarea class="form-control" id="message_body" name="message_body" rows="4" 
@@ -154,6 +155,15 @@
     const scheduleWrapper = document.getElementById('scheduleWrapper');
     const scheduleDate = document.getElementById('schedule_date');
     const scheduleTime = document.getElementById('schedule_time');
+    const clientTimezone = document.getElementById('client_timezone');
+
+    if (clientTimezone) {
+        try {
+            clientTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch (e) {
+            clientTimezone.value = '';
+        }
+    }
 
     messageBody.addEventListener('input', function() {
         charCount.textContent = this.value.length;

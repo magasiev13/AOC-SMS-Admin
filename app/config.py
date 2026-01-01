@@ -19,6 +19,8 @@ class Config:
 
     # Scheduler (disable by default in production; run as a separate service)
     SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'
+
+    APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'UTC')
     
     # Database
     BASE_DIR = Path(__file__).resolve().parent.parent

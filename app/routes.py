@@ -1,4 +1,5 @@
 import json
+from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 from app import db
@@ -26,6 +27,7 @@ def index():
 @login_required
 def dashboard():
     from flask import current_app
+    app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
     events = Event.query.order_by(Event.date.desc()).all()
     admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
     
@@ -39,27 +41,44 @@ def dashboard():
         schedule_later = request.form.get('schedule_later') == 'on'
         schedule_date = request.form.get('schedule_date', '').strip()
         schedule_time = request.form.get('schedule_time', '').strip()
+        client_timezone = request.form.get('client_timezone', '').strip()
         
         if not message_body:
             flash('Message body is required.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
         
         if target == 'event' and not event_id:
             flash('Please select an event.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
         
         # Handle scheduled message
         if schedule_later:
             if not schedule_date or not schedule_time:
                 flash('Schedule date and time are required.', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
             
             try:
-                scheduled_dt = datetime.strptime(f'{schedule_date} {schedule_time}', '%Y-%m-%d %H:%M')
-                
-                if scheduled_dt <= datetime.now():
+                from datetime import timezone
+
+                tz_name = client_timezone or app_timezone
+                tz = None
+                try:
+                    tz = ZoneInfo(tz_name)
+                except Exception:
+                    if tz_name != app_timezone:
+                        try:
+                            tz = ZoneInfo(app_timezone)
+                        except Exception:
+                            tz = None
+                if tz is None:
+                    tz = timezone.utc
+
+                scheduled_local = datetime.strptime(f'{schedule_date} {schedule_time}', '%Y-%m-%d %H:%M').replace(tzinfo=tz)
+                scheduled_utc = scheduled_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+                if scheduled_utc <= datetime.utcnow():
                     flash('Scheduled time must be in the future.', 'error')
-                    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+                    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
                 
                 # Append unsubscribe text if option is checked
                 final_message = message_body
@@ -70,25 +89,25 @@ def dashboard():
                     message_body=final_message,
                     target=target,
                     event_id=event_id if target == 'event' else None,
-                    scheduled_at=scheduled_dt,
+                    scheduled_at=scheduled_utc,
                     test_mode=test_mode
                 )
                 db.session.add(scheduled)
                 db.session.commit()
                 
-                flash(f'Message scheduled for {scheduled_dt.strftime("%Y-%m-%d %H:%M")}.', 'success')
+                flash(f'Message scheduled for {scheduled_local.strftime("%Y-%m-%d %H:%M")}.', 'success')
                 return redirect(url_for('main.scheduled_list'))
                 
             except ValueError as e:
                 flash(f'Invalid date/time format: {e}', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
         
         # Immediate send
         # Test mode: send only to admin phone
         if test_mode:
             if not admin_test_phone:
                 flash('ADMIN_TEST_PHONE not configured. Add it to your .env file.', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
             recipient_data = [{'phone': admin_test_phone, 'name': 'Admin Test'}]
         else:
             # Get recipients based on target
@@ -102,7 +121,7 @@ def dashboard():
         
         if not recipient_data:
             flash('No recipients found for the selected target.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
         
         # Send messages
         try:
@@ -141,7 +160,7 @@ def dashboard():
         except Exception as e:
             flash(f'Error sending messages: {str(e)}', 'error')
     
-    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone)
+    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
 
 
 # Community Members Management
@@ -511,10 +530,27 @@ def log_detail(log_id):
 @login_required
 def scheduled_list():
     from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
+    from flask import current_app
+
+    app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
+    try:
+        tz = ZoneInfo(app_timezone)
+    except Exception:
+        tz = timezone.utc
+
+    now = datetime.utcnow()
     pending = ScheduledMessage.query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
     past = ScheduledMessage.query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
-    return render_template('scheduled/list.html', pending=pending, past=past, now=now)
+    pending_ids = [m.id for m in pending]
+
+    for msg in pending + past:
+        if msg.scheduled_at:
+            scheduled_utc = msg.scheduled_at
+            if scheduled_utc.tzinfo is None:
+                scheduled_utc = scheduled_utc.replace(tzinfo=timezone.utc)
+            msg.scheduled_at_local = scheduled_utc.astimezone(tz)
+
+    return render_template('scheduled/list.html', pending=pending, past=past, now=now, pending_ids=pending_ids)
 
 
 @bp.route('/scheduled/<int:scheduled_id>/cancel', methods=['POST'])
