@@ -243,6 +243,28 @@ def community_delete(member_id):
     return redirect(url_for('main.community_list'))
 
 
+@bp.route('/community/bulk-delete', methods=['POST'])
+@login_required
+def community_bulk_delete():
+    raw_ids = request.form.getlist('member_ids')
+    member_ids = []
+    for raw in raw_ids:
+        try:
+            member_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    member_ids = sorted(set(member_ids))
+    if not member_ids:
+        flash('No members selected.', 'warning')
+        return redirect(url_for('main.community_list'))
+
+    deleted = CommunityMember.query.filter(CommunityMember.id.in_(member_ids)).delete(synchronize_session=False)
+    db.session.commit()
+    flash(f'Deleted {deleted} member(s).', 'success')
+    return redirect(url_for('main.community_list'))
+
+
 @bp.route('/community/import', methods=['GET', 'POST'])
 @login_required
 def community_import():
