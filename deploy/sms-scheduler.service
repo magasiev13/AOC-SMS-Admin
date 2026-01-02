@@ -7,9 +7,9 @@ User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 Environment="PATH=/opt/sms-admin/venv/bin"
-Environment="SCHEDULER_ENABLED=1"
 EnvironmentFile=/opt/sms-admin/.env
 ExecStart=/opt/sms-admin/venv/bin/python -m app.scheduler_runner
+ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
