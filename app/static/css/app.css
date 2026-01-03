@@ -169,6 +169,7 @@ h6,
   flex-direction: column;
   flex: 1;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .app-topbar {
@@ -188,6 +189,7 @@ h6,
 .app-content {
   flex: 1;
   padding: var(--space-5) var(--space-4);
+  min-width: 0;
 }
 
 .app-page-header {
@@ -252,6 +254,10 @@ h6,
 .table {
   color: var(--color-text);
   font-size: var(--font-size-2);
+}
+
+.table-responsive {
+  max-width: 100%;
 }
 
 .table th {
