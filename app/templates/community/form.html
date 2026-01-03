@@ -2,10 +2,18 @@
 
 {% block title %}{{ 'Edit' if member else 'Add' }} Community Member - SMS Admin{% endblock %}
 
+{% block page_title %}{{ 'Edit' if member else 'Add' }} Community Member{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.community_list') }}">Community</a> /
+<span>{{ 'Edit' if member else 'Add' }}</span>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
-        <div class="card">
+        <div class="card app-card">
             <div class="card-header">
                 <h5 class="mb-0">
                     <i class="bi bi-person me-2"></i>{{ 'Edit' if member else 'Add' }} Community Member

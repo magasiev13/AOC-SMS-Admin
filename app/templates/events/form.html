@@ -2,10 +2,18 @@
 
 {% block title %}{{ 'Edit' if event else 'Create' }} Event - SMS Admin{% endblock %}
 
+{% block page_title %}{{ 'Edit' if event else 'Create' }} Event{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.events_list') }}">Events</a> /
+<span>{{ 'Edit' if event else 'Create' }}</span>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
-        <div class="card">
+        <div class="card app-card">
             <div class="card-header">
                 <h5 class="mb-0">
                     <i class="bi bi-calendar-event me-2"></i>{{ 'Edit' if event else 'Create' }} Event

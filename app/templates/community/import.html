@@ -2,10 +2,18 @@
 
 {% block title %}Import Community Members - SMS Admin{% endblock %}
 
+{% block page_title %}Import Community Members{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.community_list') }}">Community</a> /
+<span>Import</span>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
-        <div class="card">
+        <div class="card app-card">
             <div class="card-header">
                 <h5 class="mb-0">
                     <i class="bi bi-upload me-2"></i>Import Community Members from CSV

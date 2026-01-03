@@ -2,20 +2,23 @@
 
 {% block title %}Community Members - SMS Admin{% endblock %}
 
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4><i class="bi bi-people me-2"></i>Community Members</h4>
-    <div>
-        <a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary me-2">
-            <i class="bi bi-upload me-1"></i>Import CSV
-        </a>
-        <a href="{{ url_for('main.community_add') }}" class="btn btn-primary">
-            <i class="bi bi-plus-lg me-1"></i>Add Member
-        </a>
-    </div>
-</div>
+{% block page_title %}Community Members{% endblock %}
 
-<div class="card mb-4">
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Community</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary">
+    <i class="bi bi-upload me-1"></i>Import CSV
+</a>
+<a href="{{ url_for('main.community_add') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Add Member
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card mb-4">
     <div class="card-body">
         <form method="GET" class="row g-3">
             <div class="col-md-10">
@@ -31,7 +34,7 @@
     </div>
 </div>
 
-<div class="card">
+<div class="card app-card">
     {% if members %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">

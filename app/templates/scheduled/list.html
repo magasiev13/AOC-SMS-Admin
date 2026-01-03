@@ -2,18 +2,23 @@
 
 {% block title %}Scheduled Messages - SMS Admin{% endblock %}
 
-{% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4><i class="bi bi-clock-history me-2"></i>Scheduled Messages</h4>
-    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">
-        <i class="bi bi-plus-lg me-1"></i>Schedule New
-    </a>
-</div>
+{% block page_title %}Scheduled Messages{% endblock %}
 
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Scheduled</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Schedule New
+</a>
+{% endblock %}
+
+{% block content %}
 <div id="pendingIdsContainer" data-pending-ids='{{ pending_ids|tojson }}'></div>
 
 {% if pending %}
-<div class="card mb-4">
+<div class="card app-card mb-4">
     <div class="card-header bg-warning-subtle">
         <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
     </div>
@@ -77,7 +82,7 @@
 {% endif %}
 
 {% if past %}
-<div class="card">
+<div class="card app-card">
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Past Scheduled Messages</h6>
     </div>

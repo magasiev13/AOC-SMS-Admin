@@ -2,31 +2,35 @@
 
 {% block title %}{{ event.title }} - SMS Admin{% endblock %}
 
+{% block page_title %}{{ event.title }}{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.events_list') }}">Events</a> /
+<span>{{ event.title }}</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-primary">
+    <i class="bi bi-pencil me-1"></i>Edit
+</a>
+<a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back
+</a>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div>
-        <h4 class="mb-1">{{ event.title }}</h4>
-        <p class="text-muted mb-0">
-            {% if event.date %}
-            <i class="bi bi-calendar me-1"></i>{{ event.date.strftime('%B %d, %Y') }}
-            {% else %}
-            <i class="bi bi-calendar me-1"></i>No date set
-            {% endif %}
-        </p>
-    </div>
-    <div>
-        <a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-primary">
-            <i class="bi bi-pencil me-1"></i>Edit
-        </a>
-        <a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-arrow-left me-1"></i>Back
-        </a>
-    </div>
-</div>
+<p class="text-muted mb-4">
+    {% if event.date %}
+    <i class="bi bi-calendar me-1"></i>{{ event.date.strftime('%B %d, %Y') }}
+    {% else %}
+    <i class="bi bi-calendar me-1"></i>No date set
+    {% endif %}
+</p>
 
 <div class="row">
     <div class="col-lg-5 mb-4">
-        <div class="card mb-4">
+        <div class="card app-card mb-4">
             <div class="card-header">
                 <h6 class="mb-0"><i class="bi bi-person-plus me-2"></i>Add Registration</h6>
             </div>
@@ -44,7 +48,7 @@
             </div>
         </div>
         
-        <div class="card">
+        <div class="card app-card">
             <div class="card-header">
                 <h6 class="mb-0"><i class="bi bi-upload me-2"></i>Import from CSV</h6>
             </div>
@@ -62,7 +66,7 @@
     </div>
 
     <div class="col-lg-7 mb-4">
-        <div class="card">
+        <div class="card app-card">
             <div class="card-header">
                 <h6 class="mb-0"><i class="bi bi-people me-2"></i>Registrations ({{ registrations|length }})</h6>
             </div>
