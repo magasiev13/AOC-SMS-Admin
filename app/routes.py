@@ -368,8 +368,20 @@ def community_import():
 @bp.route('/events')
 @login_required
 def events_list():
-    events = Event.query.order_by(Event.date.desc()).all()
-    return render_template('events/list.html', events=events)
+    search = request.args.get('search', '').strip()
+    query = Event.query
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.filter(
+            db.or_(
+                Event.title.ilike(pattern),
+                db.cast(Event.date, db.String).ilike(pattern)
+            )
+        )
+
+    events = query.order_by(Event.date.desc()).all()
+    return render_template('events/list.html', events=events, search=search)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
@@ -549,8 +561,21 @@ def event_import_registrations(event_id):
 @bp.route('/logs')
 @login_required
 def logs_list():
-    logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(100).all()
-    return render_template('logs/list.html', logs=logs)
+    search = request.args.get('search', '').strip()
+    query = MessageLog.query
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.outerjoin(Event).filter(
+            db.or_(
+                MessageLog.message_body.ilike(pattern),
+                MessageLog.target.ilike(pattern),
+                Event.title.ilike(pattern)
+            )
+        )
+
+    logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    return render_template('logs/list.html', logs=logs, search=search)
 
 
 @bp.route('/logs/<int:log_id>')
@@ -568,6 +593,7 @@ def scheduled_list():
     from datetime import datetime, timezone
     from flask import current_app
 
+    search = request.args.get('search', '').strip()
     app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
     try:
         tz = ZoneInfo(app_timezone)
@@ -575,8 +601,20 @@ def scheduled_list():
         tz = timezone.utc
 
     now = datetime.utcnow()
-    pending = ScheduledMessage.query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
-    past = ScheduledMessage.query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
+    query = ScheduledMessage.query
+
+    if search:
+        pattern = f'%{search}%'
+        query = query.outerjoin(Event).filter(
+            db.or_(
+                ScheduledMessage.message_body.ilike(pattern),
+                ScheduledMessage.target.ilike(pattern),
+                Event.title.ilike(pattern)
+            )
+        )
+
+    pending = query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
+    past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
     pending_ids = [m.id for m in pending]
 
     for msg in pending + past:
@@ -586,7 +624,14 @@ def scheduled_list():
                 scheduled_utc = scheduled_utc.replace(tzinfo=timezone.utc)
             msg.scheduled_at_local = scheduled_utc.astimezone(tz)
 
-    return render_template('scheduled/list.html', pending=pending, past=past, now=now, pending_ids=pending_ids)
+    return render_template(
+        'scheduled/list.html',
+        pending=pending,
+        past=past,
+        now=now,
+        pending_ids=pending_ids,
+        search=search
+    )
 
 
 @bp.route('/scheduled/<int:scheduled_id>/cancel', methods=['POST'])
