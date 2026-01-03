@@ -2,6 +2,14 @@
 
 {% block title %}Import Community Members - SMS Admin{% endblock %}
 
+{% block page_title %}Import Community Members{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.community_list') }}">Community</a> /
+<span>Import</span>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
