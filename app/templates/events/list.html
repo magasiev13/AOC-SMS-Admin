@@ -48,6 +48,7 @@
                                 </a>
                                 <form method="POST" action="{{ url_for('main.event_delete', event_id=event.id) }}" 
                                       class="d-inline" onsubmit="return confirm('Delete this event and all registrations?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-outline-danger" title="Delete">
                                         <i class="bi bi-trash"></i>
                                     </button>

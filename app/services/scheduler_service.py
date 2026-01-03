@@ -18,6 +18,17 @@ def send_scheduled_messages(app):
         from app.services.twilio_service import get_twilio_service
         
         now = datetime.utcnow()
+        processing_timeout = now - timedelta(minutes=10)
+        stuck_processing = ScheduledMessage.query.filter(
+            ScheduledMessage.status == 'processing',
+            ScheduledMessage.scheduled_at <= processing_timeout
+        ).all()
+        for scheduled in stuck_processing:
+            scheduled.status = 'failed'
+            scheduled.error_message = 'Message processing timed out'
+            scheduled.sent_at = now
+        if stuck_processing:
+            db.session.commit()
         # Messages older than 5 minutes are considered expired
         expiry_threshold = now - timedelta(minutes=5)
         

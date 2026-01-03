@@ -32,6 +32,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-2">
                         <input type="text" class="form-control" name="name" placeholder="Name (optional)">
                     </div>
@@ -49,6 +50,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-2">
                         <input type="file" class="form-control" name="file" accept=".csv" required>
                     </div>
@@ -81,6 +83,7 @@
                             <td><code>{{ reg.phone }}</code></td>
                             <td>
                                 <form method="POST" action="{{ url_for('main.event_unregister', event_id=event.id, registration_id=reg.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" onclick="return confirm('Remove this registration?');">
                                         <i class="bi bi-x"></i>
                                     </button>

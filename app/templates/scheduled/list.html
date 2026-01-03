@@ -50,7 +50,9 @@
                             <i class="bi bi-x-circle"></i> Cancel
                         </button>
                         <form id="cancel-scheduled-{{ msg.id }}" method="POST" 
-                              action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;"></form>
+                              action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        </form>
                     </td>
                 </tr>
                 {% endfor %}
@@ -100,6 +102,8 @@
                         {% if msg.message_log and msg.message_log.id %}
                         <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
                         {% endif %}
+                        {% elif msg.status == 'processing' %}
+                        <span class="badge bg-info text-dark">Processing</span>
                         {% elif msg.status == 'failed' %}
                         <span class="badge bg-danger" title="{{ msg.error_message }}">Failed</span>
                         {% elif msg.status == 'expired' %}
@@ -123,7 +127,9 @@
                             <i class="bi bi-trash"></i>
                         </button>
                         <form id="delete-scheduled-{{ msg.id }}" method="POST" 
-                              action="{{ url_for('main.scheduled_delete', scheduled_id=msg.id) }}" style="display:none;"></form>
+                              action="{{ url_for('main.scheduled_delete', scheduled_id=msg.id) }}" style="display:none;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        </form>
                     </td>
                 </tr>
                 {% endfor %}

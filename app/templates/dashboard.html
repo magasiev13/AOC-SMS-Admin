@@ -11,6 +11,7 @@
             </div>
             <div class="card-body">
                 <form method="POST" id="sendForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="client_timezone" id="client_timezone">
                     <div class="mb-3">
                         <label for="message_body" class="form-label">Message</label>
