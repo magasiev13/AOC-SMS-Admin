@@ -157,7 +157,7 @@ def verify_admin_password(stored_password: str, provided_password: str) -> bool:
     if not stored_password or not provided_password:
         return False
 
-    if stored_password.startswith(('pbkdf2:', 'scrypt:', 'argon2:')):
+    if stored_password.startswith(('pbkdf2:', 'scrypt:')):
         return check_password_hash(stored_password, provided_password)
 
     return hmac.compare_digest(stored_password, provided_password)
