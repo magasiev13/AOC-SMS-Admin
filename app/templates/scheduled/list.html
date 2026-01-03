@@ -17,15 +17,53 @@
 {% block content %}
 <div id="pendingIdsContainer" data-pending-ids='{{ pending_ids|tojson }}'></div>
 
+<div class="card app-card mb-4">
+    <div class="card-body">
+        <form class="filter-bar" method="GET">
+            <div class="flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" name="search" placeholder="Search scheduled messages">
+                </div>
+            </div>
+            <div class="filter-chip-group">
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Active</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">New</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Failed</button>
+            </div>
+            <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-funnel me-1"></i>Apply
+            </button>
+        </form>
+    </div>
+</div>
+
 {% if pending %}
 <div class="card app-card mb-4">
     <div class="card-header bg-warning-subtle">
         <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
     </div>
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
+    <div class="bulk-action-bar" id="pendingBulkBar">
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-primary"><span id="pendingSelectedCount">0</span> selected</span>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="pendingSelectAllBtn">Select all</button>
+                <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="pendingInvertSelectionBtn">Invert</button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Reschedule</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" disabled>Cancel</button>
+        </div>
+    </div>
+    <div class="table-responsive d-none d-lg-block">
+        <table class="table table-hover table-sticky-header mb-0" data-bulk-scope="pending">
             <thead class="table-light">
                 <tr>
+                    <th width="40">
+                        <input class="form-check-input" type="checkbox" id="selectAllPending" aria-label="Select all pending messages">
+                    </th>
                     <th>Scheduled For</th>
                     <th>Target</th>
                     <th>Message</th>
@@ -35,6 +73,9 @@
             <tbody>
                 {% for msg in pending %}
                 <tr>
+                    <td>
+                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
+                    </td>
                     <td>
                         <strong>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</strong>
                     </td>
@@ -49,11 +90,18 @@
                     </td>
                     <td>{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
                     <td>
-                        <button type="button" class="btn btn-sm btn-outline-warning"
-                                data-bs-toggle="modal" data-bs-target="#actionModal"
-                                data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
-                            <i class="bi bi-x-circle"></i> Cancel
-                        </button>
+                        <div class="d-flex flex-wrap gap-2 row-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
+                                    aria-controls="scheduledPreview{{ msg.id }}">
+                                <i class="bi bi-layout-sidebar-inset"></i>
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-warning"
+                                    data-bs-toggle="modal" data-bs-target="#actionModal"
+                                    data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </button>
+                        </div>
                         <form id="cancel-scheduled-{{ msg.id }}" method="POST" 
                               action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -63,6 +111,32 @@
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+    <div class="card-list d-lg-none">
+        {% for msg in pending %}
+        <div class="card-list-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <h6 class="mb-1">{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</h6>
+                    <div class="text-muted small">{{ msg.target }}</div>
+                    <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
+                </div>
+                <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
+                        aria-controls="scheduledPreview{{ msg.id }}">
+                    <i class="bi bi-layout-sidebar-inset"></i> Preview
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-warning"
+                        data-bs-toggle="modal" data-bs-target="#actionModal"
+                        data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+        {% endfor %}
     </div>
 </div>
 {% else %}
@@ -86,10 +160,27 @@
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Past Scheduled Messages</h6>
     </div>
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
+    <div class="bulk-action-bar" id="pastBulkBar">
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-primary"><span id="pastSelectedCount">0</span> selected</span>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select all</button>
+                <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="pastInvertSelectionBtn">Invert</button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Export</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" disabled>Delete</button>
+        </div>
+    </div>
+    <div class="table-responsive d-none d-lg-block">
+        <table class="table table-hover table-sticky-header mb-0" data-bulk-scope="past">
             <thead class="table-light">
                 <tr>
+                    <th width="40">
+                        <input class="form-check-input" type="checkbox" id="selectAllPast" aria-label="Select all past messages">
+                    </th>
                     <th>Scheduled For</th>
                     <th>Status</th>
                     <th>Target</th>
@@ -100,6 +191,9 @@
             <tbody>
                 {% for msg in past %}
                 <tr>
+                    <td>
+                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past">
+                    </td>
                     <td>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</td>
                     <td>
                         {% if msg.status == 'sent' %}
@@ -126,11 +220,18 @@
                     </td>
                     <td>{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
                     <td>
-                        <button type="button" class="btn btn-sm btn-outline-danger"
-                                data-bs-toggle="modal" data-bs-target="#actionModal"
-                                data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
-                            <i class="bi bi-trash"></i>
-                        </button>
+                        <div class="d-flex flex-wrap gap-2 row-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
+                                    aria-controls="scheduledPreview{{ msg.id }}">
+                                <i class="bi bi-layout-sidebar-inset"></i>
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                    data-bs-toggle="modal" data-bs-target="#actionModal"
+                                    data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
                         <form id="delete-scheduled-{{ msg.id }}" method="POST" 
                               action="{{ url_for('main.scheduled_delete', scheduled_id=msg.id) }}" style="display:none;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -141,7 +242,49 @@
             </tbody>
         </table>
     </div>
+    <div class="card-list d-lg-none">
+        {% for msg in past %}
+        <div class="card-list-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <h6 class="mb-1">{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</h6>
+                    <div class="text-muted small">{{ msg.status|capitalize }} · {{ msg.target }}</div>
+                    <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
+                </div>
+                <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past">
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
+                        aria-controls="scheduledPreview{{ msg.id }}">
+                    <i class="bi bi-layout-sidebar-inset"></i> Preview
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        data-bs-toggle="modal" data-bs-target="#actionModal"
+                        data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
+                    <i class="bi bi-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
 </div>
+{% endif %}
+
+{% if pending or past %}
+    {% for msg in (pending or []) + (past or []) %}
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="scheduledPreview{{ msg.id }}">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title">Scheduled preview</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+        </div>
+        <div class="offcanvas-body">
+            <p class="mb-2"><strong>Scheduled:</strong> {{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</p>
+            <p class="mb-2"><strong>Target:</strong> {{ msg.target }}</p>
+            <p class="mb-0"><strong>Message:</strong> {{ msg.message_body }}</p>
+        </div>
+    </div>
+    {% endfor %}
 {% endif %}
 
 <!-- Action Confirmation Modal -->
@@ -218,5 +361,68 @@
     if (Array.isArray(currentPendingIds) && currentPendingIds.length > 0) {
         setTimeout(() => setInterval(checkStatus, 3000), 1000);
     }
+
+    function setupBulkControls(group) {
+        const bulkBar = document.getElementById(`${group}BulkBar`);
+        const selectedCountEl = document.getElementById(`${group}SelectedCount`);
+        const selectAllCheckbox = document.getElementById(`selectAll${group.charAt(0).toUpperCase()}${group.slice(1)}`);
+
+        function getGroupCheckboxes() {
+            return Array.from(document.querySelectorAll(`.js-select-row[data-bulk-group="${group}"]`));
+        }
+
+        function updateBulkUi() {
+            if (!selectedCountEl || !bulkBar) return;
+            const boxes = getGroupCheckboxes();
+            const selected = boxes.filter(b => b.checked).length;
+            selectedCountEl.textContent = selected;
+            bulkBar.classList.toggle('is-visible', selected > 0);
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = boxes.length > 0 && boxes.every(b => b.checked);
+                selectAllCheckbox.indeterminate = selected > 0 && selected < boxes.length;
+            }
+        }
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.addEventListener('change', function() {
+                const boxes = getGroupCheckboxes();
+                boxes.forEach(b => { b.checked = selectAllCheckbox.checked; });
+                updateBulkUi();
+            });
+        }
+
+        const selectAllBtn = document.getElementById(`${group}SelectAllBtn`);
+        if (selectAllBtn) {
+            selectAllBtn.addEventListener('click', function() {
+                const boxes = getGroupCheckboxes();
+                boxes.forEach(b => { b.checked = true; });
+                updateBulkUi();
+            });
+        }
+
+        const selectNoneBtn = document.getElementById(`${group}SelectNoneBtn`);
+        if (selectNoneBtn) {
+            selectNoneBtn.addEventListener('click', function() {
+                const boxes = getGroupCheckboxes();
+                boxes.forEach(b => { b.checked = false; });
+                updateBulkUi();
+            });
+        }
+
+        const invertSelectionBtn = document.getElementById(`${group}InvertSelectionBtn`);
+        if (invertSelectionBtn) {
+            invertSelectionBtn.addEventListener('click', function() {
+                const boxes = getGroupCheckboxes();
+                boxes.forEach(b => { b.checked = !b.checked; });
+                updateBulkUi();
+            });
+        }
+
+        getGroupCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+        updateBulkUi();
+    }
+
+    setupBulkControls('pending');
+    setupBulkControls('past');
 </script>
 {% endblock %}

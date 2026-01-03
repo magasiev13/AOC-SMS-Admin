@@ -307,6 +307,82 @@ h6,
   vertical-align: middle;
 }
 
+.table-sticky-header thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--color-surface-muted);
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.filter-bar .form-control {
+  min-width: 220px;
+}
+
+.filter-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filter-chip {
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-weight: 600;
+}
+
+.bulk-action-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background-color: var(--color-surface-muted);
+}
+
+.bulk-action-bar.is-visible {
+  display: flex;
+}
+
+.row-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.table-hover tbody tr:hover .row-actions,
+.table-hover tbody tr:focus-within .row-actions {
+  opacity: 1;
+}
+
+.card-list {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.card-list-item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  background-color: var(--color-surface);
+  box-shadow: var(--elevation-1);
+}
+
+.card-list-item .row-actions {
+  opacity: 1;
+}
+
+.preview-panel {
+  width: min(380px, 90vw);
+}
+
 .btn {
   border-radius: var(--radius-md);
   font-size: var(--font-size-2);

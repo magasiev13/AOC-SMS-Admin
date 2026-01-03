@@ -17,11 +17,53 @@
 {% endblock %}
 
 {% block content %}
+<div class="card app-card mb-4">
+    <div class="card-body">
+        <form class="filter-bar" method="GET">
+            <div class="flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" name="search" placeholder="Search logs">
+                </div>
+            </div>
+            <div class="filter-chip-group">
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Active</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">New</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Failed</button>
+            </div>
+            <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-funnel me-1"></i>Apply
+            </button>
+        </form>
+    </div>
+</div>
+
 <div class="card app-card">
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
+    {% if logs %}
+    <div class="bulk-action-bar" id="bulkActionBar">
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-primary"><span id="selectedCount">0</span> selected</span>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
+                <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Export</button>
+            <button type="button" class="btn btn-sm btn-outline-primary" disabled>Retry</button>
+        </div>
+    </div>
+    {% endif %}
+    <div class="table-responsive d-none d-lg-block">
+        <table class="table table-hover table-sticky-header mb-0">
             <thead class="table-light">
                 <tr>
+                    <th width="40">
+                        {% if logs %}
+                        <input class="form-check-input" type="checkbox" id="selectAllLogs" aria-label="Select all logs">
+                        {% endif %}
+                    </th>
                     <th>Date</th>
                     <th>Target</th>
                     <th>Message</th>
@@ -33,6 +75,9 @@
                 {% if logs %}
                 {% for log in logs %}
                 <tr>
+                    <td>
+                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
+                    </td>
                     <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td>
                     <td>
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
@@ -54,15 +99,22 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary">
-                            <i class="bi bi-eye"></i>
-                        </a>
+                        <div class="row-actions">
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    data-bs-toggle="offcanvas" data-bs-target="#logPreview{{ log.id }}"
+                                    aria-controls="logPreview{{ log.id }}">
+                                <i class="bi bi-layout-sidebar-inset"></i>
+                            </button>
+                            <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="5" class="text-center text-muted py-4">
+                    <td colspan="6" class="text-center text-muted py-4">
                         No message logs yet. <a href="{{ url_for('main.dashboard') }}">Send your first message</a>.
                     </td>
                 </tr>
@@ -70,12 +122,60 @@
             </tbody>
         </table>
     </div>
+    <div class="card-list d-lg-none">
+        {% if logs %}
+            {% for log in logs %}
+            <div class="card-list-item">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <h6 class="mb-1">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</h6>
+                        <div class="text-muted small">
+                            {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
+                        </div>
+                        <div class="text-muted small">{{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}</div>
+                    </div>
+                    <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                    <button type="button" class="btn btn-sm btn-outline-primary"
+                            data-bs-toggle="offcanvas" data-bs-target="#logPreview{{ log.id }}"
+                            aria-controls="logPreview{{ log.id }}">
+                        <i class="bi bi-layout-sidebar-inset"></i> Preview
+                    </button>
+                    <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i> View
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="text-center text-muted py-4">
+                No message logs yet. <a href="{{ url_for('main.dashboard') }}">Send your first message</a>.
+            </div>
+        {% endif %}
+    </div>
     {% if logs %}
     <div class="card-footer text-muted">
         Showing {{ logs|length }} log(s)
     </div>
     {% endif %}
 </div>
+
+{% if logs %}
+    {% for log in logs %}
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="logPreview{{ log.id }}">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title">Log preview</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+        </div>
+        <div class="offcanvas-body">
+            <p class="mb-2"><strong>Target:</strong> {{ log.target }}</p>
+            <p class="mb-2"><strong>Sent:</strong> {{ log.success_count }} success / {{ log.failure_count }} failed</p>
+            <p class="mb-0"><strong>Message:</strong> {{ log.message_body }}</p>
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
 
 <!-- Clear Logs Modal -->
 <div class="modal fade" id="clearLogsModal" tabindex="-1">
@@ -106,4 +206,66 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const bulkActionBar = document.getElementById('bulkActionBar');
+    const selectedCountEl = document.getElementById('selectedCount');
+    const selectAllLogs = document.getElementById('selectAllLogs');
+
+    function getLogCheckboxes() {
+        return Array.from(document.querySelectorAll('.js-select-row'));
+    }
+
+    function updateBulkUi() {
+        if (!selectedCountEl || !bulkActionBar) return;
+        const boxes = getLogCheckboxes();
+        const selected = boxes.filter(b => b.checked).length;
+        selectedCountEl.textContent = selected;
+        bulkActionBar.classList.toggle('is-visible', selected > 0);
+        if (selectAllLogs) {
+            selectAllLogs.checked = boxes.length > 0 && boxes.every(b => b.checked);
+            selectAllLogs.indeterminate = selected > 0 && selected < boxes.length;
+        }
+    }
+
+    if (selectAllLogs) {
+        selectAllLogs.addEventListener('change', function() {
+            const boxes = getLogCheckboxes();
+            boxes.forEach(b => { b.checked = selectAllLogs.checked; });
+            updateBulkUi();
+        });
+    }
+
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function() {
+            const boxes = getLogCheckboxes();
+            boxes.forEach(b => { b.checked = true; });
+            updateBulkUi();
+        });
+    }
+
+    const selectNoneBtn = document.getElementById('selectNoneBtn');
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', function() {
+            const boxes = getLogCheckboxes();
+            boxes.forEach(b => { b.checked = false; });
+            updateBulkUi();
+        });
+    }
+
+    const invertSelectionBtn = document.getElementById('invertSelectionBtn');
+    if (invertSelectionBtn) {
+        invertSelectionBtn.addEventListener('click', function() {
+            const boxes = getLogCheckboxes();
+            boxes.forEach(b => { b.checked = !b.checked; });
+            updateBulkUi();
+        });
+    }
+
+    getLogCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+    updateBulkUi();
+</script>
 {% endblock %}
