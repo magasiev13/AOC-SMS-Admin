@@ -201,6 +201,25 @@ h6,
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
+  text-align: center;
+}
+
+.app-mobile-nav-panel .app-search,
+.app-mobile-nav-panel .nav {
+  width: 100%;
+}
+
+.app-mobile-nav-panel .app-search .form-control {
+  width: 100%;
+}
+
+.app-mobile-nav-panel .nav {
+  align-items: center;
+}
+
+.app-mobile-nav-panel .app-nav-link {
+  justify-content: center;
+  width: 100%;
 }
 
 .app-content {
