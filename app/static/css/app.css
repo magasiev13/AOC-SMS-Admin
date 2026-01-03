@@ -201,7 +201,7 @@ h6,
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  text-align: center;
+  text-align: left;
 }
 
 .app-mobile-nav-panel .app-search,
@@ -214,11 +214,11 @@ h6,
 }
 
 .app-mobile-nav-panel .nav {
-  align-items: center;
+  align-items: flex-start;
 }
 
 .app-mobile-nav-panel .app-nav-link {
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
 }
 
