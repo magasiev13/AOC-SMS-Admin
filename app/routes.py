@@ -30,6 +30,39 @@ def dashboard():
     app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
     events = Event.query.order_by(Event.date.desc()).all()
     admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
+
+    def build_dashboard_context():
+        community_count = CommunityMember.query.count()
+        event_registration_count = EventRegistration.query.count()
+        total_recipients = community_count + event_registration_count
+        latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
+        recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+        pending_scheduled_count = ScheduledMessage.query.filter_by(status='pending').count()
+        success_rate = None
+        failure_rate = None
+        if latest_log and latest_log.total_recipients:
+            success_rate = round((latest_log.success_count / latest_log.total_recipients) * 100, 1)
+            failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
+
+        return {
+            'community_count': community_count,
+            'event_registration_count': event_registration_count,
+            'total_recipients': total_recipients,
+            'latest_log': latest_log,
+            'recent_logs': recent_logs,
+            'pending_scheduled_count': pending_scheduled_count,
+            'success_rate': success_rate,
+            'failure_rate': failure_rate,
+        }
+
+    def render_dashboard():
+        return render_template(
+            'dashboard.html',
+            events=events,
+            admin_test_phone=admin_test_phone,
+            app_timezone=app_timezone,
+            **build_dashboard_context()
+        )
     
     if request.method == 'POST':
         from datetime import datetime
@@ -45,17 +78,17 @@ def dashboard():
         
         if not message_body:
             flash('Message body is required.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+            return render_dashboard()
         
         if target == 'event' and not event_id:
             flash('Please select an event.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+            return render_dashboard()
         
         # Handle scheduled message
         if schedule_later:
             if not schedule_date or not schedule_time:
                 flash('Schedule date and time are required.', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+                return render_dashboard()
             
             try:
                 from datetime import timezone
@@ -78,7 +111,7 @@ def dashboard():
 
                 if scheduled_utc <= datetime.utcnow():
                     flash('Scheduled time must be in the future.', 'error')
-                    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+                    return render_dashboard()
                 
                 # Append unsubscribe text if option is checked
                 final_message = message_body
@@ -100,14 +133,14 @@ def dashboard():
                 
             except ValueError as e:
                 flash(f'Invalid date/time format: {e}', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+                return render_dashboard()
         
         # Immediate send
         # Test mode: send only to admin phone
         if test_mode:
             if not admin_test_phone:
                 flash('ADMIN_TEST_PHONE not configured. Add it to your .env file.', 'error')
-                return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+                return render_dashboard()
             recipient_data = [{'phone': admin_test_phone, 'name': 'Admin Test'}]
         else:
             # Get recipients based on target
@@ -121,7 +154,7 @@ def dashboard():
         
         if not recipient_data:
             flash('No recipients found for the selected target.', 'error')
-            return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+            return render_dashboard()
         
         # Send messages
         try:
@@ -160,7 +193,7 @@ def dashboard():
         except Exception as e:
             flash(f'Error sending messages: {str(e)}', 'error')
     
-    return render_template('dashboard.html', events=events, admin_test_phone=admin_test_phone, app_timezone=app_timezone)
+    return render_dashboard()
 
 
 # Community Members Management
