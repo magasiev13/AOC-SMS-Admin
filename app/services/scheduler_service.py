@@ -47,10 +47,17 @@ def send_scheduled_messages(app):
                 print(f"[Scheduler] Expired scheduled message {scheduled.id} - was scheduled for {scheduled.scheduled_at}")
                 continue
             # Mark as processing immediately to prevent race condition
-            scheduled.status = 'processing'
             try:
+                updated = ScheduledMessage.query.filter_by(
+                    id=scheduled.id,
+                    status='pending'
+                ).update({'status': 'processing'}, synchronize_session=False)
+                if not updated:
+                    db.session.rollback()
+                    continue  # Another process already grabbed this one
                 db.session.commit()
-            except:
+                scheduled.status = 'processing'
+            except Exception:
                 db.session.rollback()
                 continue  # Another process already grabbed this one
             try:
