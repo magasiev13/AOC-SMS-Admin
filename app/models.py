@@ -82,7 +82,7 @@ class ScheduledMessage(db.Model):
     message_body = db.Column(db.Text, nullable=False)
     target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
-    status = db.Column(db.String(20), default='pending')  # 'pending', 'sent', 'failed', 'cancelled'
+    status = db.Column(db.String(20), default='pending')  # 'pending', 'processing', 'sent', 'failed', 'expired', 'cancelled'
     test_mode = db.Column(db.Boolean, default=False)  # If true, send only to admin test phone
     sent_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)

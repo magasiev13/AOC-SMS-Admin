@@ -46,7 +46,9 @@
                 <i class="bi bi-trash me-1"></i>Delete selected
             </button>
         </div>
-        <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.community_bulk_delete') }}" style="display:none;"></form>
+        <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.community_bulk_delete') }}" style="display:none;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </form>
     </div>
     {% endif %}
     <div class="table-responsive">
@@ -85,7 +87,9 @@
                                 <i class="bi bi-trash"></i>
                             </button>
                             <form id="delete-member-{{ member.id }}" method="POST" 
-                                  action="{{ url_for('main.community_delete', member_id=member.id) }}" style="display:none;"></form>
+                                  action="{{ url_for('main.community_delete', member_id=member.id) }}" style="display:none;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            </form>
                         </td>
                     </tr>
                     {% endfor %}

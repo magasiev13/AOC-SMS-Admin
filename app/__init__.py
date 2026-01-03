@@ -3,8 +3,10 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from pathlib import Path
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_wtf import CSRFProtect
 
 db = SQLAlchemy()
+csrf = CSRFProtect()
 
 
 def create_app():
@@ -28,6 +30,7 @@ def create_app():
     
     # Initialize extensions
     db.init_app(app)
+    csrf.init_app(app)
     
     # Initialize Flask-Login
     from app.auth import login_manager, bp as auth_bp

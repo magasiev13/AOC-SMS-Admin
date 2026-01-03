@@ -452,7 +452,10 @@ def event_register(event_id):
 @bp.route('/events/<int:event_id>/unregister/<int:registration_id>', methods=['POST'])
 @login_required
 def event_unregister(event_id, registration_id):
-    registration = EventRegistration.query.get_or_404(registration_id)
+    registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
+    if not registration:
+        flash('Registration not found for this event.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
     db.session.delete(registration)
     db.session.commit()
     flash('Registration removed.', 'success')
@@ -558,8 +561,8 @@ def scheduled_list():
 def scheduled_cancel(scheduled_id):
     scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
     
-    if scheduled.status != 'pending':
-        flash('Only pending messages can be cancelled.', 'error')
+    if scheduled.status not in {'pending', 'processing'}:
+        flash('Only pending or processing messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
     
     scheduled.status = 'cancelled'
