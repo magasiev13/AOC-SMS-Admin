@@ -1,0 +1,173 @@
+:root {
+  --color-primary: #0d6efd;
+  --color-primary-strong: #0b5ed7;
+  --color-accent: #6f42c1;
+  --color-success: #198754;
+  --color-warning: #ffc107;
+  --color-danger: #dc3545;
+
+  --color-bg: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8f9fa;
+  --color-border: #dee2e6;
+  --color-text: #212529;
+  --color-text-muted: #6c757d;
+
+  --elevation-1: 0 0.125rem 0.25rem rgba(15, 23, 42, 0.08);
+  --elevation-2: 0 0.5rem 1.25rem rgba(15, 23, 42, 0.12);
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-pill: 999px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --font-size-1: 0.75rem;
+  --font-size-2: 0.875rem;
+  --font-size-3: 1rem;
+  --font-size-4: 1.25rem;
+  --font-size-5: 1.5rem;
+  --font-size-6: 2rem;
+
+  --line-height-1: 1.2;
+  --line-height-2: 1.4;
+  --line-height-3: 1.6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.app-body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-3);
+  line-height: var(--line-height-3);
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+h1,
+.h1 {
+  font-size: var(--font-size-6);
+  line-height: var(--line-height-1);
+  font-weight: 700;
+}
+
+h2,
+.h2 {
+  font-size: var(--font-size-5);
+  line-height: var(--line-height-1);
+  font-weight: 700;
+}
+
+h3,
+.h3 {
+  font-size: var(--font-size-4);
+  line-height: var(--line-height-2);
+  font-weight: 600;
+}
+
+h4,
+.h4,
+h5,
+.h5,
+h6,
+.h6 {
+  font-size: var(--font-size-3);
+  line-height: var(--line-height-2);
+  font-weight: 600;
+}
+
+.navbar-brand {
+  font-weight: 600;
+}
+
+.app-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-1);
+}
+
+.card-header {
+  font-size: var(--font-size-2);
+  font-weight: 600;
+}
+
+.card-footer {
+  font-size: var(--font-size-2);
+}
+
+.table {
+  color: var(--color-text);
+  font-size: var(--font-size-2);
+}
+
+.table th {
+  font-weight: 600;
+}
+
+.table td,
+.table th {
+  vertical-align: middle;
+}
+
+.btn {
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-2);
+  font-weight: 600;
+  padding: var(--space-2) var(--space-3);
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--color-primary-strong);
+  border-color: var(--color-primary-strong);
+}
+
+.btn-group-sm > .btn {
+  padding: var(--space-1) var(--space-2);
+}
+
+.badge {
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-1);
+  font-weight: 600;
+  padding: var(--space-1) var(--space-2);
+}
+
+.form-control,
+.form-select,
+.form-check-input,
+.input-group-text {
+  border-radius: var(--radius-md);
+  border-color: var(--color-border);
+  font-size: var(--font-size-2);
+}
+
+.form-control,
+.form-select {
+  padding: var(--space-2) var(--space-3);
+}
+
+.form-control:focus,
+.form-select:focus,
+.form-check-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
+}
+
+.text-muted {
+  color: var(--color-text-muted) !important;
+}
