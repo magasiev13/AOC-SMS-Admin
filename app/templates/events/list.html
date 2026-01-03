@@ -102,9 +102,13 @@
                                     <i class="bi bi-pencil"></i>
                                 </a>
                                 <form method="POST" action="{{ url_for('main.event_delete', event_id=event.id) }}" 
-                                      class="d-inline" onsubmit="return confirm('Delete this event and all registrations?');">
+                                      class="d-inline" id="delete-event-{{ event.id }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-outline-danger" title="Delete">
+                                    <button type="button" class="btn btn-outline-danger" title="Delete"
+                                            data-bs-toggle="modal" data-bs-target="#deleteEventModal"
+                                            data-form-id="delete-event-{{ event.id }}"
+                                            data-event-title="{{ event.title }}"
+                                            data-registration-count="{{ event.registrations|length }}">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </form>
@@ -177,10 +181,58 @@
     </div>
     {% endfor %}
 {% endif %}
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteEventModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Event
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">Delete <strong id="deleteEventName">this event</strong>?</p>
+                <p class="text-muted small mb-0" id="deleteEventImpact"></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteEventBtn">
+                    <i class="bi bi-trash me-1"></i>Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    let formToSubmit = null;
+    const deleteEventModal = document.getElementById('deleteEventModal');
+
+    if (deleteEventModal) {
+        deleteEventModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const eventTitle = button.getAttribute('data-event-title') || 'this event';
+            const formId = button.getAttribute('data-form-id');
+            const registrationCount = button.getAttribute('data-registration-count') || '0';
+
+            document.getElementById('deleteEventName').textContent = eventTitle;
+            document.getElementById('deleteEventImpact').textContent =
+                `Deleting will remove ${registrationCount} registration(s).`;
+            formToSubmit = document.getElementById(formId);
+        });
+
+        const confirmDeleteEventBtn = document.getElementById('confirmDeleteEventBtn');
+        confirmDeleteEventBtn.addEventListener('click', function() {
+            if (formToSubmit) {
+                formToSubmit.submit();
+            }
+        });
+    }
+
     const bulkActionBar = document.getElementById('bulkActionBar');
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllEvents = document.getElementById('selectAllEvents');
