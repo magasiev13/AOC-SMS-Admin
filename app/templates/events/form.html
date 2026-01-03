@@ -2,6 +2,14 @@
 
 {% block title %}{{ 'Edit' if event else 'Create' }} Event - SMS Admin{% endblock %}
 
+{% block page_title %}{{ 'Edit' if event else 'Create' }} Event{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.events_list') }}">Events</a> /
+<span>{{ 'Edit' if event else 'Create' }}</span>
+{% endblock %}
+
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
