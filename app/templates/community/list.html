@@ -322,8 +322,10 @@
         });
     }
 
-    getMemberCheckboxes().forEach(b => {
-        b.addEventListener('change', updateBulkUi);
+    document.addEventListener('change', function(event) {
+        if (event.target && event.target.classList.contains('member-checkbox')) {
+            updateBulkUi();
+        }
     });
 
     const bulkDeleteModal = document.getElementById('bulkDeleteModal');
