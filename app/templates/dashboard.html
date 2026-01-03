@@ -115,12 +115,14 @@
                     <form method="POST" id="sendForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
+                        <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div class="mb-3">
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
                                       placeholder="Enter your message..." required maxlength="1600"></textarea>
                             <div class="form-text">
-                                <span id="charCount">0</span> / 1600 characters
+                                <span><span id="charCount">0</span> / 1600 characters</span>
+                                <span class="ms-2">Estimated segments: <span id="segmentCount">0</span> (160 chars per segment, longer messages will split)</span>
                             </div>
                         </div>
 
@@ -169,47 +171,55 @@
                             </div>
                         </div>
 
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater">
-                                <label class="form-check-label" for="scheduleLater">
-                                    <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
-                                </label>
-                            </div>
-                            <div class="form-text">
-                                Schedule sends in your local time ({{ app_timezone }} fallback). Leave unchecked to send immediately.
-                            </div>
-                        </div>
-
-                        <div class="mb-3" id="scheduleWrapper" style="display: none;">
-                            <div class="row">
-                                <div class="col-md-6">
-                                    <label for="schedule_date" class="form-label">Date</label>
-                                    <input type="date" class="form-control" id="schedule_date" name="schedule_date">
+                        <details class="advanced-options mb-3">
+                            <summary class="advanced-options__summary">
+                                <i class="bi bi-sliders me-2"></i>Advanced options
+                            </summary>
+                            <div class="mt-3">
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater">
+                                        <label class="form-check-label" for="scheduleLater">
+                                            <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
+                                        </label>
+                                    </div>
+                                    <div class="form-text">
+                                        Schedule sends in your local time ({{ app_timezone }} fallback). Detected timezone:
+                                        <span id="timezoneHint">Unavailable</span>.
+                                    </div>
                                 </div>
-                                <div class="col-md-6">
-                                    <label for="schedule_time" class="form-label">Time</label>
-                                    <input type="time" class="form-control" id="schedule_time" name="schedule_time">
-                                </div>
-                            </div>
-                            <div class="form-text">
-                                <i class="bi bi-info-circle me-1"></i>Enter your local time. The scheduler checks every minute.
-                            </div>
-                        </div>
 
-                        {% if admin_test_phone %}
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
-                                <label class="form-check-label" for="testMode">
-                                    <i class="bi bi-bug me-1"></i><strong>Test Mode</strong> - Send only to my phone ({{ admin_test_phone }})
-                                </label>
+                                <div class="mb-3" id="scheduleWrapper" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <label for="schedule_date" class="form-label">Date</label>
+                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="schedule_time" class="form-label">Time</label>
+                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time">
+                                        </div>
+                                    </div>
+                                    <div class="form-text">
+                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. The scheduler checks every minute.
+                                    </div>
+                                </div>
+
+                                {% if admin_test_phone %}
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
+                                        <label class="form-check-label" for="testMode">
+                                            <i class="bi bi-bug me-1"></i><strong>Test Mode</strong> - Send only to my phone ({{ admin_test_phone }})
+                                        </label>
+                                    </div>
+                                    <div class="form-text text-warning">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Uncheck to send to all recipients
+                                    </div>
+                                </div>
+                                {% endif %}
                             </div>
-                            <div class="form-text text-warning">
-                                <i class="bi bi-exclamation-triangle me-1"></i>Uncheck to send to all recipients
-                            </div>
-                        </div>
-                        {% endif %}
+                        </details>
 
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn">
@@ -264,28 +274,55 @@
 <script>
     const messageBody = document.getElementById('message_body');
     const charCount = document.getElementById('charCount');
+    const segmentCount = document.getElementById('segmentCount');
     const targetEvent = document.getElementById('targetEvent');
     const targetCommunity = document.getElementById('targetCommunity');
     const eventSelectWrapper = document.getElementById('eventSelectWrapper');
     const sendForm = document.getElementById('sendForm');
     const sendBtn = document.getElementById('sendBtn');
+    const sendFormError = document.getElementById('sendFormError');
     const scheduleLater = document.getElementById('scheduleLater');
     const scheduleWrapper = document.getElementById('scheduleWrapper');
     const scheduleDate = document.getElementById('schedule_date');
     const scheduleTime = document.getElementById('schedule_time');
     const clientTimezone = document.getElementById('client_timezone');
+    const timezoneHint = document.getElementById('timezoneHint');
 
     if (clientTimezone) {
         try {
-            clientTimezone.value = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+            const resolvedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+            clientTimezone.value = resolvedTimezone;
+            if (timezoneHint) {
+                timezoneHint.textContent = resolvedTimezone || 'Unavailable';
+            }
         } catch (e) {
             clientTimezone.value = '';
+            if (timezoneHint) {
+                timezoneHint.textContent = 'Unavailable';
+            }
         }
     }
 
-    messageBody.addEventListener('input', function() {
-        charCount.textContent = this.value.length;
-    });
+    function estimateSegments(length) {
+        if (length === 0) {
+            return 0;
+        }
+        if (length <= 160) {
+            return 1;
+        }
+        return Math.ceil(length / 153);
+    }
+
+    function updateMessageStats() {
+        const length = messageBody.value.length;
+        charCount.textContent = length;
+        if (segmentCount) {
+            segmentCount.textContent = estimateSegments(length);
+        }
+    }
+
+    updateMessageStats();
+    messageBody.addEventListener('input', updateMessageStats);
 
     function toggleEventSelect() {
         eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';
@@ -306,8 +343,64 @@
     targetEvent.addEventListener('change', toggleEventSelect);
     targetCommunity.addEventListener('change', toggleEventSelect);
     scheduleLater.addEventListener('change', toggleSchedule);
+    toggleEventSelect();
+    toggleSchedule();
 
-    sendForm.addEventListener('submit', function() {
+    function setValidationError(message) {
+        if (!sendFormError) {
+            return;
+        }
+        if (message) {
+            sendFormError.textContent = message;
+            sendFormError.classList.remove('d-none');
+        } else {
+            sendFormError.textContent = '';
+            sendFormError.classList.add('d-none');
+        }
+    }
+
+    function resetValidationState() {
+        messageBody.classList.remove('is-invalid');
+        scheduleDate.classList.remove('is-invalid');
+        scheduleTime.classList.remove('is-invalid');
+        document.getElementById('event_id').classList.remove('is-invalid');
+        setValidationError('');
+    }
+
+    sendForm.addEventListener('submit', function(event) {
+        resetValidationState();
+        const errors = [];
+
+        if (!messageBody.value.trim()) {
+            errors.push('Message body is required.');
+            messageBody.classList.add('is-invalid');
+        }
+
+        if (targetEvent.checked) {
+            const eventSelect = document.getElementById('event_id');
+            if (!eventSelect.value) {
+                errors.push('Please select an event for the event blast.');
+                eventSelect.classList.add('is-invalid');
+            }
+        }
+
+        if (scheduleLater.checked) {
+            if (!scheduleDate.value) {
+                errors.push('Schedule date is required when scheduling.');
+                scheduleDate.classList.add('is-invalid');
+            }
+            if (!scheduleTime.value) {
+                errors.push('Schedule time is required when scheduling.');
+                scheduleTime.classList.add('is-invalid');
+            }
+        }
+
+        if (errors.length > 0) {
+            event.preventDefault();
+            setValidationError(errors[0]);
+            return;
+        }
+
         sendBtn.disabled = true;
         if (scheduleLater.checked) {
             sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scheduling...';
@@ -315,5 +408,7 @@
             sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
         }
     });
+
+    sendForm.addEventListener('input', resetValidationState);
 </script>
 {% endblock %}
