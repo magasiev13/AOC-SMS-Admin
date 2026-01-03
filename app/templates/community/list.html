@@ -260,8 +260,15 @@
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
     const bulkActionBar = document.getElementById('bulkActionBar');
 
+    function isElementVisible(element) {
+        if (!element) return false;
+        if (element.offsetParent !== null) return true;
+        return element.getClientRects().length > 0;
+    }
+
     function getMemberCheckboxes() {
-        return Array.from(document.querySelectorAll('.member-checkbox'));
+        return Array.from(document.querySelectorAll('.member-checkbox'))
+            .filter(isElementVisible);
     }
 
     function updateBulkUi() {
