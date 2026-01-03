@@ -11,6 +11,10 @@ csrf = CSRFProtect()
 
 def create_app():
     app = Flask(__name__)
+
+    @app.context_processor
+    def inject_app_version():
+        return {"app_version": os.environ.get("APP_VERSION", "dev")}
     
     # Load configuration
     from app.config import Config
