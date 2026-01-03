@@ -174,6 +174,18 @@ sudo systemctl start sms
 sudo systemctl status sms
 ```
 
+### 8b. Setup Scheduler Service (for scheduled messages)
+
+```bash
+sudo cp /opt/sms-admin/deploy/sms-scheduler.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable sms-scheduler
+sudo systemctl start sms-scheduler
+
+# Check status
+sudo systemctl status sms-scheduler
+```
+
 ### 9. Setup Nginx HTTP Basic Auth
 
 ```bash
