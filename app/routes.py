@@ -4,7 +4,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app import db
 from app.models import CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage
-from app.utils import normalize_phone, validate_phone, parse_recipients_csv, parse_phones_csv
+from app.utils import normalize_phone, validate_phone, parse_recipients_csv, parse_phones_csv, verify_admin_password
 
 bp = Blueprint('main', __name__)
 
@@ -606,7 +606,7 @@ def logs_clear():
         flash('ADMIN_PASSWORD not configured in .env file.', 'error')
         return redirect(url_for('main.logs_list'))
     
-    if admin_password != expected_password:
+    if not verify_admin_password(expected_password, admin_password):
         flash('Invalid admin password.', 'error')
         return redirect(url_for('main.logs_list'))
     
