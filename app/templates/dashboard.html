@@ -3,6 +3,108 @@
 {% block title %}Send Message - SMS Admin{% endblock %}
 
 {% block content %}
+<div class="row justify-content-center mb-4">
+    <div class="col-lg-10">
+        <h4 class="mb-3">Overview</h4>
+        <div class="row g-3">
+            <div class="col-sm-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <p class="text-muted mb-1">Unique Recipients</p>
+                                <h4 class="mb-0">{{ total_recipients }}</h4>
+                                <small class="text-muted">{{ total_community_recipients }} community · {{ total_event_registrations }} event</small>
+                            </div>
+                            <i class="bi bi-people-fill fs-3 text-primary"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <p class="text-muted mb-1">Last Blast</p>
+                                {% if last_log %}
+                                <h4 class="mb-0">{{ last_log.success_count }}/{{ last_log.total_recipients }}</h4>
+                                <small class="text-muted">{{ last_log.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                                {% else %}
+                                <h5 class="mb-1">No blasts yet</h5>
+                                <small class="text-muted">Send your first update today.</small>
+                                {% endif %}
+                            </div>
+                            <i class="bi bi-broadcast fs-3 text-success"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <p class="text-muted mb-1">Delivery Success</p>
+                                {% if success_rate is not none %}
+                                <h4 class="mb-0">{{ success_rate }}%</h4>
+                                <small class="text-muted">{{ total_failure }} failed · {{ total_sent }} total</small>
+                                {% else %}
+                                <h5 class="mb-1">No data yet</h5>
+                                <small class="text-muted">Success rate will appear after a send.</small>
+                                {% endif %}
+                            </div>
+                            <i class="bi bi-check-circle-fill fs-3 text-info"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <p class="text-muted mb-1">Scheduled Queue</p>
+                                <h4 class="mb-0">{{ pending_scheduled }}</h4>
+                                <small class="text-muted">Pending messages</small>
+                            </div>
+                            <i class="bi bi-calendar-check fs-3 text-warning"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Quick Links</h6>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-4">
+                        <a href="{{ url_for('main.community_list') }}" class="text-decoration-none">
+                            <i class="bi bi-people fs-4 d-block mb-1"></i>
+                            <small class="text-muted">Community</small>
+                        </a>
+                    </div>
+                    <div class="col-4">
+                        <a href="{{ url_for('main.events_list') }}" class="text-decoration-none">
+                            <i class="bi bi-calendar-event fs-4 d-block mb-1"></i>
+                            <small class="text-muted">Events ({{ events|length }})</small>
+                        </a>
+                    </div>
+                    <div class="col-4">
+                        <a href="{{ url_for('main.logs_list') }}" class="text-decoration-none">
+                            <i class="bi bi-journal-text fs-4 d-block mb-1"></i>
+                            <small class="text-muted">Logs</small>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row justify-content-center">
     <div class="col-lg-8">
         <div class="card">
@@ -15,7 +117,7 @@
                     <input type="hidden" name="client_timezone" id="client_timezone">
                     <div class="mb-3">
                         <label for="message_body" class="form-label">Message</label>
-                        <textarea class="form-control" id="message_body" name="message_body" rows="4" 
+                        <textarea class="form-control" id="message_body" name="message_body" rows="4"
                                   placeholder="Enter your message..." required maxlength="1600"></textarea>
                         <div class="form-text">
                             <span id="charCount">0</span> / 1600 characters
@@ -25,7 +127,7 @@
                     <div class="mb-3">
                         <label class="form-label">Target Audience</label>
                         <div class="form-check">
-                            <input class="form-check-input" type="radio" name="target" id="targetCommunity" 
+                            <input class="form-check-input" type="radio" name="target" id="targetCommunity"
                                    value="community" checked>
                             <label class="form-check-label" for="targetCommunity">
                                 <i class="bi bi-people me-1"></i>Community Blast
@@ -33,12 +135,15 @@
                             </label>
                         </div>
                         <div class="form-check">
-                            <input class="form-check-input" type="radio" name="target" id="targetEvent" 
+                            <input class="form-check-input" type="radio" name="target" id="targetEvent"
                                    value="event">
                             <label class="form-check-label" for="targetEvent">
                                 <i class="bi bi-calendar-event me-1"></i>Event Blast
                                 <span class="text-muted">(registered event attendees)</span>
                             </label>
+                        </div>
+                        <div class="form-text">
+                            Choose community for broad announcements, or target an event for attendee-specific updates.
                         </div>
                     </div>
 
@@ -52,6 +157,9 @@
                             </option>
                             {% endfor %}
                         </select>
+                        <div class="form-text">
+                            Event blasts only include registered attendees for the selected event.
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -70,6 +178,9 @@
                             <label class="form-check-label" for="scheduleLater">
                                 <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
                             </label>
+                        </div>
+                        <div class="form-text">
+                            Ideal for off-hours. Scheduling uses your local time zone.
                         </div>
                     </div>
 
@@ -111,33 +222,44 @@
                 </form>
             </div>
         </div>
+    </div>
+</div>
 
-        <div class="card mt-4">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Quick Links</h6>
+<div class="row justify-content-center mt-4">
+    <div class="col-lg-10">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Activity</h6>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.logs_list') }}">View all logs</a>
             </div>
+            {% if recent_logs %}
+            <ul class="list-group list-group-flush">
+                {% for log in recent_logs %}
+                <li class="list-group-item d-flex justify-content-between align-items-start">
+                    <div>
+                        <div class="fw-semibold">
+                            {{ log.target|title }} blast
+                            {% if log.event %}
+                            · {{ log.event.title }}
+                            {% endif %}
+                        </div>
+                        <small class="text-muted">
+                            {{ log.created_at.strftime('%Y-%m-%d %H:%M') }} ·
+                            {{ log.success_count }}/{{ log.total_recipients }} delivered
+                            {% if log.failure_count %}
+                            ({{ log.failure_count }} failed)
+                            {% endif %}
+                        </small>
+                    </div>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('main.log_detail', log_id=log.id) }}">View</a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
             <div class="card-body">
-                <div class="row text-center">
-                    <div class="col-4">
-                        <a href="{{ url_for('main.community_list') }}" class="text-decoration-none">
-                            <i class="bi bi-people fs-4 d-block mb-1"></i>
-                            <small class="text-muted">Community</small>
-                        </a>
-                    </div>
-                    <div class="col-4">
-                        <a href="{{ url_for('main.events_list') }}" class="text-decoration-none">
-                            <i class="bi bi-calendar-event fs-4 d-block mb-1"></i>
-                            <small class="text-muted">Events ({{ events|length }})</small>
-                        </a>
-                    </div>
-                    <div class="col-4">
-                        <a href="{{ url_for('main.logs_list') }}" class="text-decoration-none">
-                            <i class="bi bi-journal-text fs-4 d-block mb-1"></i>
-                            <small class="text-muted">Logs</small>
-                        </a>
-                    </div>
-                </div>
+                <p class="text-muted mb-0">No messages sent yet. Recent activity will appear here after your first blast.</p>
             </div>
+            {% endif %}
         </div>
     </div>
 </div>
