@@ -116,6 +116,7 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
+                        <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
                         <div class="mb-3">
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
@@ -281,6 +282,7 @@
     const sendForm = document.getElementById('sendForm');
     const sendBtn = document.getElementById('sendBtn');
     const sendFormError = document.getElementById('sendFormError');
+    const sendFormStatus = document.getElementById('sendFormStatus');
     const scheduleLater = document.getElementById('scheduleLater');
     const scheduleWrapper = document.getElementById('scheduleWrapper');
     const scheduleDate = document.getElementById('schedule_date');
@@ -365,6 +367,9 @@
         scheduleTime.classList.remove('is-invalid');
         document.getElementById('event_id').classList.remove('is-invalid');
         setValidationError('');
+        if (sendFormStatus) {
+            sendFormStatus.textContent = '';
+        }
     }
 
     sendForm.addEventListener('submit', function(event) {
@@ -398,14 +403,23 @@
         if (errors.length > 0) {
             event.preventDefault();
             setValidationError(errors[0]);
+            if (sendFormStatus) {
+                sendFormStatus.textContent = 'Please resolve the highlighted errors before sending.';
+            }
             return;
         }
 
         sendBtn.disabled = true;
         if (scheduleLater.checked) {
             sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scheduling...';
+            if (sendFormStatus) {
+                sendFormStatus.textContent = 'Scheduling your message. Please wait.';
+            }
         } else {
             sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
+            if (sendFormStatus) {
+                sendFormStatus.textContent = 'Sending your message. Please wait.';
+            }
         }
     });
 

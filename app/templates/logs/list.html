@@ -19,7 +19,7 @@
 {% block content %}
 <div class="card app-card mb-4">
     <div class="card-body">
-        <form class="filter-bar" method="GET">
+        <form class="filter-bar" method="GET" data-table-loading-target="logsTable">
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -56,7 +56,7 @@
     </div>
     {% endif %}
     <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="logsTable">
             <thead class="table-light">
                 <tr>
                     <th width="40">
@@ -71,7 +71,7 @@
                     <th width="80"></th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody class="table-data">
                 {% if logs %}
                 {% for log in logs %}
                 <tr>
@@ -119,6 +119,18 @@
                     </td>
                 </tr>
                 {% endif %}
+            </tbody>
+            <tbody class="table-skeleton-body" aria-hidden="true">
+                {% for _ in range(5) %}
+                <tr>
+                    <td><span class="skeleton-block" style="width: 1rem;"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
+                    <td><span class="skeleton-block w-25"></span></td>
+                    <td><span class="skeleton-block w-75"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
+                    <td><span class="skeleton-block w-25"></span></td>
+                </tr>
+                {% endfor %}
             </tbody>
         </table>
     </div>

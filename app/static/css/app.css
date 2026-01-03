@@ -1,7 +1,7 @@
 :root {
-  --color-primary: #0d6efd;
-  --color-primary-strong: #0b5ed7;
-  --color-accent: #6f42c1;
+  --color-primary: #0a58ca;
+  --color-primary-strong: #084298;
+  --color-accent: #59359f;
   --color-success: #198754;
   --color-warning: #ffc107;
   --color-danger: #dc3545;
@@ -11,7 +11,9 @@
   --color-surface-muted: #f8f9fa;
   --color-border: #dee2e6;
   --color-text: #212529;
-  --color-text-muted: #6c757d;
+  --color-text-muted: #495057;
+
+  --color-focus: #0b5ed7;
 
   --elevation-1: 0 0.125rem 0.25rem rgba(15, 23, 42, 0.08);
   --elevation-2: 0 0.5rem 1.25rem rgba(15, 23, 42, 0.12);
@@ -433,6 +435,38 @@ h6,
   box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.2);
 }
 
+.btn:focus-visible,
+.btn-close:focus-visible,
+.navbar-toggler:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible,
+.form-check-input:focus-visible,
+.app-nav-link:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.btn:disabled,
+.btn.disabled {
+  opacity: 0.65;
+}
+
+.form-check-input:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.form-check-input:indeterminate {
+  background-color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.form-check-input:disabled {
+  opacity: 0.6;
+}
+
 .validation-message {
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
@@ -494,4 +528,38 @@ h6,
 
 .text-muted {
   color: var(--color-text-muted) !important;
+}
+
+.table-loading .table-skeleton-body {
+  display: none;
+}
+
+.table-loading.is-loading .table-data {
+  display: none;
+}
+
+.table-loading.is-loading .table-skeleton-body {
+  display: table-row-group;
+}
+
+.skeleton-block {
+  display: block;
+  height: 0.75rem;
+  background: linear-gradient(90deg, #e9ecef 25%, #f8f9fa 37%, #e9ecef 63%);
+  background-size: 400% 100%;
+  border-radius: var(--radius-sm);
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-block.skeleton-block--lg {
+  height: 1rem;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }
