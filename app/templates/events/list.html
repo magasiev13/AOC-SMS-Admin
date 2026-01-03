@@ -15,11 +15,53 @@
 {% endblock %}
 
 {% block content %}
+<div class="card app-card mb-4">
+    <div class="card-body">
+        <form class="filter-bar" method="GET">
+            <div class="flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" name="search" placeholder="Search events">
+                </div>
+            </div>
+            <div class="filter-chip-group">
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Active</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">New</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Failed</button>
+            </div>
+            <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-funnel me-1"></i>Apply
+            </button>
+        </form>
+    </div>
+</div>
+
 <div class="card app-card">
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
+    {% if events %}
+    <div class="bulk-action-bar" id="bulkActionBar">
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-primary"><span id="selectedCount">0</span> selected</span>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
+                <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Export</button>
+            <button type="button" class="btn btn-sm btn-outline-primary" disabled>Notify</button>
+        </div>
+    </div>
+    {% endif %}
+    <div class="table-responsive d-none d-lg-block">
+        <table class="table table-hover table-sticky-header mb-0">
             <thead class="table-light">
                 <tr>
+                    <th width="40">
+                        {% if events %}
+                        <input class="form-check-input" type="checkbox" id="selectAllEvents" aria-label="Select all events">
+                        {% endif %}
+                    </th>
                     <th>Title</th>
                     <th>Date</th>
                     <th>Registrations</th>
@@ -32,6 +74,9 @@
                     {% for event in events %}
                     <tr>
                         <td>
+                            <input class="form-check-input js-select-row" type="checkbox" aria-label="Select event">
+                        </td>
+                        <td>
                             <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="text-decoration-none">
                                 {{ event.title }}
                             </a>
@@ -42,7 +87,12 @@
                         </td>
                         <td>{{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}</td>
                         <td>
-                            <div class="btn-group btn-group-sm">
+                            <div class="btn-group btn-group-sm row-actions">
+                                <button type="button" class="btn btn-outline-primary" title="Preview"
+                                        data-bs-toggle="offcanvas" data-bs-target="#eventPreview{{ event.id }}"
+                                        aria-controls="eventPreview{{ event.id }}">
+                                    <i class="bi bi-layout-sidebar-inset"></i>
+                                </button>
                                 <a href="{{ url_for('main.event_detail', event_id=event.id) }}" 
                                    class="btn btn-outline-primary" title="View">
                                     <i class="bi bi-eye"></i>
@@ -64,7 +114,7 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="5" class="text-center text-muted py-4">
+                        <td colspan="6" class="text-center text-muted py-4">
                             No events found. <a href="{{ url_for('main.event_add') }}">Create one</a>.
                         </td>
                     </tr>
@@ -72,10 +122,121 @@
             </tbody>
         </table>
     </div>
+    <div class="card-list d-lg-none">
+        {% if events %}
+            {% for event in events %}
+            <div class="card-list-item">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <h6 class="mb-1">{{ event.title }}</h6>
+                        <div class="text-muted small">Date: {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</div>
+                        <div class="text-muted small">Registrations: {{ event.registrations|length }}</div>
+                    </div>
+                    <input class="form-check-input js-select-row" type="checkbox" aria-label="Select event">
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                    <button type="button" class="btn btn-sm btn-outline-primary"
+                            data-bs-toggle="offcanvas" data-bs-target="#eventPreview{{ event.id }}"
+                            aria-controls="eventPreview{{ event.id }}">
+                        <i class="bi bi-layout-sidebar-inset"></i> Preview
+                    </button>
+                    <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i> View
+                    </a>
+                    <a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="text-center text-muted py-4">
+                No events found. <a href="{{ url_for('main.event_add') }}">Create one</a>.
+            </div>
+        {% endif %}
+    </div>
     {% if events %}
     <div class="card-footer text-muted">
         Showing {{ events|length }} event(s)
     </div>
     {% endif %}
 </div>
+
+{% if events %}
+    {% for event in events %}
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="eventPreview{{ event.id }}">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title">{{ event.title }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+        </div>
+        <div class="offcanvas-body">
+            <p class="mb-2"><strong>Date:</strong> {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</p>
+            <p class="mb-2"><strong>Registrations:</strong> {{ event.registrations|length }}</p>
+            <p class="text-muted small mb-0">Preview upcoming registrants, send reminders, or edit details.</p>
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const bulkActionBar = document.getElementById('bulkActionBar');
+    const selectedCountEl = document.getElementById('selectedCount');
+    const selectAllEvents = document.getElementById('selectAllEvents');
+
+    function getEventCheckboxes() {
+        return Array.from(document.querySelectorAll('.js-select-row'));
+    }
+
+    function updateBulkUi() {
+        if (!selectedCountEl || !bulkActionBar) return;
+        const boxes = getEventCheckboxes();
+        const selected = boxes.filter(b => b.checked).length;
+        selectedCountEl.textContent = selected;
+        bulkActionBar.classList.toggle('is-visible', selected > 0);
+        if (selectAllEvents) {
+            selectAllEvents.checked = boxes.length > 0 && boxes.every(b => b.checked);
+            selectAllEvents.indeterminate = selected > 0 && selected < boxes.length;
+        }
+    }
+
+    if (selectAllEvents) {
+        selectAllEvents.addEventListener('change', function() {
+            const boxes = getEventCheckboxes();
+            boxes.forEach(b => { b.checked = selectAllEvents.checked; });
+            updateBulkUi();
+        });
+    }
+
+    const selectAllBtn = document.getElementById('selectAllBtn');
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function() {
+            const boxes = getEventCheckboxes();
+            boxes.forEach(b => { b.checked = true; });
+            updateBulkUi();
+        });
+    }
+
+    const selectNoneBtn = document.getElementById('selectNoneBtn');
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', function() {
+            const boxes = getEventCheckboxes();
+            boxes.forEach(b => { b.checked = false; });
+            updateBulkUi();
+        });
+    }
+
+    const invertSelectionBtn = document.getElementById('invertSelectionBtn');
+    if (invertSelectionBtn) {
+        invertSelectionBtn.addEventListener('click', function() {
+            const boxes = getEventCheckboxes();
+            boxes.forEach(b => { b.checked = !b.checked; });
+            updateBulkUi();
+        });
+    }
+
+    getEventCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+    updateBulkUi();
+</script>
 {% endblock %}
