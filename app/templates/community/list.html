@@ -79,20 +79,22 @@
                         <td>{{ member.name or '-' }}</td>
                         <td><code>{{ member.phone }}</code></td>
                         <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</td>
-                        <td class="text-nowrap">
-                            <a href="{{ url_for('main.community_edit', member_id=member.id) }}" 
-                               class="btn btn-sm btn-outline-secondary me-1" title="Edit">
-                                <i class="bi bi-pencil"></i>
-                            </a>
-                            <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
-                                    data-bs-toggle="modal" data-bs-target="#deleteModal" 
-                                    data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                            <form id="delete-member-{{ member.id }}" method="POST" 
-                                  action="{{ url_for('main.community_delete', member_id=member.id) }}" style="display:none;">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            </form>
+                        <td>
+                            <div class="d-flex flex-wrap gap-1">
+                                <a href="{{ url_for('main.community_edit', member_id=member.id) }}" 
+                                   class="btn btn-sm btn-outline-secondary" title="Edit">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                        data-bs-toggle="modal" data-bs-target="#deleteModal" 
+                                        data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                                <form id="delete-member-{{ member.id }}" method="POST" 
+                                      action="{{ url_for('main.community_delete', member_id=member.id) }}" style="display:none;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
