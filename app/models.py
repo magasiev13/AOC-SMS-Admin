@@ -105,6 +105,7 @@ class MessageLog(db.Model):
     message_body = db.Column(db.Text, nullable=False)
     target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
+    status = db.Column(db.String(20), default='sent')  # 'processing', 'sent', 'failed'
     total_recipients = db.Column(db.Integer, default=0)
     success_count = db.Column(db.Integer, default=0)
     failure_count = db.Column(db.Integer, default=0)

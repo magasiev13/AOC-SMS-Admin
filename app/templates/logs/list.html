@@ -93,6 +93,11 @@
                         </span>
                     </td>
                     <td>
+                        <div class="mb-1">
+                            <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
+                                {{ log.status or 'sent' }}
+                            </span>
+                        </div>
                         <span class="text-success">{{ log.success_count }} sent</span>
                         {% if log.failure_count > 0 %}
                         / <span class="text-danger">{{ log.failure_count }} failed</span>
@@ -144,6 +149,11 @@
                         <div class="text-muted small">
                             {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
                         </div>
+                        <div class="mt-1">
+                            <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
+                                {{ log.status or 'sent' }}
+                            </span>
+                        </div>
                         <div class="text-muted small">{{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}</div>
                     </div>
                     <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
@@ -182,6 +192,7 @@
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Target:</strong> {{ log.target }}</p>
+            <p class="mb-2"><strong>Status:</strong> {{ log.status or 'sent' }}</p>
             <p class="mb-2"><strong>Sent:</strong> {{ log.success_count }} success / {{ log.failure_count }} failed</p>
             <p class="mb-0"><strong>Message:</strong> {{ log.message_body }}</p>
         </div>

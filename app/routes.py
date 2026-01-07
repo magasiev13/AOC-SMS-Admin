@@ -178,42 +178,44 @@ def dashboard():
                 flash('All recipients are unsubscribed or no recipients were found.', 'error')
             return render_dashboard()
         
-        # Send messages
+        # Append unsubscribe text if option is checked
+        final_message = message_body
+        if include_unsubscribe:
+            final_message = message_body + "\n\nReply STOP to unsubscribe."
+
+        # Persist log before sending begins
+        log = MessageLog(
+            message_body=final_message,
+            target=target,
+            event_id=event_id if target == 'event' else None,
+            status='processing',
+            total_recipients=len(recipient_data),
+            success_count=0,
+            failure_count=0,
+            details='[]'
+        )
+        db.session.add(log)
+        db.session.commit()
+
         try:
-            from app.services.twilio_service import get_twilio_service
-            twilio = get_twilio_service()
-            
-            # Append unsubscribe text if option is checked
-            final_message = message_body
-            if include_unsubscribe:
-                final_message = message_body + "\n\nReply STOP to unsubscribe."
-            
-            result = twilio.send_bulk(recipient_data, final_message)
-            
-            # Log the send (store the final message with unsubscribe text if included)
-            log = MessageLog(
-                message_body=final_message,
-                target=target,
-                event_id=event_id if target == 'event' else None,
-                total_recipients=result['total'],
-                success_count=result['success_count'],
-                failure_count=result['failure_count'],
-                details=json.dumps(result['details'])
+            from rq import Retry
+            from app.queue import get_queue
+
+            queue = get_queue()
+            queue.enqueue(
+                'app.tasks.send_bulk_job',
+                log.id,
+                recipient_data,
+                final_message,
+                retry=Retry(max=3, interval=[30, 120, 300])
             )
-            db.session.add(log)
-            db.session.commit()
-            
-            if result['failure_count'] == 0:
-                flash(f'Successfully sent {result["success_count"]} messages!', 'success')
-            else:
-                flash(f'Sent {result["success_count"]} messages. {result["failure_count"]} failed.', 'warning')
-            
+            flash('Blast queued. Sending in the background.', 'success')
             return redirect(url_for('main.log_detail', log_id=log.id))
-            
-        except ValueError as e:
-            flash(f'Twilio configuration error: {str(e)}', 'error')
         except Exception as e:
-            flash(f'Error sending messages: {str(e)}', 'error')
+            log.status = 'failed'
+            log.details = json.dumps([{'error': str(e)}])
+            db.session.commit()
+            flash(f'Error queueing messages: {str(e)}', 'error')
     
     return render_dashboard()
 

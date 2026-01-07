@@ -21,6 +21,10 @@ class Config:
     SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'
 
     APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'UTC')
+
+    # Redis / RQ
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    RQ_QUEUE_NAME = os.environ.get('RQ_QUEUE_NAME', 'sms')
     
     # Database
     BASE_DIR = Path(__file__).resolve().parent.parent
