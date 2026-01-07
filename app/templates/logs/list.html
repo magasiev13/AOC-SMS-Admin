@@ -228,8 +228,18 @@
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllLogs = document.getElementById('selectAllLogs');
 
+    function isDesktopView() {
+        return window.matchMedia('(min-width: 992px)').matches;
+    }
+
     function getLogCheckboxes() {
-        return Array.from(document.querySelectorAll('.js-select-row'));
+        const container = isDesktopView()
+            ? document.querySelector('.table-responsive.d-lg-block')
+            : document.querySelector('.card-list.d-lg-none');
+        if (!container) {
+            return [];
+        }
+        return Array.from(container.querySelectorAll('.js-select-row'));
     }
 
     function updateBulkUi() {
@@ -239,8 +249,13 @@
         selectedCountEl.textContent = selected;
         bulkActionBar.classList.toggle('is-visible', selected > 0);
         if (selectAllLogs) {
-            selectAllLogs.checked = boxes.length > 0 && boxes.every(b => b.checked);
-            selectAllLogs.indeterminate = selected > 0 && selected < boxes.length;
+            if (isDesktopView()) {
+                selectAllLogs.checked = boxes.length > 0 && boxes.every(b => b.checked);
+                selectAllLogs.indeterminate = selected > 0 && selected < boxes.length;
+            } else {
+                selectAllLogs.checked = false;
+                selectAllLogs.indeterminate = false;
+            }
         }
     }
 
@@ -279,7 +294,10 @@
         });
     }
 
-    getLogCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+    window.addEventListener('resize', updateBulkUi);
+
+    Array.from(document.querySelectorAll('.js-select-row'))
+        .forEach(b => b.addEventListener('change', updateBulkUi));
     updateBulkUi();
 </script>
 {% endblock %}
