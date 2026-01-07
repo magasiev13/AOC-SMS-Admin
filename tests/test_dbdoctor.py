@@ -18,6 +18,10 @@ class TestDbDoctor(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(original)
+            if "app.config" in sys.modules:
+                import app.config
+
+                importlib.reload(app.config)
 
     def _create_legacy_message_logs_db(self, db_path: str) -> None:
         with sqlite3.connect(db_path) as connection:
