@@ -8,6 +8,11 @@ from twilio.base.exceptions import TwilioRestException
 class TwilioTransientError(Exception):
     """Transient Twilio error that should trigger a retry."""
 
+    def __init__(self, message: str, results: dict | None = None, failed_index: int | None = None):
+        super().__init__(message)
+        self.results = results
+        self.failed_index = failed_index
+
 
 class TwilioService:
     def __init__(self):
@@ -83,11 +88,18 @@ class TwilioService:
             'details': []
         }
         
-        for recipient in recipients:
+        for index, recipient in enumerate(recipients):
             phone = recipient.get('phone')
             name = recipient.get('name', '')
-            
-            result = self.send_message(phone, body, raise_on_transient=raise_on_transient)
+
+            try:
+                result = self.send_message(phone, body, raise_on_transient=raise_on_transient)
+            except TwilioTransientError as exc:
+                raise TwilioTransientError(
+                    str(exc),
+                    results=results,
+                    failed_index=index
+                ) from exc
             
             detail = {
                 'phone': phone,
