@@ -63,6 +63,8 @@ def _ensure_migrations_tables(connection) -> None:
 
 
 def _get_applied_versions(connection) -> set[str]:
+    if not connection.dialect.name.startswith("sqlite"):
+        return set()
     result = connection.execute(
         text(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=:table_name"
@@ -87,9 +89,10 @@ def _sqlite_db_path(engine: Engine) -> str:
 
 def inspect_migrations(engine: Engine) -> dict[str, list[str] | str]:
     migrations = _migration_files()
-    applied = []
-    with engine.connect() as connection:
-        applied = sorted(_get_applied_versions(connection))
+    applied: list[str] = []
+    if engine.url.drivername.startswith("sqlite"):
+        with engine.connect() as connection:
+            applied = sorted(_get_applied_versions(connection))
     return {
         "db_path": _sqlite_db_path(engine),
         "migrations": [migration.version for migration in migrations],
@@ -104,6 +107,9 @@ def run_pending_migrations(engine: Engine, logger) -> list[str]:
 
     if not migrations:
         logger.info("No migrations found. Skipping migration runner.")
+        return []
+    if not engine.url.drivername.startswith("sqlite"):
+        logger.info("Non-SQLite database detected; skipping SQLite migrations.")
         return []
 
     applied_versions: set[str] = set()
