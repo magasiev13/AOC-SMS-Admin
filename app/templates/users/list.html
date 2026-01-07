@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Users - SMS Admin{% endblock %}
+
+{% block page_title %}Users{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Users</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.users_add') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Add User
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Username</th>
+                    <th>Role</th>
+                    <th>Created</th>
+                    <th width="140">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if users %}
+                    {% for user in users %}
+                    <tr>
+                        <td>
+                            {{ user.username }}
+                            {% if current_user.id == user.id %}
+                                <span class="badge bg-secondary ms-2">You</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
+                                {{ 'Admin' if user.is_admin else 'Social Media Manager' }}
+                            </span>
+                        </td>
+                        <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
+                        <td>
+                            <div class="d-flex flex-wrap gap-1">
+                                <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                        data-bs-toggle="modal" data-bs-target="#deleteUserModal"
+                                        data-username="{{ user.username }}"
+                                        data-form-id="delete-user-{{ user.id }}"
+                                        {% if current_user.id == user.id %}disabled{% endif %}>
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                                <form id="delete-user-{{ user.id }}" method="POST"
+                                      action="{{ url_for('main.users_delete', user_id=user.id) }}" style="display:none;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-4">
+                            No users found.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if users %}
+    <div class="card-footer text-muted">
+        Showing {{ users|length }} user(s)
+    </div>
+    {% endif %}
+</div>
+
+<div class="modal fade" id="deleteUserModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                Delete <strong id="deleteUsername"></strong>?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteUserBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let userFormToSubmit = null;
+    const deleteUserModal = document.getElementById('deleteUserModal');
+
+    if (deleteUserModal) {
+        deleteUserModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const username = button.getAttribute('data-username') || 'this user';
+            const formId = button.getAttribute('data-form-id');
+
+            document.getElementById('deleteUsername').textContent = username;
+            userFormToSubmit = document.getElementById(formId);
+        });
+    }
+
+    const confirmDeleteUserBtn = document.getElementById('confirmDeleteUserBtn');
+    if (confirmDeleteUserBtn) {
+        confirmDeleteUserBtn.addEventListener('click', function() {
+            if (userFormToSubmit) {
+                userFormToSubmit.submit();
+            }
+        });
+    }
+</script>
+{% endblock %}

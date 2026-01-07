@@ -4,17 +4,21 @@
 
 {% block page_title %}Community Members{% endblock %}
 
+{% set can_manage_community = current_user.is_admin %}
+
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Community</span>
 {% endblock %}
 
 {% block page_actions %}
+{% if can_manage_community %}
 <a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary">
     <i class="bi bi-upload me-1"></i>Import CSV
 </a>
 <a href="{{ url_for('main.community_add') }}" class="btn btn-primary">
     <i class="bi bi-plus-lg me-1"></i>Add Member
 </a>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -41,7 +45,7 @@
 </div>
 
 <div class="card app-card">
-    {% if members %}
+    {% if members and can_manage_community %}
     <div class="bulk-action-bar" id="bulkActionBar">
         <div class="d-flex align-items-center gap-2">
             <span class="badge bg-primary"><span id="selectedCount">0</span> selected</span>
@@ -67,27 +71,34 @@
         <table class="table table-hover table-sticky-header mb-0 table-loading" id="communityTable">
             <thead class="table-light">
                 <tr>
+                    {% if can_manage_community %}
                     <th width="40">
                         {% if members %}
                         <input class="form-check-input" type="checkbox" id="selectAllMembers" aria-label="Select all members">
                         {% endif %}
                     </th>
+                    {% endif %}
                     <th>Name</th>
                     <th>Phone</th>
                     <th>Added</th>
+                    {% if can_manage_community %}
                     <th width="120">Actions</th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody class="table-data">
                 {% if members %}
                     {% for member in members %}
                     <tr>
+                        {% if can_manage_community %}
                         <td>
                             <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids" value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select member">
                         </td>
+                        {% endif %}
                         <td>{{ member.name or '-' }}</td>
                         <td><code>{{ member.phone }}</code></td>
                         <td>{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</td>
+                        {% if can_manage_community %}
                         <td>
                             <div class="d-flex flex-wrap gap-1 row-actions">
                                 <button type="button" class="btn btn-sm btn-outline-primary"
@@ -110,14 +121,17 @@
                                 </form>
                             </div>
                         </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="5" class="text-center text-muted py-4">
+                        <td colspan="{{ 5 if can_manage_community else 3 }}" class="text-center text-muted py-4">
                             No community members found.
-                            <a href="{{ url_for('main.community_add') }}">Add one</a> or 
+                            {% if can_manage_community %}
+                            <a href="{{ url_for('main.community_add') }}">Add one</a> or
                             <a href="{{ url_for('main.community_import') }}">import from CSV</a>.
+                            {% endif %}
                         </td>
                     </tr>
                 {% endif %}
@@ -145,9 +159,12 @@
                         <div class="text-muted small"><code>{{ member.phone }}</code></div>
                         <div class="text-muted small">Added {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</div>
                     </div>
+                    {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
                            value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select member">
+                    {% endif %}
                 </div>
+                {% if can_manage_community %}
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview{{ member.id }}"
@@ -163,13 +180,16 @@
                         <i class="bi bi-trash"></i> Delete
                     </button>
                 </div>
+                {% endif %}
             </div>
             {% endfor %}
         {% else %}
             <div class="text-center text-muted py-4">
                 No community members found.
+                {% if can_manage_community %}
                 <a href="{{ url_for('main.community_add') }}">Add one</a> or
                 <a href="{{ url_for('main.community_import') }}">import from CSV</a>.
+                {% endif %}
             </div>
         {% endif %}
     </div>
@@ -180,7 +200,7 @@
     {% endif %}
 </div>
 
-{% if members %}
+{% if members and can_manage_community %}
     {% for member in members %}
     <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="memberPreview{{ member.id }}">
         <div class="offcanvas-header">
@@ -196,6 +216,7 @@
     {% endfor %}
 {% endif %}
 
+{% if can_manage_community %}
 <!-- Delete Confirmation Modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
     <div class="modal-dialog modal-sm">
@@ -232,9 +253,11 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if can_manage_community %}
 <script>
     let formToSubmit = null;
     const deleteModal = document.getElementById('deleteModal');
@@ -349,4 +372,5 @@
 
     updateBulkUi();
 </script>
+{% endif %}
 {% endblock %}

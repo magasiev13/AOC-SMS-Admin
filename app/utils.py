@@ -1,8 +1,6 @@
 import re
 import csv
 import io
-import hmac
-from werkzeug.security import check_password_hash
 
 
 def normalize_phone(phone: str) -> str:
@@ -151,13 +149,3 @@ def parse_phones_csv(file_content: str) -> list:
     
     return phones
 
-
-def verify_admin_password(stored_password: str, provided_password: str) -> bool:
-    """Verify admin password with support for hashed values."""
-    if not stored_password or not provided_password:
-        return False
-
-    if stored_password.startswith(('pbkdf2:', 'scrypt:')):
-        return check_password_hash(stored_password, provided_password)
-
-    return hmac.compare_digest(stored_password, provided_password)

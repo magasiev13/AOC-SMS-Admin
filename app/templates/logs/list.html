@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block page_actions %}
-{% if logs %}
+{% if logs and current_user.is_admin %}
 <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
     <i class="bi bi-trash me-1"></i>Clear All Logs
 </button>
@@ -189,6 +189,7 @@
     {% endfor %}
 {% endif %}
 
+{% if current_user.is_admin %}
 <!-- Clear Logs Modal -->
 <div class="modal fade" id="clearLogsModal" tabindex="-1">
     <div class="modal-dialog">
@@ -218,6 +219,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
