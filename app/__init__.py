@@ -49,9 +49,27 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
         # Create database tables and run migrations
         with app.app_context():
             db.create_all()
-            from app.migrations.runner import run_pending_migrations
+            from app.migrations.runner import inspect_migrations, run_pending_migrations
 
             run_pending_migrations(db.engine, app.logger)
+            migration_report = inspect_migrations(db.engine)
+            migration_total = len(migration_report["migrations"])
+            applied = set(migration_report["applied"])
+            pending = [
+                version
+                for version in migration_report["migrations"]
+                if version not in applied
+            ]
+            app.logger.info("Database file in use: %s", migration_report["db_path"])
+            if migration_total:
+                app.logger.info(
+                    "Schema migrations: %s/%s applied; pending: %s",
+                    len(applied),
+                    migration_total,
+                    ", ".join(pending) if pending else "none",
+                )
+            else:
+                app.logger.info("Schema migrations: none")
 
             from app.models import AppUser
 
