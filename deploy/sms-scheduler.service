@@ -8,6 +8,7 @@ Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 Environment="PATH=/opt/sms-admin/venv/bin"
 EnvironmentFile=/opt/sms-admin/.env
+ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
 ExecStart=/opt/sms-admin/venv/bin/python -m app.scheduler_runner
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-failure

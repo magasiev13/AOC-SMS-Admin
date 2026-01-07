@@ -822,6 +822,7 @@ def logs_list():
             'MessageLog list query failed due to schema mismatch: %s',
             exc,
         )
+        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
         logs = []
     return render_template('logs/list.html', logs=logs, search=search)
 
