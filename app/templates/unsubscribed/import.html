@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Import Unsubscribed - SMS Admin{% endblock %}
+
+{% block page_title %}Import Unsubscribed Contacts{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.unsubscribed_list') }}">Unsubscribed</a> /
+<span>Import CSV</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card app-card">
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Upload CSV</label>
+                        <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Import CSV</button>
+                    <div class="form-text mt-2">Supports: phone only, name+phone, or first+last+phone.</div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

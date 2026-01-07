@@ -49,6 +49,20 @@ class CommunityMember(db.Model):
         return f'<CommunityMember {self.phone}>'
 
 
+class UnsubscribedContact(db.Model):
+    """Phone numbers that should not receive messages."""
+    __tablename__ = 'unsubscribed_contacts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=True)
+    phone = db.Column(db.String(20), nullable=False, unique=True)
+    source = db.Column(db.String(50), nullable=False, default='manual')
+    created_at = db.Column(db.DateTime, default=utc_now)
+
+    def __repr__(self):
+        return f'<UnsubscribedContact {self.phone}>'
+
+
 class Event(db.Model):
     """Event definitions."""
     __tablename__ = 'events'
