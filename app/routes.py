@@ -58,6 +58,7 @@ def dashboard():
             recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
         except OperationalError as exc:
             from flask import current_app
+            db.session.rollback()
             current_app.logger.warning(
                 'MessageLog query failed due to schema mismatch: %s',
                 exc,
