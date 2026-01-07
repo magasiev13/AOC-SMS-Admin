@@ -130,6 +130,7 @@ def init_scheduler(app):
     global scheduler, _scheduler_initialized
     
     if _scheduler_initialized:
+        app.logger.warning("Scheduler already initialized; skipping duplicate startup.")
         return
     
     _scheduler_initialized = True
@@ -146,7 +147,7 @@ def init_scheduler(app):
     
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown() if scheduler and scheduler.running else None)
-    print("[Scheduler] Background scheduler started")
+    app.logger.info("[Scheduler] Background scheduler started")
 
 
 def shutdown_scheduler():

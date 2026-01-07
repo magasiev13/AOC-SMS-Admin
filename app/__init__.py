@@ -75,11 +75,24 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                     db.session.commit()
     
     # Start background scheduler
+    scheduler_setting = app.config.get('SCHEDULER_ENABLED')
+    scheduler_reason = "explicit override" if start_scheduler is not None else "configuration"
     if start_scheduler is None:
-        start_scheduler = app.config.get('SCHEDULER_ENABLED')
+        start_scheduler = scheduler_setting
 
     if start_scheduler:
+        app.logger.info(
+            "Scheduler enabled (SCHEDULER_ENABLED=%s) via %s; starting background scheduler.",
+            scheduler_setting,
+            scheduler_reason,
+        )
         from app.services.scheduler_service import init_scheduler
         init_scheduler(app)
+    else:
+        app.logger.info(
+            "Scheduler disabled (SCHEDULER_ENABLED=%s) via %s; running web app only.",
+            scheduler_setting,
+            scheduler_reason,
+        )
     
     return app
