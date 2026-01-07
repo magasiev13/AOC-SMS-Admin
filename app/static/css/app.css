@@ -448,6 +448,15 @@ h6,
   font-size: var(--font-size-2);
 }
 
+@media (max-width: 768px) {
+  .form-control,
+  .form-select,
+  .form-check-input,
+  .input-group-text {
+    font-size: var(--font-size-3);
+  }
+}
+
 .form-control,
 .form-select {
   padding: var(--space-2) var(--space-3);
