@@ -196,6 +196,45 @@ sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pytho
 sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --apply'
 ```
 
+### 8d. systemd Override Examples (ExecStartPre)
+
+Use drop-in overrides if you need to enforce or customize the migration step for both services.
+These examples explicitly run migrations *before* the main process starts, and the journal will
+show the `ExecStartPre` step before the service `ExecStart` line.
+
+```bash
+sudo systemctl edit sms
+```
+
+```ini
+[Service]
+ExecStartPre=
+ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+```
+
+```bash
+sudo systemctl edit sms-scheduler
+```
+
+```ini
+[Service]
+ExecStartPre=
+ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+```
+
+### 8e. Verify systemd Migration Order and Logs
+
+Run these commands after any unit edits to confirm migrations run before service startup:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart sms sms-scheduler
+sudo journalctl -u sms -u sms-scheduler -b --no-pager
+```
+
+In the journal output, the `ExecStartPre` lines for `app.dbdoctor --apply` should appear before
+the `ExecStart` lines for both `sms` and `sms-scheduler`.
+
 ### 9. Setup Nginx HTTP Basic Auth
 
 ```bash
