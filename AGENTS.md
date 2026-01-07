@@ -49,3 +49,12 @@ This repository welcomes AI agents. Use this guide to work safely, predictably, 
 - [ ] Tests or checks run (or skipped with reason).
 - [ ] Summary is concise and accurate.
 - [ ] No hidden side effects.
+
+## 9) Quick ops guide (Codex)
+- **Unit tests:** run `pytest`. If none exist, add focused tests in `tests/` and document how to run them.
+- **DB doctor & migrations:** run `python app/dbdoctor.py` and `python app/migrate.py` (apply migrations before serving).
+- **Systemd services:** expected units are `sms` and `sms-scheduler`; both should load environment from the systemd EnvironmentFile or `/etc/default/sms` before start.
+- **Definition of done (prod):**
+  - [ ] No 500s in logs after deploy.
+  - [ ] Migrations run **before** serving traffic.
+  - [ ] Logs are clear of errors for `sms` and `sms-scheduler`.
