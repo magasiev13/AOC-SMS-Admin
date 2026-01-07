@@ -40,6 +40,13 @@
                     
                     <dt>Total Recipients</dt>
                     <dd>{{ log.total_recipients }}</dd>
+
+                    <dt>Status</dt>
+                    <dd>
+                        <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
+                            {{ log.status or 'sent' }}
+                        </span>
+                    </dd>
                     
                     <dt>Results</dt>
                     <dd>
