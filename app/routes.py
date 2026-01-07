@@ -7,6 +7,8 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app import db
 from app.auth import require_roles
+from sqlalchemy.exc import OperationalError
+
 from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage, UnsubscribedContact
 from app.services.recipient_service import filter_unsubscribed_recipients, get_unsubscribed_phone_set
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv
@@ -49,8 +51,17 @@ def dashboard():
         event_registration_count = EventRegistration.query.count()
         total_recipients = community_count + event_registration_count
         unsubscribed_count = UnsubscribedContact.query.count()
-        latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
-        recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+        latest_log = None
+        recent_logs = []
+        try:
+            latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
+            recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+        except OperationalError as exc:
+            from flask import current_app
+            current_app.logger.warning(
+                'MessageLog query failed due to schema mismatch: %s',
+                exc,
+            )
         pending_scheduled_count = ScheduledMessage.query.filter_by(status='pending').count()
         success_rate = None
         failure_rate = None
@@ -803,14 +814,32 @@ def logs_list():
             )
         )
 
-    logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    try:
+        logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    except OperationalError as exc:
+        from flask import current_app
+        current_app.logger.warning(
+            'MessageLog list query failed due to schema mismatch: %s',
+            exc,
+        )
+        logs = []
     return render_template('logs/list.html', logs=logs, search=search)
 
 
 @bp.route('/logs/<int:log_id>')
 @login_required
 def log_detail(log_id):
-    log = MessageLog.query.get_or_404(log_id)
+    try:
+        log = MessageLog.query.get_or_404(log_id)
+    except OperationalError as exc:
+        from flask import current_app
+        current_app.logger.warning(
+            'MessageLog detail query failed due to schema mismatch: %s',
+            exc,
+        )
+        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        return redirect(url_for('main.logs_list'))
+
     details = json.loads(log.details) if log.details else []
     return render_template('logs/detail.html', log=log, details=details)
 
