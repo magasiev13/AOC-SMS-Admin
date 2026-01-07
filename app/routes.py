@@ -1,13 +1,25 @@
+import csv
+import io
 import json
+from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, make_response
 from flask_login import login_required, current_user
 from app import db
 from app.auth import require_roles
-from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage
+from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage, UnsubscribedContact
+from app.services.recipient_service import filter_unsubscribed_recipients, get_unsubscribed_phone_set
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv
 
 bp = Blueprint('main', __name__)
+
+
+def _is_safe_url(target):
+    if not target:
+        return False
+    host_url = urlparse(request.host_url)
+    redirect_url = urlparse(urljoin(request.host_url, target))
+    return redirect_url.scheme in ('http', 'https') and host_url.netloc == redirect_url.netloc
 
 
 # Health check endpoint
@@ -36,6 +48,7 @@ def dashboard():
         community_count = CommunityMember.query.count()
         event_registration_count = EventRegistration.query.count()
         total_recipients = community_count + event_registration_count
+        unsubscribed_count = UnsubscribedContact.query.count()
         latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
         recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
         pending_scheduled_count = ScheduledMessage.query.filter_by(status='pending').count()
@@ -49,6 +62,7 @@ def dashboard():
             'community_count': community_count,
             'event_registration_count': event_registration_count,
             'total_recipients': total_recipients,
+            'unsubscribed_count': unsubscribed_count,
             'latest_log': latest_log,
             'recent_logs': recent_logs,
             'pending_scheduled_count': pending_scheduled_count,
@@ -152,9 +166,16 @@ def dashboard():
                 # Get registrations for the event (they store phone/name directly)
                 registrations = EventRegistration.query.filter_by(event_id=event_id).all()
                 recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
+
+            recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
+            if skipped:
+                flash(f'Skipped {len(skipped)} unsubscribed recipient(s).', 'warning')
         
         if not recipient_data:
-            flash('No recipients found for the selected target.', 'error')
+            if test_mode:
+                flash('No recipients found for the selected target.', 'error')
+            else:
+                flash('All recipients are unsubscribed or no recipients were found.', 'error')
             return render_dashboard()
         
         # Send messages
@@ -324,7 +345,8 @@ def community_list():
         )
     
     members = query.order_by(CommunityMember.name, CommunityMember.phone).all()
-    return render_template('community/list.html', members=members, search=search)
+    unsubscribed_phones = get_unsubscribed_phone_set([member.phone for member in members])
+    return render_template('community/list.html', members=members, search=search, unsubscribed_phones=unsubscribed_phones)
 
 
 @bp.route('/community/add', methods=['GET', 'POST'])
@@ -343,6 +365,9 @@ def community_add():
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
             return render_template('community/form.html', member=None)
+
+        if UnsubscribedContact.query.filter_by(phone=phone).first():
+            flash('This number is currently unsubscribed and will not receive messages.', 'warning')
         
         # Check for duplicate
         existing = CommunityMember.query.filter_by(phone=phone).first()
@@ -378,6 +403,9 @@ def community_edit(member_id):
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
             return render_template('community/form.html', member=member)
+
+        if UnsubscribedContact.query.filter_by(phone=phone).first():
+            flash('This number is currently unsubscribed and will not receive messages.', 'warning')
         
         # Check for duplicate (excluding current)
         existing = CommunityMember.query.filter(
@@ -407,6 +435,23 @@ def community_delete(member_id):
     db.session.commit()
     flash('Community member deleted.', 'success')
     return redirect(url_for('main.community_list'))
+
+
+@bp.route('/community/export')
+@login_required
+@require_roles('admin')
+def community_export():
+    members = CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['name', 'phone', 'created_at'])
+    for member in members:
+        writer.writerow([member.name or '', member.phone, member.created_at.isoformat() if member.created_at else ''])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=community_members.csv'
+    return response
 
 
 @bp.route('/community/bulk-delete', methods=['POST'])
@@ -480,6 +525,27 @@ def community_import():
     return render_template('community/import.html')
 
 
+@bp.route('/community/<int:member_id>/unsubscribe', methods=['POST'])
+@login_required
+@require_roles('admin')
+def community_unsubscribe(member_id):
+    member = CommunityMember.query.get_or_404(member_id)
+    existing = UnsubscribedContact.query.filter_by(phone=member.phone).first()
+    if existing:
+        flash('That number is already unsubscribed.', 'warning')
+        return redirect(url_for('main.community_list'))
+
+    unsubscribe = UnsubscribedContact(
+        name=member.name,
+        phone=member.phone,
+        source='community'
+    )
+    db.session.add(unsubscribe)
+    db.session.commit()
+    flash('Member added to unsubscribed list.', 'success')
+    return redirect(url_for('main.community_list'))
+
+
 # Events Management
 @bp.route('/events')
 @login_required
@@ -535,7 +601,8 @@ def event_add():
 def event_detail(event_id):
     event = Event.query.get_or_404(event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
-    return render_template('events/detail.html', event=event, registrations=registrations)
+    unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
+    return render_template('events/detail.html', event=event, registrations=registrations, unsubscribed_phones=unsubscribed_phones)
 
 
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
@@ -595,6 +662,9 @@ def event_register(event_id):
     if not validate_phone(phone):
         flash('Invalid phone number format.', 'error')
         return redirect(url_for('main.event_detail', event_id=event_id))
+
+    if UnsubscribedContact.query.filter_by(phone=phone).first():
+        flash('This number is currently unsubscribed and will not receive messages.', 'warning')
     
     # Check if already registered for this event
     existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
@@ -620,6 +690,30 @@ def event_unregister(event_id, registration_id):
     db.session.delete(registration)
     db.session.commit()
     flash('Registration removed.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event_id))
+
+
+@bp.route('/events/<int:event_id>/registrations/<int:registration_id>/unsubscribe', methods=['POST'])
+@login_required
+def event_registration_unsubscribe(event_id, registration_id):
+    registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
+    if not registration:
+        flash('Registration not found for this event.', 'error')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+
+    existing = UnsubscribedContact.query.filter_by(phone=registration.phone).first()
+    if existing:
+        flash('That number is already unsubscribed.', 'warning')
+        return redirect(url_for('main.event_detail', event_id=event_id))
+
+    unsubscribe = UnsubscribedContact(
+        name=registration.name,
+        phone=registration.phone,
+        source=f'event:{event_id}'
+    )
+    db.session.add(unsubscribe)
+    db.session.commit()
+    flash('Registration added to unsubscribed list.', 'success')
     return redirect(url_for('main.event_detail', event_id=event_id))
 
 
@@ -671,6 +765,23 @@ def event_import_registrations(event_id):
         flash(f'Error processing CSV: {str(e)}', 'error')
     
     return redirect(url_for('main.event_detail', event_id=event_id))
+
+
+@bp.route('/events/<int:event_id>/export')
+@login_required
+def event_export_registrations(event_id):
+    event = Event.query.get_or_404(event_id)
+    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['name', 'phone', 'created_at'])
+    for reg in registrations:
+        writer.writerow([reg.name or '', reg.phone, reg.created_at.isoformat() if reg.created_at else ''])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = f'attachment; filename=event_{event.id}_registrations.csv'
+    return response
 
 
 # Message Logs
@@ -807,3 +918,138 @@ def logs_clear():
     
     flash(f'Successfully cleared {deleted_count} log(s).', 'success')
     return redirect(url_for('main.logs_list'))
+
+
+# Unsubscribed Contacts
+@bp.route('/unsubscribed')
+@login_required
+def unsubscribed_list():
+    search = request.args.get('search', '').strip()
+    query = UnsubscribedContact.query
+
+    if search:
+        query = query.filter(
+            db.or_(
+                UnsubscribedContact.name.ilike(f'%{search}%'),
+                UnsubscribedContact.phone.ilike(f'%{search}%'),
+                UnsubscribedContact.source.ilike(f'%{search}%')
+            )
+        )
+
+    unsubscribed = query.order_by(UnsubscribedContact.created_at.desc()).all()
+    return render_template('unsubscribed/list.html', unsubscribed=unsubscribed, search=search)
+
+
+@bp.route('/unsubscribed/add', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def unsubscribed_add():
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip() or None
+        phone = request.form.get('phone', '').strip()
+        source = request.form.get('source', '').strip() or 'manual'
+        next_url = request.form.get('next')
+
+        if not phone:
+            flash('Phone number is required.', 'error')
+            return render_template('unsubscribed/form.html', entry=None)
+
+        phone = normalize_phone(phone)
+        if not validate_phone(phone):
+            flash('Invalid phone number format.', 'error')
+            return render_template('unsubscribed/form.html', entry=None)
+
+        existing = UnsubscribedContact.query.filter_by(phone=phone).first()
+        if existing:
+            flash('That phone number is already unsubscribed.', 'warning')
+            if next_url and _is_safe_url(next_url):
+                return redirect(next_url)
+            return redirect(url_for('main.unsubscribed_list'))
+
+        entry = UnsubscribedContact(name=name, phone=phone, source=source)
+        db.session.add(entry)
+        db.session.commit()
+        flash('Added to unsubscribed list.', 'success')
+
+        if next_url and _is_safe_url(next_url):
+            return redirect(next_url)
+        return redirect(url_for('main.unsubscribed_list'))
+
+    return render_template('unsubscribed/form.html', entry=None)
+
+
+@bp.route('/unsubscribed/import', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def unsubscribed_import():
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash('No file uploaded.', 'error')
+            return render_template('unsubscribed/import.html')
+
+        file = request.files['file']
+        if file.filename == '':
+            flash('No file selected.', 'error')
+            return render_template('unsubscribed/import.html')
+
+        try:
+            content = file.read().decode('utf-8')
+            parsed = parse_recipients_csv(content)
+
+            if not parsed:
+                flash('No valid entries found in CSV.', 'error')
+                return render_template('unsubscribed/import.html')
+
+            added = 0
+            skipped = 0
+
+            for rec in parsed:
+                existing = UnsubscribedContact.query.filter_by(phone=rec['phone']).first()
+                if existing:
+                    skipped += 1
+                    continue
+
+                entry = UnsubscribedContact(
+                    name=rec['name'],
+                    phone=rec['phone'],
+                    source='import'
+                )
+                db.session.add(entry)
+                added += 1
+
+            db.session.commit()
+            flash(f'Imported {added} unsubscribed contact(s). {skipped} duplicates skipped.', 'success')
+            return redirect(url_for('main.unsubscribed_list'))
+
+        except Exception as e:
+            flash(f'Error processing CSV: {str(e)}', 'error')
+
+    return render_template('unsubscribed/import.html')
+
+
+@bp.route('/unsubscribed/export')
+@login_required
+@require_roles('admin')
+def unsubscribed_export():
+    entries = UnsubscribedContact.query.order_by(UnsubscribedContact.created_at.desc()).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['name', 'phone', 'source', 'created_at'])
+    for entry in entries:
+        writer.writerow([entry.name or '', entry.phone, entry.source, entry.created_at.isoformat() if entry.created_at else ''])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = 'attachment; filename=unsubscribed_contacts.csv'
+    return response
+
+
+@bp.route('/unsubscribed/<int:entry_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin')
+def unsubscribed_delete(entry_id):
+    entry = UnsubscribedContact.query.get_or_404(entry_id)
+    db.session.delete(entry)
+    db.session.commit()
+    flash('Removed from unsubscribed list.', 'success')
+    return redirect(url_for('main.unsubscribed_list'))

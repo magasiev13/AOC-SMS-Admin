@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Add Unsubscribed Contact - SMS Admin{% endblock %}
+
+{% block page_title %}Add Unsubscribed Contact{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.unsubscribed_list') }}">Unsubscribed</a> /
+<span>Add</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card app-card">
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Name (optional)</label>
+                        <input type="text" class="form-control" id="name" name="name" placeholder="Contact name">
+                    </div>
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">Phone</label>
+                        <input type="tel" class="form-control" id="phone" name="phone" placeholder="+1 (555) 555-5555" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="source" class="form-label">Source</label>
+                        <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
+                        <div class="form-text">Helps track why the number is suppressed (e.g., manual, event:123).</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Add Unsubscribed</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

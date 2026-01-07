@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}Unsubscribed Contacts - SMS Admin{% endblock %}
+
+{% block page_title %}Unsubscribed Contacts{% endblock %}
+
+{% set can_manage_unsubscribed = current_user.is_admin %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Unsubscribed</span>
+{% endblock %}
+
+{% block page_actions %}
+{% if can_manage_unsubscribed %}
+<a href="{{ url_for('main.unsubscribed_import') }}" class="btn btn-outline-primary">
+    <i class="bi bi-upload me-1"></i>Import CSV
+</a>
+<a href="{{ url_for('main.unsubscribed_export') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-download me-1"></i>Export CSV
+</a>
+<a href="{{ url_for('main.unsubscribed_add') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Add Unsubscribed
+</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card app-card mb-4">
+    <div class="card-body">
+        <form method="GET" class="filter-bar" data-table-loading-target="unsubscribedTable">
+            <div class="flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, or source..."
+                           value="{{ search }}">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-secondary">
+                <i class="bi bi-funnel me-1"></i>Apply
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card app-card">
+    <div class="table-responsive">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Source</th>
+                    <th>Added</th>
+                    {% if can_manage_unsubscribed %}
+                    <th width="80">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody class="table-data">
+                {% if unsubscribed %}
+                    {% for entry in unsubscribed %}
+                    <tr>
+                        <td>{{ entry.name or '-' }}</td>
+                        <td><code>{{ entry.phone }}</code></td>
+                        <td><span class="badge bg-light text-dark">{{ entry.source }}</span></td>
+                        <td>{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
+                        {% if can_manage_unsubscribed %}
+                        <td>
+                            <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="{{ 5 if can_manage_unsubscribed else 4 }}" class="text-center text-muted py-4">
+                            No unsubscribed contacts found.
+                            {% if can_manage_unsubscribed %}
+                            <a href="{{ url_for('main.unsubscribed_add') }}">Add one</a> or
+                            <a href="{{ url_for('main.unsubscribed_import') }}">import from CSV</a>.
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+            <tbody class="table-skeleton-body" aria-hidden="true">
+                {% for _ in range(5) %}
+                <tr>
+                    <td><span class="skeleton-block w-75"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
+                    {% if can_manage_unsubscribed %}
+                    <td><span class="skeleton-block w-25"></span></td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if unsubscribed %}
+    <div class="card-footer text-muted">
+        Showing {{ unsubscribed|length }} contact(s)
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

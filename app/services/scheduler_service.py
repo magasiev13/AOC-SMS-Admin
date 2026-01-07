@@ -15,6 +15,7 @@ def send_scheduled_messages(app):
         from datetime import timedelta
         from app import db
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
+        from app.services.recipient_service import filter_unsubscribed_recipients
         from app.services.twilio_service import get_twilio_service
         
         now = datetime.utcnow()
@@ -79,9 +80,14 @@ def send_scheduled_messages(app):
                     registrations = EventRegistration.query.filter_by(event_id=scheduled.event_id).all()
                     recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
                 
+                if not scheduled.test_mode:
+                    recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
+                    if skipped:
+                        print(f"[Scheduler] Skipped {len(skipped)} unsubscribed recipient(s) for message {scheduled.id}")
+
                 if not recipient_data:
                     scheduled.status = 'failed'
-                    scheduled.error_message = 'No recipients found'
+                    scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
                     scheduled.sent_at = now
                     db.session.commit()
                     continue
