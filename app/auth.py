@@ -1,8 +1,9 @@
 import time
 from urllib.parse import urljoin, urlparse
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required
-from app.utils import verify_admin_password
+from functools import wraps
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from app.models import AppUser
 
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
@@ -71,33 +72,24 @@ def _record_failed_login():
     data['count'] = data.get('count', 0) + 1
     _FAILED_LOGINS[client_ip] = data
 
-class User(UserMixin):
-    """Simple user class for single-admin authentication."""
-    
-    def __init__(self, id):
-        self.id = id
-    
-    @staticmethod
-    def validate(username, password):
-        """Validate credentials against configured admin user."""
-        admin_username = current_app.config.get('ADMIN_USERNAME')
-        admin_password = current_app.config.get('ADMIN_PASSWORD')
-        
-        if not admin_password:
-            return None
-        
-        if username == admin_username and verify_admin_password(admin_password, password):
-            return User(id=username)
-        return None
+
+def require_roles(*roles):
+    def decorator(view):
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            if not current_user.is_authenticated:
+                return login_manager.unauthorized()
+            if roles and current_user.role not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
 
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user by ID (username)."""
-    admin_username = current_app.config.get('ADMIN_USERNAME')
-    if user_id == admin_username:
-        return User(id=user_id)
-    return None
+    """Load user by ID."""
+    return AppUser.query.get(int(user_id))
 
 
 @bp.route('/login', methods=['GET', 'POST'])
@@ -113,9 +105,9 @@ def login():
         password = request.form.get('password', '')
         remember = request.form.get('remember') == 'on'
         
-        user = User.validate(username, password)
+        user = AppUser.query.filter_by(username=username).first()
         
-        if user:
+        if user and user.check_password(password):
             login_user(user, remember=remember)
             _FAILED_LOGINS.pop(_get_client_ip(), None)
             next_page = request.args.get('next')

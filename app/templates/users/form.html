@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit' if user else 'Create' }} User - SMS Admin{% endblock %}
+
+{% block page_title %}{{ 'Edit' if user else 'Create' }} User{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.users_list') }}">Users</a> /
+<span>{{ 'Edit' if user else 'Create' }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card app-card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-person-gear me-2"></i>{{ 'Edit' if user else 'Create' }} User
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="username" name="username" required
+                               value="{{ user.username if user else '' }}"
+                               placeholder="username">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
+                        <select class="form-select" id="role" name="role" required>
+                            <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
+                            <option value="admin" {% if user and user.role == 'admin' %}selected{% endif %}>Admin</option>
+                            <option value="social_manager" {% if user and user.role == 'social_manager' %}selected{% endif %}>Social Media Manager</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-4">
+                        <label for="password" class="form-label">
+                            {{ 'New Password' if user else 'Password' }}{% if not user %} <span class="text-danger">*</span>{% endif %}
+                        </label>
+                        <input type="password" class="form-control" id="password" name="password" {% if not user %}required{% endif %}>
+                        {% if user %}
+                        <div class="form-text">Leave blank to keep the existing password.</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg me-1"></i>{{ 'Update' if user else 'Create' }} User
+                        </button>
+                        <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

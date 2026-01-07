@@ -3,8 +3,9 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_required, current_user
 from app import db
-from app.models import CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage
-from app.utils import normalize_phone, validate_phone, parse_recipients_csv, parse_phones_csv, verify_admin_password
+from app.auth import require_roles
+from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage
+from app.utils import normalize_phone, validate_phone, parse_recipients_csv
 
 bp = Blueprint('main', __name__)
 
@@ -196,6 +197,116 @@ def dashboard():
     return render_dashboard()
 
 
+# User Management
+@bp.route('/users')
+@login_required
+@require_roles('admin')
+def users_list():
+    users = AppUser.query.order_by(AppUser.username).all()
+    return render_template('users/list.html', users=users)
+
+
+@bp.route('/users/add', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def users_add():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        role = request.form.get('role', '').strip()
+        password = request.form.get('password', '')
+
+        if not username:
+            flash('Username is required.', 'error')
+            return render_template('users/form.html', user=None)
+
+        if role not in {'admin', 'social_manager'}:
+            flash('Role selection is required.', 'error')
+            return render_template('users/form.html', user=None)
+
+        if not password:
+            flash('Password is required.', 'error')
+            return render_template('users/form.html', user=None)
+
+        existing = AppUser.query.filter_by(username=username).first()
+        if existing:
+            flash('A user with this username already exists.', 'error')
+            return render_template('users/form.html', user=None)
+
+        user = AppUser(username=username, role=role)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+
+        flash('User created successfully.', 'success')
+        return redirect(url_for('main.users_list'))
+
+    return render_template('users/form.html', user=None)
+
+
+@bp.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def users_edit(user_id):
+    user = AppUser.query.get_or_404(user_id)
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        role = request.form.get('role', '').strip()
+        password = request.form.get('password', '')
+
+        if not username:
+            flash('Username is required.', 'error')
+            return render_template('users/form.html', user=user)
+
+        if role not in {'admin', 'social_manager'}:
+            flash('Role selection is required.', 'error')
+            return render_template('users/form.html', user=user)
+
+        existing = AppUser.query.filter(AppUser.username == username, AppUser.id != user_id).first()
+        if existing:
+            flash('A user with this username already exists.', 'error')
+            return render_template('users/form.html', user=user)
+
+        if user.role == 'admin' and role != 'admin':
+            admin_count = AppUser.query.filter_by(role='admin').count()
+            if admin_count <= 1:
+                flash('At least one admin user is required.', 'error')
+                return render_template('users/form.html', user=user)
+
+        user.username = username
+        user.role = role
+        if password:
+            user.set_password(password)
+
+        db.session.commit()
+        flash('User updated successfully.', 'success')
+        return redirect(url_for('main.users_list'))
+
+    return render_template('users/form.html', user=user)
+
+
+@bp.route('/users/<int:user_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin')
+def users_delete(user_id):
+    user = AppUser.query.get_or_404(user_id)
+
+    if user.id == current_user.id:
+        flash('You cannot delete your own account.', 'error')
+        return redirect(url_for('main.users_list'))
+
+    if user.role == 'admin':
+        admin_count = AppUser.query.filter_by(role='admin').count()
+        if admin_count <= 1:
+            flash('At least one admin user is required.', 'error')
+            return redirect(url_for('main.users_list'))
+
+    db.session.delete(user)
+    db.session.commit()
+    flash('User deleted successfully.', 'success')
+    return redirect(url_for('main.users_list'))
+
+
 # Community Members Management
 @bp.route('/community')
 @login_required
@@ -218,6 +329,7 @@ def community_list():
 
 @bp.route('/community/add', methods=['GET', 'POST'])
 @login_required
+@require_roles('admin')
 def community_add():
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
@@ -250,6 +362,7 @@ def community_add():
 
 @bp.route('/community/<int:member_id>/edit', methods=['GET', 'POST'])
 @login_required
+@require_roles('admin')
 def community_edit(member_id):
     member = CommunityMember.query.get_or_404(member_id)
     
@@ -287,6 +400,7 @@ def community_edit(member_id):
 
 @bp.route('/community/<int:member_id>/delete', methods=['POST'])
 @login_required
+@require_roles('admin')
 def community_delete(member_id):
     member = CommunityMember.query.get_or_404(member_id)
     db.session.delete(member)
@@ -297,6 +411,7 @@ def community_delete(member_id):
 
 @bp.route('/community/bulk-delete', methods=['POST'])
 @login_required
+@require_roles('admin')
 def community_bulk_delete():
     raw_ids = request.form.getlist('member_ids')
     member_ids = []
@@ -319,6 +434,7 @@ def community_bulk_delete():
 
 @bp.route('/community/import', methods=['GET', 'POST'])
 @login_required
+@require_roles('admin')
 def community_import():
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -676,18 +792,12 @@ def scheduled_status():
 
 @bp.route('/logs/clear', methods=['POST'])
 @login_required
+@require_roles('admin')
 def logs_clear():
     """Clear all message logs - requires admin password confirmation."""
-    from flask import current_app
-    
     admin_password = request.form.get('admin_password', '')
-    expected_password = current_app.config.get('ADMIN_PASSWORD')
-    
-    if not expected_password:
-        flash('ADMIN_PASSWORD not configured in .env file.', 'error')
-        return redirect(url_for('main.logs_list'))
-    
-    if not verify_admin_password(expected_password, admin_password):
+
+    if not current_user.check_password(admin_password):
         flash('Invalid admin password.', 'error')
         return redirect(url_for('main.logs_list'))
     
