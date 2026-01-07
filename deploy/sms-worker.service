@@ -10,6 +10,7 @@ Environment="PATH=/opt/sms-admin/venv/bin"
 Environment="SCHEDULER_ENABLED=0"
 Environment="RQ_QUEUE_NAME=sms"
 EnvironmentFile=/opt/sms-admin/.env
+ExecStartPre=/usr/local/bin/dbdoctor --apply
 ExecStart=/opt/sms-admin/venv/bin/rq worker --url ${REDIS_URL} ${RQ_QUEUE_NAME}
 Restart=on-failure
 RestartSec=5
