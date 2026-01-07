@@ -89,10 +89,11 @@ def _sqlite_db_path(engine: Engine) -> str:
 
 def inspect_migrations(engine: Engine) -> dict[str, list[str] | str]:
     migrations = _migration_files()
-    applied: list[str] = []
     if engine.url.drivername.startswith("sqlite"):
         with engine.connect() as connection:
             applied = sorted(_get_applied_versions(connection))
+    else:
+        applied = [migration.version for migration in migrations]
     return {
         "db_path": _sqlite_db_path(engine),
         "migrations": [migration.version for migration in migrations],
