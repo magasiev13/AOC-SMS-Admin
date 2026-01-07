@@ -134,7 +134,16 @@ sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3 -m venv venv'
 sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
 ```
 
-### 5. Configure Environment Variables
+### 5. Install dbdoctor Command
+
+```bash
+sudo /opt/sms-admin/deploy/install.sh
+```
+
+> **Note:** The installer uses `/usr/local/bin/dbdoctor` by default. Override with `DBDOCTOR_DEST=/custom/path/dbdoctor`.
+> The dbdoctor wrapper uses `/opt/sms-admin/venv/bin/python` by default; override with `SMS_ADMIN_PYTHON=/custom/venv/bin/python`.
+
+### 6. Configure Environment Variables
 
 ```bash
 # Create .env file (readable only by smsadmin)
@@ -149,20 +158,20 @@ EOF'
 sudo chmod 600 /opt/sms-admin/.env
 ```
 
-### 6. Initialize Database
+### 7. Initialize Database
 
 ```bash
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --apply'
+sudo -u smsadmin dbdoctor --apply
 ```
 
-### 7. Create Log Directory
+### 8. Create Log Directory
 
 ```bash
 sudo mkdir -p /var/log/sms-admin
 sudo chown smsadmin:smsadmin /var/log/sms-admin
 ```
 
-### 8. Setup systemd Service
+### 9. Setup systemd Service
 
 ```bash
 sudo cp /opt/sms-admin/deploy/sms.service /etc/systemd/system/
@@ -174,7 +183,7 @@ sudo systemctl start sms
 sudo systemctl status sms
 ```
 
-### 8b. Setup Scheduler Service (for scheduled messages)
+### 9b. Setup Scheduler Service (for scheduled messages)
 
 ```bash
 sudo cp /opt/sms-admin/deploy/sms-scheduler.service /etc/systemd/system/
@@ -186,17 +195,22 @@ sudo systemctl start sms-scheduler
 sudo systemctl status sms-scheduler
 ```
 
-### 8c. Database Migration Checks
+### 9c. Database Migration Checks
 
 ```bash
 # Print the current database path and migration status
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --print'
+sudo -u smsadmin dbdoctor --print
+
+# Run the full database doctor report
+sudo -u smsadmin dbdoctor --doctor
 
 # Apply any pending migrations (also run automatically by systemd ExecStartPre)
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --apply'
+sudo -u smsadmin dbdoctor --apply
 ```
 
-### 8d. systemd Override Examples (ExecStartPre)
+Migrations run automatically on restart because the systemd units include an `ExecStartPre` step that calls `dbdoctor --apply`.
+
+### 9d. systemd Override Examples (ExecStartPre)
 
 Use drop-in overrides if you need to enforce or customize the migration step for both services.
 These examples explicitly run migrations *before* the main process starts, and the journal will
@@ -209,7 +223,7 @@ sudo systemctl edit sms
 ```ini
 [Service]
 ExecStartPre=
-ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+ExecStartPre=/usr/local/bin/dbdoctor --apply
 ```
 
 ```bash
@@ -219,10 +233,10 @@ sudo systemctl edit sms-scheduler
 ```ini
 [Service]
 ExecStartPre=
-ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+ExecStartPre=/usr/local/bin/dbdoctor --apply
 ```
 
-### 8e. Verify systemd Migration Order and Logs
+### 9e. Verify systemd Migration Order and Logs
 
 Run these commands after any unit edits to confirm migrations run before service startup:
 
@@ -232,10 +246,10 @@ sudo systemctl restart sms sms-scheduler
 sudo journalctl -u sms -u sms-scheduler -b --no-pager
 ```
 
-In the journal output, the `ExecStartPre` lines for `app.dbdoctor --apply` should appear before
+In the journal output, the `ExecStartPre` lines for `dbdoctor --apply` should appear before
 the `ExecStart` lines for both `sms` and `sms-scheduler`.
 
-### 9. Setup Nginx HTTP Basic Auth
+### 11. Setup Nginx HTTP Basic Auth
 
 ```bash
 # Create password file (replace 'admin' with your username)
@@ -243,7 +257,7 @@ sudo htpasswd -c /etc/nginx/.htpasswd admin
 # Enter password when prompted
 ```
 
-### 10. Configure Nginx
+### 12. Configure Nginx
 
 ```bash
 # Copy nginx config
@@ -260,7 +274,7 @@ sudo nano /etc/nginx/sites-available/sms.theitwingman.com
 # Comment out the SSL server block and modify the HTTP block to proxy directly
 ```
 
-### 11. Setup SSL with Let's Encrypt
+### 13. Setup SSL with Let's Encrypt
 
 ```bash
 # Get SSL certificate
@@ -271,7 +285,7 @@ sudo certbot --nginx -d sms.theitwingman.com
 sudo systemctl reload nginx
 ```
 
-### 12. Verify Deployment
+### 14. Verify Deployment
 
 ```bash
 # Check health endpoint (no auth required)

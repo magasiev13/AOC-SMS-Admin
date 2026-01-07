@@ -9,7 +9,7 @@ WorkingDirectory=/opt/sms-admin
 Environment="PATH=/opt/sms-admin/venv/bin"
 Environment="SCHEDULER_ENABLED=0"
 EnvironmentFile=/opt/sms-admin/.env
-ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+ExecStartPre=/usr/local/bin/dbdoctor --apply
 ExecStart=/opt/sms-admin/venv/bin/gunicorn --workers 1 --bind 127.0.0.1:8000 --access-logfile /var/log/sms-admin/access.log --error-logfile /var/log/sms-admin/error.log wsgi:app
 ExecReload=/bin/kill -s HUP $MAINPID
 Restart=on-failure

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SMS_ADMIN_PYTHON="${SMS_ADMIN_PYTHON:-/opt/sms-admin/venv/bin/python}"
+
+if [[ ! -x "${SMS_ADMIN_PYTHON}" ]]; then
+  echo "ERROR: Python interpreter not found at ${SMS_ADMIN_PYTHON}." >&2
+  echo "Set SMS_ADMIN_PYTHON to the venv python path, e.g. /opt/sms-admin/venv/bin/python." >&2
+  exit 1
+fi
+
+exec "${SMS_ADMIN_PYTHON}" -m app.dbdoctor "$@"
