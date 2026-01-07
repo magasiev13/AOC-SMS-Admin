@@ -1,7 +1,11 @@
 import argparse
 import logging
 
-from app import create_app, db
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+
+from app import db
+from app.config import Config
 from app.migrations.runner import inspect_migrations, run_pending_migrations
 
 
@@ -28,6 +32,13 @@ def _print_report(report: dict[str, list[str] | str]) -> None:
         print(f"  - {version}: {status}")
 
 
+def _build_engine() -> Engine:
+    return create_engine(
+        Config.SQLALCHEMY_DATABASE_URI,
+        **Config.SQLALCHEMY_ENGINE_OPTIONS,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Inspect or apply database migrations.")
     parser.add_argument(
@@ -47,16 +58,18 @@ def main() -> None:
         parser.error("Specify --print or --apply")
 
     _configure_logging()
-    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    engine = _build_engine()
+    logger = logging.getLogger(__name__)
 
-    with app.app_context():
-        if args.apply:
-            db.create_all()
-            run_pending_migrations(db.engine, app.logger)
+    if args.apply:
+        from app import models  # noqa: F401
 
-        if args.print_only:
-            report = inspect_migrations(db.engine)
-            _print_report(report)
+        db.metadata.create_all(bind=engine)
+        run_pending_migrations(engine, logger)
+
+    if args.print_only:
+        report = inspect_migrations(engine)
+        _print_report(report)
 
 
 if __name__ == "__main__":
