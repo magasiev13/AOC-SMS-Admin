@@ -152,7 +152,7 @@ sudo chmod 600 /opt/sms-admin/.env
 ### 6. Initialize Database
 
 ```bash
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -c "from app import create_app; create_app()"'
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --apply'
 ```
 
 ### 7. Create Log Directory
@@ -184,6 +184,16 @@ sudo systemctl start sms-scheduler
 
 # Check status
 sudo systemctl status sms-scheduler
+```
+
+### 8c. Database Migration Checks
+
+```bash
+# Print the current database path and migration status
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --print'
+
+# Apply any pending migrations (also run automatically by systemd ExecStartPre)
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && python -m app.dbdoctor --apply'
 ```
 
 ### 9. Setup Nginx HTTP Basic Auth
