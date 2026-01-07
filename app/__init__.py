@@ -47,6 +47,9 @@ def create_app():
     # Create database tables
     with app.app_context():
         db.create_all()
+        from app.schema import ensure_message_log_columns
+
+        ensure_message_log_columns(db, app.logger)
 
         from app.models import AppUser
 
