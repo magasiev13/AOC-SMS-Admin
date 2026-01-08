@@ -13,6 +13,7 @@ def send_scheduled_messages(app):
     """Check for and send any pending scheduled messages."""
     with app.app_context():
         from datetime import timedelta
+        from flask import current_app
         from app import db
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
         from app.services.recipient_service import filter_unsubscribed_recipients
@@ -30,8 +31,10 @@ def send_scheduled_messages(app):
             scheduled.sent_at = now
         if stuck_processing:
             db.session.commit()
-        # Messages older than 5 minutes are considered expired
-        expiry_threshold = now - timedelta(minutes=5)
+        max_lag_minutes = current_app.config.get('SCHEDULED_MESSAGE_MAX_LAG')
+        expiry_threshold = None
+        if max_lag_minutes and max_lag_minutes > 0:
+            expiry_threshold = now - timedelta(minutes=max_lag_minutes)
         
         pending = ScheduledMessage.query.filter(
             ScheduledMessage.status == 'pending',
@@ -39,14 +42,25 @@ def send_scheduled_messages(app):
         ).all()
         
         for scheduled in pending:
-            # Mark as expired if too old (more than 5 minutes past scheduled time)
-            if scheduled.scheduled_at < expiry_threshold:
+            # Mark as expired if too old (beyond configured max lag)
+            if expiry_threshold and scheduled.scheduled_at < expiry_threshold:
                 scheduled.status = 'expired'
-                scheduled.error_message = 'Message expired - scheduled time was more than 5 minutes ago'
+                scheduled.error_message = (
+                    'Message expired - scheduled time exceeded max lag '
+                    f'of {max_lag_minutes} minutes'
+                )
                 scheduled.sent_at = now
                 db.session.commit()
-                print(f"[Scheduler] Expired scheduled message {scheduled.id} - was scheduled for {scheduled.scheduled_at}")
+                print(
+                    "[Scheduler] Expired scheduled message "
+                    f"{scheduled.id} - was scheduled for {scheduled.scheduled_at}"
+                )
                 continue
+            if scheduled.scheduled_at < now:
+                print(
+                    "[Scheduler] Late send for scheduled message "
+                    f"{scheduled.id} - scheduled for {scheduled.scheduled_at}"
+                )
             # Mark as processing immediately to prevent race condition
             try:
                 updated = ScheduledMessage.query.filter_by(
@@ -64,7 +78,6 @@ def send_scheduled_messages(app):
             try:
                 # Test mode: send only to admin phone
                 if scheduled.test_mode:
-                    from flask import current_app
                     admin_phone = current_app.config.get('ADMIN_TEST_PHONE')
                     if not admin_phone:
                         scheduled.status = 'failed'

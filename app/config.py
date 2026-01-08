@@ -19,6 +19,7 @@ class Config:
 
     # Scheduler (disable by default in production; run as a separate service)
     SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'
+    SCHEDULED_MESSAGE_MAX_LAG = int(os.environ.get('SCHEDULED_MESSAGE_MAX_LAG', '1440'))
 
     APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'UTC')
 
