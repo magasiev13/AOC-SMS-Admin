@@ -1110,7 +1110,9 @@ def unsubscribed_backfill():
 
     message = (
         f"Backfill complete: {summary['logs']} log(s) scanned, "
-        f"{summary['calls']} log(s) processed."
+        f"{summary['calls']} log(s) processed, "
+        f"{summary['unsubscribed']} unsubscribed, "
+        f"{summary['suppressed']} suppressed."
     )
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return jsonify({'message': message, 'summary': summary})

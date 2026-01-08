@@ -162,10 +162,11 @@
                     headers: {
                         'X-Requested-With': 'XMLHttpRequest',
                     },
+                    credentials: 'same-origin',
                     body: new FormData(backfillForm),
                 });
 
-                const payload = await response.json();
+                const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
                     throw new Error(payload?.error || 'Backfill failed.');
                 }
