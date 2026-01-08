@@ -98,19 +98,25 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {% if not is_unsubscribed %}
-                                <form method="POST" action="{{ url_for('main.event_registration_unsubscribe', event_id=event.id, registration_id=reg.id) }}" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-sm btn-outline-warning" title="Unsubscribe">
+                                <div class="d-flex flex-wrap gap-1">
+                                    {% if not is_unsubscribed %}
+                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe">
                                         <i class="bi bi-person-x"></i>
                                     </button>
-                                </form>
-                                {% endif %}
-                                <form method="POST" action="{{ url_for('main.event_unregister', event_id=event.id, registration_id=reg.id) }}" class="d-inline">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" onclick="return confirm('Remove this registration?');">
+                                    {% endif %}
+                                    <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" title="Remove" onclick="return confirm('Remove this registration?');">
                                         <i class="bi bi-x"></i>
                                     </button>
+                                </div>
+                                {% if not is_unsubscribed %}
+                                <form id="unsubscribe-reg-{{ reg.id }}" method="POST" 
+                                      action="{{ url_for('main.event_registration_unsubscribe', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                </form>
+                                {% endif %}
+                                <form id="remove-reg-{{ reg.id }}" method="POST" 
+                                      action="{{ url_for('main.event_unregister', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 </form>
                             </td>
                         </tr>

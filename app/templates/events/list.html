@@ -24,11 +24,6 @@
                     <input type="text" class="form-control" name="search" placeholder="Search events" value="{{ search }}">
                 </div>
             </div>
-            <div class="filter-chip-group">
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Active</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">New</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Failed</button>
-            </div>
             <button type="submit" class="btn btn-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
             </button>
@@ -38,18 +33,14 @@
 
 <div class="card app-card">
     {% if events %}
-    <div class="bulk-action-bar" id="bulkActionBar">
-        <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-primary"><span id="selectedCount">0</span> selected</span>
-            <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
-                <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
-                <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
-            </div>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
+            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
+            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+            <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
-        <div class="d-flex align-items-center gap-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Export</button>
-            <button type="button" class="btn btn-sm btn-outline-primary" disabled>Notify</button>
+        <div class="d-flex align-items-center">
+            <span class="text-muted me-3"><span id="selectedCount">0</span> selected</span>
         </div>
     </div>
     {% endif %}
@@ -87,30 +78,30 @@
                         </td>
                         <td>{{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}</td>
                         <td>
-                            <div class="btn-group btn-group-sm row-actions">
-                                <button type="button" class="btn btn-outline-primary" title="Preview"
+                            <div class="d-flex flex-wrap gap-1 row-actions">
+                                <button type="button" class="btn btn-sm btn-outline-primary" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#eventPreview{{ event.id }}"
                                         aria-controls="eventPreview{{ event.id }}">
                                     <i class="bi bi-layout-sidebar-inset"></i>
                                 </button>
                                 <a href="{{ url_for('main.event_detail', event_id=event.id) }}" 
-                                   class="btn btn-outline-primary" title="View">
+                                   class="btn btn-sm btn-outline-primary" title="View">
                                     <i class="bi bi-eye"></i>
                                 </a>
                                 <a href="{{ url_for('main.event_edit', event_id=event.id) }}" 
-                                   class="btn btn-outline-secondary" title="Edit">
+                                   class="btn btn-sm btn-outline-secondary" title="Edit">
                                     <i class="bi bi-pencil"></i>
                                 </a>
+                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                        data-bs-toggle="modal" data-bs-target="#deleteEventModal"
+                                        data-form-id="delete-event-{{ event.id }}"
+                                        data-event-title="{{ event.title }}"
+                                        data-registration-count="{{ event.registrations|length }}">
+                                    <i class="bi bi-trash"></i>
+                                </button>
                                 <form method="POST" action="{{ url_for('main.event_delete', event_id=event.id) }}" 
-                                      class="d-inline" id="delete-event-{{ event.id }}">
+                                      id="delete-event-{{ event.id }}" style="display:none;">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="button" class="btn btn-outline-danger" title="Delete"
-                                            data-bs-toggle="modal" data-bs-target="#deleteEventModal"
-                                            data-form-id="delete-event-{{ event.id }}"
-                                            data-event-title="{{ event.title }}"
-                                            data-registration-count="{{ event.registrations|length }}">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
                                 </form>
                             </div>
                         </td>
@@ -118,8 +109,15 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-4">
-                            No events found. <a href="{{ url_for('main.event_add') }}">Create one</a>.
+                        <td colspan="6" class="py-5">
+                            <div class="empty-state">
+                                <i class="bi bi-calendar-x empty-state__icon"></i>
+                                <div class="empty-state__title">No events found</div>
+                                <div class="empty-state__text">Create your first event to start collecting registrations.</div>
+                                <a href="{{ url_for('main.event_add') }}" class="btn btn-primary btn-sm">
+                                    <i class="bi bi-plus-lg me-1"></i>Create Event
+                                </a>
+                            </div>
                         </td>
                     </tr>
                 {% endif %}
@@ -166,8 +164,13 @@
             </div>
             {% endfor %}
         {% else %}
-            <div class="text-center text-muted py-4">
-                No events found. <a href="{{ url_for('main.event_add') }}">Create one</a>.
+            <div class="empty-state py-5">
+                <i class="bi bi-calendar-x empty-state__icon"></i>
+                <div class="empty-state__title">No events found</div>
+                <div class="empty-state__text">Create your first event to start collecting registrations.</div>
+                <a href="{{ url_for('main.event_add') }}" class="btn btn-primary btn-sm">
+                    <i class="bi bi-plus-lg me-1"></i>Create Event
+                </a>
             </div>
         {% endif %}
     </div>
@@ -245,7 +248,6 @@
         });
     }
 
-    const bulkActionBar = document.getElementById('bulkActionBar');
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllEvents = document.getElementById('selectAllEvents');
 
@@ -254,11 +256,10 @@
     }
 
     function updateBulkUi() {
-        if (!selectedCountEl || !bulkActionBar) return;
+        if (!selectedCountEl) return;
         const boxes = getEventCheckboxes();
         const selected = boxes.filter(b => b.checked).length;
         selectedCountEl.textContent = selected;
-        bulkActionBar.classList.toggle('is-visible', selected > 0);
         if (selectAllEvents) {
             selectAllEvents.checked = boxes.length > 0 && boxes.every(b => b.checked);
             selectAllEvents.indeterminate = selected > 0 && selected < boxes.length;

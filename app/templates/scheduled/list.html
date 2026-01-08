@@ -26,11 +26,6 @@
                     <input type="text" class="form-control" name="search" placeholder="Search scheduled messages" value="{{ search }}">
                 </div>
             </div>
-            <div class="filter-chip-group">
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Active</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">New</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm filter-chip">Failed</button>
-            </div>
             <button type="submit" class="btn btn-secondary">
                 <i class="bi bi-funnel me-1"></i>Apply
             </button>
@@ -40,21 +35,15 @@
 
 {% if pending %}
 <div class="card app-card mb-4">
-    <div class="card-header bg-warning-subtle">
+    <div class="card-header bg-warning-subtle d-flex flex-wrap justify-content-between align-items-center gap-2">
         <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
-    </div>
-    <div class="bulk-action-bar" id="pendingBulkBar">
-        <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-primary"><span id="pendingSelectedCount">0</span> selected</span>
-            <div class="btn-group btn-group-sm" role="group">
+        <div class="d-flex align-items-center gap-3">
+            <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectAllBtn">Select all</button>
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
                 <button type="button" class="btn btn-outline-secondary" id="pendingInvertSelectionBtn">Invert</button>
             </div>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-            <button type="button" class="btn btn-sm btn-outline-secondary" disabled>Reschedule</button>
-            <button type="button" class="btn btn-sm btn-outline-danger" disabled>Cancel</button>
+            <span class="text-muted"><span id="pendingSelectedCount">0</span> selected</span>
         </div>
     </div>
     <div class="table-responsive d-none d-lg-block">
@@ -151,9 +140,17 @@
     </div>
 </div>
 {% else %}
-<div class="alert alert-info mb-4">
-    <i class="bi bi-info-circle me-2"></i>No pending scheduled messages. 
-    <a href="{{ url_for('main.dashboard') }}">Schedule one now</a>.
+<div class="card app-card mb-4">
+    <div class="card-body py-5">
+        <div class="empty-state">
+            <i class="bi bi-clock empty-state__icon"></i>
+            <div class="empty-state__title">No scheduled messages</div>
+            <div class="empty-state__text">Schedule a message to send at a specific time.</div>
+            <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-sm">
+                <i class="bi bi-plus-lg me-1"></i>Schedule Message
+            </a>
+        </div>
+    </div>
 </div>
 {% endif %}
 
@@ -386,7 +383,6 @@
     }
 
     function setupBulkControls(group) {
-        const bulkBar = document.getElementById(`${group}BulkBar`);
         const selectedCountEl = document.getElementById(`${group}SelectedCount`);
         const selectAllCheckbox = document.getElementById(`selectAll${group.charAt(0).toUpperCase()}${group.slice(1)}`);
 
@@ -395,11 +391,10 @@
         }
 
         function updateBulkUi() {
-            if (!selectedCountEl || !bulkBar) return;
+            if (!selectedCountEl) return;
             const boxes = getGroupCheckboxes();
             const selected = boxes.filter(b => b.checked).length;
             selectedCountEl.textContent = selected;
-            bulkBar.classList.toggle('is-visible', selected > 0);
             if (selectAllCheckbox) {
                 selectAllCheckbox.checked = boxes.length > 0 && boxes.every(b => b.checked);
                 selectAllCheckbox.indeterminate = selected > 0 && selected < boxes.length;

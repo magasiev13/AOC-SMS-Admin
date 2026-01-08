@@ -9,6 +9,8 @@ from app import db
 from app.auth import require_roles
 from sqlalchemy.exc import OperationalError
 
+from datetime import datetime, timedelta
+
 from app.models import (
     AppUser,
     CommunityMember,
@@ -60,6 +62,45 @@ def dashboard():
     events = Event.query.order_by(Event.date.desc()).all()
     admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
 
+    def build_chart_data():
+        """Build 7-day delivery trends data for the dashboard chart."""
+        today = datetime.utcnow().date()
+        labels = []
+        sent_data = []
+        failed_data = []
+        
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            labels.append(day.strftime('%b %d'))
+            
+            day_start = datetime.combine(day, datetime.min.time())
+            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time())
+            
+            try:
+                logs = MessageLog.query.filter(
+                    MessageLog.created_at >= day_start,
+                    MessageLog.created_at < day_end
+                ).all()
+                
+                day_sent = sum(log.success_count or 0 for log in logs)
+                day_failed = sum(log.failure_count or 0 for log in logs)
+            except OperationalError:
+                day_sent = 0
+                day_failed = 0
+            
+            sent_data.append(day_sent)
+            failed_data.append(day_failed)
+        
+        if any(sent_data) or any(failed_data):
+            return {
+                'trends': {
+                    'labels': labels,
+                    'sent': sent_data,
+                    'failed': failed_data
+                }
+            }
+        return None
+
     def build_dashboard_context():
         community_count = CommunityMember.query.count()
         event_registration_count = EventRegistration.query.count()
@@ -84,6 +125,8 @@ def dashboard():
             success_rate = round((latest_log.success_count / latest_log.total_recipients) * 100, 1)
             failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
 
+        chart_data = build_chart_data()
+
         return {
             'community_count': community_count,
             'event_registration_count': event_registration_count,
@@ -94,6 +137,7 @@ def dashboard():
             'pending_scheduled_count': pending_scheduled_count,
             'success_rate': success_rate,
             'failure_rate': failure_rate,
+            'chart_data': chart_data,
         }
 
     def render_dashboard():
@@ -106,7 +150,6 @@ def dashboard():
         )
     
     if request.method == 'POST':
-        from datetime import datetime
         message_body = request.form.get('message_body', '').strip()
         target = request.form.get('target', 'community')
         event_id = request.form.get('event_id', type=int)

@@ -1,120 +1,170 @@
 {% extends "base.html" %}
 
-{% block title %}Send Message - SMS Admin{% endblock %}
+{% block title %}Dashboard - SMS Admin{% endblock %}
 
-{% block page_title %}Send Message{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
 
 {% block breadcrumbs %}
-<span>Dashboard</span>
+<span class="live-indicator"><span class="live-indicator__dot"></span> Live</span>
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-xl-10">
+<div class="row">
+    <div class="col-xl-12">
+        <!-- Stats Row -->
         <section class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="bi bi-speedometer2 me-2"></i>Overview</h5>
-                <small class="text-muted">Live system snapshot</small>
-            </div>
             <div class="row g-3">
-                <div class="col-md-6 col-xl-3">
-                    <div class="card app-card h-100">
-                        <div class="card-body">
-                            <div class="text-muted text-uppercase small">Total recipients</div>
-                            <div class="fs-4 fw-semibold">{{ total_recipients }}</div>
-                            <div class="text-muted small">
-                                Community {{ community_count }} • Event registrations {{ event_registration_count }}
-                            </div>
-                            <div class="text-muted small">
-                                Unsubscribed {{ unsubscribed_count }} (suppressed)
-                            </div>
+                <!-- Total Recipients -->
+                <div class="col-sm-6 col-xl-3">
+                    <div class="stat-card stat-card--primary h-100">
+                        <i class="bi bi-people-fill stat-card__icon"></i>
+                        <div class="stat-card__label">Total Recipients</div>
+                        <div class="stat-card__value">{{ total_recipients }}</div>
+                        <div class="stat-card__meta">
+                            {{ community_count }} community • {{ event_registration_count }} events
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="card app-card h-100">
-                        <div class="card-body">
-                            <div class="text-muted text-uppercase small">Last blast status</div>
-                            {% if latest_log %}
-                            <div class="fs-4 fw-semibold">
-                                {% if latest_log.failure_count == 0 %}Delivered{% else %}Partial{% endif %}
-                            </div>
-                            <div class="text-muted small">
-                                {{ latest_log.created_at.strftime('%Y-%m-%d %H:%M UTC') }}
-                            </div>
-                            <div class="text-muted small">
-                                {{ latest_log.success_count }}/{{ latest_log.total_recipients }} delivered
-                            </div>
-                            {% else %}
-                            <div class="fs-4 fw-semibold">No blasts yet</div>
-                            <div class="text-muted small">Send your first message to populate KPIs.</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="card app-card h-100">
-                        <div class="card-body">
-                            <div class="text-muted text-uppercase small">Delivery rate</div>
-                            {% if success_rate is not none %}
-                            <div class="fs-4 fw-semibold">{{ success_rate }}%</div>
-                            <div class="text-muted small">Failures {{ failure_rate }}%</div>
-                            {% else %}
-                            <div class="fs-4 fw-semibold">N/A</div>
-                            <div class="text-muted small">No delivery data yet.</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-6 col-xl-3">
-                    <div class="card app-card h-100">
-                        <div class="card-body">
-                            <div class="text-muted text-uppercase small">Scheduled queue</div>
-                            <div class="fs-4 fw-semibold">{{ pending_scheduled_count }}</div>
-                            <div class="text-muted small">
-                                <a href="{{ url_for('main.scheduled_list') }}" class="text-decoration-none">View scheduled sends</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <div class="card app-card mt-4">
-                <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Quick Links</h6>
+                <!-- Last Blast Status -->
+                <div class="col-sm-6 col-xl-3">
+                    <div class="stat-card stat-card--{% if latest_log and latest_log.failure_count == 0 %}success{% elif latest_log %}warning{% else %}dark{% endif %} h-100">
+                        <i class="bi bi-send-check-fill stat-card__icon"></i>
+                        <div class="stat-card__label">Last Blast</div>
+                        {% if latest_log %}
+                        <div class="stat-card__value">
+                            {% if latest_log.failure_count == 0 %}Delivered{% else %}Partial{% endif %}
+                        </div>
+                        <div class="stat-card__meta">
+                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} sent
+                        </div>
+                        {% else %}
+                        <div class="stat-card__value">—</div>
+                        <div class="stat-card__meta">No blasts sent yet</div>
+                        {% endif %}
+                    </div>
                 </div>
-                <div class="card-body">
-                    <div class="row text-center">
-                        <div class="col-4">
-                            <a href="{{ url_for('main.community_list') }}" class="text-decoration-none">
-                                <i class="bi bi-people fs-4 d-block mb-1"></i>
-                                <small class="text-muted">Community</small>
-                            </a>
+
+                <!-- Delivery Rate with Progress Ring -->
+                <div class="col-sm-6 col-xl-3">
+                    <div class="stat-card stat-card--info h-100">
+                        <i class="bi bi-check-circle-fill stat-card__icon"></i>
+                        <div class="stat-card__label">Delivery Rate</div>
+                        {% if success_rate is not none %}
+                        <div class="stat-card__ring">
+                            <div class="progress-ring">
+                                <svg class="progress-ring__svg" width="64" height="64">
+                                    <circle class="progress-ring__circle-bg" cx="32" cy="32" r="26" stroke-width="5"/>
+                                    <circle class="progress-ring__circle" cx="32" cy="32" r="26" stroke-width="5"
+                                            stroke-dasharray="{{ 163.4 }}"
+                                            stroke-dashoffset="{{ 163.4 - (163.4 * success_rate / 100) }}"/>
+                                </svg>
+                                <span class="progress-ring__text">{{ success_rate|int }}%</span>
+                            </div>
                         </div>
-                        <div class="col-4">
-                            <a href="{{ url_for('main.events_list') }}" class="text-decoration-none">
-                                <i class="bi bi-calendar-event fs-4 d-block mb-1"></i>
-                                <small class="text-muted">Events ({{ events|length }})</small>
-                            </a>
-                        </div>
-                        <div class="col-4">
-                            <a href="{{ url_for('main.logs_list') }}" class="text-decoration-none">
-                                <i class="bi bi-journal-text fs-4 d-block mb-1"></i>
-                                <small class="text-muted">Logs</small>
-                            </a>
+                        <div class="stat-card__meta">{{ failure_rate }}% failed</div>
+                        {% else %}
+                        <div class="stat-card__value">N/A</div>
+                        <div class="stat-card__meta">No data yet</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Scheduled Queue -->
+                <div class="col-sm-6 col-xl-3">
+                    <div class="stat-card stat-card--purple h-100">
+                        <i class="bi bi-clock-fill stat-card__icon"></i>
+                        <div class="stat-card__label">Scheduled</div>
+                        <div class="stat-card__value">{{ pending_scheduled_count }}</div>
+                        <div class="stat-card__meta">
+                            <a href="{{ url_for('main.scheduled_list') }}">View queue →</a>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
 
+        <!-- Charts Row -->
         <section class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="bi bi-send me-2"></i>Send SMS Blast</h5>
-                <small class="text-muted">Action center</small>
+            <div class="row g-3">
+                <!-- Delivery Trends Chart -->
+                <div class="col-lg-8">
+                    <div class="chart-card h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title">
+                                <i class="bi bi-graph-up"></i> Delivery Trends
+                            </h6>
+                            <span class="text-muted small">Last 7 days</span>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="deliveryTrendsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audience Breakdown -->
+                <div class="col-lg-4">
+                    <div class="chart-card h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title">
+                                <i class="bi bi-pie-chart"></i> Audience
+                            </h6>
+                        </div>
+                        <div class="chart-container chart-container--sm">
+                            <canvas id="audienceChart"></canvas>
+                        </div>
+                        <div class="chart-legend">
+                            <div class="chart-legend__item">
+                                <span class="chart-legend__color" style="background: #6366f1"></span>
+                                Community ({{ community_count }})
+                            </div>
+                            <div class="chart-legend__item">
+                                <span class="chart-legend__color" style="background: #8b5cf6"></span>
+                                Events ({{ event_registration_count }})
+                            </div>
+                            <div class="chart-legend__item">
+                                <span class="chart-legend__color" style="background: #e2e8f0"></span>
+                                Unsub ({{ unsubscribed_count }})
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="card app-card">
-                <div class="card-body">
+        </section>
+
+        <!-- Quick Links -->
+        <section class="mb-4">
+            <div class="quick-links">
+                <a href="{{ url_for('main.community_list') }}" class="quick-link">
+                    <i class="bi bi-people quick-link__icon"></i>
+                    <span class="quick-link__label">Community</span>
+                </a>
+                <a href="{{ url_for('main.events_list') }}" class="quick-link">
+                    <i class="bi bi-calendar-event quick-link__icon"></i>
+                    <span class="quick-link__label">Events ({{ events|length }})</span>
+                </a>
+                <a href="{{ url_for('main.scheduled_list') }}" class="quick-link">
+                    <i class="bi bi-clock quick-link__icon"></i>
+                    <span class="quick-link__label">Scheduled</span>
+                </a>
+                <a href="{{ url_for('main.logs_list') }}" class="quick-link">
+                    <i class="bi bi-journal-text quick-link__icon"></i>
+                    <span class="quick-link__label">Logs</span>
+                </a>
+                <a href="{{ url_for('main.unsubscribed_list') }}" class="quick-link">
+                    <i class="bi bi-person-x quick-link__icon"></i>
+                    <span class="quick-link__label">Suppressed</span>
+                </a>
+            </div>
+        </section>
+
+        <!-- Send SMS Section -->
+        <section class="mb-4">
+            <div class="send-card">
+                <div class="send-card__header">
+                    <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
+                </div>
+                <div class="send-card__body">
                     <form method="POST" id="sendForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
@@ -235,40 +285,51 @@
             </div>
         </section>
 
+        <!-- Recent Activity Timeline -->
         <section class="mb-4">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0"><i class="bi bi-activity me-2"></i>Recent Activity</h5>
-                <a href="{{ url_for('main.logs_list') }}" class="text-decoration-none small">View all logs</a>
+            <div class="section-header">
+                <h5 class="section-title"><i class="bi bi-activity"></i> Recent Activity</h5>
+                <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">View all logs</a>
             </div>
-            <div class="card app-card">
-                <div class="card-body p-0">
-                    <ul class="list-group list-group-flush">
-                        {% for log in recent_logs %}
-                        <li class="list-group-item d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-2">
-                            <div>
-                                <div class="fw-semibold">{{ log.message_body|truncate(80) }}</div>
-                                <small class="text-muted">
-                                    {{ log.created_at.strftime('%Y-%m-%d %H:%M UTC') }}
-                                    • {{ log.target|capitalize }}
-                                    {% if log.event %}• {{ log.event.title }}{% endif %}
-                                </small>
-                            </div>
-                            <div class="text-md-end">
-                                <span class="badge bg-success">{{ log.success_count }} sent</span>
-                                {% if log.failure_count %}
-                                <span class="badge bg-danger">{{ log.failure_count }} failed</span>
-                                {% endif %}
-                                <div class="mt-2">
-                                    <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-secondary">View</a>
-                                </div>
-                            </div>
-                        </li>
-                        {% else %}
-                        <li class="list-group-item text-muted">No message activity yet. Send a blast to get started.</li>
-                        {% endfor %}
-                    </ul>
+            
+            {% if recent_logs %}
+            <div class="activity-timeline">
+                {% for log in recent_logs %}
+                <div class="activity-item activity-item--{% if log.failure_count == 0 %}success{% elif log.failure_count < log.success_count %}warning{% else %}danger{% endif %}">
+                    <div class="activity-item__content">
+                        <div class="activity-item__header">
+                            <div class="activity-item__title">{{ log.message_body|truncate(60) }}</div>
+                            <span class="activity-item__time">{{ log.created_at.strftime('%b %d, %H:%M') }}</span>
+                        </div>
+                        <div class="activity-item__meta">
+                            <span class="activity-item__badge activity-item__badge--success">
+                                <i class="bi bi-check-circle"></i> {{ log.success_count }} sent
+                            </span>
+                            {% if log.failure_count %}
+                            <span class="activity-item__badge activity-item__badge--danger">
+                                <i class="bi bi-x-circle"></i> {{ log.failure_count }} failed
+                            </span>
+                            {% endif %}
+                            <span class="activity-item__badge activity-item__badge--info">
+                                {{ log.target|capitalize }}{% if log.event %}: {{ log.event.title }}{% endif %}
+                            </span>
+                            <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary ms-auto">
+                                Details <i class="bi bi-arrow-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="chart-card">
+                <div class="empty-state">
+                    <i class="bi bi-inbox empty-state__icon"></i>
+                    <div class="empty-state__title">No activity yet</div>
+                    <div class="empty-state__text">Send your first SMS blast to see activity here.</div>
                 </div>
             </div>
+            {% endif %}
         </section>
     </div>
 </div>
@@ -427,5 +488,140 @@
     });
 
     sendForm.addEventListener('input', resetValidationState);
+
+    // ===== Chart.js Initialization =====
+    
+    // Chart data from server
+    const chartData = {{ chart_data|tojson|safe if chart_data else '{}' }};
+    
+    // Delivery Trends Chart (Line/Area)
+    const trendsCtx = document.getElementById('deliveryTrendsChart');
+    if (trendsCtx && chartData.trends) {
+        new Chart(trendsCtx, {
+            type: 'line',
+            data: {
+                labels: chartData.trends.labels,
+                datasets: [
+                    {
+                        label: 'Sent',
+                        data: chartData.trends.sent,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: '#10b981',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    },
+                    {
+                        label: 'Failed',
+                        data: chartData.trends.failed,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: '#ef4444',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20,
+                            font: { size: 12, weight: '500' }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleFont: { size: 13, weight: '600' },
+                        bodyFont: { size: 12 },
+                        padding: 12,
+                        cornerRadius: 8,
+                        displayColors: true
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { font: { size: 11 }, color: '#64748b' }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: { font: { size: 11 }, color: '#64748b', stepSize: 1 }
+                    }
+                }
+            }
+        });
+    } else if (trendsCtx) {
+        // No data - show empty state
+        trendsCtx.parentElement.innerHTML = `
+            <div class="empty-state">
+                <i class="bi bi-graph-up empty-state__icon"></i>
+                <div class="empty-state__title">No trend data yet</div>
+                <div class="empty-state__text">Send messages to see delivery trends.</div>
+            </div>
+        `;
+    }
+
+    // Audience Donut Chart
+    const audienceCtx = document.getElementById('audienceChart');
+    if (audienceCtx) {
+        const communityCount = {{ community_count }};
+        const eventCount = {{ event_registration_count }};
+        const unsubCount = {{ unsubscribed_count }};
+        
+        if (communityCount > 0 || eventCount > 0 || unsubCount > 0) {
+            new Chart(audienceCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Community', 'Events', 'Unsubscribed'],
+                    datasets: [{
+                        data: [communityCount, eventCount, unsubCount],
+                        backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],
+                        borderWidth: 0,
+                        hoverOffset: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1e293b',
+                            titleFont: { size: 13, weight: '600' },
+                            bodyFont: { size: 12 },
+                            padding: 12,
+                            cornerRadius: 8
+                        }
+                    }
+                }
+            });
+        } else {
+            audienceCtx.parentElement.innerHTML = `
+                <div class="empty-state">
+                    <i class="bi bi-people empty-state__icon"></i>
+                    <div class="empty-state__text">No recipients yet</div>
+                </div>
+            `;
+        }
+    }
 </script>
 {% endblock %}
