@@ -167,3 +167,17 @@ class ScheduledMessage(db.Model):
     
     def __repr__(self):
         return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'
+
+
+class LoginAttempt(db.Model):
+    """Track failed login attempts for rate limiting across workers."""
+    __tablename__ = 'login_attempts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_ip = db.Column(db.String(45), nullable=False, index=True)
+    attempt_count = db.Column(db.Integer, default=1, nullable=False)
+    first_attempt_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    locked_until = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return f'<LoginAttempt {self.client_ip} count={self.attempt_count}>'

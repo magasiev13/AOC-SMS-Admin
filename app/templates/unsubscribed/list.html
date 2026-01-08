@@ -153,8 +153,33 @@
         </table>
     </div>
 {% if entries %}
-    <div class="card-footer text-muted">
-        Showing {{ entries|length }} contact(s)
+    <div class="card-footer d-flex justify-content-between align-items-center text-muted">
+        <span>Showing {{ entries|length }} of {{ total_count }} contact(s)</span>
+        {% if total_pages > 1 %}
+        <nav aria-label="Suppression list pagination">
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1) }}" aria-label="Previous">
+                        <span aria-hidden="true">&laquo;</span>
+                    </a>
+                </li>
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}
+                    <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                    {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                    <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=p) }}">{{ p }}</a></li>
+                    {% elif p == page - 3 or p == page + 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                    {% endif %}
+                {% endfor %}
+                <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page+1) }}" aria-label="Next">
+                        <span aria-hidden="true">&raquo;</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
     </div>
     {% endif %}
 </div>

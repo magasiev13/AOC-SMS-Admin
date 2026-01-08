@@ -3,6 +3,16 @@ import csv
 import io
 
 
+def escape_like(value: str) -> str:
+    """
+    Escape special LIKE pattern characters (% and _) to prevent
+    SQL injection via wildcard abuse in search queries.
+    """
+    if not value:
+        return value
+    return value.replace('%', r'\%').replace('_', r'\_')
+
+
 def normalize_phone(phone: str) -> str:
     """
     Normalize phone number to E.164-ish format.

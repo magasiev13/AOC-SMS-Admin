@@ -1,9 +1,10 @@
-import time
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 from functools import wraps
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from app.models import AppUser
+from app import db
+from app.models import AppUser, LoginAttempt
 
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
@@ -12,7 +13,6 @@ login_manager.login_message_category = 'warning'
 
 bp = Blueprint('auth', __name__)
 
-_FAILED_LOGINS = {}
 _MAX_LOGIN_ATTEMPTS = 5
 _ATTEMPT_WINDOW_SECONDS = 300
 _LOCKOUT_SECONDS = 600
@@ -32,26 +32,30 @@ def _is_safe_url(target):
 
 def _login_rate_limited():
     client_ip = _get_client_ip()
-    data = _FAILED_LOGINS.get(client_ip)
-    if not data:
+    now = datetime.now(timezone.utc)
+
+    record = LoginAttempt.query.filter_by(client_ip=client_ip).first()
+    if not record:
         return False, None
 
-    now = time.time()
-    locked_until = data.get('locked_until')
-    if locked_until and now < locked_until:
-        return True, locked_until - now
+    if record.locked_until:
+        if now < record.locked_until.replace(tzinfo=timezone.utc):
+            remaining = (record.locked_until.replace(tzinfo=timezone.utc) - now).total_seconds()
+            return True, remaining
+        else:
+            db.session.delete(record)
+            db.session.commit()
+            return False, None
 
-    if locked_until and now >= locked_until:
-        _FAILED_LOGINS.pop(client_ip, None)
+    first_attempt = record.first_attempt_at.replace(tzinfo=timezone.utc)
+    if (now - first_attempt).total_seconds() > _ATTEMPT_WINDOW_SECONDS:
+        db.session.delete(record)
+        db.session.commit()
         return False, None
 
-    first_attempt = data.get('first_attempt', now)
-    if now - first_attempt > _ATTEMPT_WINDOW_SECONDS:
-        _FAILED_LOGINS.pop(client_ip, None)
-        return False, None
-
-    if data.get('count', 0) >= _MAX_LOGIN_ATTEMPTS:
-        _FAILED_LOGINS[client_ip]['locked_until'] = now + _LOCKOUT_SECONDS
+    if record.attempt_count >= _MAX_LOGIN_ATTEMPTS:
+        record.locked_until = now + timedelta(seconds=_LOCKOUT_SECONDS)
+        db.session.commit()
         return True, _LOCKOUT_SECONDS
 
     return False, None
@@ -59,18 +63,30 @@ def _login_rate_limited():
 
 def _record_failed_login():
     client_ip = _get_client_ip()
-    now = time.time()
-    data = _FAILED_LOGINS.get(client_ip)
-    if not data:
-        _FAILED_LOGINS[client_ip] = {'count': 1, 'first_attempt': now}
+    now = datetime.now(timezone.utc)
+
+    record = LoginAttempt.query.filter_by(client_ip=client_ip).first()
+    if not record:
+        record = LoginAttempt(client_ip=client_ip, attempt_count=1, first_attempt_at=now)
+        db.session.add(record)
+        db.session.commit()
         return
 
-    if now - data.get('first_attempt', now) > _ATTEMPT_WINDOW_SECONDS:
-        _FAILED_LOGINS[client_ip] = {'count': 1, 'first_attempt': now}
-        return
+    first_attempt = record.first_attempt_at.replace(tzinfo=timezone.utc)
+    if (now - first_attempt).total_seconds() > _ATTEMPT_WINDOW_SECONDS:
+        record.attempt_count = 1
+        record.first_attempt_at = now
+        record.locked_until = None
+    else:
+        record.attempt_count += 1
 
-    data['count'] = data.get('count', 0) + 1
-    _FAILED_LOGINS[client_ip] = data
+    db.session.commit()
+
+
+def _clear_failed_logins():
+    client_ip = _get_client_ip()
+    LoginAttempt.query.filter_by(client_ip=client_ip).delete()
+    db.session.commit()
 
 
 def require_roles(*roles):
@@ -125,7 +141,7 @@ def login():
         
         if user and user.check_password(password):
             login_user(user, remember=remember)
-            _FAILED_LOGINS.pop(_get_client_ip(), None)
+            _clear_failed_logins()
             if user.must_change_password:
                 return redirect(url_for('main.change_password'))
             next_page = request.args.get('next')

@@ -4,6 +4,7 @@ from rq import get_current_job
 from app import create_app, db
 from app.models import MessageLog
 from app.services.suppression_service import process_failure_details
+from app.services.suppression_backfill import backfill_suppressions
 from app.services.twilio_service import TwilioTransientError, get_twilio_service
 
 
@@ -99,3 +100,10 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
             log.details = json.dumps([{'error': str(exc)}])
             db.session.commit()
             process_failure_details([{'error': str(exc)}], log.id)
+
+
+def backfill_suppressions_job() -> dict:
+    """Run suppression backfill as a background job."""
+    app = create_app(start_scheduler=False)
+    with app.app_context():
+        return backfill_suppressions()

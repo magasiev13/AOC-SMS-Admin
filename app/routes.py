@@ -25,8 +25,7 @@ from app.services.recipient_service import (
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
-from app.services.suppression_backfill import backfill_suppressions
-from app.utils import normalize_phone, validate_phone, parse_recipients_csv
+from app.utils import normalize_phone, validate_phone, parse_recipients_csv, escape_like
 
 bp = Blueprint('main', __name__)
 
@@ -407,10 +406,11 @@ def community_list():
     query = CommunityMember.query
     
     if search:
+        escaped = escape_like(search)
         query = query.filter(
             db.or_(
-                CommunityMember.name.ilike(f'%{search}%'),
-                CommunityMember.phone.ilike(f'%{search}%')
+                CommunityMember.name.ilike(f'%{escaped}%', escape='\\'),
+                CommunityMember.phone.ilike(f'%{escaped}%', escape='\\')
             )
         )
     
@@ -624,11 +624,12 @@ def events_list():
     query = Event.query
 
     if search:
-        pattern = f'%{search}%'
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
         query = query.filter(
             db.or_(
-                Event.title.ilike(pattern),
-                db.cast(Event.date, db.String).ilike(pattern)
+                Event.title.ilike(pattern, escape='\\'),
+                db.cast(Event.date, db.String).ilike(pattern, escape='\\')
             )
         )
 
@@ -709,6 +710,7 @@ def event_edit(event_id):
 
 @bp.route('/events/<int:event_id>/delete', methods=['POST'])
 @login_required
+@require_roles('admin')
 def event_delete(event_id):
     event = Event.query.get_or_404(event_id)
     db.session.delete(event)
@@ -862,12 +864,13 @@ def logs_list():
     query = MessageLog.query
 
     if search:
-        pattern = f'%{search}%'
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
         query = query.outerjoin(Event).filter(
             db.or_(
-                MessageLog.message_body.ilike(pattern),
-                MessageLog.target.ilike(pattern),
-                Event.title.ilike(pattern)
+                MessageLog.message_body.ilike(pattern, escape='\\'),
+                MessageLog.target.ilike(pattern, escape='\\'),
+                Event.title.ilike(pattern, escape='\\')
             )
         )
 
@@ -947,12 +950,13 @@ def scheduled_list():
     query = ScheduledMessage.query
 
     if search:
-        pattern = f'%{search}%'
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
         query = query.outerjoin(Event).filter(
             db.or_(
-                ScheduledMessage.message_body.ilike(pattern),
-                ScheduledMessage.target.ilike(pattern),
-                Event.title.ilike(pattern)
+                ScheduledMessage.message_body.ilike(pattern, escape='\\'),
+                ScheduledMessage.target.ilike(pattern, escape='\\'),
+                Event.title.ilike(pattern, escape='\\')
             )
         )
 
@@ -979,6 +983,7 @@ def scheduled_list():
 
 @bp.route('/scheduled/<int:scheduled_id>/cancel', methods=['POST'])
 @login_required
+@require_roles('admin')
 def scheduled_cancel(scheduled_id):
     scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
     
@@ -994,6 +999,7 @@ def scheduled_cancel(scheduled_id):
 
 @bp.route('/scheduled/<int:scheduled_id>/delete', methods=['POST'])
 @login_required
+@require_roles('admin')
 def scheduled_delete(scheduled_id):
     scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
     db.session.delete(scheduled)
@@ -1041,58 +1047,90 @@ def logs_clear():
 @login_required
 def unsubscribed_list():
     search = request.args.get('search', '').strip()
+    page = request.args.get('page', 1, type=int)
+    per_page = 50
+
     unsubscribed_query = UnsubscribedContact.query
     suppressed_query = SuppressedContact.query
 
     if search:
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
         unsubscribed_query = unsubscribed_query.filter(
             db.or_(
-                UnsubscribedContact.name.ilike(f'%{search}%'),
-                UnsubscribedContact.phone.ilike(f'%{search}%'),
-                UnsubscribedContact.reason.ilike(f'%{search}%'),
-                UnsubscribedContact.source.ilike(f'%{search}%'),
+                UnsubscribedContact.name.ilike(pattern, escape='\\'),
+                UnsubscribedContact.phone.ilike(pattern, escape='\\'),
+                UnsubscribedContact.reason.ilike(pattern, escape='\\'),
+                UnsubscribedContact.source.ilike(pattern, escape='\\'),
             )
         )
         suppressed_query = suppressed_query.filter(
             db.or_(
-                SuppressedContact.phone.ilike(f'%{search}%'),
-                SuppressedContact.reason.ilike(f'%{search}%'),
-                SuppressedContact.category.ilike(f'%{search}%'),
-                SuppressedContact.source.ilike(f'%{search}%'),
+                SuppressedContact.phone.ilike(pattern, escape='\\'),
+                SuppressedContact.reason.ilike(pattern, escape='\\'),
+                SuppressedContact.category.ilike(pattern, escape='\\'),
+                SuppressedContact.source.ilike(pattern, escape='\\'),
             )
         )
 
-    unsubscribed_entries = unsubscribed_query.order_by(UnsubscribedContact.created_at.desc()).all()
-    suppressed_entries = suppressed_query.order_by(SuppressedContact.created_at.desc()).all()
-    combined = [
-        {
-            'name': entry.name,
-            'phone': entry.phone,
-            'reason': entry.reason,
-            'category': 'unsubscribed',
-            'source': entry.source,
-            'created_at': entry.created_at,
-            'entry_type': 'unsubscribed',
-            'id': entry.id,
-        }
-        for entry in unsubscribed_entries
-    ]
-    combined.extend(
-        {
-            'name': None,
-            'phone': entry.phone,
-            'reason': entry.reason,
-            'category': entry.category,
-            'source': entry.source,
-            'created_at': entry.created_at,
-            'entry_type': 'suppressed',
-            'id': entry.id,
-        }
-        for entry in suppressed_entries
-    )
-    combined.sort(key=lambda entry: entry['created_at'] or utc_now(), reverse=True)
+    unsubscribed_count = unsubscribed_query.count()
+    suppressed_count = suppressed_query.count()
+    total_count = unsubscribed_count + suppressed_count
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
 
-    return render_template('unsubscribed/list.html', entries=combined, search=search)
+    offset = (page - 1) * per_page
+    remaining = per_page
+
+    combined = []
+
+    if offset < unsubscribed_count:
+        unsub_to_take = min(remaining, unsubscribed_count - offset)
+        unsubscribed_entries = unsubscribed_query.order_by(
+            UnsubscribedContact.created_at.desc()
+        ).offset(offset).limit(unsub_to_take).all()
+        combined.extend(
+            {
+                'name': entry.name,
+                'phone': entry.phone,
+                'reason': entry.reason,
+                'category': 'unsubscribed',
+                'source': entry.source,
+                'created_at': entry.created_at,
+                'entry_type': 'unsubscribed',
+                'id': entry.id,
+            }
+            for entry in unsubscribed_entries
+        )
+        remaining -= len(unsubscribed_entries)
+
+    if remaining > 0:
+        supp_offset = max(0, offset - unsubscribed_count)
+        suppressed_entries = suppressed_query.order_by(
+            SuppressedContact.created_at.desc()
+        ).offset(supp_offset).limit(remaining).all()
+        combined.extend(
+            {
+                'name': None,
+                'phone': entry.phone,
+                'reason': entry.reason,
+                'category': entry.category,
+                'source': entry.source,
+                'created_at': entry.created_at,
+                'entry_type': 'suppressed',
+                'id': entry.id,
+            }
+            for entry in suppressed_entries
+        )
+
+    return render_template(
+        'unsubscribed/list.html',
+        entries=combined,
+        search=search,
+        page=page,
+        total_pages=total_pages,
+        total_count=total_count,
+    )
 
 
 @bp.route('/unsubscribed/backfill', methods=['POST'])
@@ -1100,23 +1138,19 @@ def unsubscribed_list():
 @require_roles('admin')
 def unsubscribed_backfill():
     try:
-        summary = backfill_suppressions()
-    except Exception:
-        current_app.logger.exception('Backfill suppressions failed')
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'error': 'Backfill failed. Check server logs for details.'}), 500
-        flash('Backfill failed. Check server logs for details.', 'error')
-        return redirect(url_for('main.unsubscribed_list'))
+        from app.queue import get_queue
 
-    message = (
-        f"Backfill complete: {summary['logs']} log(s) scanned, "
-        f"{summary['calls']} log(s) processed, "
-        f"{summary['unsubscribed']} unsubscribed, "
-        f"{summary['suppressed']} suppressed."
-    )
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({'message': message, 'summary': summary})
-    flash(message, 'success')
+        queue = get_queue()
+        job = queue.enqueue('app.tasks.backfill_suppressions_job')
+        message = f"Backfill queued (job {job.id}). Results will appear shortly."
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'message': message, 'job_id': job.id})
+        flash(message, 'success')
+    except Exception:
+        current_app.logger.exception('Failed to queue backfill job')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'error': 'Failed to queue backfill. Check server logs.'}), 500
+        flash('Failed to queue backfill. Check server logs.', 'error')
     return redirect(url_for('main.unsubscribed_list'))
 
 
