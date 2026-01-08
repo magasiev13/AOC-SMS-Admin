@@ -3,7 +3,7 @@ import io
 import json
 from urllib.parse import urljoin, urlparse
 from zoneinfo import ZoneInfo
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, make_response
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, make_response, current_app
 from flask_login import login_required, current_user
 from app import db
 from app.auth import require_roles
@@ -1099,11 +1099,22 @@ def unsubscribed_list():
 @login_required
 @require_roles('admin')
 def unsubscribed_backfill():
-    summary = backfill_suppressions()
-    flash(
-        f"Backfill complete: {summary['logs']} log(s) scanned, {summary['calls']} log(s) processed.",
-        'success',
+    try:
+        summary = backfill_suppressions()
+    except Exception:
+        current_app.logger.exception('Backfill suppressions failed')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'error': 'Backfill failed. Check server logs for details.'}), 500
+        flash('Backfill failed. Check server logs for details.', 'error')
+        return redirect(url_for('main.unsubscribed_list'))
+
+    message = (
+        f"Backfill complete: {summary['logs']} log(s) scanned, "
+        f"{summary['calls']} log(s) processed."
     )
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'message': message, 'summary': summary})
+    flash(message, 'success')
     return redirect(url_for('main.unsubscribed_list'))
 
 

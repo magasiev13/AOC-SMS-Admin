@@ -12,9 +12,9 @@
 
 {% block page_actions %}
 {% if can_manage_unsubscribed %}
-<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline">
+<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline" data-backfill-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-outline-warning" onclick="return confirm('Run suppression backfill from message logs?');">
+    <button type="submit" class="btn btn-outline-warning" data-backfill-button>
         <i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs
     </button>
 </form>
@@ -31,6 +31,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="alert alert-success d-none" role="status" aria-live="polite" id="backfillAlert"></div>
 <div class="card app-card mb-4">
     <div class="card-body">
         <form method="GET" class="filter-bar" data-table-loading-target="unsubscribedTable">
@@ -127,4 +128,74 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const backfillForm = document.querySelector('[data-backfill-form]');
+    const backfillAlert = document.getElementById('backfillAlert');
+
+    if (backfillForm) {
+        const backfillButton = backfillForm.querySelector('[data-backfill-button]');
+
+        backfillForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            if (!confirm('Run suppression backfill from message logs?')) {
+                return;
+            }
+
+            if (backfillButton) {
+                backfillButton.disabled = true;
+                backfillButton.classList.add('disabled');
+                backfillButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Running backfill...';
+            }
+
+            if (backfillAlert) {
+                backfillAlert.classList.add('d-none');
+                backfillAlert.textContent = '';
+            }
+
+            try {
+                const response = await fetch(backfillForm.action, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: new FormData(backfillForm),
+                });
+
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload?.error || 'Backfill failed.');
+                }
+
+                if (backfillAlert) {
+                    backfillAlert.textContent = payload.message;
+                    backfillAlert.classList.remove('d-none');
+                    backfillAlert.classList.remove('alert-danger');
+                    backfillAlert.classList.add('alert-success');
+                } else {
+                    alert(payload.message);
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Backfill failed.';
+                if (backfillAlert) {
+                    backfillAlert.textContent = message;
+                    backfillAlert.classList.remove('d-none');
+                    backfillAlert.classList.remove('alert-success');
+                    backfillAlert.classList.add('alert-danger');
+                } else {
+                    alert(message);
+                }
+            } finally {
+                if (backfillButton) {
+                    backfillButton.disabled = false;
+                    backfillButton.classList.remove('disabled');
+                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs';
+                }
+            }
+        });
+    }
+</script>
 {% endblock %}
