@@ -16,7 +16,10 @@ def send_scheduled_messages(app):
         from flask import current_app
         from app import db
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
-        from app.services.recipient_service import filter_unsubscribed_recipients
+        from app.services.recipient_service import (
+            filter_suppressed_recipients,
+            filter_unsubscribed_recipients,
+        )
         from app.services.suppression_service import process_failure_details
         from app.services.twilio_service import get_twilio_service
         
@@ -98,6 +101,13 @@ def send_scheduled_messages(app):
                     recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
                     if skipped:
                         print(f"[Scheduler] Skipped {len(skipped)} unsubscribed recipient(s) for message {scheduled.id}")
+
+                    recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
+                    if suppressed_skipped:
+                        print(
+                            "[Scheduler] Skipped "
+                            f"{len(suppressed_skipped)} suppressed recipient(s) for message {scheduled.id}"
+                        )
 
                 if not recipient_data:
                     scheduled.status = 'failed'
