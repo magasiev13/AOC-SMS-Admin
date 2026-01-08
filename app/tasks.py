@@ -3,6 +3,7 @@ import time
 from rq import get_current_job
 from app import create_app, db
 from app.models import MessageLog
+from app.services.suppression_service import process_failure_details
 from app.services.twilio_service import TwilioTransientError, get_twilio_service
 
 
@@ -75,7 +76,9 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
             log.details = json.dumps(combined_details)
             log.status = 'sent' if log.failure_count == 0 else 'failed'
             db.session.commit()
+            process_failure_details(combined_details, log.id)
         except TwilioTransientError as exc:
+            combined_details = existing_details
             if exc.results:
                 combined_details = existing_details + exc.results.get('details', [])
                 log.total_recipients = len(recipient_data)
@@ -86,10 +89,13 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
             if _should_mark_failed():
                 log.status = 'failed'
                 error_detail = {'error': str(exc)}
-                log.details = json.dumps((combined_details if exc.results else existing_details) + [error_detail])
+                combined_details = (combined_details if exc.results else existing_details) + [error_detail]
+                log.details = json.dumps(combined_details)
                 db.session.commit()
+            process_failure_details(combined_details, log.id)
             raise
         except Exception as exc:
             log.status = 'failed'
             log.details = json.dumps([{'error': str(exc)}])
             db.session.commit()
+            process_failure_details([{'error': str(exc)}], log.id)
