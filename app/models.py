@@ -16,6 +16,7 @@ class AppUser(UserMixin, db.Model):
     username = db.Column(db.String(80), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(30), nullable=False, default='admin')
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
 
     def set_password(self, password: str) -> None:
