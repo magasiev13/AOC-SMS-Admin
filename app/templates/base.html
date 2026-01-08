@@ -31,7 +31,7 @@
                     <i class="bi bi-people me-2"></i>Community
                 </a>
                 <a class="app-nav-link {% if 'unsubscribed' in request.endpoint %}active{% endif %}" href="{{ url_for('main.unsubscribed_list') }}">
-                    <i class="bi bi-person-x me-2"></i>Unsubscribed
+                    <i class="bi bi-person-x me-2"></i>Suppression
                 </a>
                 <a class="app-nav-link {% if 'event' in request.endpoint %}active{% endif %}" href="{{ url_for('main.events_list') }}">
                     <i class="bi bi-calendar-event me-2"></i>Events
@@ -86,7 +86,7 @@
                                 <i class="bi bi-people me-2"></i>Community
                             </a>
                             <a class="app-nav-link {% if 'unsubscribed' in request.endpoint %}active{% endif %}" href="{{ url_for('main.unsubscribed_list') }}">
-                                <i class="bi bi-person-x me-2"></i>Unsubscribed
+                                <i class="bi bi-person-x me-2"></i>Suppression
                             </a>
                             <a class="app-nav-link {% if 'event' in request.endpoint %}active{% endif %}" href="{{ url_for('main.events_list') }}">
                                 <i class="bi bi-calendar-event me-2"></i>Events

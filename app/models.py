@@ -60,6 +60,7 @@ class UnsubscribedContact(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False, unique=True)
+    reason = db.Column(db.Text, nullable=True)
     source = db.Column(db.String(50), nullable=False, default='manual')
     created_at = db.Column(db.DateTime, default=utc_now)
 

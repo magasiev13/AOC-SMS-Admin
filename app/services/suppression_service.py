@@ -123,6 +123,8 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 existing = UnsubscribedContact.query.filter_by(phone=normalized_phone).first()
                 if existing:
                     existing.source = 'message_failure'
+                    if error_text:
+                        existing.reason = error_text
                     if detail.get('name') and not existing.name:
                         existing.name = detail.get('name')
                 else:
@@ -130,6 +132,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                         UnsubscribedContact(
                             name=detail.get('name'),
                             phone=normalized_phone,
+                            reason=error_text or None,
                             source='message_failure',
                         )
                     )

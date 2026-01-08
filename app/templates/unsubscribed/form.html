@@ -32,6 +32,10 @@
                         <input type="tel" class="form-control" id="phone" name="phone" placeholder="+1 (555) 555-5555" required>
                     </div>
                     <div class="mb-3">
+                        <label for="reason" class="form-label">Reason (optional)</label>
+                        <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is unsubscribed"></textarea>
+                    </div>
+                    <div class="mb-3">
                         <label for="source" class="form-label">Source</label>
                         <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
                         <div class="form-text">Helps track why the number is suppressed (e.g., manual, event:123).</div>

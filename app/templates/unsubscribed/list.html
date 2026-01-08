@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Unsubscribed Contacts - SMS Admin{% endblock %}
+{% block title %}Suppression - SMS Admin{% endblock %}
 
-{% block page_title %}Unsubscribed Contacts{% endblock %}
+{% block page_title %}Suppression{% endblock %}
 
 {% set can_manage_unsubscribed = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Unsubscribed</span>
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Suppression</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -31,7 +31,7 @@
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, or source..."
+                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, reason, category, or source..."
                            value="{{ search }}">
                 </div>
             </div>
@@ -49,6 +49,8 @@
                 <tr>
                     <th>Name</th>
                     <th>Phone</th>
+                    <th>Reason</th>
+                    <th>Category</th>
                     <th>Source</th>
                     <th>Added</th>
                     {% if can_manage_unsubscribed %}
@@ -57,29 +59,37 @@
                 </tr>
             </thead>
             <tbody class="table-data">
-                {% if unsubscribed %}
-                    {% for entry in unsubscribed %}
+                {% if entries %}
+                    {% for entry in entries %}
                     <tr>
                         <td>{{ entry.name or '-' }}</td>
                         <td><code>{{ entry.phone }}</code></td>
-                        <td><span class="badge bg-light text-dark">{{ entry.source }}</span></td>
+                        <td>{{ entry.reason or '-' }}</td>
+                        <td>
+                            <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
+                        </td>
+                        <td><span class="badge bg-light text-dark">{{ entry.source or '-' }}</span></td>
                         <td>{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
                         {% if can_manage_unsubscribed %}
                         <td>
+                            {% if entry.entry_type == 'unsubscribed' %}
                             <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </form>
+                            {% else %}
+                            <span class="text-muted small">Managed via suppression</span>
+                            {% endif %}
                         </td>
                         {% endif %}
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="{{ 5 if can_manage_unsubscribed else 4 }}" class="text-center text-muted py-4">
-                            No unsubscribed contacts found.
+                        <td colspan="{{ 7 if can_manage_unsubscribed else 6 }}" class="text-center text-muted py-4">
+                            No suppressed or unsubscribed contacts found.
                             {% if can_manage_unsubscribed %}
                             <a href="{{ url_for('main.unsubscribed_add') }}">Add one</a> or
                             <a href="{{ url_for('main.unsubscribed_import') }}">import from CSV</a>.
@@ -93,6 +103,8 @@
                 <tr>
                     <td><span class="skeleton-block w-75"></span></td>
                     <td><span class="skeleton-block w-50"></span></td>
+                    <td><span class="skeleton-block w-75"></span></td>
+                    <td><span class="skeleton-block w-50"></span></td>
                     <td><span class="skeleton-block w-50"></span></td>
                     <td><span class="skeleton-block w-50"></span></td>
                     {% if can_manage_unsubscribed %}
@@ -103,9 +115,9 @@
             </tbody>
         </table>
     </div>
-    {% if unsubscribed %}
+{% if entries %}
     <div class="card-footer text-muted">
-        Showing {{ unsubscribed|length }} contact(s)
+        Showing {{ entries|length }} contact(s)
     </div>
     {% endif %}
 </div>

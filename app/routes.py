@@ -9,7 +9,17 @@ from app import db
 from app.auth import require_roles
 from sqlalchemy.exc import OperationalError
 
-from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage, UnsubscribedContact
+from app.models import (
+    AppUser,
+    CommunityMember,
+    Event,
+    EventRegistration,
+    MessageLog,
+    ScheduledMessage,
+    SuppressedContact,
+    UnsubscribedContact,
+    utc_now,
+)
 from app.services.recipient_service import (
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
@@ -888,7 +898,34 @@ def log_detail(log_id):
         return redirect(url_for('main.logs_list'))
 
     details = json.loads(log.details) if log.details else []
-    return render_template('logs/detail.html', log=log, details=details)
+    phones = set()
+    for detail in details:
+        raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
+        normalized = normalize_phone(raw_phone) if raw_phone else ''
+        detail['normalized_phone'] = normalized
+        if normalized:
+            phones.add(normalized)
+
+    suppression_status = {}
+    if phones:
+        unsubscribed_phones = {
+            entry.phone for entry in UnsubscribedContact.query.filter(UnsubscribedContact.phone.in_(phones))
+        }
+        suppressed_phones = {
+            entry.phone for entry in SuppressedContact.query.filter(SuppressedContact.phone.in_(phones))
+        }
+        for phone in phones:
+            if phone in unsubscribed_phones:
+                suppression_status[phone] = 'unsubscribed'
+            elif phone in suppressed_phones:
+                suppression_status[phone] = 'suppressed'
+
+    return render_template(
+        'logs/detail.html',
+        log=log,
+        details=details,
+        suppression_status=suppression_status,
+    )
 
 
 # Scheduled Messages
@@ -1003,19 +1040,58 @@ def logs_clear():
 @login_required
 def unsubscribed_list():
     search = request.args.get('search', '').strip()
-    query = UnsubscribedContact.query
+    unsubscribed_query = UnsubscribedContact.query
+    suppressed_query = SuppressedContact.query
 
     if search:
-        query = query.filter(
+        unsubscribed_query = unsubscribed_query.filter(
             db.or_(
                 UnsubscribedContact.name.ilike(f'%{search}%'),
                 UnsubscribedContact.phone.ilike(f'%{search}%'),
-                UnsubscribedContact.source.ilike(f'%{search}%')
+                UnsubscribedContact.reason.ilike(f'%{search}%'),
+                UnsubscribedContact.source.ilike(f'%{search}%'),
+            )
+        )
+        suppressed_query = suppressed_query.filter(
+            db.or_(
+                SuppressedContact.phone.ilike(f'%{search}%'),
+                SuppressedContact.reason.ilike(f'%{search}%'),
+                SuppressedContact.category.ilike(f'%{search}%'),
+                SuppressedContact.source.ilike(f'%{search}%'),
             )
         )
 
-    unsubscribed = query.order_by(UnsubscribedContact.created_at.desc()).all()
-    return render_template('unsubscribed/list.html', unsubscribed=unsubscribed, search=search)
+    unsubscribed_entries = unsubscribed_query.order_by(UnsubscribedContact.created_at.desc()).all()
+    suppressed_entries = suppressed_query.order_by(SuppressedContact.created_at.desc()).all()
+    combined = [
+        {
+            'name': entry.name,
+            'phone': entry.phone,
+            'reason': entry.reason,
+            'category': 'unsubscribed',
+            'source': entry.source,
+            'created_at': entry.created_at,
+            'entry_type': 'unsubscribed',
+            'id': entry.id,
+        }
+        for entry in unsubscribed_entries
+    ]
+    combined.extend(
+        {
+            'name': None,
+            'phone': entry.phone,
+            'reason': entry.reason,
+            'category': entry.category,
+            'source': entry.source,
+            'created_at': entry.created_at,
+            'entry_type': 'suppressed',
+            'id': entry.id,
+        }
+        for entry in suppressed_entries
+    )
+    combined.sort(key=lambda entry: entry['created_at'] or utc_now(), reverse=True)
+
+    return render_template('unsubscribed/list.html', entries=combined, search=search)
 
 
 @bp.route('/unsubscribed/add', methods=['GET', 'POST'])
@@ -1025,6 +1101,7 @@ def unsubscribed_add():
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
         phone = request.form.get('phone', '').strip()
+        reason = request.form.get('reason', '').strip() or None
         source = request.form.get('source', '').strip() or 'manual'
         next_url = request.form.get('next')
 
@@ -1044,7 +1121,7 @@ def unsubscribed_add():
                 return redirect(next_url)
             return redirect(url_for('main.unsubscribed_list'))
 
-        entry = UnsubscribedContact(name=name, phone=phone, source=source)
+        entry = UnsubscribedContact(name=name, phone=phone, reason=reason, source=source)
         db.session.add(entry)
         db.session.commit()
         flash('Added to unsubscribed list.', 'success')
@@ -1112,9 +1189,15 @@ def unsubscribed_export():
     entries = UnsubscribedContact.query.order_by(UnsubscribedContact.created_at.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['name', 'phone', 'source', 'created_at'])
+    writer.writerow(['name', 'phone', 'reason', 'source', 'created_at'])
     for entry in entries:
-        writer.writerow([entry.name or '', entry.phone, entry.source, entry.created_at.isoformat() if entry.created_at else ''])
+        writer.writerow([
+            entry.name or '',
+            entry.phone,
+            entry.reason or '',
+            entry.source,
+            entry.created_at.isoformat() if entry.created_at else '',
+        ])
 
     response = make_response(output.getvalue())
     response.headers['Content-Type'] = 'text/csv'
