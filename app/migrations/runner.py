@@ -30,6 +30,25 @@ def _migration_files() -> list[Migration]:
     return migrations
 
 
+def _non_sqlite_migration_message(engine: Engine, migrations: list[Migration]) -> str:
+    migration_list = ", ".join(migration.version for migration in migrations)
+    return (
+        "Non-SQLite database detected "
+        f"({engine.url.drivername}) while SQLite-only migrations exist. "
+        "Run equivalent migrations with Alembic or switch to SQLite before "
+        "starting the app. "
+        f"Found migrations: {migration_list}."
+    )
+
+
+def check_migrations_compatibility(engine: Engine, logger) -> None:
+    migrations = _migration_files()
+    if migrations and not engine.url.drivername.startswith("sqlite"):
+        message = _non_sqlite_migration_message(engine, migrations)
+        logger.error(message)
+        raise RuntimeError(message)
+
+
 def _load_migration(migration: Migration):
     spec = importlib.util.spec_from_file_location(f"app.migrations.{migration.name}", migration.path)
     if not spec or not spec.loader:
@@ -110,8 +129,9 @@ def run_pending_migrations(engine: Engine, logger) -> list[str]:
         logger.info("No migrations found. Skipping migration runner.")
         return []
     if not engine.url.drivername.startswith("sqlite"):
-        logger.info("Non-SQLite database detected; skipping SQLite migrations.")
-        return []
+        message = _non_sqlite_migration_message(engine, migrations)
+        logger.error(message)
+        raise RuntimeError(message)
 
     applied_versions: set[str] = set()
     applied_now: list[str] = []
