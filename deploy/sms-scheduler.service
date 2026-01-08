@@ -6,7 +6,7 @@ After=network.target
 User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
-Environment="PATH=/opt/sms-admin/venv/bin"
+Environment="PATH=/opt/sms-admin/venv/bin:/usr/local/bin:/usr/bin:/bin"
 EnvironmentFile=/opt/sms-admin/.env
 ExecStartPre=/usr/local/bin/dbdoctor --apply
 ExecStart=/opt/sms-admin/venv/bin/python -m app.scheduler_runner

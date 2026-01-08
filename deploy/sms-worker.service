@@ -6,7 +6,7 @@ After=network.target redis.service
 User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
-Environment="PATH=/opt/sms-admin/venv/bin"
+Environment="PATH=/opt/sms-admin/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="SCHEDULER_ENABLED=0"
 Environment="RQ_QUEUE_NAME=sms"
 EnvironmentFile=/opt/sms-admin/.env
