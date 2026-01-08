@@ -80,6 +80,7 @@
                             <th>Name</th>
                             <th>Phone</th>
                             <th>Status</th>
+                            <th>Suppression</th>
                             <th>Error</th>
                         </tr>
                     </thead>
@@ -97,6 +98,15 @@
                                 {% endif %}
                             </td>
                             <td>
+                                {% if not d.success and suppression_status.get(d.normalized_phone) %}
+                                <span class="badge bg-warning text-dark text-uppercase">
+                                    {{ suppression_status.get(d.normalized_phone) }}
+                                </span>
+                                {% else %}
+                                -
+                                {% endif %}
+                            </td>
+                            <td>
                                 {% if d.error %}
                                 <small class="text-danger">{{ d.error }}</small>
                                 {% else %}
@@ -107,7 +117,7 @@
                         {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="4" class="text-center text-muted py-3">No details available.</td>
+                            <td colspan="5" class="text-center text-muted py-3">No details available.</td>
                         </tr>
                         {% endif %}
                     </tbody>
