@@ -1,7 +1,10 @@
 from datetime import datetime as dt, timezone
+
+from sqlalchemy.orm import validates
 from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
 from app import db
+from app.utils import normalize_phone
 
 
 def utc_now():
@@ -62,6 +65,30 @@ class UnsubscribedContact(db.Model):
 
     def __repr__(self):
         return f'<UnsubscribedContact {self.phone}>'
+
+
+class SuppressedContact(db.Model):
+    """Phone numbers that should not receive messages for specific reasons."""
+    __tablename__ = 'suppressed_contacts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    phone = db.Column(db.String(20), nullable=False, unique=True)
+    reason = db.Column(db.Text, nullable=True)
+    category = db.Column(db.String(20), nullable=False)
+    source = db.Column(db.String(50), nullable=True)
+    source_type = db.Column(db.String(50), nullable=True)
+    source_message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+
+    message_log = db.relationship('MessageLog')
+
+    @validates('phone')
+    def _normalize_phone(self, key, value):
+        return normalize_phone(value)
+
+    def __repr__(self):
+        return f'<SuppressedContact {self.phone} category={self.category}>'
 
 
 class Event(db.Model):
