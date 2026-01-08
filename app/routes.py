@@ -249,6 +249,7 @@ def users_add():
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
         password = request.form.get('password', '')
+        must_change_password = request.form.get('must_change_password', 'on') == 'on'
 
         if not username:
             flash('Username is required.', 'error')
@@ -267,7 +268,7 @@ def users_add():
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=None)
 
-        user = AppUser(username=username, role=role)
+        user = AppUser(username=username, role=role, must_change_password=must_change_password)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
@@ -288,6 +289,7 @@ def users_edit(user_id):
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
         password = request.form.get('password', '')
+        must_change_password = request.form.get('must_change_password') == 'on'
 
         if not username:
             flash('Username is required.', 'error')
@@ -310,6 +312,7 @@ def users_edit(user_id):
 
         user.username = username
         user.role = role
+        user.must_change_password = must_change_password
         if password:
             user.set_password(password)
 
@@ -340,6 +343,40 @@ def users_delete(user_id):
     db.session.commit()
     flash('User deleted successfully.', 'success')
     return redirect(url_for('main.users_list'))
+
+
+@bp.route('/account/password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not current_password:
+            flash('Current password is required.', 'error')
+            return render_template('auth/change_password.html')
+
+        if not new_password:
+            flash('New password is required.', 'error')
+            return render_template('auth/change_password.html')
+
+        if new_password != confirm_password:
+            flash('New password and confirmation do not match.', 'error')
+            return render_template('auth/change_password.html')
+
+        if not current_user.check_password(current_password):
+            flash('Current password is incorrect.', 'error')
+            return render_template('auth/change_password.html')
+
+        current_user.set_password(new_password)
+        current_user.must_change_password = False
+        db.session.commit()
+
+        flash('Password updated successfully.', 'success')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template('auth/change_password.html')
 
 
 # Community Members Management
