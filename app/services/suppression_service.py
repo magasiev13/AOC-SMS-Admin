@@ -92,6 +92,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
         'community_member_deletes': 0,
         'event_registration_deletes': 0,
         'skipped_no_phone': 0,
+        'skipped_invalid': 0,
     }
 
     def get_phone(entry: dict) -> str:
@@ -101,6 +102,9 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
 
     with db.session.begin():
         for detail in details:
+            if not isinstance(detail, dict):
+                counts['skipped_invalid'] += 1
+                continue
             success = detail.get('success')
             status = detail.get('status')
             error_text = detail.get('error') or detail.get('message') or ''
