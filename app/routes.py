@@ -249,7 +249,7 @@ def users_add():
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
         password = request.form.get('password', '')
-        must_change_password = request.form.get('must_change_password', 'on') == 'on'
+        must_change_password = request.form.get('must_change_password') == 'on'
 
         if not username:
             flash('Username is required.', 'error')
