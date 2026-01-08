@@ -17,6 +17,7 @@ def send_scheduled_messages(app):
         from app import db
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
         from app.services.recipient_service import filter_unsubscribed_recipients
+        from app.services.suppression_service import process_failure_details
         from app.services.twilio_service import get_twilio_service
         
         now = datetime.utcnow()
@@ -127,6 +128,8 @@ def send_scheduled_messages(app):
                 scheduled.sent_at = now
                 scheduled.message_log_id = log.id
                 db.session.commit()
+
+                process_failure_details(result.get('details', []), log.id)
                 
                 print(f"[Scheduler] Sent scheduled message {scheduled.id}: {result['success_count']}/{result['total']} successful")
                 
