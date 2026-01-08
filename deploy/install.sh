@@ -38,6 +38,8 @@ sudo "${DBDOCTOR_DEST}" --apply
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms.service" /etc/systemd/system/sms.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-worker.service" /etc/systemd/system/sms-worker.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-scheduler.service" /etc/systemd/system/sms-scheduler.service
+sudo install -d /opt/sms-admin/deploy
+sudo install -m 0755 "${REPO_ROOT}/deploy/run_worker.sh" /opt/sms-admin/deploy/run_worker.sh
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now sms sms-worker sms-scheduler
