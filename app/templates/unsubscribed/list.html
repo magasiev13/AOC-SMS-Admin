@@ -220,13 +220,12 @@
                 }
 
                 if (backfillAlert) {
-                    backfillAlert.textContent = payload.message;
+                    backfillAlert.textContent = payload.message + ' Refreshing...';
                     backfillAlert.classList.remove('d-none');
                     backfillAlert.classList.remove('alert-danger');
                     backfillAlert.classList.add('alert-success');
-                } else {
-                    alert(payload.message);
                 }
+                setTimeout(function() { window.location.reload(); }, 1500);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Backfill failed.';
                 if (backfillAlert) {
