@@ -49,7 +49,19 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
         total_recipients = len(recipient_data)
         start_index = len(details)
 
-        twilio = get_twilio_service()
+        try:
+            twilio = get_twilio_service()
+        except Exception as exc:
+            details.append({
+                'phone': '',
+                'name': '',
+                'success': False,
+                'error': str(exc),
+            })
+            failure_count += 1
+            log.status = 'failed'
+            _persist_progress(log, total_recipients, success_count, failure_count, details)
+            return
 
         for recipient in recipient_data[start_index:]:
             phone = recipient.get('phone')
