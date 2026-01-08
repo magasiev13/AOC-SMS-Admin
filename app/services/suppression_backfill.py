@@ -1,13 +1,8 @@
-#!/usr/bin/env python3
-import argparse
-
-from app import create_app
-from app.services.suppression_backfill import backfill_suppressions
 import json
+from typing import Optional
 
 from flask import current_app
 
-from app import create_app
 from app.models import MessageLog
 from app.services.suppression_service import process_failure_details
 
@@ -24,7 +19,8 @@ def _load_details(log: MessageLog) -> list:
     return details
 
 
-def backfill_suppressions(batch_size: int) -> None:
+def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None) -> dict:
+    log = logger or current_app.logger
     last_id = 0
     batch_number = 0
     total_logs = 0
@@ -46,13 +42,13 @@ def backfill_suppressions(batch_size: int) -> None:
         batch_calls = 0
         batch_details = 0
 
-        for log in batch:
+        for log_entry in batch:
             batch_logs += 1
-            details = _load_details(log)
+            details = _load_details(log_entry)
             if not details:
                 continue
             batch_details += len(details)
-            process_failure_details(details, log.id)
+            process_failure_details(details, log_entry.id)
             batch_calls += 1
 
         last_id = batch[-1].id
@@ -60,7 +56,7 @@ def backfill_suppressions(batch_size: int) -> None:
         total_calls += batch_calls
         total_details += batch_details
 
-        current_app.logger.info(
+        log.info(
             "Backfill suppressions batch=%s logs=%s calls=%s details=%s",
             batch_number,
             batch_logs,
@@ -68,7 +64,7 @@ def backfill_suppressions(batch_size: int) -> None:
             batch_details,
         )
 
-    current_app.logger.info(
+    log.info(
         "Backfill suppressions complete batches=%s logs=%s calls=%s details=%s",
         batch_number,
         total_logs,
@@ -76,21 +72,9 @@ def backfill_suppressions(batch_size: int) -> None:
         total_details,
     )
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Backfill suppression records from message logs.")
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=500,
-        help="Number of MessageLog rows to process per batch.",
-    )
-    args = parser.parse_args()
-
-    app = create_app(run_startup_tasks=False, start_scheduler=False)
-    with app.app_context():
-        backfill_suppressions(args.batch_size)
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        'batches': batch_number,
+        'logs': total_logs,
+        'calls': total_calls,
+        'details': total_details,
+    }

@@ -25,6 +25,7 @@ from app.services.recipient_service import (
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
+from app.services.suppression_backfill import backfill_suppressions
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv
 
 bp = Blueprint('main', __name__)
@@ -1092,6 +1093,18 @@ def unsubscribed_list():
     combined.sort(key=lambda entry: entry['created_at'] or utc_now(), reverse=True)
 
     return render_template('unsubscribed/list.html', entries=combined, search=search)
+
+
+@bp.route('/unsubscribed/backfill', methods=['POST'])
+@login_required
+@require_roles('admin')
+def unsubscribed_backfill():
+    summary = backfill_suppressions()
+    flash(
+        f"Backfill complete: {summary['logs']} log(s) scanned, {summary['calls']} log(s) processed.",
+        'success',
+    )
+    return redirect(url_for('main.unsubscribed_list'))
 
 
 @bp.route('/unsubscribed/add', methods=['GET', 'POST'])

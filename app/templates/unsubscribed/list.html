@@ -12,6 +12,12 @@
 
 {% block page_actions %}
 {% if can_manage_unsubscribed %}
+<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-outline-warning" onclick="return confirm('Run suppression backfill from message logs?');">
+        <i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs
+    </button>
+</form>
 <a href="{{ url_for('main.unsubscribed_import') }}" class="btn btn-outline-primary">
     <i class="bi bi-upload me-1"></i>Import CSV
 </a>
