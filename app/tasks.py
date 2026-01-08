@@ -1,4 +1,5 @@
 import json
+import time
 from rq import get_current_job
 from app import create_app, db
 from app.models import MessageLog
@@ -10,6 +11,29 @@ def _should_mark_failed() -> bool:
     if job is None:
         return True
     return job.retries_left == 0
+
+
+def _load_details(log: MessageLog) -> list:
+    if not log.details:
+        return []
+    try:
+        return json.loads(log.details)
+    except json.JSONDecodeError:
+        return []
+
+
+def _persist_progress(
+    log: MessageLog,
+    total_recipients: int,
+    success_count: int,
+    failure_count: int,
+    details: list,
+) -> None:
+    log.total_recipients = total_recipients
+    log.success_count = success_count
+    log.failure_count = failure_count
+    log.details = json.dumps(details)
+    db.session.commit()
 
 
 def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: float = 0.1) -> None:
