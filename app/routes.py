@@ -10,7 +10,11 @@ from app.auth import require_roles
 from sqlalchemy.exc import OperationalError
 
 from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage, UnsubscribedContact
-from app.services.recipient_service import filter_unsubscribed_recipients, get_unsubscribed_phone_set
+from app.services.recipient_service import (
+    filter_suppressed_recipients,
+    filter_unsubscribed_recipients,
+    get_unsubscribed_phone_set,
+)
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv
 
 bp = Blueprint('main', __name__)
@@ -182,6 +186,10 @@ def dashboard():
             recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
             if skipped:
                 flash(f'Skipped {len(skipped)} unsubscribed recipient(s).', 'warning')
+
+            recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
+            if suppressed_skipped:
+                flash(f'Skipped {len(suppressed_skipped)} suppressed recipient(s).', 'warning')
         
         if not recipient_data:
             if test_mode:

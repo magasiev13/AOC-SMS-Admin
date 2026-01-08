@@ -3,7 +3,7 @@ from typing import Literal
 from flask import current_app
 
 from app import db
-from app.models import SuppressedContact, UnsubscribedContact, utc_now
+from app.models import CommunityMember, EventRegistration, SuppressedContact, UnsubscribedContact, utc_now
 from app.utils import normalize_phone
 
 
@@ -89,11 +89,15 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
         'soft_fail': 0,
         'unsubscribed_upserts': 0,
         'suppressed_upserts': 0,
+        'community_member_deletes': 0,
+        'event_registration_deletes': 0,
         'skipped_no_phone': 0,
     }
 
     def get_phone(entry: dict) -> str:
         return entry.get('phone') or entry.get('to') or entry.get('recipient') or ''
+
+    suppressed_phones = set()
 
     with db.session.begin():
         for detail in details:
@@ -151,10 +155,20 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                         )
                     )
                 counts['suppressed_upserts'] += 1
+                suppressed_phones.add(normalized_phone)
+
+        if suppressed_phones:
+            counts['community_member_deletes'] = CommunityMember.query.filter(
+                CommunityMember.phone.in_(suppressed_phones)
+            ).delete(synchronize_session=False)
+            counts['event_registration_deletes'] = EventRegistration.query.filter(
+                EventRegistration.phone.in_(suppressed_phones)
+            ).delete(synchronize_session=False)
 
     current_app.logger.info(
         "Processed failure details: total=%s failed=%s opt_out=%s hard_fail=%s soft_fail=%s "
-        "unsubscribed_upserts=%s suppressed_upserts=%s skipped_no_phone=%s",
+        "unsubscribed_upserts=%s suppressed_upserts=%s community_member_deletes=%s "
+        "event_registration_deletes=%s skipped_no_phone=%s",
         counts['total'],
         counts['failed'],
         counts['opt_out'],
@@ -162,6 +176,8 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
         counts['soft_fail'],
         counts['unsubscribed_upserts'],
         counts['suppressed_upserts'],
+        counts['community_member_deletes'],
+        counts['event_registration_deletes'],
         counts['skipped_no_phone'],
     )
 
