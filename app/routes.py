@@ -1235,8 +1235,58 @@ def unsubscribed_export():
 @login_required
 @require_roles('admin')
 def unsubscribed_delete(entry_id):
-    entry = UnsubscribedContact.query.get_or_404(entry_id)
+    entry = UnsubscribedContact.query.get(entry_id)
+    if entry is None:
+        flash('Entry already deleted or not found.', 'warning')
+        return redirect(url_for('main.unsubscribed_list'))
     db.session.delete(entry)
     db.session.commit()
     flash('Removed from unsubscribed list.', 'success')
+    return redirect(url_for('main.unsubscribed_list'))
+
+
+@bp.route('/unsubscribed/bulk-delete', methods=['POST'])
+@login_required
+@require_roles('admin')
+def unsubscribed_bulk_delete():
+    raw_unsub_ids = request.form.getlist('unsubscribed_ids')
+    raw_supp_ids = request.form.getlist('suppressed_ids')
+
+    unsub_ids = []
+    for raw in raw_unsub_ids:
+        try:
+            unsub_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    supp_ids = []
+    for raw in raw_supp_ids:
+        try:
+            supp_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    unsub_ids = sorted(set(unsub_ids))
+    supp_ids = sorted(set(supp_ids))
+
+    if not unsub_ids and not supp_ids:
+        flash('No entries selected.', 'warning')
+        return redirect(url_for('main.unsubscribed_list'))
+
+    deleted_unsub = 0
+    deleted_supp = 0
+
+    if unsub_ids:
+        deleted_unsub = UnsubscribedContact.query.filter(
+            UnsubscribedContact.id.in_(unsub_ids)
+        ).delete(synchronize_session=False)
+
+    if supp_ids:
+        deleted_supp = SuppressedContact.query.filter(
+            SuppressedContact.id.in_(supp_ids)
+        ).delete(synchronize_session=False)
+
+    db.session.commit()
+    total = deleted_unsub + deleted_supp
+    flash(f'Deleted {total} entry/entries ({deleted_unsub} unsubscribed, {deleted_supp} suppressed).', 'success')
     return redirect(url_for('main.unsubscribed_list'))
