@@ -48,8 +48,14 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
     if run_startup_tasks:
         # Create database tables and run migrations
         with app.app_context():
+            from app.migrations.runner import (
+                check_migrations_compatibility,
+                inspect_migrations,
+                run_pending_migrations,
+            )
+
+            check_migrations_compatibility(db.engine, app.logger)
             db.create_all()
-            from app.migrations.runner import inspect_migrations, run_pending_migrations
 
             run_pending_migrations(db.engine, app.logger)
             migration_report = inspect_migrations(db.engine)
