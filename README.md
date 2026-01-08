@@ -145,17 +145,20 @@ sudo /opt/sms-admin/deploy/install.sh
 
 ### 6. Configure Environment Variables
 
+The installer creates `/opt/sms-admin/.env` as `root:smsadmin` with `660` permissions so
+members of the `smsadmin` group can update it. If your deploy user is not in that group,
+either add them or edit the file via `sudo`.
+
 ```bash
-# Create .env file (readable only by smsadmin)
-sudo -u smsadmin bash -c 'cat > /opt/sms-admin/.env << EOF
+# Create .env file (root:smsadmin, group-writable)
+sudo install -m 660 -o root -g smsadmin /dev/null /opt/sms-admin/.env
+sudo tee /opt/sms-admin/.env >/dev/null << 'EOF'
 TWILIO_ACCOUNT_SID=your_account_sid_here
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_FROM_NUMBER=+1234567890
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 FLASK_ENV=production
-EOF'
-
-sudo chmod 600 /opt/sms-admin/.env
+EOF
 ```
 
 ### 7. Initialize Database

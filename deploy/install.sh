@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBDOCTOR_SRC="${REPO_ROOT}/bin/dbdoctor"
 DBDOCTOR_DEST="${DBDOCTOR_DEST:-/usr/local/bin/dbdoctor}"
 ENV_FILE="/opt/sms-admin/.env"
+DEPLOY_USER="${SUDO_USER:-$(id -un)}"
 DEFAULT_REDIS_URL="redis://localhost:6379/0"
 DEFAULT_RQ_QUEUE_NAME="sms"
 
@@ -19,7 +20,12 @@ echo "Installed dbdoctor to ${DBDOCTOR_DEST}"
 
 sudo touch "${ENV_FILE}"
 sudo chown root:smsadmin "${ENV_FILE}"
-sudo chmod 640 "${ENV_FILE}"
+sudo chmod 660 "${ENV_FILE}"
+
+if ! id -nG "${DEPLOY_USER}" | tr ' ' '\n' | grep -qx smsadmin; then
+  sudo usermod -aG smsadmin "${DEPLOY_USER}"
+  echo "Added ${DEPLOY_USER} to smsadmin group for .env access."
+fi
 
 ensure_env_key() {
   local key="$1"
