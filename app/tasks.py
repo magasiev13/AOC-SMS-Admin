@@ -43,58 +43,53 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
         if not log:
             raise ValueError(f"MessageLog {log_id} not found")
 
-        details = _load_details(log)
-        success_count = sum(1 for detail in details if detail.get('success'))
-        failure_count = sum(1 for detail in details if not detail.get('success'))
-        total_recipients = len(recipient_data)
-        start_index = len(details)
-
-        twilio = get_twilio_service()
-
-        for recipient in recipient_data[start_index:]:
-            phone = recipient.get('phone')
-            name = recipient.get('name', '')
-
+        existing_details = []
+        if log.details:
             try:
-                result = twilio.send_message(phone, final_message, raise_on_transient=True)
-            except TwilioTransientError as exc:
-                if _should_mark_failed():
-                    details.append({
-                        'phone': phone,
-                        'name': name,
-                        'success': False,
-                        'error': str(exc),
-                    })
-                    failure_count += 1
-                    log.status = 'failed'
-                _persist_progress(log, total_recipients, success_count, failure_count, details)
-                raise
-            except Exception as exc:
-                details.append({
-                    'phone': phone,
-                    'name': name,
-                    'success': False,
-                    'error': str(exc),
-                })
-                failure_count += 1
+                existing_details = json.loads(log.details)
+            except json.JSONDecodeError:
+                existing_details = []
+        if not isinstance(existing_details, list):
+            existing_details = []
+
+        existing_success = sum(1 for detail in existing_details if detail.get('success') is True)
+        existing_failure = sum(1 for detail in existing_details if detail.get('success') is False)
+        start_index = len(existing_details)
+        remaining_recipients = recipient_data[start_index:]
+
+        if not remaining_recipients:
+            log.total_recipients = len(recipient_data)
+            log.success_count = existing_success
+            log.failure_count = existing_failure
+            log.status = 'sent' if existing_failure == 0 else 'failed'
+            db.session.commit()
+            return
+
+        try:
+            twilio = get_twilio_service()
+            result = twilio.send_bulk(remaining_recipients, final_message, delay=delay, raise_on_transient=True)
+            combined_details = existing_details + result['details']
+            log.total_recipients = len(recipient_data)
+            log.success_count = existing_success + result['success_count']
+            log.failure_count = existing_failure + result['failure_count']
+            log.details = json.dumps(combined_details)
+            log.status = 'sent' if log.failure_count == 0 else 'failed'
+            db.session.commit()
+        except TwilioTransientError as exc:
+            if exc.results:
+                combined_details = existing_details + exc.results.get('details', [])
+                log.total_recipients = len(recipient_data)
+                log.success_count = existing_success + exc.results.get('success_count', 0)
+                log.failure_count = existing_failure + exc.results.get('failure_count', 0)
+                log.details = json.dumps(combined_details)
+                db.session.commit()
+            if _should_mark_failed():
                 log.status = 'failed'
-                _persist_progress(log, total_recipients, success_count, failure_count, details)
-                return
-
-            details.append({
-                'phone': phone,
-                'name': name,
-                'success': result['success'],
-                'error': result.get('error'),
-            })
-
-            if result['success']:
-                success_count += 1
-            else:
-                failure_count += 1
-
-            if delay > 0:
-                time.sleep(delay)
-
-        log.status = 'sent' if failure_count == 0 else 'failed'
-        _persist_progress(log, total_recipients, success_count, failure_count, details)
+                error_detail = {'error': str(exc)}
+                log.details = json.dumps((combined_details if exc.results else existing_details) + [error_detail])
+                db.session.commit()
+            raise
+        except Exception as exc:
+            log.status = 'failed'
+            log.details = json.dumps([{'error': str(exc)}])
+            db.session.commit()

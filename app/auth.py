@@ -7,7 +7,7 @@ from app.models import AppUser
 
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
-login_manager.login_message = 'Please log in to access this page.'
+login_manager.login_message = None
 login_manager.login_message_category = 'warning'
 
 bp = Blueprint('auth', __name__)
@@ -86,6 +86,22 @@ def require_roles(*roles):
     return decorator
 
 
+@bp.before_app_request
+def enforce_password_change():
+    if not current_user.is_authenticated:
+        return None
+    if not current_user.must_change_password:
+        return None
+
+    endpoint = request.endpoint or ""
+    if endpoint.startswith("static"):
+        return None
+    if endpoint in {"auth.login", "auth.logout", "main.change_password"}:
+        return None
+
+    return redirect(url_for("main.change_password"))
+
+
 @login_manager.user_loader
 def load_user(user_id):
     """Load user by ID."""
@@ -110,6 +126,8 @@ def login():
         if user and user.check_password(password):
             login_user(user, remember=remember)
             _FAILED_LOGINS.pop(_get_client_ip(), None)
+            if user.must_change_password:
+                return redirect(url_for('main.change_password'))
             next_page = request.args.get('next')
             if next_page and _is_safe_url(next_page):
                 return redirect(next_page)

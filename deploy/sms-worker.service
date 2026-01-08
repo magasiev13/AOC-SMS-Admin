@@ -6,11 +6,11 @@ After=network.target redis.service
 User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
-Environment="PATH=/opt/sms-admin/venv/bin"
 Environment="SCHEDULER_ENABLED=0"
 Environment="RQ_QUEUE_NAME=sms"
 EnvironmentFile=/opt/sms-admin/.env
-ExecStart=/opt/sms-admin/venv/bin/rq worker --url ${REDIS_URL} ${RQ_QUEUE_NAME}
+ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
+ExecStart=/bin/bash /opt/sms-admin/deploy/run_worker.sh
 Restart=on-failure
 RestartSec=5
 

@@ -7,6 +7,8 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app import db
 from app.auth import require_roles
+from sqlalchemy.exc import OperationalError
+
 from app.models import AppUser, CommunityMember, Event, EventRegistration, MessageLog, ScheduledMessage, UnsubscribedContact
 from app.services.recipient_service import filter_unsubscribed_recipients, get_unsubscribed_phone_set
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv
@@ -49,8 +51,18 @@ def dashboard():
         event_registration_count = EventRegistration.query.count()
         total_recipients = community_count + event_registration_count
         unsubscribed_count = UnsubscribedContact.query.count()
-        latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
-        recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+        latest_log = None
+        recent_logs = []
+        try:
+            latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
+            recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+        except OperationalError as exc:
+            from flask import current_app
+            db.session.rollback()
+            current_app.logger.warning(
+                'MessageLog query failed due to schema mismatch: %s',
+                exc,
+            )
         pending_scheduled_count = ScheduledMessage.query.filter_by(status='pending').count()
         success_rate = None
         failure_rate = None
@@ -237,6 +249,7 @@ def users_add():
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
         password = request.form.get('password', '')
+        must_change_password = request.form.get('must_change_password') == 'on'
 
         if not username:
             flash('Username is required.', 'error')
@@ -255,7 +268,7 @@ def users_add():
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=None)
 
-        user = AppUser(username=username, role=role)
+        user = AppUser(username=username, role=role, must_change_password=must_change_password)
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
@@ -276,6 +289,7 @@ def users_edit(user_id):
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
         password = request.form.get('password', '')
+        must_change_password = request.form.get('must_change_password') == 'on'
 
         if not username:
             flash('Username is required.', 'error')
@@ -298,6 +312,7 @@ def users_edit(user_id):
 
         user.username = username
         user.role = role
+        user.must_change_password = must_change_password
         if password:
             user.set_password(password)
 
@@ -328,6 +343,40 @@ def users_delete(user_id):
     db.session.commit()
     flash('User deleted successfully.', 'success')
     return redirect(url_for('main.users_list'))
+
+
+@bp.route('/account/password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        current_password = request.form.get('current_password', '')
+        new_password = request.form.get('new_password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not current_password:
+            flash('Current password is required.', 'error')
+            return render_template('auth/change_password.html')
+
+        if not new_password:
+            flash('New password is required.', 'error')
+            return render_template('auth/change_password.html')
+
+        if new_password != confirm_password:
+            flash('New password and confirmation do not match.', 'error')
+            return render_template('auth/change_password.html')
+
+        if not current_user.check_password(current_password):
+            flash('Current password is incorrect.', 'error')
+            return render_template('auth/change_password.html')
+
+        current_user.set_password(new_password)
+        current_user.must_change_password = False
+        db.session.commit()
+
+        flash('Password updated successfully.', 'success')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template('auth/change_password.html')
 
 
 # Community Members Management
@@ -803,14 +852,33 @@ def logs_list():
             )
         )
 
-    logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    try:
+        logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+    except OperationalError as exc:
+        from flask import current_app
+        current_app.logger.warning(
+            'MessageLog list query failed due to schema mismatch: %s',
+            exc,
+        )
+        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        logs = []
     return render_template('logs/list.html', logs=logs, search=search)
 
 
 @bp.route('/logs/<int:log_id>')
 @login_required
 def log_detail(log_id):
-    log = MessageLog.query.get_or_404(log_id)
+    try:
+        log = MessageLog.query.get_or_404(log_id)
+    except OperationalError as exc:
+        from flask import current_app
+        current_app.logger.warning(
+            'MessageLog detail query failed due to schema mismatch: %s',
+            exc,
+        )
+        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        return redirect(url_for('main.logs_list'))
+
     details = json.loads(log.details) if log.details else []
     return render_template('logs/detail.html', log=log, details=details)
 
