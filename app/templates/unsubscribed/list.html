@@ -250,7 +250,7 @@
                     backfillAlert.classList.remove('alert-danger');
                     backfillAlert.classList.add('alert-success');
                 }
-                setTimeout(function() { window.location.reload(); }, 1500);
+                setTimeout(function() { window.location.reload(); }, 1000);
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Backfill failed.';
                 if (backfillAlert) {
