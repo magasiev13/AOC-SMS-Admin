@@ -94,11 +94,13 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
     
     # Start background scheduler
     scheduler_setting = app.config.get('SCHEDULER_ENABLED')
-    scheduler_reason = "explicit override" if start_scheduler is not None else "configuration"
     if start_scheduler is None:
-        start_scheduler = scheduler_setting
+        start_scheduler = os.environ.get("SCHEDULER_RUNNER") == "1"
+        scheduler_reason = "SCHEDULER_RUNNER flag"
+    else:
+        scheduler_reason = "explicit override"
 
-    if start_scheduler:
+    if start_scheduler and scheduler_setting:
         app.logger.info(
             "Scheduler enabled (SCHEDULER_ENABLED=%s) via %s; starting background scheduler.",
             scheduler_setting,
@@ -106,11 +108,24 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
         )
         from app.services.scheduler_service import init_scheduler
         init_scheduler(app)
-    else:
+    elif start_scheduler and not scheduler_setting:
         app.logger.info(
-            "Scheduler disabled (SCHEDULER_ENABLED=%s) via %s; running web app only.",
-            scheduler_setting,
+            "Scheduler runner requested via %s, but SCHEDULER_ENABLED=%s; not starting.",
             scheduler_reason,
+            scheduler_setting,
         )
+    else:
+        if scheduler_setting:
+            app.logger.warning(
+                "Scheduler enabled (SCHEDULER_ENABLED=%s) but not started (%s).",
+                scheduler_setting,
+                scheduler_reason,
+            )
+        else:
+            app.logger.info(
+                "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only (%s).",
+                scheduler_setting,
+                scheduler_reason,
+            )
     
     return app
