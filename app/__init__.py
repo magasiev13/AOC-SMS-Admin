@@ -88,7 +88,7 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                     admin_username = app.config.get('ADMIN_USERNAME', 'admin')
                     password_hash = admin_password
                     if not admin_password.startswith(('pbkdf2:', 'scrypt:')):
-                        password_hash = generate_password_hash(admin_password)
+                        password_hash = generate_password_hash(admin_password, method='pbkdf2:sha256')
 
                     admin_user = AppUser(
                         username=admin_username,

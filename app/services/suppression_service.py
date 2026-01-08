@@ -100,7 +100,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
 
     suppressed_phones = set()
 
-    with db.session.begin():
+    try:
         for detail in details:
             if not isinstance(detail, dict):
                 counts['skipped_invalid'] += 1
@@ -141,6 +141,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                         )
                     )
                 counts['unsubscribed_upserts'] += 1
+                suppressed_phones.add(normalized_phone)
             elif category == 'hard_fail':
                 existing = SuppressedContact.query.filter_by(phone=normalized_phone).first()
                 if existing:
@@ -171,6 +172,11 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
             counts['event_registration_deletes'] = EventRegistration.query.filter(
                 EventRegistration.phone.in_(suppressed_phones)
             ).delete(synchronize_session=False)
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
 
     current_app.logger.info(
         "Processed failure details: total=%s failed=%s opt_out=%s hard_fail=%s soft_fail=%s "
