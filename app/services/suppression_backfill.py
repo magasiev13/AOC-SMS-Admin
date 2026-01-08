@@ -14,9 +14,13 @@ def _load_details(log: MessageLog) -> list:
         details = json.loads(log.details)
     except json.JSONDecodeError:
         return []
-    if not isinstance(details, list):
-        return []
-    return details
+    if isinstance(details, list):
+        return details
+    if isinstance(details, dict):
+        candidate = details.get('details') or details.get('results')
+        if isinstance(candidate, list):
+            return candidate
+    return []
 
 
 def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None) -> dict:
@@ -26,6 +30,8 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
     total_logs = 0
     total_calls = 0
     total_details = 0
+    total_unsubscribed = 0
+    total_suppressed = 0
 
     while True:
         batch = (
@@ -41,6 +47,8 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
         batch_logs = 0
         batch_calls = 0
         batch_details = 0
+        batch_unsubscribed = 0
+        batch_suppressed = 0
 
         for log_entry in batch:
             batch_logs += 1
@@ -48,28 +56,36 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
             if not details:
                 continue
             batch_details += len(details)
-            process_failure_details(details, log_entry.id)
+            result = process_failure_details(details, log_entry.id)
+            batch_unsubscribed += result.get('unsubscribed_upserts', 0)
+            batch_suppressed += result.get('suppressed_upserts', 0)
             batch_calls += 1
 
         last_id = batch[-1].id
         total_logs += batch_logs
         total_calls += batch_calls
         total_details += batch_details
+        total_unsubscribed += batch_unsubscribed
+        total_suppressed += batch_suppressed
 
         log.info(
-            "Backfill suppressions batch=%s logs=%s calls=%s details=%s",
+            "Backfill suppressions batch=%s logs=%s calls=%s details=%s unsubscribed=%s suppressed=%s",
             batch_number,
             batch_logs,
             batch_calls,
             batch_details,
+            batch_unsubscribed,
+            batch_suppressed,
         )
 
     log.info(
-        "Backfill suppressions complete batches=%s logs=%s calls=%s details=%s",
+        "Backfill suppressions complete batches=%s logs=%s calls=%s details=%s unsubscribed=%s suppressed=%s",
         batch_number,
         total_logs,
         total_calls,
         total_details,
+        total_unsubscribed,
+        total_suppressed,
     )
 
     return {
@@ -77,4 +93,6 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
         'logs': total_logs,
         'calls': total_calls,
         'details': total_details,
+        'unsubscribed': total_unsubscribed,
+        'suppressed': total_suppressed,
     }
