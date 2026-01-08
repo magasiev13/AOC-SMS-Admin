@@ -152,7 +152,7 @@ either add them or edit the file via `sudo`.
 ```bash
 # Create .env file (root:smsadmin, group-writable)
 sudo install -m 660 -o root -g smsadmin /dev/null /opt/sms-admin/.env
-sudo tee /opt/sms-admin/.env >/dev/null << 'EOF'
+sudo tee /opt/sms-admin/.env >/dev/null << EOF
 TWILIO_ACCOUNT_SID=your_account_sid_here
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_FROM_NUMBER=+1234567890
