@@ -18,7 +18,7 @@ signal.signal(signal.SIGINT, _handle_shutdown)
 
 
 def main():
-    create_app()
+    create_app(start_scheduler=True)
 
     while not _shutdown_requested:
         time.sleep(1)
