@@ -927,6 +927,7 @@ a:focus-visible {
   border-radius: var(--radius-lg);
   box-shadow: var(--elevation-1);
   padding: var(--space-4);
+  overflow: visible;
 }
 
 .chart-card__header {
