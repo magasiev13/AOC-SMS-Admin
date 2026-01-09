@@ -31,26 +31,10 @@
 </div>
 
 <div class="card app-card">
-    {% if logs %}
-    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
-            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
-        </div>
-        <div class="bulk-selection-actions" id="bulkSelectionActions">
-            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
-        </div>
-    </div>
-    {% endif %}
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover table-sticky-header mb-0 table-loading" id="logsTable">
             <thead class="table-light">
                 <tr>
-                    <th width="40">
-                        {% if logs %}
-                        <input class="form-check-input" type="checkbox" id="selectAllLogs" aria-label="Select all logs">
-                        {% endif %}
-                    </th>
                     <th>Date</th>
                     <th>Target</th>
                     <th>Message</th>
@@ -62,9 +46,6 @@
                 {% if logs %}
                 {% for log in logs %}
                 <tr>
-                    <td>
-                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
-                    </td>
                     <td>{{ log.created_at|localtime }}</td>
                     <td>
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
@@ -106,7 +87,7 @@
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="6" class="py-5">
+                    <td colspan="5" class="py-5">
                         <div class="empty-state">
                             <i class="bi bi-journal-x empty-state__icon"></i>
                             <div class="empty-state__title">No message logs yet</div>
@@ -122,7 +103,6 @@
             <tbody class="table-skeleton-body" aria-hidden="true">
                 {% for _ in range(5) %}
                 <tr>
-                    <td><span class="skeleton-block" style="width: 1rem;"></span></td>
                     <td><span class="skeleton-block w-50"></span></td>
                     <td><span class="skeleton-block w-25"></span></td>
                     <td><span class="skeleton-block w-75"></span></td>
@@ -150,7 +130,6 @@
                         </div>
                         <div class="text-muted small">{{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}</div>
                     </div>
-                    <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                     <button type="button" class="btn btn-sm btn-outline-primary"
@@ -232,79 +211,3 @@
 {% endif %}
 {% endblock %}
 
-{% block scripts %}
-<script>
-    const bulkActionBar = document.getElementById('bulkActionBar');
-    const selectedCountEl = document.getElementById('selectedCount');
-    const selectAllLogs = document.getElementById('selectAllLogs');
-    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
-
-    function isDesktopView() {
-        return window.matchMedia('(min-width: 992px)').matches;
-    }
-
-    function getLogCheckboxes() {
-        const container = isDesktopView()
-            ? document.querySelector('.table-responsive.d-lg-block')
-            : document.querySelector('.card-list.d-lg-none');
-        if (!container) {
-            return [];
-        }
-        return Array.from(container.querySelectorAll('.js-select-row'));
-    }
-
-    function updateBulkUi() {
-        if (!selectedCountEl) return;
-        const boxes = getLogCheckboxes();
-        const selected = boxes.filter(b => b.checked).length;
-        selectedCountEl.textContent = selected;
-        if (bulkSelectionActions) {
-            bulkSelectionActions.classList.toggle('is-visible', selected > 0);
-        }
-        if (bulkActionBar) {
-            bulkActionBar.classList.toggle('is-visible', selected > 0);
-        }
-        if (selectAllLogs) {
-            if (isDesktopView()) {
-                selectAllLogs.checked = boxes.length > 0 && boxes.every(b => b.checked);
-                selectAllLogs.indeterminate = selected > 0 && selected < boxes.length;
-            } else {
-                selectAllLogs.checked = false;
-                selectAllLogs.indeterminate = false;
-            }
-        }
-    }
-
-    if (selectAllLogs) {
-        selectAllLogs.addEventListener('change', function() {
-            const boxes = getLogCheckboxes();
-            boxes.forEach(b => { b.checked = selectAllLogs.checked; });
-            updateBulkUi();
-        });
-    }
-
-    const selectAllBtn = document.getElementById('selectAllBtn');
-    if (selectAllBtn) {
-        selectAllBtn.addEventListener('click', function() {
-            const boxes = getLogCheckboxes();
-            boxes.forEach(b => { b.checked = true; });
-            updateBulkUi();
-        });
-    }
-
-    const selectNoneBtn = document.getElementById('selectNoneBtn');
-    if (selectNoneBtn) {
-        selectNoneBtn.addEventListener('click', function() {
-            const boxes = getLogCheckboxes();
-            boxes.forEach(b => { b.checked = false; });
-            updateBulkUi();
-        });
-    }
-
-    window.addEventListener('resize', updateBulkUi);
-
-    Array.from(document.querySelectorAll('.js-select-row'))
-        .forEach(b => b.addEventListener('change', updateBulkUi));
-    updateBulkUi();
-</script>
-{% endblock %}
