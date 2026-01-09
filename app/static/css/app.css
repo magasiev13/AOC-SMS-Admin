@@ -957,7 +957,17 @@ a:focus-visible {
 }
 
 .chart-container--sm {
-  height: 180px;
+  height: 200px;
+  padding: var(--space-2);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chart-container--sm canvas {
+  max-width: 100% !important;
+  max-height: 100% !important;
 }
 
 /* Activity Timeline */
