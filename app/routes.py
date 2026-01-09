@@ -9,7 +9,7 @@ from app import db
 from app.auth import require_roles
 from sqlalchemy.exc import OperationalError
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models import (
     AppUser,
@@ -64,7 +64,13 @@ def dashboard():
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""
-        today = datetime.utcnow().date()
+        tz = None
+        try:
+            tz = ZoneInfo(app_timezone)
+        except Exception:
+            tz = timezone.utc
+
+        today = datetime.now(tz).date()
         labels = []
         sent_data = []
         failed_data = []
@@ -73,8 +79,10 @@ def dashboard():
             day = today - timedelta(days=i)
             labels.append(day.strftime('%b %d'))
             
-            day_start = datetime.combine(day, datetime.min.time())
-            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time())
+            day_start_local = datetime.combine(day, datetime.min.time(), tzinfo=tz)
+            day_end_local = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+            day_start = day_start_local.astimezone(timezone.utc).replace(tzinfo=None)
+            day_end = day_end_local.astimezone(timezone.utc).replace(tzinfo=None)
             
             try:
                 logs = MessageLog.query.filter(
@@ -175,8 +183,6 @@ def dashboard():
                 return render_dashboard()
             
             try:
-                from datetime import timezone
-
                 tz_name = client_timezone or app_timezone
                 tz = None
                 try:
