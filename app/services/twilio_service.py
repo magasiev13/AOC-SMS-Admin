@@ -1,5 +1,6 @@
 import time
 import json
+from typing import Optional
 from flask import current_app
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
@@ -8,7 +9,7 @@ from twilio.base.exceptions import TwilioRestException
 class TwilioTransientError(Exception):
     """Transient Twilio error that should trigger a retry."""
 
-    def __init__(self, message: str, results: dict | None = None, failed_index: int | None = None):
+    def __init__(self, message: str, results: Optional[dict] = None, failed_index: Optional[int] = None):
         super().__init__(message)
         self.results = results
         self.failed_index = failed_index

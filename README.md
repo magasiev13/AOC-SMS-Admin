@@ -186,16 +186,41 @@ sudo systemctl start sms
 sudo systemctl status sms
 ```
 
-### 9b. Setup Scheduler Service (for scheduled messages)
+### 9b. Setup Scheduler Timer (for scheduled messages)
+
+The scheduler uses a **systemd timer** (not a long-running daemon) to reliably process scheduled messages every 60 seconds. This approach is more robust because:
+- Each invocation is independent — no background threads that can die silently
+- If the scheduler crashes, systemd invokes it again on the next tick
+- Clear, auditable logs per run
 
 ```bash
+# Copy service and timer files
 sudo cp /opt/sms-admin/deploy/sms-scheduler.service /etc/systemd/system/
+sudo cp /opt/sms-admin/deploy/sms-scheduler.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable sms-scheduler
-sudo systemctl start sms-scheduler
 
-# Check status
-sudo systemctl status sms-scheduler
+# Enable and start the timer (NOT the service directly)
+sudo systemctl enable --now sms-scheduler.timer
+
+# Check timer status
+sudo systemctl status sms-scheduler.timer
+sudo systemctl list-timers sms-scheduler.timer
+```
+
+**Troubleshooting scheduled messages:**
+
+```bash
+# View scheduler logs (shows each run with counts)
+journalctl -u sms-scheduler.service -f
+
+# Check when timer last ran and next run time
+systemctl list-timers sms-scheduler.timer
+
+# Manually trigger the scheduler (for testing)
+sudo systemctl start sms-scheduler.service
+
+# Check if timer is enabled
+systemctl is-enabled sms-scheduler.timer
 ```
 
 ### 9c. Database Migration Checks
