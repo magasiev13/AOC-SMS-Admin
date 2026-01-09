@@ -21,7 +21,7 @@
                         <div class="stat-card__label">Total Recipients</div>
                         <div class="stat-card__value">{{ total_recipients }}</div>
                         <div class="stat-card__meta">
-                            {{ community_count }} community • {{ event_registration_count }} events
+                            {{ community_count }} community • {{ event_registration_count }} RSVPs
                         </div>
                     </div>
                 </div>
@@ -115,7 +115,7 @@
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #8b5cf6"></span>
-                                Events ({{ event_registration_count }})
+                                Event RSVPs ({{ event_registration_count }})
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #e2e8f0"></span>
@@ -597,7 +597,7 @@
             new Chart(audienceCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Community', 'Events', 'Unsubscribed'],
+                    labels: ['Community', 'Event RSVPs', 'Unsubscribed'],
                     datasets: [{
                         data: [communityCount, eventCount, unsubCount],
                         backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],
