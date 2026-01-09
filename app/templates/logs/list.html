@@ -69,7 +69,7 @@
                     <td>
                         <input class="form-check-input js-select-row" type="checkbox" aria-label="Select log">
                     </td>
-                    <td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td>
+                    <td>{{ log.created_at|localtime }}</td>
                     <td>
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
                             {{ log.target }}
@@ -143,7 +143,7 @@
             <div class="card-list-item">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
-                        <h6 class="mb-1">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</h6>
+                        <h6 class="mb-1">{{ log.created_at|localtime }}</h6>
                         <div class="text-muted small">
                             {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
                         </div>

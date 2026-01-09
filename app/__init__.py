@@ -1,8 +1,11 @@
 import os
-from flask import Flask
+from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, timezone
+from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_wtf import CSRFProtect
 from werkzeug.security import generate_password_hash
@@ -17,6 +20,27 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
     @app.context_processor
     def inject_app_version():
         return {"app_version": os.environ.get("APP_VERSION", "dev")}
+    
+    @app.template_filter('localtime')
+    def localtime_filter(utc_dt, fmt='%Y-%m-%d %H:%M'):
+        """Convert UTC datetime to user's local timezone."""
+        if not utc_dt:
+            return '-'
+        
+        app_timezone = app.config.get('APP_TIMEZONE', 'UTC')
+        client_tz_raw = request.cookies.get('client_timezone', '')
+        client_tz = unquote(client_tz_raw).strip() if client_tz_raw else ''
+        display_tz = client_tz or app_timezone
+        
+        try:
+            tz = ZoneInfo(display_tz)
+        except Exception:
+            tz = timezone.utc
+        
+        if utc_dt.tzinfo is None:
+            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+        
+        return utc_dt.astimezone(tz).strftime(fmt)
     
     # Load configuration
     from app.config import Config

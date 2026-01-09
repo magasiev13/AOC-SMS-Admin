@@ -66,7 +66,7 @@
                         <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
                     </td>
                     <td>
-                        <strong>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</strong>
+                        <strong>{{ msg.scheduled_at|localtime }}</strong>
                     </td>
                     <td>
                         {% if msg.test_mode %}
@@ -117,7 +117,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
                     <div class="text-muted small">{{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
                 </div>
@@ -202,7 +202,7 @@
                     <td>
                         <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past">
                     </td>
-                    <td>{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>{{ msg.scheduled_at|localtime }}</td>
                     <td>
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
@@ -267,7 +267,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
                     <div class="text-muted small">{{ msg.status|capitalize }} · {{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
                 </div>
@@ -299,7 +299,7 @@
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
         </div>
         <div class="offcanvas-body">
-            <p class="mb-2"><strong>Scheduled:</strong> {{ (msg.scheduled_at_local or msg.scheduled_at).strftime('%Y-%m-%d %H:%M') }}</p>
+            <p class="mb-2"><strong>Scheduled:</strong> {{ msg.scheduled_at|localtime }}</p>
             <p class="mb-2"><strong>Target:</strong> {{ msg.target }}</p>
             <p class="mb-0"><strong>Message:</strong> {{ msg.message_body }}</p>
         </div>

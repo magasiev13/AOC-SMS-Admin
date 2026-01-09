@@ -1,7 +1,7 @@
 import csv
 import io
 import json
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 from zoneinfo import ZoneInfo
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, make_response, current_app
 from flask_login import login_required, current_user
@@ -59,7 +59,8 @@ def index():
 def dashboard():
     from flask import current_app
     app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
-    client_timezone = request.cookies.get('client_timezone', '').strip()
+    client_timezone_raw = request.cookies.get('client_timezone', '')
+    client_timezone = unquote(client_timezone_raw).strip() if client_timezone_raw else ''
     dashboard_timezone = client_timezone or app_timezone
     events = Event.query.order_by(Event.date.desc()).all()
     admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
@@ -993,16 +994,7 @@ def log_detail(log_id):
 @bp.route('/scheduled')
 @login_required
 def scheduled_list():
-    from datetime import datetime, timezone
-    from flask import current_app
-
     search = request.args.get('search', '').strip()
-    app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
-    try:
-        tz = ZoneInfo(app_timezone)
-    except Exception:
-        tz = timezone.utc
-
     now = datetime.utcnow()
     query = ScheduledMessage.query
 
@@ -1020,13 +1012,6 @@ def scheduled_list():
     pending = query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
     pending_ids = [m.id for m in pending]
-
-    for msg in pending + past:
-        if msg.scheduled_at:
-            scheduled_utc = msg.scheduled_at
-            if scheduled_utc.tzinfo is None:
-                scheduled_utc = scheduled_utc.replace(tzinfo=timezone.utc)
-            msg.scheduled_at_local = scheduled_utc.astimezone(tz)
 
     return render_template(
         'scheduled/list.html',
