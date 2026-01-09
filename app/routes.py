@@ -59,6 +59,8 @@ def index():
 def dashboard():
     from flask import current_app
     app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
+    client_timezone = request.cookies.get('client_timezone', '').strip()
+    dashboard_timezone = client_timezone or app_timezone
     events = Event.query.order_by(Event.date.desc()).all()
     admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
 
@@ -66,9 +68,15 @@ def dashboard():
         """Build 7-day delivery trends data for the dashboard chart."""
         tz = None
         try:
-            tz = ZoneInfo(app_timezone)
+            tz = ZoneInfo(dashboard_timezone)
         except Exception:
-            tz = timezone.utc
+            if dashboard_timezone != app_timezone:
+                try:
+                    tz = ZoneInfo(app_timezone)
+                except Exception:
+                    tz = timezone.utc
+            else:
+                tz = timezone.utc
 
         today = datetime.now(tz).date()
         labels = []

@@ -354,12 +354,24 @@
     const clientTimezone = document.getElementById('client_timezone');
     const timezoneHint = document.getElementById('timezoneHint');
 
+    function getCookieValue(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
     if (clientTimezone) {
         try {
             const resolvedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
             clientTimezone.value = resolvedTimezone;
             if (timezoneHint) {
                 timezoneHint.textContent = resolvedTimezone || 'Unavailable';
+            }
+            if (resolvedTimezone) {
+                const existingTimezone = getCookieValue('client_timezone');
+                if (existingTimezone !== resolvedTimezone) {
+                    document.cookie = `client_timezone=${encodeURIComponent(resolvedTimezone)}; path=/; max-age=31536000; samesite=lax`;
+                    window.location.reload();
+                }
             }
         } catch (e) {
             clientTimezone.value = '';
