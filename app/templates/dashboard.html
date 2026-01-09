@@ -45,22 +45,17 @@
                     </div>
                 </div>
 
-                <!-- Delivery Rate with Progress Ring -->
+                <!-- Delivery Rate -->
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
                         <div class="stat-card__label">Delivery Rate</div>
                         {% if success_rate is not none %}
-                        <div class="stat-card__ring">
-                            <div class="progress-ring">
-                                <svg class="progress-ring__svg" width="64" height="64">
-                                    <circle class="progress-ring__circle-bg" cx="32" cy="32" r="26" stroke-width="5"/>
-                                    <circle class="progress-ring__circle" cx="32" cy="32" r="26" stroke-width="5"
-                                            stroke-dasharray="{{ 163.4 }}"
-                                            stroke-dashoffset="{{ 163.4 - (163.4 * success_rate / 100) }}"/>
-                                </svg>
-                                <span class="progress-ring__text">{{ success_rate|int }}%</span>
-                            </div>
+                        <div class="stat-card__value stat-card__value--rate">
+                            <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
+                        </div>
+                        <div class="stat-card__progress">
+                            <div class="stat-card__progress-bar" style="width: {{ success_rate }}%"></div>
                         </div>
                         <div class="stat-card__meta">{{ failure_rate }}% failed</div>
                         {% else %}
