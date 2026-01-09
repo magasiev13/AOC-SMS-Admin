@@ -52,7 +52,7 @@ This repository welcomes AI agents. Use this guide to work safely, predictably, 
 
 ## 9) Quick ops guide (Codex)
 - **Unit tests:** run `pytest`. If none exist, add focused tests in `tests/` and document how to run them.
-- **DB doctor & migrations:** run `python app/dbdoctor.py` and `python app/migrate.py` (apply migrations before serving).
+- **DB doctor & migrations:** run `python app/dbdoctor.py` and `python -m app.dbdoctor --apply` (apply migrations before serving).
 - **Systemd services:** expected units are `sms`, `sms-worker`, and `sms-scheduler.timer`; all load environment from `/opt/sms-admin/.env`.
 - **Scheduler:** uses systemd timer (`sms-scheduler.timer`) that triggers `sms-scheduler.service` (Type=oneshot) every 60 seconds. Do NOT enable `sms-scheduler.service` directly—enable only the timer.
 - **Definition of done (prod):**
