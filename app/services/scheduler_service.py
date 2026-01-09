@@ -5,6 +5,7 @@ import atexit
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from app.services.twilio_service import get_twilio_service
 
 scheduler = None
 _scheduler_initialized = False
@@ -33,8 +34,6 @@ def send_scheduled_messages(app):
             filter_unsubscribed_recipients,
         )
         from app.services.suppression_service import process_failure_details
-        from app.services.twilio_service import get_twilio_service
-        
         now = datetime.utcnow()
         logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
         

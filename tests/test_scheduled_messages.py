@@ -5,11 +5,12 @@ Run with: pytest tests/test_scheduled_messages.py -v
 
 import os
 import unittest
+import importlib
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
-os.environ.setdefault("SQLALCHEMY_DATABASE_URI", "sqlite:///:memory:")
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 from app import create_app, db
 from app.models import ScheduledMessage, CommunityMember
@@ -21,8 +22,11 @@ class TestScheduledMessageProcessing(unittest.TestCase):
 
     def setUp(self):
         """Create test app and database."""
+        os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+        import app.config
+
+        importlib.reload(app.config)
         self.app = create_app(run_startup_tasks=False)
-        self.app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
         self.app.config["TESTING"] = True
         self.app_context = self.app.app_context()
         self.app_context.push()
@@ -63,7 +67,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
             "failure_count": 0,
             "details": [{"phone": "+15551234567", "status": "sent", "sid": "SM123"}],
         }
-        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+        with patch("app.services.twilio_service.get_twilio_service") as mock_twilio:
             mock_service = MagicMock()
             mock_service.send_bulk.return_value = mock_result
             mock_twilio.return_value = mock_service
@@ -97,7 +101,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         msg_id = scheduled.id
 
         # Run the scheduler
-        with patch("app.services.scheduler_service.get_twilio_service"):
+        with patch("app.services.twilio_service.get_twilio_service"):
             send_scheduled_messages(self.app)
 
         # Refresh and verify still pending
@@ -121,7 +125,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         msg_id = scheduled.id
 
         # Run the scheduler
-        with patch("app.services.scheduler_service.get_twilio_service"):
+        with patch("app.services.twilio_service.get_twilio_service"):
             send_scheduled_messages(self.app)
 
         # Refresh and verify marked as failed
@@ -161,7 +165,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
                 "details": [],
             }
 
-        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+        with patch("app.services.twilio_service.get_twilio_service") as mock_twilio:
             mock_service = MagicMock()
             mock_service.send_bulk.side_effect = capture_status
             mock_twilio.return_value = mock_service
