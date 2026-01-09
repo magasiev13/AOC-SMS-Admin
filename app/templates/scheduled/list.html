@@ -408,7 +408,8 @@
         const bulkSelectionActions = document.getElementById(`${group}BulkSelectionActions`);
 
         function getGroupCheckboxes() {
-            return Array.from(document.querySelectorAll(`.js-select-row[data-bulk-group="${group}"]`));
+            return Array.from(document.querySelectorAll(`.js-select-row[data-bulk-group="${group}"]`))
+                .filter(b => b.offsetParent !== null);
         }
 
         function updateBulkUi() {
