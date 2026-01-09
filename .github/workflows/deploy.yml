@@ -39,9 +39,22 @@ jobs:
 
           echo "==> Service status"
           sudo systemctl is-active --quiet sms
-          sudo systemctl is-active --quiet sms-scheduler
+          sudo systemctl is-active --quiet sms-worker
+          sudo systemctl is-active --quiet sms-scheduler.timer
+
+          # Strong signal that scheduled sending works: run oneshot once and confirm it succeeded
+          sudo systemctl start sms-scheduler.service || true
+          RESULT="$(sudo systemctl show -p Result --value sms-scheduler.service || true)"
+          CODE="$(sudo systemctl show -p ExecMainStatus --value sms-scheduler.service || true)"
+          if [ "$RESULT" != "success" ] || [ "$CODE" != "0" ]; then
+            echo "❌ sms-scheduler.service did not succeed (Result=$RESULT ExecMainStatus=$CODE)"
+            sudo systemctl status sms-scheduler.service --no-pager || true
+            sudo journalctl -u sms-scheduler.service -n 160 --no-pager || true
+            exit 1
+          fi
 
           echo "==> Health check (Gunicorn direct)"
           curl -fsS http://127.0.0.1:8000/health >/dev/null
+
           echo "✅ Deploy complete and healthy"
           REMOTE
