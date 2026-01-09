@@ -13,7 +13,11 @@
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
             <a class="app-sidebar-brand" href="{{ url_for('main.dashboard') }}">
-                <i class="bi bi-chat-dots-fill me-2"></i>SMS Admin
+                <span class="brand-icon">
+                    <span class="brand-icon__pulse"></span>
+                    <i class="bi bi-send-fill"></i>
+                </span>
+                <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
             </a>
             <div class="app-sidebar-search">
                 {% block app_search %}
@@ -64,7 +68,11 @@
             <nav class="app-topbar navbar navbar-light d-lg-none">
                 <div class="container-fluid">
                     <a class="navbar-brand" href="{{ url_for('main.dashboard') }}">
-                        <i class="bi bi-chat-dots-fill me-2"></i>SMS Admin
+                        <span class="brand-icon brand-icon--sm">
+                            <span class="brand-icon__pulse"></span>
+                            <i class="bi bi-send-fill"></i>
+                        </span>
+                        <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
                     </a>
                     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#appMobileNav">
                         <span class="navbar-toggler-icon"></span>
