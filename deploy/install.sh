@@ -62,15 +62,16 @@ sudo chmod 750 "${INSTANCE_DIR}"
 # If sms.db exists, ensure it's writable
 if [[ -f "${INSTANCE_DIR}/sms.db" ]]; then
   sudo chown smsadmin:smsadmin "${INSTANCE_DIR}/sms.db"
-  sudo chmod 660 "${INSTANCE_DIR}/sms.db"
+  sudo chmod 640 "${INSTANCE_DIR}/sms.db"
   echo "✓ Database file permissions fixed: ${INSTANCE_DIR}/sms.db"
 fi
+sudo chmod 640 "${INSTANCE_DIR}/sms.db" 2>/dev/null || true
 
 # Also fix WAL and SHM files if they exist (SQLite journal files)
 for ext in db-wal db-shm; do
   if [[ -f "${INSTANCE_DIR}/sms.${ext}" ]]; then
     sudo chown smsadmin:smsadmin "${INSTANCE_DIR}/sms.${ext}"
-    sudo chmod 660 "${INSTANCE_DIR}/sms.${ext}"
+    sudo chmod 640 "${INSTANCE_DIR}/sms.${ext}"
   fi
 done
 
@@ -81,13 +82,13 @@ echo "✓ Instance directory permissions fixed: ${INSTANCE_DIR}"
 # ============================================
 echo ""
 echo "Running dbdoctor --apply..."
-if ! sudo -u smsadmin "${DBDOCTOR_DEST}" --apply; then
+if ! sudo -u smsadmin bash -c "cd \"${APP_ROOT}\" && \"${DBDOCTOR_DEST}\" --apply"; then
   echo ""
   echo "✗ ERROR: dbdoctor failed. Common causes:" >&2
   echo "  1. Database is read-only. Fix with:" >&2
   echo "     sudo chown -R smsadmin:smsadmin ${INSTANCE_DIR}" >&2
   echo "     sudo chmod 750 ${INSTANCE_DIR}" >&2
-  echo "     sudo chmod 660 ${INSTANCE_DIR}/sms.db" >&2
+  echo "     sudo chmod 640 ${INSTANCE_DIR}/sms.db" >&2
   echo "  2. Missing .env configuration" >&2
   echo "  3. Database corruption (check with: sqlite3 ${INSTANCE_DIR}/sms.db 'PRAGMA integrity_check;')" >&2
   exit 1
@@ -102,15 +103,17 @@ echo "Installing systemd services..."
 
 # Ensure deploy directory exists in target
 sudo mkdir -p "${APP_ROOT}/deploy"
-sudo chown smsadmin:smsadmin "${APP_ROOT}/deploy"
+sudo chown -R smsadmin:smsadmin "${APP_ROOT}/deploy"
+sudo chmod 755 "${APP_ROOT}/deploy"
 
 # Install service files
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms.service" /etc/systemd/system/sms.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-worker.service" /etc/systemd/system/sms-worker.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-scheduler.service" /etc/systemd/system/sms-scheduler.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-scheduler.timer" /etc/systemd/system/sms-scheduler.timer
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
+sudo install -m 0644 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
 sudo chown smsadmin:smsadmin "${APP_ROOT}/deploy/run_scheduler_once.sh"
+sudo chmod 644 "${APP_ROOT}/deploy/run_scheduler_once.sh"
 
 sudo systemctl daemon-reload
 echo "✓ Systemd units installed"
@@ -188,32 +191,22 @@ fi
 # Check main services
 echo ""
 echo "--- Service Status ---"
-for svc in sms sms-worker; do
-  if systemctl is-active --quiet "${svc}"; then
-    echo "✓ ${svc}: active"
-  else
-    echo "✗ ${svc}: $(systemctl is-active ${svc})"
-  fi
-done
+systemctl is-active sms-worker sms 2>/dev/null || true
 
 # Check scheduler timer
 echo ""
 echo "--- Scheduler Timer ---"
-if systemctl is-active --quiet sms-scheduler.timer; then
-  echo "✓ sms-scheduler.timer: active"
-else
-  echo "✗ sms-scheduler.timer: $(systemctl is-active sms-scheduler.timer)"
-fi
+systemctl is-active sms-scheduler.timer 2>/dev/null || true
 
 # Show timer schedule
 echo ""
 echo "--- Timer Schedule ---"
-systemctl list-timers sms-scheduler.timer --no-pager 2>/dev/null || echo "Could not list timers"
+systemctl list-timers --no-pager 2>/dev/null | grep sms-scheduler || echo "No scheduler timer found"
 
 # Show recent scheduler logs
 echo ""
-echo "--- Recent Scheduler Logs (last 10 lines) ---"
-journalctl -u sms-scheduler.service -n 10 --no-pager 2>/dev/null || echo "No logs available yet"
+echo "--- Recent Scheduler Logs (last 30 lines) ---"
+journalctl -u sms-scheduler.service -n 30 --no-pager 2>/dev/null || echo "No logs available yet"
 
 set -e
 
