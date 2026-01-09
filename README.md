@@ -188,10 +188,13 @@ sudo systemctl status sms
 
 ### 9b. Setup Scheduler Timer (for scheduled messages)
 
-The scheduler uses a **systemd timer** (not a long-running daemon) to reliably process scheduled messages every 60 seconds. This approach is more robust because:
+The scheduler uses a **systemd timer + oneshot service** (not a long-running daemon) to reliably process scheduled messages every **30 seconds**. This approach is more robust because:
 - Each invocation is independent — no background threads that can die silently
 - If the scheduler crashes, systemd invokes it again on the next tick
-- Clear, auditable logs per run
+- Clear, auditable logs per run via journald
+- The old long-running `sms-scheduler` process was unreliable (would start/stop without processing due messages)
+
+The `deploy/install.sh` script handles all of this automatically, but for manual setup:
 
 ```bash
 # Copy service and timer files
@@ -202,18 +205,17 @@ sudo systemctl daemon-reload
 # Enable and start the timer (NOT the service directly)
 sudo systemctl enable --now sms-scheduler.timer
 
-# Check timer status
-sudo systemctl status sms-scheduler.timer
-sudo systemctl list-timers sms-scheduler.timer
+# Verify timer is active
+systemctl list-timers | grep sms-scheduler
 ```
 
-**Troubleshooting scheduled messages:**
+**Verifying scheduled message processing:**
 
 ```bash
-# View scheduler logs (shows each run with counts)
+# Watch scheduler logs in real-time (shows message processing)
 journalctl -u sms-scheduler.service -f
 
-# Check when timer last ran and next run time
+# Check timer status and next run time
 systemctl list-timers sms-scheduler.timer
 
 # Manually trigger the scheduler (for testing)
@@ -221,6 +223,24 @@ sudo systemctl start sms-scheduler.service
 
 # Check if timer is enabled
 systemctl is-enabled sms-scheduler.timer
+```
+
+**Common failure: Read-only SQLite database**
+
+If the scheduler fails with "attempt to write a readonly database", the `instance/` directory or `sms.db` file has incorrect permissions. The install script fixes this automatically, but to fix manually:
+
+```bash
+# Fix instance directory permissions
+sudo chown -R smsadmin:smsadmin /opt/sms-admin/instance
+sudo chmod 750 /opt/sms-admin/instance
+sudo chmod 660 /opt/sms-admin/instance/sms.db
+
+# Also fix WAL/SHM files if they exist
+sudo chmod 660 /opt/sms-admin/instance/sms.db-wal 2>/dev/null || true
+sudo chmod 660 /opt/sms-admin/instance/sms.db-shm 2>/dev/null || true
+
+# Verify by running scheduler manually
+sudo -u smsadmin /opt/sms-admin/deploy/run_scheduler_once.sh
 ```
 
 ### 9c. Database Migration Checks

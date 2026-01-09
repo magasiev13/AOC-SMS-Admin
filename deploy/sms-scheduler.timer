@@ -5,11 +5,9 @@ Documentation=man:systemd.timer(5)
 [Timer]
 # Start 30 seconds after boot
 OnBootSec=30
-# Then run every 60 seconds
-OnUnitActiveSec=60
-# Randomize delay up to 5 seconds to prevent thundering herd
-RandomizedDelaySec=5
-# Persist timer state across reboots
+# Run every 30 seconds for timely message delivery
+OnUnitActiveSec=30
+# Persist timer state across reboots (catches up missed runs)
 Persistent=true
 
 [Install]
