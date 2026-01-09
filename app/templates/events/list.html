@@ -39,8 +39,8 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
             <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
-        <div class="d-flex align-items-center">
-            <span class="text-muted me-3"><span id="selectedCount">0</span> selected</span>
+        <div class="bulk-selection-actions" id="bulkSelectionActions">
+            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
         </div>
     </div>
     {% endif %}
@@ -250,6 +250,7 @@
 
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllEvents = document.getElementById('selectAllEvents');
+    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
 
     function getEventCheckboxes() {
         return Array.from(document.querySelectorAll('.js-select-row'));
@@ -260,6 +261,9 @@
         const boxes = getEventCheckboxes();
         const selected = boxes.filter(b => b.checked).length;
         selectedCountEl.textContent = selected;
+        if (bulkSelectionActions) {
+            bulkSelectionActions.classList.toggle('is-visible', selected > 0);
+        }
         if (selectAllEvents) {
             selectAllEvents.checked = boxes.length > 0 && boxes.every(b => b.checked);
             selectAllEvents.indeterminate = selected > 0 && selected < boxes.length;

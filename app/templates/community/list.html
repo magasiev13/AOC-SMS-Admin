@@ -50,9 +50,9 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
             <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
-        <div class="d-flex align-items-center">
-            <span class="text-muted me-3"><span id="selectedCount">0</span> selected</span>
-            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn" disabled
+        <div class="bulk-selection-actions" id="bulkSelectionActions">
+            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
+            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
                 <i class="bi bi-trash me-1"></i>Delete selected
             </button>
@@ -330,6 +330,7 @@
     const selectAllMembers = document.getElementById('selectAllMembers');
     const selectedCountEl = document.getElementById('selectedCount');
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
     function isElementVisible(element) {
         if (!element) return false;
         if (element.offsetParent !== null) return true;
@@ -342,11 +343,13 @@
     }
 
     function updateBulkUi() {
-        if (!selectedCountEl || !bulkDeleteBtn) return;
+        if (!selectedCountEl) return;
         const boxes = getMemberCheckboxes();
         const selected = boxes.filter(b => b.checked).length;
         selectedCountEl.textContent = selected;
-        bulkDeleteBtn.disabled = selected === 0;
+        if (bulkSelectionActions) {
+            bulkSelectionActions.classList.toggle('is-visible', selected > 0);
+        }
 
         if (selectAllMembers) {
             selectAllMembers.checked = boxes.length > 0 && boxes.every(b => b.checked);

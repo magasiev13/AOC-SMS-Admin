@@ -43,7 +43,9 @@
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
                 <button type="button" class="btn btn-outline-secondary" id="pendingInvertSelectionBtn">Invert</button>
             </div>
-            <span class="text-muted"><span id="pendingSelectedCount">0</span> selected</span>
+            <div class="bulk-selection-actions" id="pendingBulkSelectionActions">
+                <span class="text-muted"><span id="pendingSelectedCount">0</span> selected</span>
+            </div>
         </div>
     </div>
     <div class="table-responsive d-none d-lg-block">
@@ -170,7 +172,9 @@
     </div>
     <div class="bulk-action-bar" id="pastBulkBar">
         <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-primary"><span id="pastSelectedCount">0</span> selected</span>
+            <div class="bulk-selection-actions" id="pastBulkSelectionActions">
+                <span class="badge bg-primary"><span id="pastSelectedCount">0</span> selected</span>
+            </div>
             <div class="btn-group btn-group-sm" role="group">
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select all</button>
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select none</button>
@@ -385,6 +389,7 @@
     function setupBulkControls(group) {
         const selectedCountEl = document.getElementById(`${group}SelectedCount`);
         const selectAllCheckbox = document.getElementById(`selectAll${group.charAt(0).toUpperCase()}${group.slice(1)}`);
+        const bulkSelectionActions = document.getElementById(`${group}BulkSelectionActions`);
 
         function getGroupCheckboxes() {
             return Array.from(document.querySelectorAll(`.js-select-row[data-bulk-group="${group}"]`));
@@ -395,6 +400,9 @@
             const boxes = getGroupCheckboxes();
             const selected = boxes.filter(b => b.checked).length;
             selectedCountEl.textContent = selected;
+            if (bulkSelectionActions) {
+                bulkSelectionActions.classList.toggle('is-visible', selected > 0);
+            }
             if (selectAllCheckbox) {
                 selectAllCheckbox.checked = boxes.length > 0 && boxes.every(b => b.checked);
                 selectAllCheckbox.indeterminate = selected > 0 && selected < boxes.length;

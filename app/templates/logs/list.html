@@ -41,8 +41,8 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
             <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
-        <div class="d-flex align-items-center">
-            <span class="text-muted me-3"><span id="selectedCount">0</span> selected</span>
+        <div class="bulk-selection-actions" id="bulkSelectionActions">
+            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
         </div>
     </div>
     {% endif %}
@@ -241,6 +241,7 @@
     const bulkActionBar = document.getElementById('bulkActionBar');
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllLogs = document.getElementById('selectAllLogs');
+    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
 
     function isDesktopView() {
         return window.matchMedia('(min-width: 992px)').matches;
@@ -257,11 +258,16 @@
     }
 
     function updateBulkUi() {
-        if (!selectedCountEl || !bulkActionBar) return;
+        if (!selectedCountEl) return;
         const boxes = getLogCheckboxes();
         const selected = boxes.filter(b => b.checked).length;
         selectedCountEl.textContent = selected;
-        bulkActionBar.classList.toggle('is-visible', selected > 0);
+        if (bulkSelectionActions) {
+            bulkSelectionActions.classList.toggle('is-visible', selected > 0);
+        }
+        if (bulkActionBar) {
+            bulkActionBar.classList.toggle('is-visible', selected > 0);
+        }
         if (selectAllLogs) {
             if (isDesktopView()) {
                 selectAllLogs.checked = boxes.length > 0 && boxes.every(b => b.checked);

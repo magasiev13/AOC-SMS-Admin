@@ -56,9 +56,9 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
             <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
-        <div class="d-flex align-items-center">
-            <span class="text-muted me-3"><span id="selectedCount">0</span> selected</span>
-            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn" disabled
+        <div class="bulk-selection-actions" id="bulkSelectionActions">
+            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
+            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
                 <i class="bi bi-trash me-1"></i>Delete selected
             </button>
@@ -279,6 +279,7 @@
     const invertSelectionBtn = document.getElementById('invertSelectionBtn');
     const selectedCount = document.getElementById('selectedCount');
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
+    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
     const bulkDeleteCount = document.getElementById('bulkDeleteCount');
     const confirmBulkDeleteBtn = document.getElementById('confirmBulkDeleteBtn');
     const bulkDeleteForm = document.getElementById('bulkDeleteForm');
@@ -287,7 +288,9 @@
         const checked = document.querySelectorAll('.entry-checkbox:checked');
         const count = checked.length;
         if (selectedCount) selectedCount.textContent = count;
-        if (bulkDeleteBtn) bulkDeleteBtn.disabled = count === 0;
+        if (bulkSelectionActions) {
+            bulkSelectionActions.classList.toggle('is-visible', count > 0);
+        }
         if (bulkDeleteCount) bulkDeleteCount.textContent = count;
         if (selectAllCheckbox) {
             selectAllCheckbox.checked = checkboxes.length > 0 && count === checkboxes.length;
