@@ -754,19 +754,19 @@ a:focus-visible {
 .stat-card__value--rate {
   display: flex;
   align-items: baseline;
-  gap: 2px;
+  gap: 1px;
 }
 
 .stat-card__percentage {
-  font-size: 2.5rem;
+  font-size: var(--font-size-6);
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.1;
 }
 
 .stat-card__percent-sign {
-  font-size: 1.25rem;
+  font-size: var(--font-size-4);
   font-weight: 600;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .stat-card__progress {
