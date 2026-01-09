@@ -37,7 +37,6 @@
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
             <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
-            <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
             <span class="text-muted"><span id="selectedCount">0</span> selected</span>
@@ -292,15 +291,6 @@
         selectNoneBtn.addEventListener('click', function() {
             const boxes = getEventCheckboxes();
             boxes.forEach(b => { b.checked = false; });
-            updateBulkUi();
-        });
-    }
-
-    const invertSelectionBtn = document.getElementById('invertSelectionBtn');
-    if (invertSelectionBtn) {
-        invertSelectionBtn.addEventListener('click', function() {
-            const boxes = getEventCheckboxes();
-            boxes.forEach(b => { b.checked = !b.checked; });
             updateBulkUi();
         });
     }

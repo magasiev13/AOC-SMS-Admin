@@ -54,7 +54,6 @@
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
             <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
-            <button type="button" class="btn btn-outline-secondary" id="invertSelectionBtn">Invert</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
             <span class="text-muted"><span id="selectedCount">0</span> selected</span>
@@ -276,7 +275,6 @@
     const selectAllCheckbox = document.getElementById('selectAllEntries');
     const selectAllBtn = document.getElementById('selectAllBtn');
     const selectNoneBtn = document.getElementById('selectNoneBtn');
-    const invertSelectionBtn = document.getElementById('invertSelectionBtn');
     const selectedCount = document.getElementById('selectedCount');
     const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
     const bulkSelectionActions = document.getElementById('bulkSelectionActions');
@@ -319,13 +317,6 @@
     if (selectNoneBtn) {
         selectNoneBtn.addEventListener('click', function() {
             checkboxes.forEach(function(cb) { cb.checked = false; });
-            updateBulkUi();
-        });
-    }
-
-    if (invertSelectionBtn) {
-        invertSelectionBtn.addEventListener('click', function() {
-            checkboxes.forEach(function(cb) { cb.checked = !cb.checked; });
             updateBulkUi();
         });
     }

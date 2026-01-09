@@ -41,7 +41,6 @@
             <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectAllBtn">Select all</button>
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
-                <button type="button" class="btn btn-outline-secondary" id="pendingInvertSelectionBtn">Invert</button>
             </div>
             <div class="bulk-selection-actions" id="pendingBulkSelectionActions">
                 <span class="text-muted"><span id="pendingSelectedCount">0</span> selected</span>
@@ -178,7 +177,6 @@
             <div class="btn-group btn-group-sm" role="group">
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select all</button>
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select none</button>
-                <button type="button" class="btn btn-outline-secondary" id="pastInvertSelectionBtn">Invert</button>
             </div>
         </div>
         <div class="d-flex align-items-center gap-2">
@@ -431,15 +429,6 @@
             selectNoneBtn.addEventListener('click', function() {
                 const boxes = getGroupCheckboxes();
                 boxes.forEach(b => { b.checked = false; });
-                updateBulkUi();
-            });
-        }
-
-        const invertSelectionBtn = document.getElementById(`${group}InvertSelectionBtn`);
-        if (invertSelectionBtn) {
-            invertSelectionBtn.addEventListener('click', function() {
-                const boxes = getGroupCheckboxes();
-                boxes.forEach(b => { b.checked = !b.checked; });
                 updateBulkUi();
             });
         }
