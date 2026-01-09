@@ -247,6 +247,17 @@ h6,
 .app-mobile-nav-panel .app-nav-link {
   justify-content: flex-start;
   width: 100%;
+  color: var(--color-text);
+  background-color: transparent;
+}
+
+.app-mobile-nav-panel .app-nav-link:hover {
+  color: var(--color-text);
+  background-color: var(--color-surface-muted);
+}
+
+.app-mobile-nav-panel .app-nav-link.active {
+  color: #fff;
 }
 
 .app-content {
