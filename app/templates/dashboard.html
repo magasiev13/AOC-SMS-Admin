@@ -299,7 +299,7 @@
                     <div class="activity-item__content">
                         <div class="activity-item__header">
                             <div class="activity-item__title">{{ log.message_body|truncate(60) }}</div>
-                            <span class="activity-item__time">{{ log.created_at.strftime('%b %d, %H:%M') }}</span>
+                            <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
                         </div>
                         <div class="activity-item__meta">
                             <span class="activity-item__badge activity-item__badge--success">

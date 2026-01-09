@@ -26,7 +26,7 @@
             <div class="card-body">
                 <dl class="mb-0">
                     <dt>Sent At</dt>
-                    <dd>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if log.created_at else '-' }}</dd>
+                    <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
                     
                     <dt>Target</dt>
                     <dd>
