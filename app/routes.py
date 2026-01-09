@@ -1050,6 +1050,27 @@ def scheduled_delete(scheduled_id):
     return redirect(url_for('main.scheduled_list'))
 
 
+@bp.route('/scheduled/bulk-delete', methods=['POST'])
+@login_required
+@require_roles('admin')
+def scheduled_bulk_delete():
+    ids_str = request.form.get('scheduled_ids', '')
+    if not ids_str:
+        flash('No messages selected.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+    
+    try:
+        ids = [int(i) for i in ids_str.split(',') if i.strip()]
+    except ValueError:
+        flash('Invalid selection.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+    
+    deleted = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).delete(synchronize_session=False)
+    db.session.commit()
+    flash(f'{deleted} scheduled message(s) deleted.', 'success')
+    return redirect(url_for('main.scheduled_list'))
+
+
 @bp.route('/scheduled/status')
 @login_required
 def scheduled_status():
