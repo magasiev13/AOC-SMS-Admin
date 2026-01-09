@@ -154,7 +154,7 @@ h6,
   border-radius: var(--radius-md);
   transition: transform 0.2s ease;
   isolation: isolate;
-  animation: border-glow 6s ease-in-out infinite;
+  animation: border-glow 8s ease-in-out infinite;
 }
 
 @keyframes border-glow {
