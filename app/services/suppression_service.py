@@ -1,5 +1,7 @@
 from typing import Literal
 
+import re
+
 from flask import current_app
 
 from app import db
@@ -16,23 +18,18 @@ def classify_failure(error_text: str) -> OptOutCategory:
 
     message = error_text.lower()
 
-    opt_out_patterns = [
+    opt_out_phrases = [
         'unsubscribed',
         'opted out',
+        'opted-out',
         'opt-out',
         'opt out',
-        'stop',
         'reply stop',
         'unsubscribe',
-        'cancel',
-        'quit',
-        'end',
-        'blocked',
         'recipient has opted out',
-        'opt-out',
-        '21610',
-        '30004',
     ]
+    opt_out_tokens = {'stop', 'cancel', 'quit', 'end', 'blocked'}
+    opt_out_codes = {'21610', '30004'}
     hard_fail_patterns = [
         'invalid',
         'not a valid',
@@ -70,7 +67,14 @@ def classify_failure(error_text: str) -> OptOutCategory:
         '504',
     ]
 
-    if any(pattern in message for pattern in opt_out_patterns):
+    def _contains_token(token: str) -> bool:
+        return re.search(rf"\b{re.escape(token)}\b", message) is not None
+
+    if any(pattern in message for pattern in opt_out_phrases):
+        return 'opt_out'
+    if any(code in message for code in opt_out_codes):
+        return 'opt_out'
+    if any(_contains_token(token) for token in opt_out_tokens):
         return 'opt_out'
     if any(pattern in message for pattern in hard_fail_patterns):
         return 'hard_fail'

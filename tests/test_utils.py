@@ -6,6 +6,7 @@ Run with: python -m unittest tests.test_utils
 import unittest
 
 from app.utils import (
+    escape_like,
     normalize_phone,
     validate_phone,
     parse_recipients_csv,
@@ -36,6 +37,12 @@ class TestValidatePhone(unittest.TestCase):
 
     def test_empty(self) -> None:
         self.assertFalse(validate_phone(""))
+
+
+class TestEscapeLike(unittest.TestCase):
+    def test_escapes_backslash_and_wildcards(self) -> None:
+        value = "foo\\bar%_"
+        self.assertEqual(escape_like(value), "foo\\\\bar\\%\\_")
 
 
 class TestParseRecipientsCsv(unittest.TestCase):
