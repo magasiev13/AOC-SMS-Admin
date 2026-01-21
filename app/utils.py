@@ -1,6 +1,10 @@
 import re
 import csv
 import io
+from typing import Optional
+
+
+_TEMPLATE_TOKEN_RE = re.compile(r"\{(first\s*name|firstname|first_name|name)\}", re.IGNORECASE)
 
 
 def escape_like(value: str) -> str:
@@ -49,6 +53,29 @@ def validate_phone(phone: str) -> bool:
     normalized = normalize_phone(phone)
     # E.164: + followed by 7-15 digits
     return bool(re.match(r'^\+\d{7,15}$', normalized))
+
+
+def get_first_name(name: Optional[str]) -> str:
+    if not name:
+        return ''
+    parts = name.strip().split()
+    return parts[0] if parts else ''
+
+
+def render_message_template(template: str, recipient: dict, fallback: str = 'there') -> str:
+    if not template:
+        return template
+
+    full_name = (recipient.get('name') or '').strip()
+    first_name = get_first_name(full_name) or fallback
+
+    def _replace(match: re.Match) -> str:
+        token = match.group(1).replace(' ', '').lower()
+        if token == 'name':
+            return full_name or fallback
+        return first_name
+
+    return _TEMPLATE_TOKEN_RE.sub(_replace, template)
 
 
 def _looks_like_phone(value: str) -> bool:

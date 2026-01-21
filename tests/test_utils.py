@@ -11,6 +11,7 @@ from app.utils import (
     validate_phone,
     parse_recipients_csv,
     parse_phones_csv,
+    render_message_template,
 )
 
 
@@ -77,6 +78,32 @@ class TestParsePhonesCsv(unittest.TestCase):
         self.assertEqual(
             parse_phones_csv(content),
             ["+17203832388", "+13105551212", "+14155552671"],
+        )
+
+
+class TestRenderMessageTemplate(unittest.TestCase):
+    def test_first_name_placeholder(self) -> None:
+        template = "Hello {first name}, thanks!"
+        recipient = {"name": "Michael Jordan"}
+        self.assertEqual(
+            render_message_template(template, recipient),
+            "Hello Michael, thanks!",
+        )
+
+    def test_name_placeholder(self) -> None:
+        template = "Hello {name}, welcome!"
+        recipient = {"name": "John Doe"}
+        self.assertEqual(
+            render_message_template(template, recipient),
+            "Hello John Doe, welcome!",
+        )
+
+    def test_missing_name_uses_fallback(self) -> None:
+        template = "Hello {firstname}!"
+        recipient = {"phone": "+15551234567"}
+        self.assertEqual(
+            render_message_template(template, recipient),
+            "Hello there!",
         )
 
 

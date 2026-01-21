@@ -4,6 +4,7 @@ from typing import Optional
 from flask import current_app
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+from app.utils import render_message_template
 
 
 class TwilioTransientError(Exception):
@@ -92,9 +93,10 @@ class TwilioService:
         for index, recipient in enumerate(recipients):
             phone = recipient.get('phone')
             name = recipient.get('name', '')
+            personalized_body = render_message_template(body, recipient)
 
             try:
-                result = self.send_message(phone, body, raise_on_transient=raise_on_transient)
+                result = self.send_message(phone, personalized_body, raise_on_transient=raise_on_transient)
             except TwilioTransientError as exc:
                 raise TwilioTransientError(
                     str(exc),
