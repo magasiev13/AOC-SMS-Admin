@@ -6,7 +6,7 @@ Run with: pytest tests/test_scheduled_messages.py -v
 import os
 import unittest
 import importlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
@@ -15,6 +15,10 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from app import create_app, db
 from app.models import ScheduledMessage, CommunityMember
 from app.services.scheduler_service import send_scheduled_messages
+
+
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TestScheduledMessageProcessing(unittest.TestCase):
@@ -45,7 +49,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         db.session.add(member)
         
         # Create a scheduled message that is due (scheduled_at in the past)
-        past_time = datetime.utcnow() - timedelta(minutes=1)
+        past_time = utc_now_naive() - timedelta(minutes=1)
         scheduled = ScheduledMessage(
             message_body="Test message",
             target="community",
@@ -67,7 +71,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
             "failure_count": 0,
             "details": [{"phone": "+15551234567", "status": "sent", "sid": "SM123"}],
         }
-        with patch("app.services.twilio_service.get_twilio_service") as mock_twilio:
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
             mock_service = MagicMock()
             mock_service.send_bulk.return_value = mock_result
             mock_twilio.return_value = mock_service
@@ -77,7 +81,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
 
         # Refresh from DB and check status transitioned
         db.session.expire_all()
-        updated = ScheduledMessage.query.get(msg_id)
+        updated = db.session.get(ScheduledMessage, msg_id)
         self.assertIsNotNone(updated)
         self.assertEqual(updated.status, "sent", "Message should transition from pending to sent")
         self.assertIsNotNone(updated.sent_at)
@@ -88,7 +92,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         db.session.add(member)
         
         # Create a scheduled message in the future
-        future_time = datetime.utcnow() + timedelta(hours=1)
+        future_time = utc_now_naive() + timedelta(hours=1)
         scheduled = ScheduledMessage(
             message_body="Future message",
             target="community",
@@ -101,18 +105,18 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         msg_id = scheduled.id
 
         # Run the scheduler
-        with patch("app.services.twilio_service.get_twilio_service"):
+        with patch("app.services.scheduler_service.get_twilio_service"):
             send_scheduled_messages(self.app)
 
         # Refresh and verify still pending
         db.session.expire_all()
-        updated = ScheduledMessage.query.get(msg_id)
+        updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "pending", "Future message should remain pending")
 
     def test_stuck_processing_marked_failed(self):
         """A message stuck in 'processing' for >10 minutes should be marked failed."""
         # Create a message that has been stuck in processing
-        stuck_time = datetime.utcnow() - timedelta(minutes=15)
+        stuck_time = utc_now_naive() - timedelta(minutes=15)
         scheduled = ScheduledMessage(
             message_body="Stuck message",
             target="community",
@@ -125,12 +129,12 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         msg_id = scheduled.id
 
         # Run the scheduler
-        with patch("app.services.twilio_service.get_twilio_service"):
+        with patch("app.services.scheduler_service.get_twilio_service"):
             send_scheduled_messages(self.app)
 
         # Refresh and verify marked as failed
         db.session.expire_all()
-        updated = ScheduledMessage.query.get(msg_id)
+        updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "failed", "Stuck processing message should be marked failed")
         self.assertIn("timed out", updated.error_message)
 
@@ -139,7 +143,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         member = CommunityMember(name="Test User", phone="+15551234567")
         db.session.add(member)
         
-        past_time = datetime.utcnow() - timedelta(seconds=30)
+        past_time = utc_now_naive() - timedelta(seconds=30)
         scheduled = ScheduledMessage(
             message_body="Transition test",
             target="community",
@@ -156,7 +160,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         def capture_status(*args, **kwargs):
             """Capture status during send_bulk call (when status is 'processing')."""
             db.session.expire_all()
-            msg = ScheduledMessage.query.get(msg_id)
+            msg = db.session.get(ScheduledMessage, msg_id)
             statuses_seen.append(msg.status)
             return {
                 "total": 1,
@@ -165,7 +169,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
                 "details": [],
             }
 
-        with patch("app.services.twilio_service.get_twilio_service") as mock_twilio:
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
             mock_service = MagicMock()
             mock_service.send_bulk.side_effect = capture_status
             mock_twilio.return_value = mock_service
@@ -177,7 +181,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
 
         # Verify final status is sent
         db.session.expire_all()
-        updated = ScheduledMessage.query.get(msg_id)
+        updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "sent")
 
 

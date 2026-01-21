@@ -2,7 +2,6 @@
 import json
 import logging
 import atexit
-from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.services.twilio_service import get_twilio_service
@@ -28,13 +27,13 @@ def send_scheduled_messages(app):
         from datetime import timedelta
         from flask import current_app
         from app import db
-        from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration
+        from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration, utc_now
         from app.services.recipient_service import (
             filter_suppressed_recipients,
             filter_unsubscribed_recipients,
         )
         from app.services.suppression_service import process_failure_details
-        now = datetime.utcnow()
+        now = utc_now().replace(tzinfo=None)
         logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
         
         # Step 1: Handle stuck 'processing' messages (timed out after 10 minutes)

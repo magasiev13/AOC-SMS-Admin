@@ -6,7 +6,7 @@ import io
 def escape_like(value: str) -> str:
     """
     Escape special LIKE pattern characters (% and _) plus escape tokens
-    (\) to prevent SQL injection via wildcard abuse in search queries.
+    (\\) to prevent SQL injection via wildcard abuse in search queries.
     """
     if not value:
         return value
