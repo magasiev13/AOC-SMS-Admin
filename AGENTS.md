@@ -54,7 +54,8 @@ This repository welcomes AI agents. Use this guide to work safely, predictably, 
 - **Unit tests:** run `pytest`. If none exist, add focused tests in `tests/` and document how to run them.
 - **DB doctor & migrations:** run `python -m app.dbdoctor --print` and `python -m app.dbdoctor --apply` (apply migrations before serving).
 - **Systemd services:** expected units are `sms`, `sms-worker`, and `sms-scheduler.timer`; all load environment from `/opt/sms-admin/.env`.
-- **Scheduler:** uses systemd timer (`sms-scheduler.timer`) that triggers `sms-scheduler.service` (Type=oneshot) every 60 seconds. Do NOT enable `sms-scheduler.service` directly—enable only the timer.
+- **Scheduler:** uses systemd timer (`sms-scheduler.timer`) that triggers `sms-scheduler.service` (Type=oneshot) every 30 seconds. Do NOT enable `sms-scheduler.service` directly—enable only the timer.
+- **Documentation:** see `docs/` folder for architecture, database schema, API reference, services, configuration, deployment, and troubleshooting guides.
 - **Definition of done (prod):**
   - [ ] No 500s in logs after deploy.
   - [ ] Migrations run **before** serving traffic.
