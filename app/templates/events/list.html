@@ -41,7 +41,7 @@
     </div>
     {% endif %}
     <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0 table-loading" id="eventsTable">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="eventsTable" data-sortable="client">
             <thead class="table-light">
                 <tr>
                     <th width="40">
@@ -49,10 +49,30 @@
                         <input class="form-check-input" type="checkbox" id="selectAllEvents" aria-label="Select all events">
                         {% endif %}
                     </th>
-                    <th>Title</th>
-                    <th>Date</th>
-                    <th>Registrations</th>
-                    <th>Created</th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="title">
+                            <span>Title</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="date">
+                            <span>Date</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="number">
+                        <button type="button" class="sort-button" data-sort-key="registrations">
+                            <span>Registrations</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="created">
+                            <span>Created</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th width="120">Actions</th>
                 </tr>
             </thead>
@@ -63,16 +83,20 @@
                         <td>
                             <input class="form-check-input js-select-row" type="checkbox" aria-label="Select event">
                         </td>
-                        <td>
+                        <td data-sort-value="{{ event.title }}">
                             <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="text-decoration-none">
                                 {{ event.title }}
                             </a>
                         </td>
-                        <td>{{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</td>
-                        <td>
+                        <td data-sort-value="{{ event.date.isoformat() if event.date else '' }}">
+                            {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}
+                        </td>
+                        <td data-sort-value="{{ event.registrations|length }}">
                             <span class="badge bg-secondary">{{ event.registrations|length }}</span>
                         </td>
-                        <td>{{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}</td>
+                        <td data-sort-value="{{ event.created_at.isoformat() if event.created_at else '' }}">
+                            {{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}
+                        </td>
                         <td>
                             <div class="d-flex flex-wrap gap-1 row-actions">
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Preview"

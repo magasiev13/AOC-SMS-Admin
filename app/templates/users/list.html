@@ -17,12 +17,27 @@
 {% block content %}
 <div class="card app-card">
     <div class="table-responsive">
-        <table class="table table-hover mb-0">
+        <table class="table table-hover mb-0" data-sortable="client">
             <thead class="table-light">
                 <tr>
-                    <th>Username</th>
-                    <th>Role</th>
-                    <th>Created</th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="username">
+                            <span>Username</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="enum">
+                        <button type="button" class="sort-button" data-sort-key="role">
+                            <span>Role</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="created">
+                            <span>Created</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th width="140">Actions</th>
                 </tr>
             </thead>
@@ -30,18 +45,20 @@
                 {% if users %}
                     {% for user in users %}
                     <tr>
-                        <td>
+                        <td data-sort-value="{{ user.username }}">
                             {{ user.username }}
                             {% if current_user.id == user.id %}
                                 <span class="badge bg-secondary ms-2">You</span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td data-sort-value="{{ 'Admin' if user.is_admin else 'Social Media Manager' }}">
                             <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
                                 {{ 'Admin' if user.is_admin else 'Social Media Manager' }}
                             </span>
                         </td>
-                        <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
+                        <td data-sort-value="{{ user.created_at.isoformat() if user.created_at else '' }}">
+                            {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}
+                        </td>
                         <td>
                             <div class="d-flex flex-wrap gap-1">
                                 <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary">

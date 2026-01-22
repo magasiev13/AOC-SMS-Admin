@@ -28,6 +28,7 @@ from app.services.recipient_service import (
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
+from app.sort_utils import normalize_sort_params
 from app.utils import normalize_phone, validate_phone, parse_recipients_csv, escape_like
 
 bp = Blueprint('main', __name__)
@@ -1122,6 +1123,13 @@ def logs_clear():
 def unsubscribed_list():
     search = request.args.get('search', '').strip()
     page = request.args.get('page', 1, type=int)
+    sort_key, sort_dir = normalize_sort_params(
+        request.args.get('sort'),
+        request.args.get('dir'),
+        allowed_keys={'name', 'phone', 'reason', 'category', 'source', 'created_at'},
+        default_key='created_at',
+        default_dir='desc',
+    )
     per_page = 50
 
     unsubscribed_query = UnsubscribedContact.query
@@ -1175,33 +1183,65 @@ def unsubscribed_list():
 
     offset = (page - 1) * per_page
     sql_params.update({'limit': per_page, 'offset': offset})
+    phone_sort_expr = (
+        "CAST(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') AS INTEGER)"
+    )
+    sort_config = {
+        'name': {'expr': 'LOWER(name)', 'null_check': 'name'},
+        'phone': {'expr': phone_sort_expr, 'null_check': 'phone'},
+        'reason': {'expr': 'LOWER(reason)', 'null_check': 'reason'},
+        'category': {'expr': 'LOWER(category)', 'null_check': 'category'},
+        'source': {'expr': 'LOWER(source)', 'null_check': 'source'},
+        'created_at': {'expr': 'created_at', 'null_check': 'created_at'},
+    }
+    sort_expr = sort_config[sort_key]['expr']
+    null_check = sort_config[sort_key]['null_check']
+    null_rank = 1 if sort_dir == 'asc' else 0
+    not_null_rank = 0 if sort_dir == 'asc' else 1
+    order_by = (
+        f"CASE WHEN {null_check} IS NULL OR {null_check} = '' THEN {null_rank} ELSE {not_null_rank} END, "
+        f"{sort_expr} {sort_dir}, "
+        "created_at DESC, entry_type, id"
+    )
+
     combined_sql = f"""
         SELECT
-            u.id AS id,
-            u.name AS name,
-            u.phone AS phone,
-            u.reason AS reason,
-            'unsubscribed' AS category,
-            u.source AS source,
-            u.created_at AS created_at,
-            'unsubscribed' AS entry_type
-        FROM unsubscribed_contacts u
-        WHERE 1 = 1
-        {search_filter_unsubscribed}
-        UNION ALL
-        SELECT
-            s.id AS id,
-            NULL AS name,
-            s.phone AS phone,
-            s.reason AS reason,
-            s.category AS category,
-            s.source AS source,
-            s.created_at AS created_at,
-            'suppressed' AS entry_type
-        FROM suppressed_contacts s
-        WHERE 1 = 1
-        {search_filter_suppressed}
-        ORDER BY created_at DESC, entry_type, id
+            id,
+            name,
+            phone,
+            reason,
+            category,
+            source,
+            created_at,
+            entry_type
+        FROM (
+            SELECT
+                u.id AS id,
+                u.name AS name,
+                u.phone AS phone,
+                u.reason AS reason,
+                'unsubscribed' AS category,
+                u.source AS source,
+                u.created_at AS created_at,
+                'unsubscribed' AS entry_type
+            FROM unsubscribed_contacts u
+            WHERE 1 = 1
+            {search_filter_unsubscribed}
+            UNION ALL
+            SELECT
+                s.id AS id,
+                NULL AS name,
+                s.phone AS phone,
+                s.reason AS reason,
+                s.category AS category,
+                s.source AS source,
+                s.created_at AS created_at,
+                'suppressed' AS entry_type
+            FROM suppressed_contacts s
+            WHERE 1 = 1
+            {search_filter_suppressed}
+        ) combined
+        ORDER BY {order_by}
         LIMIT :limit OFFSET :offset
     """
     combined_query = text(combined_sql).columns(
@@ -1226,6 +1266,8 @@ def unsubscribed_list():
         page=page,
         total_pages=total_pages,
         total_count=total_count,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
     )
 
 

@@ -74,30 +74,55 @@
                 <h6 class="mb-0">Recipient Details</h6>
             </div>
             <div class="table-responsive">
-                <table class="table table-sm mb-0">
+                <table class="table table-sm mb-0" data-sortable="client">
                     <thead class="table-light">
                         <tr>
-                            <th>Name</th>
-                            <th>Phone</th>
-                            <th>Status</th>
-                            <th>Suppression</th>
-                            <th>Error</th>
+                            <th data-sort-type="string">
+                                <button type="button" class="sort-button" data-sort-key="name">
+                                    <span>Name</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="phone">
+                                <button type="button" class="sort-button" data-sort-key="phone">
+                                    <span>Phone</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="enum">
+                                <button type="button" class="sort-button" data-sort-key="status">
+                                    <span>Status</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="enum">
+                                <button type="button" class="sort-button" data-sort-key="suppression">
+                                    <span>Suppression</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="string">
+                                <button type="button" class="sort-button" data-sort-key="error">
+                                    <span>Error</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
                         {% if details %}
                         {% for d in details %}
                         <tr class="{{ 'table-danger' if not d.success else '' }}">
-                            <td>{{ d.name or '-' }}</td>
-                            <td><code>{{ d.phone }}</code></td>
-                            <td>
+                            <td data-sort-value="{{ d.name or '' }}">{{ d.name or '-' }}</td>
+                            <td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>
+                            <td data-sort-value="{{ 'Sent' if d.success else 'Failed' }}">
                                 {% if d.success %}
                                 <span class="badge bg-success">Sent</span>
                                 {% else %}
                                 <span class="badge bg-danger">Failed</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-sort-value="{{ suppression_status.get(d.normalized_phone) or '' }}">
                                 {% if not d.success and suppression_status.get(d.normalized_phone) %}
                                 <span class="badge bg-warning text-dark text-uppercase">
                                     {{ suppression_status.get(d.normalized_phone) }}
@@ -106,7 +131,7 @@
                                 -
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-sort-value="{{ d.error or '' }}">
                                 {% if d.error %}
                                 <small class="text-danger">{{ d.error }}</small>
                                 {% else %}

@@ -32,22 +32,44 @@
 
 <div class="card app-card">
     <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0 table-loading" id="logsTable">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="logsTable" data-sortable="client">
             <thead class="table-light">
                 <tr>
-                    <th>Date</th>
-                    <th>Target</th>
-                    <th>Message</th>
-                    <th>Results</th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="date">
+                            <span>Date</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="enum">
+                        <button type="button" class="sort-button" data-sort-key="target">
+                            <span>Target</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="message">
+                            <span>Message</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="number">
+                        <button type="button" class="sort-button" data-sort-key="results">
+                            <span>Results</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th width="80"></th>
                 </tr>
             </thead>
             <tbody class="table-data">
                 {% if logs %}
                 {% for log in logs %}
+                {% set target_label = 'Community' if log.target == 'community' else 'Event' %}
+                {% set target_sort = target_label ~ (': ' ~ log.event.title if log.event else '') %}
                 <tr>
-                    <td>{{ log.created_at|localtime }}</td>
-                    <td>
+                    <td data-sort-value="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ log.created_at|localtime }}</td>
+                    <td data-sort-value="{{ target_sort }}">
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
                             {{ log.target }}
                         </span>
@@ -55,12 +77,12 @@
                         <br><small class="text-muted">{{ log.event.title }}</small>
                         {% endif %}
                     </td>
-                    <td>
+                    <td data-sort-value="{{ log.message_body }}">
                         <span title="{{ log.message_body }}">
                             {{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}
                         </span>
                     </td>
-                    <td>
+                    <td data-sort-value="{{ log.total_recipients or 0 }}">
                         <div class="mb-1">
                             <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
                                 {{ log.status or 'sent' }}
@@ -210,4 +232,3 @@
 </div>
 {% endif %}
 {% endblock %}
-

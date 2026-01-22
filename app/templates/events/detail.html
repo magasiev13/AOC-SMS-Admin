@@ -74,12 +74,27 @@
                 <h6 class="mb-0"><i class="bi bi-people me-2"></i>Registrations ({{ registrations|length }})</h6>
             </div>
             <div class="table-responsive">
-                <table class="table table-sm mb-0">
+                <table class="table table-sm mb-0" data-sortable="client">
                     <thead class="table-light">
                         <tr>
-                            <th>Name</th>
-                            <th>Phone</th>
-                            <th>Status</th>
+                            <th data-sort-type="string">
+                                <button type="button" class="sort-button" data-sort-key="name">
+                                    <span>Name</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="phone">
+                                <button type="button" class="sort-button" data-sort-key="phone">
+                                    <span>Phone</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="enum">
+                                <button type="button" class="sort-button" data-sort-key="status">
+                                    <span>Status</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
                             <th width="60"></th>
                         </tr>
                     </thead>
@@ -88,9 +103,9 @@
                         {% for reg in registrations %}
                         {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
                         <tr>
-                            <td>{{ reg.name or '-' }}</td>
-                            <td><code>{{ reg.phone }}</code></td>
-                            <td>
+                            <td data-sort-value="{{ reg.name or '' }}">{{ reg.name or '-' }}</td>
+                            <td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>
+                            <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else 'Active' }}">
                                 {% if is_unsubscribed %}
                                 <span class="badge bg-secondary">Unsubscribed</span>
                                 {% else %}
