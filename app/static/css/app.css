@@ -1216,6 +1216,16 @@ a:focus-visible {
   color: var(--color-primary-light);
 }
 
+.app-sidebar-brand.app-sidebar-brand--light,
+.app-sidebar-brand.app-sidebar-brand--light:hover {
+  color: var(--color-text);
+}
+
+.app-sidebar-brand.app-sidebar-brand--light .brand-text,
+.app-sidebar-brand.app-sidebar-brand--light .brand-text__accent {
+  color: var(--color-text);
+}
+
 .app-sidebar .app-search .form-control {
   background-color: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.1);
