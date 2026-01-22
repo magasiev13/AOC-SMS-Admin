@@ -1184,7 +1184,7 @@ def unsubscribed_list():
     offset = (page - 1) * per_page
     sql_params.update({'limit': per_page, 'offset': offset})
     phone_sort_expr = (
-        "CAST(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') AS INTEGER)"
+        "CAST(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') AS BIGINT)"
     )
     sort_config = {
         'name': {'expr': 'LOWER(name)', 'null_check': 'name'},
