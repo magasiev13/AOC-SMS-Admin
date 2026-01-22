@@ -4,11 +4,28 @@ A production-ready, single-user SMS admin web application for sending community 
 
 ## Features
 
-- **Send SMS Blasts**: Community-wide or event-specific messaging
+- **Send SMS Blasts**: Community-wide or event-specific messaging with personalization
+- **Scheduled Messages**: Schedule messages for future delivery with timezone support
 - **Recipients Management**: Add, edit, delete, and import recipients via CSV
 - **Events Management**: Create events and manage registrations
-- **Message Logs**: Track all sent messages with success/failure details
-- **Secure**: Environment-based secrets, Nginx HTTP Basic Auth, HTTPS
+- **Message Logs**: Track all sent messages with per-recipient success/failure details
+- **Automatic Suppression**: Auto-detect and suppress invalid numbers and opt-outs
+- **Unsubscribe Management**: Track and respect opt-outs across all sends
+- **Role-Based Access**: Admin and social manager roles with appropriate permissions
+- **Secure**: Environment-based secrets, Flask-Login authentication, CSRF protection, HTTPS
+
+## Documentation
+
+For detailed documentation, see the [`docs/`](docs/) folder:
+
+- [Architecture Overview](docs/architecture.md) - System design and components
+- [Database Schema](docs/database.md) - Data models and migrations
+- [API Reference](docs/api.md) - All HTTP routes and endpoints
+- [Services](docs/services.md) - Twilio, Scheduler, Suppression services
+- [Configuration](docs/configuration.md) - Environment variables guide
+- [Deployment](docs/deployment.md) - Production deployment instructions
+- [CLI Tools](docs/cli.md) - dbdoctor and other utilities
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
 ## Tech Stack
 
@@ -23,48 +40,63 @@ A production-ready, single-user SMS admin web application for sending community 
 
 ```
 ├── app/
-│   ├── __init__.py          # App factory
-│   ├── config.py            # Configuration
-│   ├── models.py            # SQLAlchemy models
-│   ├── routes.py            # Flask routes
-│   ├── utils.py             # Phone validation, CSV parsing
+│   ├── __init__.py          # App factory with extensions, migrations, scheduler
+│   ├── config.py            # Environment-based configuration
+│   ├── models.py            # SQLAlchemy ORM models
+│   ├── routes.py            # Flask HTTP routes (40+ endpoints)
+│   ├── auth.py              # Authentication, login, rate limiting
+│   ├── utils.py             # Phone normalization, CSV parsing, templating
+│   ├── queue.py             # Redis/RQ connection utilities
+│   ├── tasks.py             # Background job definitions
+│   ├── dbdoctor.py          # Database health check CLI
+│   ├── sort_utils.py        # Sort parameter validation
 │   ├── services/
-│   │   └── twilio_service.py
-│   ├── templates/
-│   │   ├── base.html
-│   │   ├── dashboard.html
-│   │   ├── community/       # Community members management
-│   │   ├── events/          # Events & registrations
-│   │   └── logs/            # Message history
-│   └── static/
+│   │   ├── twilio_service.py      # SMS sending via Twilio API
+│   │   ├── scheduler_service.py   # Scheduled message processing
+│   │   ├── recipient_service.py   # Recipient filtering utilities
+│   │   ├── suppression_service.py # Failure classification & suppression
+│   │   └── suppression_backfill.py # Historical suppression backfill
+│   ├── migrations/          # SQLite schema migrations
+│   ├── templates/           # Jinja2 HTML templates
+│   └── static/              # CSS, JavaScript assets
+├── bin/
+│   └── dbdoctor             # CLI wrapper script
 ├── deploy/
-│   ├── nginx.conf           # Nginx config sample
-│   └── sms.service          # systemd unit file
+│   ├── install.sh           # Automated deployment script
+│   ├── nginx.conf           # Nginx reverse proxy config
+│   ├── sms.service          # systemd unit: web app
+│   ├── sms-worker.service   # systemd unit: RQ worker
+│   ├── sms-scheduler.service # systemd unit: scheduler (oneshot)
+│   ├── sms-scheduler.timer  # systemd timer: runs scheduler every 30s
+│   └── run_scheduler_once.sh # Scheduler wrapper script
+├── docs/                    # Documentation (see below)
+├── tests/                   # pytest test suite
 ├── wsgi.py                  # WSGI entry point
 ├── requirements.txt
 ├── .env.example
+├── AGENTS.md                # AI agent guidelines
 └── README.md
 ```
 
 ## Data Model
 
 ```
+users                 → Application users with roles (admin, social_manager)
 community_members     → People who receive community blasts
-  - id, name, phone
-
-events                → Event definitions  
-  - id, title, date
-
-event_registrations   → People registered for specific events (separate from community)
-  - id, event_id, name, phone
-
+events                → Event definitions
+event_registrations   → People registered for specific events
+scheduled_messages    → Messages scheduled for future delivery
 message_logs          → Send history with per-recipient results
-  - id, created_at, message_body, target, event_id, counts, details
+unsubscribed_contacts → Opted-out phone numbers (STOP, manual)
+suppressed_contacts   → Invalid/failed phone numbers (landlines, etc.)
+login_attempts        → Failed login tracking for rate limiting
 ```
 
 **Key concept**: Community members and event registrations are **separate pools**:
 - **Community blast** → sends to everyone in `community_members`
 - **Event blast** → sends only to people in `event_registrations` for that event
+
+For detailed schema documentation, see [docs/database.md](docs/database.md).
 
 ## How to Run Locally
 
@@ -396,18 +428,35 @@ Phone formats accepted: `+1234567890`, `(323) 630-0201`, `720-383-2388`, `323630
 303-918-8410
 ```
 
+## Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app
+
+# Run specific test file
+pytest tests/test_utils.py
+```
+
 ## Assumptions
 
-1. **Single User**: App assumes single admin user; authentication via Nginx HTTP Basic Auth
-2. **Low Volume**: SMS sent individually with 100ms delay; suitable for <1000 recipients per blast
-3. **US Phone Numbers**: Phone normalization assumes US (+1) if no country code provided
-4. **UTC Timestamps**: All timestamps stored in UTC
-5. **SQLite**: Suitable for single-server deployment; not for high-concurrency scenarios
+1. **Low Volume**: SMS sent individually with 100ms delay; suitable for <1000 recipients per blast
+2. **US Phone Numbers**: Phone normalization assumes US (+1) if no country code provided
+3. **UTC Timestamps**: All timestamps stored in UTC
+4. **SQLite**: Suitable for single-server deployment; not for high-concurrency scenarios
 
 ## Security Notes
 
 - Never commit `.env` file (it's gitignored)
 - Twilio credentials loaded from environment only
 - Flask debug mode disabled in production
-- HTTP Basic Auth protects all routes except `/health`
+- Flask-Login handles authentication with password hashing
+- CSRF protection via Flask-WTF
+- Login rate limiting (5 attempts / 5 min → 10 min lockout)
 - HTTPS enforced via Nginx redirect
+- Session cookies: HTTP-only, Secure, SameSite=Lax
+
+For more details, see [docs/troubleshooting.md](docs/troubleshooting.md).
