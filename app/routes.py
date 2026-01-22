@@ -1201,7 +1201,7 @@ def unsubscribed_list():
         FROM suppressed_contacts s
         WHERE 1 = 1
         {search_filter_suppressed}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, entry_type, id
         LIMIT :limit OFFSET :offset
     """
     combined_query = text(combined_sql).columns(
