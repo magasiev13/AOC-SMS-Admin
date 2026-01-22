@@ -1808,69 +1808,7 @@ tr:hover .row-actions,
   }
 }
 
-/* 3. Bottom Navigation Bar (Mobile) */
-.app-bottom-nav {
-  display: none;
-}
-
 @media (max-width: 991.98px) {
-  .app-bottom-nav {
-    display: flex;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--color-surface);
-    border-top: 1px solid var(--color-border);
-    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
-    z-index: 1050;
-    padding: var(--space-1) 0;
-    padding-bottom: calc(var(--space-1) + env(safe-area-inset-bottom, 0));
-  }
-
-  .app-bottom-nav__link {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-2) var(--space-1);
-    color: var(--color-text-muted);
-    text-decoration: none;
-    font-size: 0.625rem;
-    font-weight: 500;
-    gap: 2px;
-    min-height: 56px;
-    transition: color 0.15s ease;
-  }
-
-  .app-bottom-nav__link i {
-    font-size: 1.25rem;
-    transition: transform 0.15s ease;
-  }
-
-  .app-bottom-nav__link:hover,
-  .app-bottom-nav__link:focus {
-    color: var(--color-primary);
-  }
-
-  .app-bottom-nav__link.active {
-    color: var(--color-primary);
-  }
-
-  .app-bottom-nav__link.active i {
-    transform: scale(1.1);
-  }
-
-  /* Add bottom padding to main content to prevent overlap with bottom nav */
-  .app-content {
-    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0));
-  }
-
-  .app-footer {
-    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0));
-  }
-
   .app-mobile-nav-panel {
     padding: var(--space-3) !important;
     max-height: calc(100vh - 140px);
