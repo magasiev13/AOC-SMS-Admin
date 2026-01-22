@@ -7,6 +7,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app import db
 from app.auth import require_roles
+from sqlalchemy import DateTime, Integer, String, Text, text
 from sqlalchemy.exc import OperationalError
 
 from datetime import datetime, timedelta, timezone
@@ -1125,10 +1126,14 @@ def unsubscribed_list():
 
     unsubscribed_query = UnsubscribedContact.query
     suppressed_query = SuppressedContact.query
+    search_filter_unsubscribed = ''
+    search_filter_suppressed = ''
+    sql_params = {}
 
     if search:
         escaped = escape_like(search)
         pattern = f'%{escaped}%'
+        sql_params['pattern'] = pattern
         unsubscribed_query = unsubscribed_query.filter(
             db.or_(
                 UnsubscribedContact.name.ilike(pattern, escape='\\'),
@@ -1145,6 +1150,22 @@ def unsubscribed_list():
                 SuppressedContact.source.ilike(pattern, escape='\\'),
             )
         )
+        search_filter_unsubscribed = """
+            AND (
+                LOWER(u.name) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(u.phone) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(u.reason) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(u.source) LIKE LOWER(:pattern) ESCAPE '\\'
+            )
+        """
+        search_filter_suppressed = """
+            AND (
+                LOWER(s.phone) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(s.reason) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(s.category) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(s.source) LIKE LOWER(:pattern) ESCAPE '\\'
+            )
+        """
 
     unsubscribed_count = unsubscribed_query.count()
     suppressed_count = suppressed_query.count()
@@ -1153,48 +1174,50 @@ def unsubscribed_list():
     page = max(1, min(page, total_pages))
 
     offset = (page - 1) * per_page
-    remaining = per_page
-
-    combined = []
-
-    if offset < unsubscribed_count:
-        unsub_to_take = min(remaining, unsubscribed_count - offset)
-        unsubscribed_entries = unsubscribed_query.order_by(
-            UnsubscribedContact.created_at.desc()
-        ).offset(offset).limit(unsub_to_take).all()
-        combined.extend(
-            {
-                'name': entry.name,
-                'phone': entry.phone,
-                'reason': entry.reason,
-                'category': 'unsubscribed',
-                'source': entry.source,
-                'created_at': entry.created_at,
-                'entry_type': 'unsubscribed',
-                'id': entry.id,
-            }
-            for entry in unsubscribed_entries
-        )
-        remaining -= len(unsubscribed_entries)
-
-    if remaining > 0:
-        supp_offset = max(0, offset - unsubscribed_count)
-        suppressed_entries = suppressed_query.order_by(
-            SuppressedContact.created_at.desc()
-        ).offset(supp_offset).limit(remaining).all()
-        combined.extend(
-            {
-                'name': None,
-                'phone': entry.phone,
-                'reason': entry.reason,
-                'category': entry.category,
-                'source': entry.source,
-                'created_at': entry.created_at,
-                'entry_type': 'suppressed',
-                'id': entry.id,
-            }
-            for entry in suppressed_entries
-        )
+    sql_params.update({'limit': per_page, 'offset': offset})
+    combined_sql = f"""
+        SELECT
+            u.id AS id,
+            u.name AS name,
+            u.phone AS phone,
+            u.reason AS reason,
+            'unsubscribed' AS category,
+            u.source AS source,
+            u.created_at AS created_at,
+            'unsubscribed' AS entry_type
+        FROM unsubscribed_contacts u
+        WHERE 1 = 1
+        {search_filter_unsubscribed}
+        UNION ALL
+        SELECT
+            s.id AS id,
+            NULL AS name,
+            s.phone AS phone,
+            s.reason AS reason,
+            s.category AS category,
+            s.source AS source,
+            s.created_at AS created_at,
+            'suppressed' AS entry_type
+        FROM suppressed_contacts s
+        WHERE 1 = 1
+        {search_filter_suppressed}
+        ORDER BY created_at DESC
+        LIMIT :limit OFFSET :offset
+    """
+    combined_query = text(combined_sql).columns(
+        id=Integer(),
+        name=String(),
+        phone=String(),
+        reason=Text(),
+        category=String(),
+        source=String(),
+        created_at=DateTime(),
+        entry_type=String(),
+    )
+    combined = [
+        dict(row)
+        for row in db.session.execute(combined_query, sql_params).mappings().all()
+    ]
 
     return render_template(
         'unsubscribed/list.html',
