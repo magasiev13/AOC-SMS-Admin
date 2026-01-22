@@ -14,8 +14,10 @@ A production-ready, single-user SMS admin web application for sending community 
 
 - **Backend**: Python 3.11+, Flask, SQLAlchemy
 - **Database**: SQLite
+- **Queue**: Redis + RQ worker (background sends)
+- **Scheduler**: APScheduler (dev) + systemd timer (prod)
 - **SMS Provider**: Twilio
-- **Production**: Gunicorn + Nginx + systemd
+- **Production**: Gunicorn + Nginx + systemd (sms, sms-worker, sms-scheduler.timer)
 
 ## Project Structure
 
