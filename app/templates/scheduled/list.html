@@ -45,15 +45,30 @@
         </div>
     </div>
     <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0 table-loading" id="scheduledTables" data-bulk-scope="pending">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="scheduledTables" data-bulk-scope="pending" data-sortable="client">
             <thead class="table-light">
                 <tr>
                     <th width="40">
                         <input class="form-check-input" type="checkbox" id="selectAllPending" aria-label="Select all pending messages">
                     </th>
-                    <th>Scheduled For</th>
-                    <th>Target</th>
-                    <th>Message</th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="scheduled">
+                            <span>Scheduled For</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="enum">
+                        <button type="button" class="sort-button" data-sort-key="target">
+                            <span>Target</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="message">
+                            <span>Message</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th width="150">Actions</th>
                 </tr>
             </thead>
@@ -63,10 +78,10 @@
                     <td>
                         <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
                     </td>
-                    <td>
+                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">
                         <strong>{{ msg.scheduled_at|localtime }}</strong>
                     </td>
-                    <td>
+                    <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
                         {% if msg.test_mode %}
                         <span class="badge bg-warning text-dark">TEST</span>
                         {% elif msg.target == 'community' %}
@@ -75,7 +90,7 @@
                         <span class="badge bg-info">Event: {{ msg.event.title if msg.event else 'Unknown' }}</span>
                         {% endif %}
                     </td>
-                    <td>{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
+                    <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions">
                             <button type="button" class="btn btn-sm btn-outline-primary"
@@ -180,16 +195,36 @@
         </div>
     </div>
     <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0 table-loading" id="scheduledPastTable" data-bulk-scope="past">
+        <table class="table table-hover table-sticky-header mb-0 table-loading" id="scheduledPastTable" data-bulk-scope="past" data-sortable="client">
             <thead class="table-light">
                 <tr>
                     <th width="40">
                         <input class="form-check-input" type="checkbox" id="selectAllPast" aria-label="Select all past messages">
                     </th>
-                    <th>Scheduled For</th>
-                    <th>Status</th>
-                    <th>Target</th>
-                    <th>Message</th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="scheduled">
+                            <span>Scheduled For</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="enum">
+                        <button type="button" class="sort-button" data-sort-key="status">
+                            <span>Status</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="enum">
+                        <button type="button" class="sort-button" data-sort-key="target">
+                            <span>Target</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="message">
+                            <span>Message</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th width="100">Actions</th>
                 </tr>
             </thead>
@@ -199,8 +234,8 @@
                     <td>
                         <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
                     </td>
-                    <td>{{ msg.scheduled_at|localtime }}</td>
-                    <td>
+                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
+                    <td data-sort-value="{{ msg.status or 'sent' }}">
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
                         {% if msg.message_log and msg.message_log.id %}
@@ -216,14 +251,14 @@
                         <span class="badge bg-secondary">Cancelled</span>
                         {% endif %}
                     </td>
-                    <td>
+                    <td data-sort-value="{{ 'Community' if msg.target == 'community' else 'Event' }}">
                         {% if msg.target == 'community' %}
                         <span class="badge bg-primary">Community</span>
                         {% else %}
                         <span class="badge bg-info">Event</span>
                         {% endif %}
                     </td>
-                    <td>{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
+                    <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions">
                             <button type="button" class="btn btn-sm btn-outline-primary"
