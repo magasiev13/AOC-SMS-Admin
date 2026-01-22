@@ -98,6 +98,14 @@ class TestRenderMessageTemplate(unittest.TestCase):
             "Hello John Doe, welcome!",
         )
 
+    def test_full_name_placeholder(self) -> None:
+        template = "Hello {full name}, welcome!"
+        recipient = {"name": "John Doe"}
+        self.assertEqual(
+            render_message_template(template, recipient),
+            "Hello John Doe, welcome!",
+        )
+
     def test_missing_name_uses_fallback(self) -> None:
         template = "Hello {firstname}!"
         recipient = {"phone": "+15551234567"}

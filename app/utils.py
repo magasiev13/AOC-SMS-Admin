@@ -4,7 +4,10 @@ import io
 from typing import Optional
 
 
-_TEMPLATE_TOKEN_RE = re.compile(r"\{(first\s*name|firstname|first_name|name)\}", re.IGNORECASE)
+_TEMPLATE_TOKEN_RE = re.compile(
+    r"\{(first\s*name|firstname|first_name|full\s*name|fullname|full_name|name)\}",
+    re.IGNORECASE,
+)
 
 
 def escape_like(value: str) -> str:
@@ -71,7 +74,7 @@ def render_message_template(template: str, recipient: dict, fallback: str = 'the
 
     def _replace(match: re.Match) -> str:
         token = match.group(1).replace(' ', '').lower()
-        if token == 'name':
+        if token in {'name', 'fullname', 'full_name'}:
             return full_name or fallback
         return first_name
 

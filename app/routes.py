@@ -944,7 +944,24 @@ def logs_list():
         )
         flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
         logs = []
-    return render_template('logs/list.html', logs=logs, search=search)
+
+    processing_logs = [
+        {
+            'id': log.id,
+            'status': log.status or 'sent',
+            'success_count': log.success_count or 0,
+            'failure_count': log.failure_count or 0,
+        }
+        for log in logs
+        if log.status == 'processing'
+    ]
+
+    return render_template(
+        'logs/list.html',
+        logs=logs,
+        search=search,
+        processing_logs=processing_logs,
+    )
 
 
 @bp.route('/logs/<int:log_id>')
@@ -1000,6 +1017,42 @@ def log_detail(log_id):
         details=details,
         suppression_status=suppression_status,
     )
+
+
+@bp.route('/logs/status')
+@login_required
+def logs_status():
+    """API endpoint for polling message log status changes."""
+    ids_str = request.args.get('ids', '').strip()
+    if not ids_str:
+        return jsonify({'logs': []})
+    try:
+        ids = [int(i) for i in ids_str.split(',') if i.strip()]
+    except ValueError:
+        return jsonify({'logs': []})
+    if not ids:
+        return jsonify({'logs': []})
+
+    ids = ids[:100]
+    try:
+        logs = MessageLog.query.filter(MessageLog.id.in_(ids)).all()
+    except OperationalError as exc:
+        current_app.logger.warning(
+            'MessageLog status query failed due to schema mismatch: %s',
+            exc,
+        )
+        return jsonify({'logs': []})
+
+    payload = []
+    for log in logs:
+        payload.append({
+            'id': log.id,
+            'status': log.status or 'sent',
+            'success_count': log.success_count or 0,
+            'failure_count': log.failure_count or 0,
+        })
+
+    return jsonify({'logs': payload})
 
 
 # Scheduled Messages
