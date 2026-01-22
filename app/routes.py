@@ -959,7 +959,17 @@ def log_detail(log_id):
         flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
         return redirect(url_for('main.logs_list'))
 
-    details = json.loads(log.details) if log.details else []
+    details = []
+    if log.details:
+        try:
+            details = json.loads(log.details)
+        except json.JSONDecodeError as exc:
+            current_app.logger.warning(
+                'MessageLog details JSON decode failed for log_id=%s: %s',
+                log_id,
+                exc,
+            )
+            details = []
     phones = set()
     for detail in details:
         raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
