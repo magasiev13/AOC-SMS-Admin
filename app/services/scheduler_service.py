@@ -2,6 +2,7 @@
 import json
 import logging
 import atexit
+from sqlalchemy import func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.services.twilio_service import get_twilio_service
@@ -40,14 +41,21 @@ def send_scheduled_messages(app):
         processing_timeout = now - timedelta(minutes=10)
         stuck_processing = ScheduledMessage.query.filter(
             ScheduledMessage.status == 'processing',
-            ScheduledMessage.scheduled_at <= processing_timeout
+            func.coalesce(
+                ScheduledMessage.processing_started_at,
+                ScheduledMessage.scheduled_at,
+            ) <= processing_timeout
         ).all()
         
         stuck_count = len(stuck_processing)
         for scheduled in stuck_processing:
+            processing_started_at = (
+                scheduled.processing_started_at or scheduled.scheduled_at
+            )
             logger.warning(
                 "[Scheduler] Marking stuck message id=%d as failed (was processing since %s)",
-                scheduled.id, scheduled.scheduled_at.isoformat() if scheduled.scheduled_at else 'unknown'
+                scheduled.id,
+                processing_started_at.isoformat() if processing_started_at else 'unknown',
             )
             scheduled.status = 'failed'
             scheduled.error_message = 'Message processing timed out'
@@ -114,13 +122,20 @@ def send_scheduled_messages(app):
                 updated = ScheduledMessage.query.filter_by(
                     id=scheduled.id,
                     status='pending'
-                ).update({'status': 'processing'}, synchronize_session=False)
+                ).update(
+                    {
+                        'status': 'processing',
+                        'processing_started_at': now,
+                    },
+                    synchronize_session=False,
+                )
                 if not updated:
                     db.session.rollback()
                     logger.info("[Scheduler] Message id=%d already claimed by another process, skipping", scheduled.id)
                     continue
                 db.session.commit()
                 scheduled.status = 'processing'
+                scheduled.processing_started_at = now
                 logger.info("[Scheduler] Message id=%d status: pending -> processing", scheduled.id)
             except Exception as e:
                 db.session.rollback()
