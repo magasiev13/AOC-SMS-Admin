@@ -24,14 +24,14 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="name" class="form-label">Name (optional)</label>
-                        <input type="text" class="form-control" id="name" name="name" 
+                        <input type="text" class="form-control" id="name" name="name" autocomplete="name"
                                value="{{ member.name if member and member.name else '' }}"
                                placeholder="Enter first and last name (e.g. John Doe)">
                     </div>
 
                     <div class="mb-4">
                         <label for="phone" class="form-label">Phone Number <span class="text-danger">*</span></label>
-                        <input type="tel" class="form-control" id="phone" name="phone" required
+                        <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" required
                                value="{{ member.phone if member else '' }}"
                                placeholder="+1234567890 or (303) 555-1234">
                         <div class="form-text">Any format accepted (will be normalized to E.164)</div>

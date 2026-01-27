@@ -24,7 +24,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="username" name="username" required
+                        <input type="text" class="form-control" id="username" name="username" required autocomplete="username"
                                value="{{ user.username if user else '' }}"
                                placeholder="username">
                     </div>
@@ -42,7 +42,7 @@
                         <label for="password" class="form-label">
                             {{ 'New Password' if user else 'Password' }}{% if not user %} <span class="text-danger">*</span>{% endif %}
                         </label>
-                        <input type="password" class="form-control" id="password" name="password" {% if not user %}required{% endif %}>
+                        <input type="password" class="form-control" id="password" name="password" autocomplete="new-password" {% if not user %}required{% endif %}>
                         {% if user %}
                         <div class="form-text">Leave blank to keep the existing password.</div>
                         {% endif %}

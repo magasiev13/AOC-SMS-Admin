@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Add Unsubscribed Contact - SMS Admin{% endblock %}
+{% block title %}Add to Suppression - SMS Admin{% endblock %}
 
-{% block page_title %}Add Unsubscribed Contact{% endblock %}
+{% block page_title %}Add to Suppression{% endblock %}
 
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.unsubscribed_list') }}">Unsubscribed</a> /
+<a href="{{ url_for('main.unsubscribed_list') }}">Suppression</a> /
 <span>Add</span>
 {% endblock %}
 
@@ -25,22 +25,22 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label for="name" class="form-label">Name (optional)</label>
-                        <input type="text" class="form-control" id="name" name="name" placeholder="Contact name">
+                        <input type="text" class="form-control" id="name" name="name" autocomplete="name" placeholder="Contact name">
                     </div>
                     <div class="mb-3">
                         <label for="phone" class="form-label">Phone</label>
-                        <input type="tel" class="form-control" id="phone" name="phone" placeholder="+1 (555) 555-5555" required>
+                        <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" placeholder="+1 (555) 555-5555" required>
                     </div>
                     <div class="mb-3">
                         <label for="reason" class="form-label">Reason (optional)</label>
-                        <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is unsubscribed"></textarea>
+                        <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is suppressed"></textarea>
                     </div>
                     <div class="mb-3">
                         <label for="source" class="form-label">Source</label>
                         <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
                         <div class="form-text">Helps track why the number is suppressed (e.g., manual, event:123).</div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Add Unsubscribed</button>
+                    <button type="submit" class="btn btn-primary w-100">Add to Suppression</button>
                 </form>
             </div>
         </div>

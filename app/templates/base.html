@@ -23,7 +23,7 @@
                 {% block app_search %}
                 <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                     <i class="bi bi-search"></i>
-                    <input class="form-control" type="search" name="search" placeholder="Search people" aria-label="Search people">
+                    <input class="form-control" type="search" name="search" placeholder="Search contacts" aria-label="Search contacts">
                 </form>
                 {% endblock %}
             </div>
@@ -74,7 +74,7 @@
                         </span>
                         <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
                     </a>
-                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#appMobileNav">
+                    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#appMobileNav" aria-controls="appMobileNav" aria-expanded="false" aria-label="Toggle navigation">
                         <span class="navbar-toggler-icon"></span>
                     </button>
                 </div>
@@ -83,7 +83,7 @@
                         {% block app_search_mobile %}
                         <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                             <i class="bi bi-search"></i>
-                            <input class="form-control" type="search" name="search" placeholder="Search people" aria-label="Search people">
+                            <input class="form-control" type="search" name="search" placeholder="Search contacts" aria-label="Search contacts">
                         </form>
                         {% endblock %}
                         <div class="nav flex-column mt-3">
@@ -195,6 +195,22 @@
                 });
             });
         });
+
+        const iconEls = document.querySelectorAll('i.bi');
+        iconEls.forEach((iconEl) => {
+            iconEl.setAttribute('aria-hidden', 'true');
+        });
+
+        function updateTableScrollHints() {
+            const responsiveTables = document.querySelectorAll('.table-responsive');
+            responsiveTables.forEach((wrapper) => {
+                const isScrollable = wrapper.scrollWidth > wrapper.clientWidth + 1;
+                wrapper.classList.toggle('is-scrollable', isScrollable);
+            });
+        }
+
+        updateTableScrollHints();
+        window.addEventListener('resize', updateTableScrollHints);
     </script>
     {% block scripts %}{% endblock %}
 </body>

@@ -465,9 +465,37 @@ h6,
 }
 
 .table-responsive {
+  position: relative;
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.table-responsive.is-scrollable::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 2.5rem;
+  height: 100%;
+  background: linear-gradient(to left, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+@media (max-width: 991.98px) {
+  .table-responsive.is-scrollable::after {
+    content: 'Scroll \2192';
+    position: absolute;
+    top: 0.5rem;
+    right: 0.75rem;
+    font-size: var(--font-size-1);
+    color: var(--color-text-muted);
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-pill);
+    padding: 0.15rem 0.5rem;
+    pointer-events: none;
+  }
 }
 
 .table th {

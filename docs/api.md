@@ -71,7 +71,9 @@ message_body=Hello!&target=community|event&event_id=1&test_mode=on&include_unsub
 
 The message body supports personalization tokens:
 - `{name}` or `{full_name}` - Recipient's full name
-- `{first_name}` or `{firstname}` - Recipient's first name
+- `{first_name}` - Recipient's first name
+
+Only these tokens are supported; invalid tokens will be rejected.
 
 Example: `Hello {first_name}!` → `Hello John!`
 

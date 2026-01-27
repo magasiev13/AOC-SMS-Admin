@@ -62,7 +62,7 @@ Send SMS to multiple recipients with rate limiting.
 | Name | Type | Description |
 |------|------|-------------|
 | `recipients` | list[dict] | List of `{'phone': str, 'name': str}` |
-| `body` | str | Message body (supports `{name}`, `{first_name}` tokens) |
+| `body` | str | Message body (supports `{name}`, `{first_name}`, `{full_name}` tokens) |
 | `delay` | float | Seconds between sends (default 0.1) |
 | `raise_on_transient` | bool | Raise on transient errors for retry |
 

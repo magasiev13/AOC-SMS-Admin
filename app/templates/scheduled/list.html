@@ -10,7 +10,7 @@
 
 {% block page_actions %}
 <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">
-    <i class="bi bi-plus-lg me-1"></i>Schedule New
+    <i class="bi bi-plus-lg me-1"></i>Schedule from Dashboard
 </a>
 {% endblock %}
 
@@ -23,7 +23,7 @@
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search scheduled messages" value="{{ search }}">
+                    <input type="text" class="form-control" name="search" placeholder="Search scheduled messages" aria-label="Search scheduled messages" value="{{ search }}">
                 </div>
             </div>
         </form>
@@ -76,7 +76,7 @@
                 {% for msg in pending %}
                 <tr>
                     <td>
-                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
+                        <input class="form-check-input js-select-row" type="checkbox" id="pending-select-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">
                         <strong>{{ msg.scheduled_at|localtime }}</strong>
@@ -93,7 +93,7 @@
                     <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions">
-                            <button type="button" class="btn btn-sm btn-outline-primary"
+                            <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
                                     data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
@@ -134,7 +134,7 @@
                     <div class="text-muted small">{{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
                 </div>
-                <input class="form-check-input js-select-row" type="checkbox" aria-label="Select pending message" data-bulk-group="pending">
+                <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending">
             </div>
             <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                 <button type="button" class="btn btn-sm btn-outline-primary"
@@ -157,10 +157,22 @@
     <div class="card-body py-5">
         <div class="empty-state">
             <i class="bi bi-clock empty-state__icon"></i>
-            <div class="empty-state__title">No scheduled messages</div>
-            <div class="empty-state__text">Schedule a message to send at a specific time.</div>
+            <div class="empty-state__title">
+                {% if past %}
+                No upcoming scheduled messages
+                {% else %}
+                No scheduled messages
+                {% endif %}
+            </div>
+            <div class="empty-state__text">
+                {% if past %}
+                Schedule a message to send at a specific time. Past scheduled messages are listed below.
+                {% else %}
+                Schedule a message to send at a specific time.
+                {% endif %}
+            </div>
             <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-sm">
-                <i class="bi bi-plus-lg me-1"></i>Schedule Message
+                <i class="bi bi-plus-lg me-1"></i>Schedule from Dashboard
             </a>
         </div>
     </div>
@@ -232,7 +244,7 @@
                 {% for msg in past %}
                 <tr>
                     <td>
-                        <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
+                        <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
                     <td data-sort-value="{{ msg.status or 'sent' }}">
@@ -261,12 +273,12 @@
                     <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions">
-                            <button type="button" class="btn btn-sm btn-outline-primary"
+                            <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
                                     data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
-                            <button type="button" class="btn btn-sm btn-outline-danger"
+                            <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete scheduled message" title="Delete"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
                                     data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
                                 <i class="bi bi-trash"></i>
@@ -303,7 +315,7 @@
                     <div class="text-muted small">{{ msg.status|capitalize }} · {{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
                 </div>
-                <input class="form-check-input js-select-row" type="checkbox" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
+                <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
             </div>
             <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                 <button type="button" class="btn btn-sm btn-outline-primary"

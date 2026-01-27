@@ -61,10 +61,10 @@
                         </td>
                         <td>
                             <div class="d-flex flex-wrap gap-1">
-                                <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary">
+                                <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="Edit user" title="Edit">
                                     <i class="bi bi-pencil"></i>
                                 </a>
-                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete user" title="Delete"
                                         data-bs-toggle="modal" data-bs-target="#deleteUserModal"
                                         data-username="{{ user.username }}"
                                         data-form-id="delete-user-{{ user.id }}"

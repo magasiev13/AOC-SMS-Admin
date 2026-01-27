@@ -81,6 +81,11 @@
                 });
             });
         });
+
+        const iconEls = document.querySelectorAll('i.bi');
+        iconEls.forEach((iconEl) => {
+            iconEl.setAttribute('aria-hidden', 'true');
+        });
     </script>
     {% block scripts %}{% endblock %}
 </body>

@@ -25,7 +25,7 @@
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
 <a href="{{ url_for('main.unsubscribed_add') }}" class="btn btn-primary">
-    <i class="bi bi-plus-lg me-1"></i>Add Unsubscribed
+    <i class="bi bi-plus-lg me-1"></i>Add to Suppression
 </a>
 {% endif %}
 {% endblock %}
@@ -38,7 +38,7 @@
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, reason, category, or source..."
+                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, reason, category, or source..." aria-label="Search suppression list"
                            value="{{ search }}">
                 </div>
             </div>
@@ -139,7 +139,7 @@
                             {% if entry.entry_type == 'unsubscribed' %}
                             <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove entry">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </form>
@@ -153,7 +153,7 @@
                 {% else %}
                     <tr>
                         <td colspan="{{ 8 if can_manage_unsubscribed else 7 }}" class="text-center text-muted py-4">
-                            No suppressed or unsubscribed contacts found.
+                            No suppression entries found.
                             {% if can_manage_unsubscribed %}
                             <a href="{{ url_for('main.unsubscribed_add') }}">Add one</a> or
                             <a href="{{ url_for('main.unsubscribed_import') }}">import from CSV</a>.
@@ -293,7 +293,7 @@
                 if (backfillButton) {
                     backfillButton.disabled = false;
                     backfillButton.classList.remove('disabled');
-                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs';
+                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Backfill from Logs';
                 }
             }
         });

@@ -41,10 +41,10 @@
                 <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-2">
-                        <input type="text" class="form-control" name="name" placeholder="Name (optional)">
+                        <input type="text" class="form-control" id="registration_name" name="name" placeholder="Name (optional)" aria-label="Name" autocomplete="name">
                     </div>
                     <div class="mb-2">
-                        <input type="tel" class="form-control" name="phone" placeholder="Phone number" required>
+                        <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="Phone number" aria-label="Phone number" autocomplete="tel" required>
                     </div>
                     <button type="submit" class="btn btn-primary w-100">Add Registration</button>
                 </form>
@@ -59,7 +59,7 @@
                 <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-2">
-                        <input type="file" class="form-control" name="file" accept=".csv" required>
+                        <input type="file" class="form-control" id="registrations_file" name="file" accept=".csv" aria-label="Upload CSV" required>
                     </div>
                     <button type="submit" class="btn btn-outline-primary w-100">Import CSV</button>
                     <div class="form-text">Supports: phone only, name+phone, or first+last+phone</div>
@@ -115,11 +115,11 @@
                             <td>
                                 <div class="d-flex flex-wrap gap-1">
                                     {% if not is_unsubscribed %}
-                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe">
+                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe registration">
                                         <i class="bi bi-person-x"></i>
                                     </button>
                                     {% endif %}
-                                    <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" title="Remove" onclick="return confirm('Remove this registration?');">
+                                    <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove registration" onclick="return confirm('Remove this registration?');">
                                         <i class="bi bi-x"></i>
                                     </button>
                                 </div>

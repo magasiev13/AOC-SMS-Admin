@@ -7,6 +7,7 @@ import unittest
 
 from app.utils import (
     escape_like,
+    find_invalid_template_tokens,
     normalize_phone,
     validate_phone,
     parse_recipients_csv,
@@ -83,7 +84,7 @@ class TestParsePhonesCsv(unittest.TestCase):
 
 class TestRenderMessageTemplate(unittest.TestCase):
     def test_first_name_placeholder(self) -> None:
-        template = "Hello {first name}, thanks!"
+        template = "Hello {first_name}, thanks!"
         recipient = {"name": "Michael Jordan"}
         self.assertEqual(
             render_message_template(template, recipient),
@@ -99,7 +100,7 @@ class TestRenderMessageTemplate(unittest.TestCase):
         )
 
     def test_full_name_placeholder(self) -> None:
-        template = "Hello {full name}, welcome!"
+        template = "Hello {full_name}, welcome!"
         recipient = {"name": "John Doe"}
         self.assertEqual(
             render_message_template(template, recipient),
@@ -107,12 +108,25 @@ class TestRenderMessageTemplate(unittest.TestCase):
         )
 
     def test_missing_name_uses_fallback(self) -> None:
-        template = "Hello {firstname}!"
+        template = "Hello {first_name}!"
         recipient = {"phone": "+15551234567"}
         self.assertEqual(
             render_message_template(template, recipient),
             "Hello there!",
         )
+
+
+class TestTemplateTokenValidation(unittest.TestCase):
+    def test_invalid_tokens(self) -> None:
+        template = "Hello {first name}, {lastname}!"
+        self.assertEqual(
+            find_invalid_template_tokens(template),
+            ["{first name}", "{lastname}"],
+        )
+
+    def test_valid_tokens(self) -> None:
+        template = "Hello {first_name} {full_name} {name}!"
+        self.assertEqual(find_invalid_template_tokens(template), [])
 
 
 if __name__ == "__main__":

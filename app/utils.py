@@ -4,10 +4,12 @@ import io
 from typing import Optional
 
 
+ALLOWED_TEMPLATE_TOKENS = ("name", "first_name", "full_name")
 _TEMPLATE_TOKEN_RE = re.compile(
-    r"\{(first\s*name|firstname|first_name|full\s*name|fullname|full_name|name)\}",
+    r"\{(" + "|".join(ALLOWED_TEMPLATE_TOKENS) + r")\}",
     re.IGNORECASE,
 )
+_TEMPLATE_TOKEN_SCAN_RE = re.compile(r"\{([^{}]+)\}")
 
 
 def escape_like(value: str) -> str:
@@ -73,12 +75,29 @@ def render_message_template(template: str, recipient: dict, fallback: str = 'the
     first_name = get_first_name(full_name) or fallback
 
     def _replace(match: re.Match) -> str:
-        token = match.group(1).replace(' ', '').lower()
-        if token in {'name', 'fullname', 'full_name'}:
+        token = match.group(1).lower()
+        if token in {'name', 'full_name'}:
             return full_name or fallback
         return first_name
 
     return _TEMPLATE_TOKEN_RE.sub(_replace, template)
+
+
+def find_invalid_template_tokens(template: str) -> list[str]:
+    if not template:
+        return []
+
+    invalid_tokens = []
+    seen = set()
+    for match in _TEMPLATE_TOKEN_SCAN_RE.finditer(template):
+        token = match.group(1)
+        normalized = token.lower()
+        if normalized not in ALLOWED_TEMPLATE_TOKENS:
+            raw = match.group(0)
+            if raw not in seen:
+                invalid_tokens.append(raw)
+                seen.add(raw)
+    return invalid_tokens
 
 
 def _looks_like_phone(value: str) -> bool:
@@ -188,4 +207,3 @@ def parse_phones_csv(file_content: str) -> list:
                     phones.append(normalized)
     
     return phones
-

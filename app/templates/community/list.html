@@ -31,7 +31,7 @@
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search by name or phone..."
+                    <input type="text" class="form-control" name="search" placeholder="Search by name or phone..." aria-label="Search community members"
                            value="{{ search }}">
                 </div>
             </div>
@@ -123,21 +123,21 @@
                         {% if can_manage_community %}
                         <td>
                             <div class="d-flex flex-wrap gap-1 row-actions">
-                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview member" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview{{ member.id }}"
                                         aria-controls="memberPreview{{ member.id }}">
                                     <i class="bi bi-layout-sidebar-inset"></i>
                                 </button>
                                 <a href="{{ url_for('main.community_edit', member_id=member.id) }}" 
-                                   class="btn btn-sm btn-outline-secondary" title="Edit">
+                                   class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit member">
                                     <i class="bi bi-pencil"></i>
                                 </a>
                                 {% if not is_unsubscribed %}
-                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe">
+                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe member">
                                     <i class="bi bi-person-x"></i>
                                 </button>
                                 {% endif %}
-                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete"
+                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete member"
                                         data-bs-toggle="modal" data-bs-target="#deleteModal" 
                                         data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
                                     <i class="bi bi-trash"></i>

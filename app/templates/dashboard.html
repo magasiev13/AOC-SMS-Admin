@@ -119,7 +119,7 @@
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #e2e8f0"></span>
-                                Unsub ({{ unsubscribed_count }})
+                                Suppression ({{ unsubscribed_count }})
                             </div>
                         </div>
                     </div>
@@ -148,7 +148,7 @@
                 </a>
                 <a href="{{ url_for('main.unsubscribed_list') }}" class="quick-link">
                     <i class="bi bi-person-x quick-link__icon"></i>
-                    <span class="quick-link__label">Suppressed</span>
+                    <span class="quick-link__label">Suppression</span>
                 </a>
             </div>
         </section>
@@ -172,7 +172,7 @@
                             <div class="form-text">
                                 <span><span id="charCount">0</span> / 1600 characters</span>
                                 <span class="ms-2">Estimated segments: <span id="segmentCount">0</span> (160 chars per segment, longer messages will split)</span>
-                                <span class="ms-2">Personalize with <code>{first name}</code> or <code>{full name}</code>.</span>
+                                <span class="ms-2">Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</span>
                             </div>
                         </div>
 
@@ -408,9 +408,9 @@
         scheduleDate.required = isScheduled;
         scheduleTime.required = isScheduled;
         if (isScheduled) {
-            sendBtn.innerHTML = '<i class="bi bi-clock me-2"></i>Schedule Message';
+            sendBtn.innerHTML = '<i class="bi bi-clock me-2" aria-hidden="true"></i>Schedule Message';
         } else {
-            sendBtn.innerHTML = '<i class="bi bi-send-fill me-2"></i>Send Now';
+            sendBtn.innerHTML = '<i class="bi bi-send-fill me-2" aria-hidden="true"></i>Send Now';
         }
     }
 
@@ -580,7 +580,7 @@
         // No data - show empty state
         trendsCtx.parentElement.innerHTML = `
             <div class="empty-state">
-                <i class="bi bi-graph-up empty-state__icon"></i>
+                <i class="bi bi-graph-up empty-state__icon" aria-hidden="true"></i>
                 <div class="empty-state__title">No trend data yet</div>
                 <div class="empty-state__text">Send messages to see delivery trends.</div>
             </div>
@@ -598,7 +598,7 @@
             new Chart(audienceCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Community', 'Event RSVPs', 'Unsubscribed'],
+                    labels: ['Community', 'Event RSVPs', 'Suppression'],
                     datasets: [{
                         data: [communityCount, eventCount, unsubCount],
                         backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],
@@ -628,7 +628,7 @@
         } else {
             audienceCtx.parentElement.innerHTML = `
                 <div class="empty-state">
-                    <i class="bi bi-people empty-state__icon"></i>
+                    <i class="bi bi-people empty-state__icon" aria-hidden="true"></i>
                     <div class="empty-state__text">No recipients yet</div>
                 </div>
             `;

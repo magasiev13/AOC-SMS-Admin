@@ -29,7 +29,14 @@ from app.services.recipient_service import (
     get_unsubscribed_phone_set,
 )
 from app.sort_utils import normalize_sort_params
-from app.utils import normalize_phone, validate_phone, parse_recipients_csv, escape_like
+from app.utils import (
+    ALLOWED_TEMPLATE_TOKENS,
+    escape_like,
+    find_invalid_template_tokens,
+    normalize_phone,
+    parse_recipients_csv,
+    validate_phone,
+)
 
 bp = Blueprint('main', __name__)
 
@@ -181,6 +188,16 @@ def dashboard():
         
         if not message_body:
             flash('Message body is required.', 'error')
+            return render_dashboard()
+
+        invalid_tokens = find_invalid_template_tokens(message_body)
+        if invalid_tokens:
+            allowed_tokens = ', '.join(f'{{{token}}}' for token in ALLOWED_TEMPLATE_TOKENS)
+            invalid_list = ', '.join(invalid_tokens)
+            flash(
+                f'Invalid personalization token(s): {invalid_list}. Use {allowed_tokens}.',
+                'error',
+            )
             return render_dashboard()
         
         if target == 'event' and not event_id:

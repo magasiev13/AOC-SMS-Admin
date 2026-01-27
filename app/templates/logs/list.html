@@ -25,7 +25,7 @@
             <div class="flex-grow-1">
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search logs" value="{{ search }}">
+                    <input type="text" class="form-control" name="search" placeholder="Search logs" aria-label="Search logs" value="{{ search }}">
                 </div>
             </div>
         </form>
@@ -97,12 +97,12 @@
                     </td>
                     <td>
                         <div class="d-flex flex-wrap gap-1 row-actions">
-                            <button type="button" class="btn btn-sm btn-outline-primary"
+                            <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview message log" title="Preview"
                                     data-bs-toggle="offcanvas" data-bs-target="#logPreview{{ log.id }}"
                                     aria-controls="logPreview{{ log.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
-                            <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary">
+                            <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary" aria-label="View log details" title="View details">
                                 <i class="bi bi-eye"></i>
                             </a>
                         </div>
@@ -219,7 +219,7 @@
                     </div>
                     <div class="mb-3">
                         <label for="admin_password" class="form-label">Enter Admin Password to confirm:</label>
-                        <input type="password" class="form-control" id="admin_password" name="admin_password" required>
+                        <input type="password" class="form-control" id="admin_password" name="admin_password" required autocomplete="current-password">
                     </div>
                 </div>
                 <div class="modal-footer">
