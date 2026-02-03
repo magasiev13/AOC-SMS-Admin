@@ -50,7 +50,15 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
         if app.config.get('SECRET_KEY') == 'dev-secret-key-change-in-production':
             raise RuntimeError('SECRET_KEY must be set in production')
 
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
+    if app.config.get('TRUST_PROXY'):
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=1,
+            x_proto=1,
+            x_host=1,
+            x_port=1,
+            x_prefix=1,
+        )
     
     # Ensure instance folder exists
     instance_path = Path(app.instance_path)

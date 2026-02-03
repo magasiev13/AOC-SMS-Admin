@@ -113,6 +113,33 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "pending", "Future message should remain pending")
 
+    def test_old_pending_message_marked_expired(self):
+        """A pending message older than max lag should be marked expired."""
+        self.app.config["SCHEDULED_MESSAGE_MAX_LAG"] = 1
+
+        old_time = utc_now_naive() - timedelta(minutes=2)
+        scheduled = ScheduledMessage(
+            message_body="Expired message",
+            target="community",
+            scheduled_at=old_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            send_scheduled_messages(self.app)
+            mock_twilio.assert_not_called()
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "expired", "Old pending message should be marked expired")
+        self.assertIsNotNone(updated.error_message)
+        self.assertIn("expired", updated.error_message)
+        self.assertIsNotNone(updated.sent_at)
+
     def test_stuck_processing_marked_failed(self):
         """A message stuck in 'processing' for >10 minutes should be marked failed."""
         # Create a message that has been stuck in processing
@@ -184,6 +211,6 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "sent")
 
-
+        
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,12 @@ cp .env.example .env
 | `FLASK_ENV` | `production` | Set to `development` for debug mode |
 | `FLASK_DEBUG` | `0` | Set to `1` to enable debug mode |
 
+### Proxy / Reverse Proxy
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TRUST_PROXY` | `0` | Set to `1` to enable `ProxyFix` and trust forwarded headers from a known reverse proxy |
+
 ### Admin
 
 | Variable | Default | Description |
@@ -49,6 +55,8 @@ cp .env.example .env
 |----------|---------|-------------|
 | `DATABASE_URL` | `sqlite:///instance/sms.db` | SQLAlchemy database URI |
 | `SQLITE_TIMEOUT` | `30` | SQLite lock timeout in seconds |
+
+If `DATABASE_URL` is unset, the app defaults to `instance/sms.db` under the project root.
 
 ### Redis / Background Jobs
 
@@ -87,6 +95,7 @@ class Config:
     # Flask
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     DEBUG = os.environ.get('FLASK_DEBUG') == '1' or os.environ.get('FLASK_ENV') == 'development'
+    TRUST_PROXY = os.environ.get('TRUST_PROXY', '0') == '1'
 
     # Security
     SESSION_COOKIE_HTTPONLY = True
@@ -156,6 +165,8 @@ TWILIO_FROM_NUMBER=+18005551234
 # Flask (required)
 SECRET_KEY=your-256-bit-random-hex-key
 FLASK_ENV=production
+# Reverse proxy (optional; set to 1 only behind a trusted proxy)
+# TRUST_PROXY=1
 
 # Admin (required)
 ADMIN_USERNAME=admin

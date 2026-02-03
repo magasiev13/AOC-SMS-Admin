@@ -241,7 +241,7 @@ sudo systemctl start sms
 sudo systemctl status sms
 ```
 
-### 9b. Setup Scheduler Timer (for scheduled messages)
+### 10. Setup Scheduler Timer (for scheduled messages)
 
 The scheduler uses a **systemd timer + oneshot service** (not a long-running daemon) to reliably process scheduled messages every **30 seconds**. This approach is more robust because:
 - Each invocation is independent — no background threads that can die silently
@@ -298,7 +298,7 @@ sudo chmod 660 /opt/sms-admin/instance/sms.db-shm 2>/dev/null || true
 sudo -u smsadmin /opt/sms-admin/deploy/run_scheduler_once.sh
 ```
 
-### 9c. Database Migration Checks
+### 11. Database Migration Checks
 
 ```bash
 # Print the current database path and migration status
@@ -313,7 +313,7 @@ sudo -u smsadmin dbdoctor --apply
 
 Migrations run automatically on restart because the systemd units include an `ExecStartPre` step that calls `dbdoctor --apply`.
 
-### 9d. systemd Override Examples (ExecStartPre)
+### 12. systemd Override Examples (ExecStartPre)
 
 Use drop-in overrides if you need to enforce or customize the migration step for both services.
 These examples explicitly run migrations *before* the main process starts, and the journal will
@@ -339,7 +339,7 @@ ExecStartPre=
 ExecStartPre=/usr/local/bin/dbdoctor --apply
 ```
 
-### 9e. Verify systemd Migration Order and Logs
+### 13. Verify systemd Migration Order and Logs
 
 Run these commands after any unit edits to confirm migrations run before service startup:
 
@@ -352,7 +352,7 @@ sudo journalctl -u sms -u sms-scheduler -b --no-pager
 In the journal output, the `ExecStartPre` lines for `dbdoctor --apply` should appear before
 the `ExecStart` lines for both `sms` and `sms-scheduler`.
 
-### 11. Setup Nginx HTTP Basic Auth
+### 14. Setup Nginx HTTP Basic Auth
 
 ```bash
 # Create password file (replace 'admin' with your username)
@@ -360,7 +360,7 @@ sudo htpasswd -c /etc/nginx/.htpasswd admin
 # Enter password when prompted
 ```
 
-### 12. Configure Nginx
+### 15. Configure Nginx
 
 ```bash
 # Copy nginx config
@@ -377,7 +377,7 @@ sudo nano /etc/nginx/sites-available/sms.theitwingman.com
 # Comment out the SSL server block and modify the HTTP block to proxy directly
 ```
 
-### 13. Setup SSL with Let's Encrypt
+### 16. Setup SSL with Let's Encrypt
 
 ```bash
 # Get SSL certificate
@@ -388,7 +388,7 @@ sudo certbot --nginx -d sms.theitwingman.com
 sudo systemctl reload nginx
 ```
 
-### 14. Verify Deployment
+### 17. Verify Deployment
 
 ```bash
 # Check health endpoint (no auth required)

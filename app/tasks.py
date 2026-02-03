@@ -39,7 +39,7 @@ def _persist_progress(
 
 
 def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: float = 0.1) -> None:
-    app = create_app(start_scheduler=False)
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         log = MessageLog.query.get(log_id)
         if not log:
@@ -104,6 +104,6 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
 
 def backfill_suppressions_job() -> dict:
     """Run suppression backfill as a background job."""
-    app = create_app(start_scheduler=False)
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         return backfill_suppressions()

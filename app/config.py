@@ -8,6 +8,7 @@ class Config:
     
     # Disable debug in production
     DEBUG = os.environ.get('FLASK_DEBUG') == '1' or os.environ.get('FLASK_ENV') == 'development'
+    TRUST_PROXY = os.environ.get('TRUST_PROXY', '0') == '1'
 
     # Security
     SESSION_COOKIE_HTTPONLY = True
