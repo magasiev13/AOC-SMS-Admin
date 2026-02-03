@@ -36,6 +36,7 @@ instance/
 .vscode/
 *.swp
 *.swo
+.codex/
 
 # Logs
 *.log
