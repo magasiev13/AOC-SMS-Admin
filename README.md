@@ -109,6 +109,15 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Optional helper (Codex-friendly; preserves existing `.env`):
+
+```bash
+./run/setup.sh
+```
+
+The helper script creates/uses the local `venv`, installs Python dependencies, and only copies
+`.env.example` to `.env` if `.env` does not already exist.
+
 ### 2. Configure Environment
 
 ```bash
