@@ -139,6 +139,18 @@ export FLASK_ENV=development
 flask --app wsgi:app run --debug
 ```
 
+Or, without manually activating the venv:
+
+```bash
+./run/dev.sh
+```
+
+Recommended for full local functionality (starts Redis-backed RQ worker + web server):
+
+```bash
+./run/up.sh
+```
+
 Visit http://127.0.0.1:5000
 
 ---

@@ -13,16 +13,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -d "${VENV_DIR}" ]]; then
+PYTHON_BIN="${VENV_DIR}/bin/python"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
   python3 -m venv "${VENV_DIR}"
   echo "Created venv: ${VENV_DIR}"
 else
   echo "Using existing venv: ${VENV_DIR}"
 fi
 
-PYTHON_BIN="${VENV_DIR}/bin/python"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "ERROR: venv python not found at ${PYTHON_BIN}." >&2
+  echo "ERROR: venv python not found at ${PYTHON_BIN} after setup." >&2
   exit 1
 fi
 
