@@ -63,4 +63,4 @@ echo "Starting RQ worker (queue=${RQ_QUEUE_NAME}, redis=${REDIS_URL})..."
 worker_pid="$!"
 
 echo "Starting Flask dev server..."
-exec "${PYTHON_BIN}" -m flask --app wsgi:app run --debug
+"${PYTHON_BIN}" -m flask --app wsgi:app run --debug

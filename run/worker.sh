@@ -24,4 +24,9 @@ fi
 REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 RQ_QUEUE_NAME="${RQ_QUEUE_NAME:-sms}"
 
+RQ_BIN="${VENV_DIR}/bin/rq"
+if [[ -x "${RQ_BIN}" ]]; then
+  exec "${RQ_BIN}" worker --url "${REDIS_URL}" "${RQ_QUEUE_NAME}"
+fi
+
 exec "${PYTHON_BIN}" -m rq worker --url "${REDIS_URL}" "${RQ_QUEUE_NAME}"
