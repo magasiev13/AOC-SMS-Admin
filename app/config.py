@@ -47,6 +47,8 @@ class Config:
     TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
     TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
+    TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
+    INBOUND_AUTO_REPLY_ENABLED = os.environ.get('INBOUND_AUTO_REPLY_ENABLED', '1') == '1'
     
     # Admin test phone for testing messages before full blast
     ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')

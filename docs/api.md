@@ -4,7 +4,7 @@ This document describes all HTTP routes in the SMS Admin application.
 
 ## Authentication
 
-All routes except `/health` and `/login` require authentication via Flask-Login session.
+All routes except `/health`, `/login`, and `/webhooks/twilio/inbound` require authentication via Flask-Login session.
 
 ### Login Flow
 
@@ -441,6 +441,57 @@ Queues background job to process historical message logs and extract suppression
 
 ---
 
+## Inbound Inbox & Automations
+
+### Twilio Inbound Webhook (Public)
+
+```
+POST /webhooks/twilio/inbound
+Content-Type: application/x-www-form-urlencoded
+
+From=%2B15551234567&Body=HELP&MessageSid=SMxxxx
+```
+
+Receives inbound SMS from Twilio and:
+- Stores the inbound message in the shared inbox
+- Handles `STOP` / `START` suppression updates
+- Applies matching keyword automation rules
+- Starts or advances survey flows
+
+If `TWILIO_VALIDATE_INBOUND_SIGNATURE=1`, requests require a valid `X-Twilio-Signature`.
+
+### Shared Inbox
+
+```
+GET /inbox
+GET /inbox?search=%2B1555&thread=12
+POST /inbox/<thread_id>/reply
+```
+
+### Keyword Automations
+
+```
+GET /inbox/keywords
+GET /inbox/keywords/add
+POST /inbox/keywords/add
+GET /inbox/keywords/<rule_id>/edit
+POST /inbox/keywords/<rule_id>/edit
+POST /inbox/keywords/<rule_id>/delete
+```
+
+### Survey Flows
+
+```
+GET /inbox/surveys
+GET /inbox/surveys/add
+POST /inbox/surveys/add
+GET /inbox/surveys/<survey_id>/edit
+POST /inbox/surveys/<survey_id>/edit
+POST /inbox/surveys/<survey_id>/deactivate
+```
+
+---
+
 ## Phone Number Formats
 
 The API accepts various phone formats and normalizes them to E.164:
@@ -485,6 +536,9 @@ Most form submissions return redirects with flash messages:
 | View dashboard | ✓ | ✓ |
 | Send messages | ✓ | ✓ |
 | View logs | ✓ | ✓ |
+| View inbox | ✓ | ✓ |
+| Reply from inbox | ✓ | ✓ |
+| Manage keyword/survey automations | ✓ | ✓ |
 | View community | ✓ | ✓ |
 | Add/edit community | ✓ | ✗ |
 | Delete community | ✓ | ✗ |

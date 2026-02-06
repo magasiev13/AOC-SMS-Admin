@@ -130,6 +130,14 @@
         <!-- Quick Links -->
         <section class="mb-4">
             <div class="quick-links">
+                <a href="{{ url_for('main.inbox_list') }}" class="quick-link">
+                    <i class="bi bi-chat-left-text quick-link__icon"></i>
+                    <span class="quick-link__label">Inbox</span>
+                </a>
+                <a href="{{ url_for('main.keyword_rules_list') }}" class="quick-link">
+                    <i class="bi bi-magic quick-link__icon"></i>
+                    <span class="quick-link__label">Automations</span>
+                </a>
                 <a href="{{ url_for('main.community_list') }}" class="quick-link">
                     <i class="bi bi-people quick-link__icon"></i>
                     <span class="quick-link__label">Community</span>
@@ -150,6 +158,67 @@
                     <i class="bi bi-person-x quick-link__icon"></i>
                     <span class="quick-link__label">Suppression</span>
                 </a>
+            </div>
+        </section>
+
+        <section class="mb-4">
+            <div class="row g-3">
+                <div class="col-lg-4">
+                    <div class="chart-card h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title"><i class="bi bi-chat-dots"></i> Inbound Engagement</h6>
+                            <span class="text-muted small">Last 7 days</span>
+                        </div>
+                        <div class="mt-2">
+                            <div class="mb-3">
+                                <div class="h3 mb-0">{{ inbound_count_7d }}</div>
+                                <div class="text-muted small">Inbound messages</div>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span class="text-muted small">Unread threads</span>
+                                <strong>{{ unread_threads_count }}</strong>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="text-muted small">Active surveys</span>
+                                <strong>{{ active_survey_sessions }}</strong>
+                            </div>
+                            <a href="{{ url_for('main.inbox_list') }}" class="btn btn-sm btn-outline-primary mt-3">Open inbox</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-8">
+                    <div class="chart-card h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title"><i class="bi bi-hash"></i> Top Trigger Keywords</h6>
+                            <span class="text-muted small">Inbound keyword matches</span>
+                        </div>
+                        {% if top_keywords %}
+                        <div class="table-responsive">
+                            <table class="table mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Keyword</th>
+                                        <th>Matches</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in top_keywords %}
+                                    <tr>
+                                        <td><code>{{ item.keyword }}</code></td>
+                                        <td>{{ item.hits }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="empty-state py-4">
+                            <i class="bi bi-hash empty-state__icon"></i>
+                            <div class="empty-state__text">No keyword activity yet.</div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
             </div>
         </section>
 
