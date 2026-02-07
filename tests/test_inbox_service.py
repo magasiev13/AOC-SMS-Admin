@@ -102,6 +102,31 @@ class TestInboxService(unittest.TestCase):
         self.assertIsNotNone(refreshed.last_matched_at)
 
     @patch("app.services.inbox_service.get_twilio_service")
+    def test_keyword_rule_whitespace_normalization_matches_inbound(self, mock_get_twilio) -> None:
+        rule = self.KeywordAutomationRule(
+            keyword="  help   now ",
+            response_body="Support is on the way.",
+            is_active=True,
+        )
+        self.db.session.add(rule)
+        self.db.session.commit()
+        self.assertEqual(rule.keyword, "HELP NOW")
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM111A",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.process_inbound_sms(
+            {"From": "+15551234567", "Body": "help now", "MessageSid": "SM-IN-1A"}
+        )
+        self.assertEqual(result["status"], "keyword_reply")
+
+    @patch("app.services.inbox_service.get_twilio_service")
     def test_survey_flow_starts_and_completes(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
             name="RSVP Flow",
@@ -156,6 +181,34 @@ class TestInboxService(unittest.TestCase):
         refreshed_survey = self.SurveyFlow.query.get(survey.id)
         self.assertEqual(refreshed_survey.start_count, 1)
         self.assertEqual(refreshed_survey.completion_count, 1)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_survey_trigger_whitespace_normalization_matches_inbound(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="Normalized Trigger Survey",
+            trigger_keyword="  check   in ",
+            intro_message="Thanks for joining.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+        self.assertEqual(survey.trigger_keyword, "CHECK IN")
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM222A",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.process_inbound_sms(
+            {"From": "+15550001111", "Body": "check in", "MessageSid": "SM-IN-2A"}
+        )
+        self.assertEqual(result["status"], "survey_started")
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_active_survey_yes_is_recorded_as_answer(self, mock_get_twilio) -> None:

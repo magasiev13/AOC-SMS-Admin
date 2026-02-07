@@ -6,7 +6,7 @@ from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import db
-from app.utils import normalize_phone
+from app.utils import normalize_keyword, normalize_phone
 
 
 def utc_now():
@@ -212,7 +212,7 @@ class KeywordAutomationRule(db.Model):
 
     @validates('keyword')
     def _normalize_keyword(self, key, value):
-        return (value or '').strip().upper()
+        return normalize_keyword(value)
 
     def __repr__(self):
         return f'<KeywordAutomationRule {self.keyword}>'
@@ -239,7 +239,7 @@ class SurveyFlow(db.Model):
 
     @validates('trigger_keyword')
     def _normalize_trigger_keyword(self, key, value):
-        return (value or '').strip().upper()
+        return normalize_keyword(value)
 
     @property
     def questions(self) -> list[str]:

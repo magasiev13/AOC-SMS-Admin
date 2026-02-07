@@ -31,7 +31,6 @@ from app.models import (
 )
 from app.services.inbox_service import (
     mark_thread_read,
-    normalize_keyword,
     parse_survey_questions,
     process_inbound_sms,
     send_thread_reply,
@@ -47,6 +46,7 @@ from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
     escape_like,
     find_invalid_template_tokens,
+    normalize_keyword,
     normalize_phone,
     parse_recipients_csv,
     validate_phone,
@@ -1768,7 +1768,7 @@ def keyword_rule_add():
         if not response_body:
             flash('Auto-reply message is required.', 'error')
             return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
-        if KeywordAutomationRule.query.filter_by(keyword=normalized_keyword).first():
+        if _keyword_conflicts_with_rule(normalized_keyword):
             flash('That keyword already exists.', 'error')
             return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
         if _keyword_conflicts_with_survey(normalized_keyword):

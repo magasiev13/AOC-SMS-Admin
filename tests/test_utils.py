@@ -8,6 +8,7 @@ import unittest
 from app.utils import (
     escape_like,
     find_invalid_template_tokens,
+    normalize_keyword,
     normalize_phone,
     validate_phone,
     parse_recipients_csv,
@@ -45,6 +46,14 @@ class TestEscapeLike(unittest.TestCase):
     def test_escapes_backslash_and_wildcards(self) -> None:
         value = "foo\\bar%_"
         self.assertEqual(escape_like(value), "foo\\\\bar\\%\\_")
+
+
+class TestNormalizeKeyword(unittest.TestCase):
+    def test_normalizes_case_and_whitespace(self) -> None:
+        self.assertEqual(normalize_keyword("  join   now "), "JOIN NOW")
+
+    def test_empty_input_stays_empty(self) -> None:
+        self.assertEqual(normalize_keyword("   "), "")
 
 
 class TestParseRecipientsCsv(unittest.TestCase):

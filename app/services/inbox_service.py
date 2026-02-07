@@ -14,16 +14,12 @@ from app.models import (
     utc_now,
 )
 from app.services.twilio_service import get_twilio_service
-from app.utils import normalize_phone, validate_phone
+from app.utils import normalize_keyword, normalize_phone, validate_phone
 
 
 STOP_KEYWORDS = {'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'}
 START_KEYWORDS = {'START', 'UNSTOP', 'YES'}
 SURVEY_CANCEL_KEYWORDS = {'CANCEL', 'QUIT'}
-
-
-def normalize_keyword(text: str) -> str:
-    return ' '.join((text or '').upper().strip().split())
 
 
 def keyword_candidates(text: str) -> list[str]:

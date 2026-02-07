@@ -22,6 +22,11 @@ def escape_like(value: str) -> str:
     return value.replace('\\', r'\\').replace('%', r'\%').replace('_', r'\_')
 
 
+def normalize_keyword(value: str) -> str:
+    """Normalize automation/survey keywords for storage and matching."""
+    return ' '.join((value or '').upper().strip().split())
+
+
 def normalize_phone(phone: str) -> str:
     """
     Normalize phone number to E.164-ish format.
