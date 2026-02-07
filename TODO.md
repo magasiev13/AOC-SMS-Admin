@@ -26,26 +26,27 @@
 
 DESIGN_SYSTEM (.md) UPDATES REQUIRED:
 
-Add a formal token set (colors, type scale, spacing, radii, elevation, motion) before implementation, since no DESIGN_SYSTEM.md currently exists.
-Add semantic color tokens for surface, surface-muted, text-primary, text-secondary, border-subtle, accent-primary, accent-primary-hover, status-success/warning/error/info; remove multi-gradient dependency as default style.
-Add interaction tokens for touch size (44px minimum), focus ring, hover/pressed states, and row action visibility behavior.
-Add component specs for Data Card List (mobile), Page Action Bar (mobile overflow), Empty State, and Table Header typography/casing rules.
-These must be approved and documented before build execution.
-IMPLEMENTATION NOTES FOR BUILD AGENT:
+- Add a formal token set (colors, type scale, spacing, radii, elevation, motion) before implementation, since no DESIGN_SYSTEM.md currently exists.
+- Add semantic color tokens for surface, surface-muted, text-primary, text-secondary, border-subtle, accent-primary, accent-primary-hover, status-success/warning/error/info; remove multi-gradient dependency as default style.
+- Add interaction tokens for touch size (44px minimum), focus ring, hover/pressed states, and row action visibility behavior.
+- Add component specs for Data Card List (mobile), Page Action Bar (mobile overflow), Empty State, and Table Header typography/casing rules.
 
-dashboard.html: breadcrumbs currently live-indicator (line 8) → replace with static “Overview” label; remove pulsing status from default dashboard header.
-dashboard.html: move section Send SMS Blast (lines 225-351) above stats/charts (before line 15) so primary action appears first.
-dashboard.html: remove Quick Links block (lines 130-162) from dashboard body; keep global navigation as the single route switcher.
-app.css: .brand-icon (line 157) animation: border-glow... → animation: none; remove glow box-shadow sequence from @keyframes border-glow.
-app.css: .brand-text::after (lines 241-262) decorative RGB underline → disable (content: none) for production UI.
-app.css: .table thead th (line 1437) text-transform: uppercase → text-transform: none; letter-spacing: 0.025em → 0.
-app.css: .row-actions (lines 625-633 and 1694-1702) hover-gated opacity → always visible (opacity: 1) for touch parity.
-app.css: stat-card variants (lines 862-884) multi-gradient backgrounds → neutral surface cards with a single accent indicator and semantic status tint only.
-app.css: .quick-link:hover (lines 1183-1189) gradient + lift → subtle surface tint + border emphasis without color inversion.
-list.html: table is always rendered (line 68) → convert to desktop table + mobile card-list pattern (same responsive structure used in community/events/logs list templates).
-list.html: current table-only layout (lines 19-91) → add mobile card-list variant with fully visible edit/delete actions and metadata labels.
-detail.html: registration table-only block (lines 76-147) → add mobile stacked registration cards and hide table on small screens.
-detail.html: recipient details table-only block → add mobile stacked recipient rows to prevent clipped status/error columns.
-keywords_list.html: wide table-only layout (lines 33-83) → add mobile card-list item layout with keyword, status, match count, and full-width actions.
-surveys_list.html: wide table-only layout (lines 33-92) → add mobile card-list item layout with trigger, question count, status, and actions.
-base.html: keep existing nav routes but add mobile page-action overflow pattern so page_actions never wrap into multi-row button clusters.
+## These must be approved and documented before build execution.
+## IMPLEMENTATION NOTES FOR BUILD AGENT:
+
+- dashboard.html: breadcrumbs currently live-indicator (line 8) → replace with static “Overview” label; remove pulsing status from default dashboard header.
+- dashboard.html: move section Send SMS Blast (lines 225-351) above stats/charts (before line 15) so primary action appears first.
+- dashboard.html: remove Quick Links block (lines 130-162) from dashboard body; keep global navigation as the single route switcher.
+- app.css: .brand-icon (line 157) animation: border-glow... → animation: none; remove glow box-shadow sequence from @keyframes border-glow.
+- app.css: .brand-text::after (lines 241-262) decorative RGB underline → disable (content: none) for production UI.
+- app.css: .table thead th (line 1437) text-transform: uppercase → text-transform: none; letter-spacing: 0.025em → 0.
+- app.css: .row-actions (lines 625-633 and 1694-1702) hover-gated opacity → always visible (opacity: 1) for touch parity.
+- app.css: stat-card variants (lines 862-884) multi-gradient backgrounds → neutral surface cards with a single accent indicator and semantic status tint only.
+- app.css: .quick-link:hover (lines 1183-1189) gradient + lift → subtle surface tint + border emphasis without color inversion.
+- list.html: table is always rendered (line 68) → convert to desktop table + mobile card-list pattern (same responsive structure used in community/events/logs list templates).
+- list.html: current table-only layout (lines 19-91) → add mobile card-list variant with fully visible edit/delete actions and metadata labels.
+- detail.html: registration table-only block (lines 76-147) → add mobile stacked registration cards and hide table on small screens.
+- detail.html: recipient details table-only block → add mobile stacked recipient rows to prevent clipped status/error columns.
+- keywords_list.html: wide table-only layout (lines 33-83) → add mobile card-list item layout with keyword, status, match count, and full-width actions.
+- surveys_list.html: wide table-only layout (lines 33-92) → add mobile card-list item layout with trigger, question count, status, and actions.
+- base.html: keep existing nav routes but add mobile page-action overflow pattern so page_actions never wrap into multi-row button clusters.
