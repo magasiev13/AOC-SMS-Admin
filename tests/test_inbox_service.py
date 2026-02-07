@@ -210,7 +210,7 @@ class TestInboxService(unittest.TestCase):
         self.assertIsNone(unsubscribed)
 
     @patch("app.services.inbox_service.get_twilio_service")
-    def test_cancel_during_active_survey_cancels_without_opt_out(self, mock_get_twilio) -> None:
+    def test_cancel_during_active_survey_opts_out(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
             name="Cancel Flow",
             trigger_keyword="CHECKIN",
@@ -239,14 +239,14 @@ class TestInboxService(unittest.TestCase):
         cancel_result = self.process_inbound_sms(
             {"From": "+15551112222", "Body": "CANCEL", "MessageSid": "SM-IN-CANCEL-2"}
         )
-        self.assertEqual(cancel_result["status"], "survey_cancelled")
+        self.assertEqual(cancel_result["status"], "opt_out")
 
         session = self.SurveySession.query.filter_by(phone="+15551112222").first()
         self.assertEqual(session.status, "cancelled")
         self.assertIsNotNone(session.completed_at)
 
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15551112222").first()
-        self.assertIsNone(unsubscribed)
+        self.assertIsNotNone(unsubscribed)
 
         thread = self.InboxThread.query.filter_by(phone="+15551112222").first()
         messages = (
@@ -257,7 +257,7 @@ class TestInboxService(unittest.TestCase):
         self.assertTrue(
             any(
                 msg.direction == "outbound"
-                and "Survey cancelled. Text the survey keyword again anytime to restart." in msg.body
+                and "You are unsubscribed and will no longer receive SMS alerts." in msg.body
                 for msg in messages
             )
         )

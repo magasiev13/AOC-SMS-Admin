@@ -340,7 +340,22 @@ def process_inbound_sms(payload: dict) -> dict:
     matched_keyword: str | None = None
 
     session = _active_session(phone)
-    if session and normalized in SURVEY_CANCEL_KEYWORDS:
+    if normalized in STOP_KEYWORDS:
+        _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
+        _cancel_active_sessions(phone)
+        sent_replies.append(
+            {
+                'source': 'system',
+                'result': _send_automated_reply(
+                    phone,
+                    thread,
+                    'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
+                    source='system',
+                ),
+            }
+        )
+        status = 'opt_out'
+    elif session and normalized in SURVEY_CANCEL_KEYWORDS:
         now = utc_now()
         session.status = 'cancelled'
         session.completed_at = now
@@ -358,21 +373,6 @@ def process_inbound_sms(payload: dict) -> dict:
             }
         )
         status = 'survey_cancelled'
-    elif normalized in STOP_KEYWORDS:
-        _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
-        _cancel_active_sessions(phone)
-        sent_replies.append(
-            {
-                'source': 'system',
-                'result': _send_automated_reply(
-                    phone,
-                    thread,
-                    'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
-                    source='system',
-                ),
-            }
-        )
-        status = 'opt_out'
     else:
         if session:
             # Active survey responses should take precedence over generic START/YES opt-in keywords.
