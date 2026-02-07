@@ -708,7 +708,7 @@ h6,
 }
 
 .inbox-thread-time {
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: var(--font-size-1);
 }
 
