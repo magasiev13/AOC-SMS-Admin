@@ -214,7 +214,9 @@
                         {% else %}
                         <div class="empty-state py-4">
                             <i class="bi bi-hash empty-state__icon"></i>
-                            <div class="empty-state__text">No keyword activity yet.</div>
+                            <div class="empty-state__title">No keyword matches yet</div>
+                            <div class="empty-state__text">Inbound keyword activity will appear here as messages arrive.</div>
+                            <a href="{{ url_for('main.inbox_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Inbox</a>
                         </div>
                         {% endif %}
                     </div>
@@ -392,6 +394,7 @@
                     <i class="bi bi-inbox empty-state__icon"></i>
                     <div class="empty-state__title">No activity yet</div>
                     <div class="empty-state__text">Send your first SMS blast to see activity here.</div>
+                    <a href="#message_body" class="btn btn-sm btn-outline-primary empty-state__action">Compose Message</a>
                 </div>
             </div>
             {% endif %}
@@ -698,7 +701,9 @@
             audienceCtx.parentElement.innerHTML = `
                 <div class="empty-state">
                     <i class="bi bi-people empty-state__icon" aria-hidden="true"></i>
-                    <div class="empty-state__text">No recipients yet</div>
+                    <div class="empty-state__title">No recipients yet</div>
+                    <div class="empty-state__text">Add members or registrations to build your audience.</div>
+                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Community</a>
                 </div>
             `;
         }

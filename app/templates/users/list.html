@@ -125,6 +125,8 @@
         <div class="empty-state py-4">
             <i class="bi bi-people empty-state__icon"></i>
             <div class="empty-state__title">No users found</div>
+            <div class="empty-state__text">Create a user to grant dashboard access.</div>
+            <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add User</a>
         </div>
         {% endif %}
     </div>
