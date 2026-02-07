@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% set is_edit = survey is not none %}
+{% if form_data %}
+    {% set name_value = form_data.name %}
+    {% set trigger_value = form_data.trigger_keyword %}
+    {% set intro_value = form_data.intro_message %}
+    {% set questions_value = form_data.questions %}
+    {% set completion_value = form_data.completion_message %}
+    {% set active_value = form_data.is_active %}
+{% elif survey %}
+    {% set name_value = survey.name %}
+    {% set trigger_value = survey.trigger_keyword %}
+    {% set intro_value = survey.intro_message or '' %}
+    {% set questions_value = survey.questions|join('\n') %}
+    {% set completion_value = survey.completion_message or '' %}
+    {% set active_value = survey.is_active %}
+{% else %}
+    {% set name_value = '' %}
+    {% set trigger_value = '' %}
+    {% set intro_value = '' %}
+    {% set questions_value = '' %}
+    {% set completion_value = '' %}
+    {% set active_value = True %}
+{% endif %}
+
+{% block title %}{{ 'Edit' if is_edit else 'Add' }} Survey Flow - SMS Admin{% endblock %}
+
+{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Survey Flow{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.survey_flows_list') }}">Survey Flows</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card">
+    <div class="card-body">
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="mb-3">
+                <label for="name" class="form-label">Survey Name</label>
+                <input type="text" class="form-control" id="name" name="name" value="{{ name_value }}"
+                       maxlength="120" required>
+            </div>
+
+            <div class="mb-3">
+                <label for="trigger_keyword" class="form-label">Trigger Keyword</label>
+                <input type="text" class="form-control" id="trigger_keyword" name="trigger_keyword" value="{{ trigger_value }}"
+                       maxlength="40" placeholder="e.g. RSVP" required>
+                <div class="form-text">When a contact sends this keyword, the survey starts.</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="intro_message" class="form-label">Intro Message (Optional)</label>
+                <textarea class="form-control" id="intro_message" name="intro_message" rows="2" maxlength="1600">{{ intro_value }}</textarea>
+            </div>
+
+            <div class="mb-3">
+                <label for="questions" class="form-label">Questions (one per line)</label>
+                <textarea class="form-control" id="questions" name="questions" rows="6" required>{{ questions_value }}</textarea>
+                <div class="form-text">Up to 10 questions. Each line is sent as one SMS prompt.</div>
+            </div>
+
+            <div class="mb-3">
+                <label for="completion_message" class="form-label">Completion Message (Optional)</label>
+                <textarea class="form-control" id="completion_message" name="completion_message" rows="2" maxlength="1600">{{ completion_value }}</textarea>
+            </div>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
+                <label class="form-check-label" for="is_active">Active</label>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-save me-1"></i>Save
+                </button>
+                <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

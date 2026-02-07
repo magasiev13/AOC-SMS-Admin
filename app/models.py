@@ -1,8 +1,10 @@
+import json
 from datetime import datetime as dt, timezone
 
-from sqlalchemy.orm import validates
 from flask_login import UserMixin
+from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
+
 from app import db
 from app.utils import normalize_phone
 
@@ -144,6 +146,163 @@ class MessageLog(db.Model):
     
     def __repr__(self):
         return f'<MessageLog {self.id} target={self.target}>'
+
+
+class InboxThread(db.Model):
+    """Conversation threads grouped by phone number."""
+    __tablename__ = 'inbox_threads'
+
+    id = db.Column(db.Integer, primary_key=True)
+    phone = db.Column(db.String(20), nullable=False, unique=True, index=True)
+    contact_name = db.Column(db.String(100), nullable=True)
+    unread_count = db.Column(db.Integer, default=0, nullable=False)
+    last_message_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    last_message_preview = db.Column(db.Text, nullable=True)
+    last_direction = db.Column(db.String(10), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    messages = db.relationship(
+        'InboxMessage',
+        back_populates='thread',
+        cascade='all, delete-orphan',
+        order_by='InboxMessage.created_at',
+    )
+
+    def __repr__(self):
+        return f'<InboxThread {self.phone}>'
+
+
+class InboxMessage(db.Model):
+    """Inbound and outbound messages shown in the shared inbox."""
+    __tablename__ = 'inbox_messages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    direction = db.Column(db.String(10), nullable=False)  # inbound/outbound
+    body = db.Column(db.Text, nullable=False)
+    message_sid = db.Column(db.String(64), nullable=True, unique=True)
+    automation_source = db.Column(db.String(30), nullable=True)
+    automation_source_id = db.Column(db.Integer, nullable=True)
+    matched_keyword = db.Column(db.String(40), nullable=True)
+    delivery_status = db.Column(db.String(30), nullable=True)
+    delivery_error = db.Column(db.Text, nullable=True)
+    raw_payload = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    thread = db.relationship('InboxThread', back_populates='messages')
+
+    def __repr__(self):
+        return f'<InboxMessage {self.id} {self.direction} {self.phone}>'
+
+
+class KeywordAutomationRule(db.Model):
+    """Keyword-based automated replies for inbound SMS."""
+    __tablename__ = 'keyword_automation_rules'
+
+    id = db.Column(db.Integer, primary_key=True)
+    keyword = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    response_body = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    match_count = db.Column(db.Integer, default=0, nullable=False)
+    last_matched_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    @validates('keyword')
+    def _normalize_keyword(self, key, value):
+        return (value or '').strip().upper()
+
+    def __repr__(self):
+        return f'<KeywordAutomationRule {self.keyword}>'
+
+
+class SurveyFlow(db.Model):
+    """Multi-step inbound survey started by a keyword."""
+    __tablename__ = 'survey_flows'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False, unique=True)
+    trigger_keyword = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    intro_message = db.Column(db.Text, nullable=True)
+    questions_json = db.Column(db.Text, nullable=False, default='[]')
+    completion_message = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    start_count = db.Column(db.Integer, default=0, nullable=False)
+    completion_count = db.Column(db.Integer, default=0, nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    sessions = db.relationship('SurveySession', back_populates='survey')
+    responses = db.relationship('SurveyResponse', back_populates='survey')
+
+    @validates('trigger_keyword')
+    def _normalize_trigger_keyword(self, key, value):
+        return (value or '').strip().upper()
+
+    @property
+    def questions(self) -> list[str]:
+        try:
+            payload = json.loads(self.questions_json or '[]')
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        return [str(item).strip() for item in payload if str(item).strip()]
+
+    def set_questions(self, questions: list[str]) -> None:
+        self.questions_json = json.dumps([question.strip() for question in questions if question and question.strip()])
+
+    def __repr__(self):
+        return f'<SurveyFlow {self.name} keyword={self.trigger_keyword}>'
+
+
+class SurveySession(db.Model):
+    """Per-phone active/completed survey progress."""
+    __tablename__ = 'survey_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey('survey_flows.id'), nullable=False, index=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    status = db.Column(db.String(20), default='active', nullable=False)  # active/completed/cancelled
+    current_question_index = db.Column(db.Integer, default=0, nullable=False)
+    started_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    last_activity_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    survey = db.relationship('SurveyFlow', back_populates='sessions')
+    thread = db.relationship('InboxThread')
+    responses = db.relationship(
+        'SurveyResponse',
+        back_populates='session',
+        cascade='all, delete-orphan',
+        order_by='SurveyResponse.question_index',
+    )
+
+    def __repr__(self):
+        return f'<SurveySession survey={self.survey_id} phone={self.phone} status={self.status}>'
+
+
+class SurveyResponse(db.Model):
+    """Captured answer for one survey question."""
+    __tablename__ = 'survey_responses'
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('survey_sessions.id'), nullable=False, index=True)
+    survey_id = db.Column(db.Integer, db.ForeignKey('survey_flows.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    question_index = db.Column(db.Integer, nullable=False)
+    question_prompt = db.Column(db.Text, nullable=False)
+    answer = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+
+    session = db.relationship('SurveySession', back_populates='responses')
+    survey = db.relationship('SurveyFlow', back_populates='responses')
+
+    def __repr__(self):
+        return f'<SurveyResponse session={self.session_id} q={self.question_index}>'
 
 
 class ScheduledMessage(db.Model):

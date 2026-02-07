@@ -1,9 +1,11 @@
 import time
-import json
 from typing import Optional
+
 from flask import current_app
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+from twilio.request_validator import RequestValidator
+
 from app.utils import render_message_template
 
 
@@ -127,3 +129,17 @@ class TwilioService:
 def get_twilio_service() -> TwilioService:
     """Factory function to get TwilioService instance."""
     return TwilioService()
+
+
+def validate_inbound_signature(url: str, params: dict, signature: Optional[str]) -> bool:
+    """Validate Twilio webhook signature for inbound requests."""
+    auth_token = current_app.config.get('TWILIO_AUTH_TOKEN')
+    if not auth_token or not signature:
+        return False
+
+    try:
+        validator = RequestValidator(auth_token)
+        return validator.validate(url, params, signature)
+    except Exception:
+        current_app.logger.exception('Failed to validate Twilio inbound signature.')
+        return False
