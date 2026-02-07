@@ -10,9 +10,9 @@
 
 {% block content %}
 <div class="row">
-    <div class="col-xl-12">
+    <div class="col-xl-12 dashboard-layout">
         <!-- Stats Row -->
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-stats">
             <div class="row g-3">
                 <!-- Total Recipients -->
                 <div class="col-sm-6 col-xl-3">
@@ -80,7 +80,7 @@
         </section>
 
         <!-- Charts Row -->
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-charts">
             <div class="row g-3">
                 <!-- Delivery Trends Chart -->
                 <div class="col-lg-8">
@@ -128,7 +128,7 @@
         </section>
 
         <!-- Quick Links -->
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-links">
             <div class="quick-links">
                 <a href="{{ url_for('main.inbox_list') }}" class="quick-link">
                     <i class="bi bi-chat-left-text quick-link__icon"></i>
@@ -161,7 +161,7 @@
             </div>
         </section>
 
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-inbound">
             <div class="row g-3">
                 <div class="col-lg-4">
                     <div class="chart-card h-100">
@@ -223,7 +223,7 @@
         </section>
 
         <!-- Send SMS Section -->
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-send">
             <div class="send-card">
                 <div class="send-card__header">
                     <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
@@ -351,7 +351,7 @@
         </section>
 
         <!-- Recent Activity Timeline -->
-        <section class="mb-4">
+        <section class="mb-4 dashboard-section dashboard-section-recent">
             <div class="section-header">
                 <h5 class="section-title"><i class="bi bi-activity"></i> Recent Activity</h5>
                 <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">View all logs</a>

@@ -12,13 +12,13 @@
 
 {% block page_actions %}
 {% if can_manage_community %}
-<a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary">
+<a href="{{ url_for('main.community_import') }}" class="btn btn-outline-primary page-action-secondary">
     <i class="bi bi-upload me-1"></i>Import CSV
 </a>
-<a href="{{ url_for('main.community_export') }}" class="btn btn-outline-secondary">
+<a href="{{ url_for('main.community_export') }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
-<a href="{{ url_for('main.community_add') }}" class="btn btn-primary">
+<a href="{{ url_for('main.community_add') }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-plus-lg me-1"></i>Add Member
 </a>
 {% endif %}

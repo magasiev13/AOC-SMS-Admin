@@ -147,8 +147,15 @@
                             {% block page_title %}SMS Admin{% endblock %}
                         </h1>
                     </div>
-                    <div class="app-page-actions">
-                        {% block page_actions %}{% endblock %}
+                    <div class="app-page-actions" data-page-actions>
+                        <div class="app-page-actions-inline" data-page-actions-inline>
+                            {% block page_actions %}{% endblock %}
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary app-page-actions-toggle d-lg-none"
+                                data-page-actions-toggle aria-expanded="false" hidden>
+                            <i class="bi bi-three-dots me-1"></i>More actions
+                        </button>
+                        <div class="app-page-actions-overflow d-lg-none" data-page-actions-overflow hidden></div>
                     </div>
                 </header>
                 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -223,8 +230,74 @@
             });
         }
 
+        function initPageActionOverflow() {
+            const wrappers = document.querySelectorAll('[data-page-actions]');
+            wrappers.forEach((wrapper) => {
+                const inline = wrapper.querySelector('[data-page-actions-inline]');
+                const overflow = wrapper.querySelector('[data-page-actions-overflow]');
+                const toggle = wrapper.querySelector('[data-page-actions-toggle]');
+                if (!inline || !overflow || !toggle) {
+                    return;
+                }
+
+                const mediaQuery = window.matchMedia('(max-width: 991.98px)');
+
+                const moveAllInline = () => {
+                    const moved = Array.from(overflow.children);
+                    moved.forEach((actionEl) => inline.appendChild(actionEl));
+                    overflow.hidden = true;
+                    toggle.hidden = true;
+                    toggle.setAttribute('aria-expanded', 'false');
+                };
+
+                const applyMobile = () => {
+                    moveAllInline();
+                    const actions = Array.from(inline.querySelectorAll(':scope > *'));
+                    if (actions.length <= 1) {
+                        return;
+                    }
+
+                    let primary = actions.find((actionEl) => actionEl.classList.contains('page-action-primary'));
+                    if (!primary) {
+                        primary = actions.find((actionEl) => actionEl.matches('.btn.btn-primary, .btn.btn-danger'));
+                    }
+                    if (!primary) {
+                        primary = actions[actions.length - 1];
+                    }
+
+                    const secondaryActions = actions.filter((actionEl) => actionEl !== primary);
+                    secondaryActions.forEach((actionEl) => {
+                        actionEl.classList.add('is-overflow-action');
+                        overflow.appendChild(actionEl);
+                    });
+
+                    toggle.hidden = false;
+                    overflow.hidden = true;
+                    toggle.setAttribute('aria-expanded', 'false');
+                };
+
+                const syncActions = () => {
+                    if (mediaQuery.matches) {
+                        applyMobile();
+                    } else {
+                        moveAllInline();
+                    }
+                };
+
+                toggle.addEventListener('click', () => {
+                    const isHidden = overflow.hidden;
+                    overflow.hidden = !isHidden;
+                    toggle.setAttribute('aria-expanded', String(isHidden));
+                });
+
+                mediaQuery.addEventListener('change', syncActions);
+                syncActions();
+            });
+        }
+
         updateTableScrollHints();
         window.addEventListener('resize', updateTableScrollHints);
+        initPageActionOverflow();
     </script>
     {% block scripts %}{% endblock %}
 </body>
