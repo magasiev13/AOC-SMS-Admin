@@ -10,6 +10,8 @@
 </head>
 <body class="app-body">
     {% set logs_active = request.endpoint and request.endpoint.startswith('main.logs') %}
+    {% set inbox_active = request.endpoint and request.endpoint.startswith('main.inbox') %}
+    {% set automation_active = request.endpoint and (request.endpoint.startswith('main.keyword_rule') or request.endpoint.startswith('main.keyword_rules') or request.endpoint.startswith('main.survey_flow') or request.endpoint.startswith('main.survey_flows')) %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
             <a class="app-sidebar-brand" href="{{ url_for('main.dashboard') }}">
@@ -30,6 +32,12 @@
             <nav class="nav flex-column app-nav">
                 <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
                     <i class="bi bi-send me-2"></i>Send
+                </a>
+                <a class="app-nav-link {% if inbox_active %}active{% endif %}" href="{{ url_for('main.inbox_list') }}">
+                    <i class="bi bi-chat-left-text me-2"></i>Inbox
+                </a>
+                <a class="app-nav-link {% if automation_active %}active{% endif %}" href="{{ url_for('main.keyword_rules_list') }}">
+                    <i class="bi bi-magic me-2"></i>Automations
                 </a>
                 <a class="app-nav-link {% if 'community' in request.endpoint %}active{% endif %}" href="{{ url_for('main.community_list') }}">
                     <i class="bi bi-people me-2"></i>Community
@@ -89,6 +97,12 @@
                         <div class="nav flex-column mt-3">
                             <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
                                 <i class="bi bi-send me-2"></i>Send
+                            </a>
+                            <a class="app-nav-link {% if inbox_active %}active{% endif %}" href="{{ url_for('main.inbox_list') }}">
+                                <i class="bi bi-chat-left-text me-2"></i>Inbox
+                            </a>
+                            <a class="app-nav-link {% if automation_active %}active{% endif %}" href="{{ url_for('main.keyword_rules_list') }}">
+                                <i class="bi bi-magic me-2"></i>Automations
                             </a>
                             <a class="app-nav-link {% if 'community' in request.endpoint %}active{% endif %}" href="{{ url_for('main.community_list') }}">
                                 <i class="bi bi-people me-2"></i>Community

@@ -1,33 +1,47 @@
 import csv
 import io
 import json
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, unquote
 from zoneinfo import ZoneInfo
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, make_response, current_app
+
+from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import login_required, current_user
-from app import db
-from app.auth import require_roles
 from sqlalchemy import DateTime, Integer, String, Text, text
 from sqlalchemy.exc import OperationalError
 
-from datetime import datetime, timedelta, timezone
+from app import csrf, db
+from app.auth import require_roles
 
 from app.models import (
     AppUser,
     CommunityMember,
     Event,
     EventRegistration,
+    InboxMessage,
+    InboxThread,
+    KeywordAutomationRule,
     MessageLog,
     ScheduledMessage,
     SuppressedContact,
+    SurveyFlow,
+    SurveySession,
     UnsubscribedContact,
     utc_now,
+)
+from app.services.inbox_service import (
+    mark_thread_read,
+    normalize_keyword,
+    parse_survey_questions,
+    process_inbound_sms,
+    send_thread_reply,
 )
 from app.services.recipient_service import (
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
+from app.services.twilio_service import validate_inbound_signature
 from app.sort_utils import normalize_sort_params
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
@@ -132,16 +146,42 @@ def dashboard():
         event_registration_count = EventRegistration.query.count()
         total_recipients = community_count + event_registration_count
         unsubscribed_count = UnsubscribedContact.query.count()
+        inbound_count_7d = 0
+        unread_threads_count = 0
+        active_survey_sessions = 0
+        top_keywords = []
         latest_log = None
         recent_logs = []
+        seven_days_ago = utc_now().replace(tzinfo=None) - timedelta(days=7)
         try:
             latest_log = MessageLog.query.order_by(MessageLog.created_at.desc()).first()
             recent_logs = MessageLog.query.order_by(MessageLog.created_at.desc()).limit(5).all()
+            inbound_count_7d = InboxMessage.query.filter(
+                InboxMessage.direction == 'inbound',
+                InboxMessage.created_at >= seven_days_ago,
+            ).count()
+            unread_threads_count = InboxThread.query.filter(InboxThread.unread_count > 0).count()
+            active_survey_sessions = SurveySession.query.filter_by(status='active').count()
+            keyword_rows = db.session.query(
+                InboxMessage.matched_keyword,
+                db.func.count(InboxMessage.id).label('hits'),
+            ).filter(
+                InboxMessage.direction == 'inbound',
+                InboxMessage.created_at >= seven_days_ago,
+                InboxMessage.matched_keyword.isnot(None),
+            ).group_by(
+                InboxMessage.matched_keyword,
+            ).order_by(
+                db.func.count(InboxMessage.id).desc(),
+            ).limit(5).all()
+            top_keywords = [
+                {'keyword': row[0], 'hits': row[1]}
+                for row in keyword_rows
+            ]
         except OperationalError as exc:
-            from flask import current_app
             db.session.rollback()
             current_app.logger.warning(
-                'MessageLog query failed due to schema mismatch: %s',
+                'Dashboard query failed due to schema mismatch: %s',
                 exc,
             )
         pending_scheduled_count = ScheduledMessage.query.filter_by(status='pending').count()
@@ -164,6 +204,10 @@ def dashboard():
             'success_rate': success_rate,
             'failure_rate': failure_rate,
             'chart_data': chart_data,
+            'inbound_count_7d': inbound_count_7d,
+            'unread_threads_count': unread_threads_count,
+            'active_survey_sessions': active_survey_sessions,
+            'top_keywords': top_keywords,
         }
 
     def render_dashboard():
@@ -1532,3 +1576,371 @@ def unsubscribed_bulk_delete():
     total = deleted_unsub + deleted_supp
     flash(f'Deleted {total} entry/entries ({deleted_unsub} unsubscribed, {deleted_supp} suppressed).', 'success')
     return redirect(url_for('main.unsubscribed_list'))
+
+
+@bp.route('/webhooks/twilio/inbound', methods=['POST'])
+@csrf.exempt
+def twilio_inbound_webhook():
+    payload = request.form.to_dict(flat=True)
+    if current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
+        signature = request.headers.get('X-Twilio-Signature')
+        if not validate_inbound_signature(request.url, payload, signature):
+            current_app.logger.warning('Rejected inbound webhook due to invalid Twilio signature.')
+            return 'Forbidden', 403
+
+    try:
+        result = process_inbound_sms(payload)
+        current_app.logger.info(
+            'Inbound webhook processed: status=%s phone=%s thread_id=%s',
+            result.get('status'),
+            result.get('phone'),
+            result.get('thread_id'),
+        )
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Failed to process inbound Twilio webhook payload')
+        return 'Internal Server Error', 500
+
+    response = make_response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', 200)
+    response.headers['Content-Type'] = 'text/xml'
+    return response
+
+
+@bp.route('/inbox')
+@login_required
+def inbox_list():
+    search = request.args.get('search', '').strip()
+    selected_thread_id = request.args.get('thread', type=int)
+    query = InboxThread.query
+
+    if search:
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
+        query = query.filter(
+            db.or_(
+                InboxThread.phone.ilike(pattern, escape='\\'),
+                InboxThread.contact_name.ilike(pattern, escape='\\'),
+            )
+        )
+
+    threads = query.order_by(InboxThread.last_message_at.desc()).limit(200).all()
+    selected_thread = None
+    if selected_thread_id:
+        selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
+        if selected_thread is None:
+            selected_thread = InboxThread.query.get(selected_thread_id)
+    elif threads:
+        selected_thread = threads[0]
+
+    messages = []
+    active_sessions = []
+    if selected_thread:
+        if selected_thread.unread_count:
+            mark_thread_read(selected_thread.id)
+            selected_thread.unread_count = 0
+
+        messages = InboxMessage.query.filter_by(thread_id=selected_thread.id).order_by(InboxMessage.created_at.asc()).all()
+        active_sessions = SurveySession.query.filter_by(
+            thread_id=selected_thread.id,
+            status='active',
+        ).order_by(SurveySession.started_at.desc()).all()
+
+    return render_template(
+        'inbox/list.html',
+        threads=threads,
+        selected_thread=selected_thread,
+        messages=messages,
+        active_sessions=active_sessions,
+        search=search,
+    )
+
+
+@bp.route('/inbox/<int:thread_id>/reply', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_reply(thread_id):
+    body = request.form.get('body', '').strip()
+    if not body:
+        flash('Reply message cannot be empty.', 'error')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
+
+    try:
+        result = send_thread_reply(thread_id, body, actor=current_user.username)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Failed sending manual inbox reply.')
+        flash('Failed to send reply. Check server logs for details.', 'error')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
+
+    if result.get('success'):
+        flash('Reply sent.', 'success')
+    else:
+        error = result.get('error') or 'Unknown error'
+        flash(f'Reply could not be delivered: {error}', 'error')
+
+    return redirect(url_for('main.inbox_list', thread=thread_id))
+
+
+@bp.route('/inbox/keywords')
+@login_required
+@require_roles('admin', 'social_manager')
+def keyword_rules_list():
+    search = request.args.get('search', '').strip()
+    query = KeywordAutomationRule.query
+
+    if search:
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
+        query = query.filter(
+            db.or_(
+                KeywordAutomationRule.keyword.ilike(pattern, escape='\\'),
+                KeywordAutomationRule.response_body.ilike(pattern, escape='\\'),
+            )
+        )
+
+    rules = query.order_by(KeywordAutomationRule.keyword.asc()).all()
+    return render_template('inbox/keywords_list.html', rules=rules, search=search)
+
+
+@bp.route('/inbox/keywords/add', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def keyword_rule_add():
+    form_data = {'keyword': '', 'response_body': '', 'is_active': True}
+    if request.method == 'POST':
+        keyword = request.form.get('keyword', '')
+        response_body = request.form.get('response_body', '').strip()
+        is_active = request.form.get('is_active') == 'on'
+        normalized_keyword = normalize_keyword(keyword)
+        form_data = {
+            'keyword': keyword,
+            'response_body': response_body,
+            'is_active': is_active,
+        }
+
+        if not normalized_keyword:
+            flash('Keyword is required.', 'error')
+            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+        if not response_body:
+            flash('Auto-reply message is required.', 'error')
+            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+        if KeywordAutomationRule.query.filter_by(keyword=normalized_keyword).first():
+            flash('That keyword already exists.', 'error')
+            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+
+        rule = KeywordAutomationRule(
+            keyword=normalized_keyword,
+            response_body=response_body,
+            is_active=is_active,
+        )
+        db.session.add(rule)
+        db.session.commit()
+        flash('Keyword automation created.', 'success')
+        return redirect(url_for('main.keyword_rules_list'))
+
+    return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+
+
+@bp.route('/inbox/keywords/<int:rule_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def keyword_rule_edit(rule_id):
+    rule = KeywordAutomationRule.query.get_or_404(rule_id)
+
+    if request.method == 'POST':
+        keyword = request.form.get('keyword', '')
+        response_body = request.form.get('response_body', '').strip()
+        is_active = request.form.get('is_active') == 'on'
+        normalized_keyword = normalize_keyword(keyword)
+
+        if not normalized_keyword:
+            flash('Keyword is required.', 'error')
+            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+        if not response_body:
+            flash('Auto-reply message is required.', 'error')
+            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+
+        existing = KeywordAutomationRule.query.filter(
+            KeywordAutomationRule.keyword == normalized_keyword,
+            KeywordAutomationRule.id != rule.id,
+        ).first()
+        if existing:
+            flash('That keyword already exists.', 'error')
+            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+
+        rule.keyword = normalized_keyword
+        rule.response_body = response_body
+        rule.is_active = is_active
+        db.session.commit()
+        flash('Keyword automation updated.', 'success')
+        return redirect(url_for('main.keyword_rules_list'))
+
+    return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+
+
+@bp.route('/inbox/keywords/<int:rule_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def keyword_rule_delete(rule_id):
+    rule = KeywordAutomationRule.query.get_or_404(rule_id)
+    db.session.delete(rule)
+    db.session.commit()
+    flash('Keyword automation deleted.', 'success')
+    return redirect(url_for('main.keyword_rules_list'))
+
+
+@bp.route('/inbox/surveys')
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flows_list():
+    search = request.args.get('search', '').strip()
+    query = SurveyFlow.query
+
+    if search:
+        escaped = escape_like(search)
+        pattern = f'%{escaped}%'
+        query = query.filter(
+            db.or_(
+                SurveyFlow.name.ilike(pattern, escape='\\'),
+                SurveyFlow.trigger_keyword.ilike(pattern, escape='\\'),
+                SurveyFlow.intro_message.ilike(pattern, escape='\\'),
+                SurveyFlow.completion_message.ilike(pattern, escape='\\'),
+            )
+        )
+
+    surveys = query.order_by(SurveyFlow.created_at.desc()).all()
+    return render_template('inbox/surveys_list.html', surveys=surveys, search=search)
+
+
+@bp.route('/inbox/surveys/add', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_add():
+    form_data = {
+        'name': '',
+        'trigger_keyword': '',
+        'intro_message': '',
+        'completion_message': '',
+        'questions': '',
+        'is_active': True,
+    }
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
+        intro_message = request.form.get('intro_message', '').strip() or None
+        completion_message = request.form.get('completion_message', '').strip() or None
+        questions_raw = request.form.get('questions', '')
+        questions = parse_survey_questions(questions_raw)
+        is_active = request.form.get('is_active') == 'on'
+
+        form_data = {
+            'name': name,
+            'trigger_keyword': trigger_keyword,
+            'intro_message': intro_message or '',
+            'completion_message': completion_message or '',
+            'questions': questions_raw,
+            'is_active': is_active,
+        }
+
+        if not name:
+            flash('Survey name is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+        if not trigger_keyword:
+            flash('Survey trigger keyword is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+        if not questions:
+            flash('At least one survey question is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+        if SurveyFlow.query.filter_by(name=name).first():
+            flash('A survey with this name already exists.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+        if SurveyFlow.query.filter_by(trigger_keyword=trigger_keyword).first():
+            flash('That survey trigger keyword already exists.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+
+        survey = SurveyFlow(
+            name=name,
+            trigger_keyword=trigger_keyword,
+            intro_message=intro_message,
+            completion_message=completion_message,
+            is_active=is_active,
+        )
+        survey.set_questions(questions)
+        db.session.add(survey)
+        db.session.commit()
+        flash('Survey flow created.', 'success')
+        return redirect(url_for('main.survey_flows_list'))
+
+    return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+
+
+@bp.route('/inbox/surveys/<int:survey_id>/edit', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_edit(survey_id):
+    survey = SurveyFlow.query.get_or_404(survey_id)
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
+        intro_message = request.form.get('intro_message', '').strip() or None
+        completion_message = request.form.get('completion_message', '').strip() or None
+        questions_raw = request.form.get('questions', '')
+        questions = parse_survey_questions(questions_raw)
+        is_active = request.form.get('is_active') == 'on'
+
+        if not name:
+            flash('Survey name is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+        if not trigger_keyword:
+            flash('Survey trigger keyword is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+        if not questions:
+            flash('At least one survey question is required.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+
+        name_conflict = SurveyFlow.query.filter(
+            SurveyFlow.name == name,
+            SurveyFlow.id != survey.id,
+        ).first()
+        if name_conflict:
+            flash('A survey with this name already exists.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+
+        keyword_conflict = SurveyFlow.query.filter(
+            SurveyFlow.trigger_keyword == trigger_keyword,
+            SurveyFlow.id != survey.id,
+        ).first()
+        if keyword_conflict:
+            flash('That survey trigger keyword already exists.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+
+        survey.name = name
+        survey.trigger_keyword = trigger_keyword
+        survey.intro_message = intro_message
+        survey.completion_message = completion_message
+        survey.is_active = is_active
+        survey.set_questions(questions)
+        db.session.commit()
+        flash('Survey flow updated.', 'success')
+        return redirect(url_for('main.survey_flows_list'))
+
+    return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+
+
+@bp.route('/inbox/surveys/<int:survey_id>/deactivate', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_deactivate(survey_id):
+    survey = SurveyFlow.query.get_or_404(survey_id)
+    survey.is_active = False
+
+    now = utc_now()
+    active_sessions = SurveySession.query.filter_by(survey_id=survey.id, status='active').all()
+    for session in active_sessions:
+        session.status = 'cancelled'
+        session.completed_at = now
+        session.last_activity_at = now
+
+    db.session.commit()
+    flash('Survey flow deactivated.', 'success')
+    return redirect(url_for('main.survey_flows_list'))

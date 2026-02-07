@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Survey Flows - SMS Admin{% endblock %}
+
+{% block page_title %}Survey Flows{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Automations</span> / <span>Surveys</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-magic me-1"></i>Keyword Rules
+</a>
+<a href="{{ url_for('main.survey_flow_add') }}" class="btn btn-primary">
+    <i class="bi bi-plus-lg me-1"></i>Add Survey Flow
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card mb-4">
+    <div class="card-body">
+        <form method="GET" class="filter-bar">
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Search survey flows">
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card app-card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Name</th>
+                    <th>Trigger</th>
+                    <th>Questions</th>
+                    <th>Starts</th>
+                    <th>Completions</th>
+                    <th>Status</th>
+                    <th width="180">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if surveys %}
+                    {% for survey in surveys %}
+                    <tr>
+                        <td>
+                            <div class="fw-semibold">{{ survey.name }}</div>
+                            {% if survey.intro_message %}
+                            <div class="small text-muted">{{ survey.intro_message|truncate(80) }}</div>
+                            {% endif %}
+                        </td>
+                        <td><code>{{ survey.trigger_keyword }}</code></td>
+                        <td>{{ survey.questions|length }}</td>
+                        <td>{{ survey.start_count or 0 }}</td>
+                        <td>{{ survey.completion_count or 0 }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
+                                {{ 'Active' if survey.is_active else 'Inactive' }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="d-flex gap-2">
+                                <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                {% if survey.is_active %}
+                                <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-sm btn-outline-warning" type="submit"
+                                            onclick="return confirm('Deactivate this survey flow?');">
+                                        <i class="bi bi-pause-circle"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted py-4">
+                        No survey flows found. <a href="{{ url_for('main.survey_flow_add') }}">Add your first survey</a>.
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
