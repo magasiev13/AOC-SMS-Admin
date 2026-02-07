@@ -272,8 +272,12 @@
     const selectAllEvents = document.getElementById('selectAllEvents');
     const bulkSelectionActions = document.getElementById('bulkSelectionActions');
 
+    function isVisible(element) {
+        return element.offsetParent !== null;
+    }
+
     function getEventCheckboxes() {
-        return Array.from(document.querySelectorAll('.js-select-row'));
+        return Array.from(document.querySelectorAll('.js-select-row')).filter(isVisible);
     }
 
     function updateBulkUi() {
@@ -316,7 +320,10 @@
         });
     }
 
-    getEventCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+    document.querySelectorAll('.js-select-row').forEach((box) => {
+        box.addEventListener('change', updateBulkUi);
+    });
+    window.addEventListener('resize', updateBulkUi);
     updateBulkUi();
 </script>
 {% endblock %}

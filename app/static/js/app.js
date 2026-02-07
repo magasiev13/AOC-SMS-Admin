@@ -1,16 +1,15 @@
-document.addEventListener('click', (event) => {
-    const confirmTarget = event.target.closest('[data-confirm]');
-    if (!confirmTarget) {
-        return;
-    }
+if (!window.__dataConfirmHandlerBound) {
+    window.__dataConfirmHandlerBound = true;
 
-    const message = confirmTarget.dataset.confirm;
-    if (!message) {
-        return;
-    }
+    document.addEventListener('click', (event) => {
+        const confirmTarget = event.target.closest('[data-confirm]');
+        if (!confirmTarget) {
+            return;
+        }
 
-    if (!window.confirm(message)) {
-        event.preventDefault();
-        event.stopPropagation();
-    }
-});
+        const message = confirmTarget.dataset.confirm || 'Are you sure?';
+        if (!window.confirm(message)) {
+            event.preventDefault();
+        }
+    });
+}

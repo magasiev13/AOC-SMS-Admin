@@ -1161,25 +1161,29 @@ def logs_status():
 
 
 # Scheduled Messages
+def _apply_scheduled_search_filter(query, search: str):
+    if not search:
+        return query
+
+    escaped = escape_like(search)
+    pattern = f'%{escaped}%'
+    return query.outerjoin(Event).filter(
+        db.or_(
+            ScheduledMessage.message_body.ilike(pattern, escape='\\'),
+            ScheduledMessage.target.ilike(pattern, escape='\\'),
+            Event.title.ilike(pattern, escape='\\')
+        )
+    )
+
+
 @bp.route('/scheduled')
 @login_required
 def scheduled_list():
     search = request.args.get('search', '').strip()
     now = datetime.utcnow()
-    query = ScheduledMessage.query
+    query = _apply_scheduled_search_filter(ScheduledMessage.query, search)
 
-    if search:
-        escaped = escape_like(search)
-        pattern = f'%{escaped}%'
-        query = query.outerjoin(Event).filter(
-            db.or_(
-                ScheduledMessage.message_body.ilike(pattern, escape='\\'),
-                ScheduledMessage.target.ilike(pattern, escape='\\'),
-                Event.title.ilike(pattern, escape='\\')
-            )
-        )
-
-    pending = query.filter_by(status='pending').order_by(ScheduledMessage.scheduled_at).all()
+    pending = query.filter(ScheduledMessage.status == 'pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
     pending_ids = [m.id for m in pending]
 
@@ -1245,7 +1249,11 @@ def scheduled_bulk_delete():
 @login_required
 def scheduled_status():
     """API endpoint for polling scheduled message status changes."""
-    pending = ScheduledMessage.query.filter_by(status='pending').all()
+    search = request.args.get('search', '').strip()
+    pending = _apply_scheduled_search_filter(
+        ScheduledMessage.query,
+        search
+    ).filter(ScheduledMessage.status == 'pending').all()
     pending_ids = [m.id for m in pending]
     pending_count = len(pending_ids)
     

@@ -420,6 +420,7 @@
     
     const pendingIdsContainer = document.getElementById('pendingIdsContainer');
     let currentPendingIds = [];
+    const statusEndpoint = `/scheduled/status${window.location.search || ''}`;
     if (pendingIdsContainer && pendingIdsContainer.dataset && pendingIdsContainer.dataset.pendingIds) {
         try {
             currentPendingIds = JSON.parse(pendingIdsContainer.dataset.pendingIds);
@@ -430,9 +431,10 @@
     
     async function checkStatus() {
         try {
-            const response = await fetch('/scheduled/status');
+            const response = await fetch(statusEndpoint);
             if (!response.ok) return;
             const data = await response.json();
+            if (!Array.isArray(data.pending_ids)) return;
             
             const currentSorted = currentPendingIds.slice().sort((a,b) => a-b).join(',');
             const newSorted = data.pending_ids.slice().sort((a,b) => a-b).join(',');
