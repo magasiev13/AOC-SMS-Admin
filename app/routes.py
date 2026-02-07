@@ -63,6 +63,20 @@ def _is_safe_url(target):
     return redirect_url.scheme in ('http', 'https') and host_url.netloc == redirect_url.netloc
 
 
+def _keyword_conflicts_with_survey(trigger_keyword: str, *, exclude_survey_id: int | None = None) -> bool:
+    query = SurveyFlow.query.filter(SurveyFlow.trigger_keyword == trigger_keyword)
+    if exclude_survey_id is not None:
+        query = query.filter(SurveyFlow.id != exclude_survey_id)
+    return query.first() is not None
+
+
+def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = None) -> bool:
+    query = KeywordAutomationRule.query.filter(KeywordAutomationRule.keyword == keyword)
+    if exclude_rule_id is not None:
+        query = query.filter(KeywordAutomationRule.id != exclude_rule_id)
+    return query.first() is not None
+
+
 # Health check endpoint
 @bp.route('/health')
 def health():
@@ -1732,6 +1746,9 @@ def keyword_rule_add():
         if KeywordAutomationRule.query.filter_by(keyword=normalized_keyword).first():
             flash('That keyword already exists.', 'error')
             return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+        if _keyword_conflicts_with_survey(normalized_keyword):
+            flash('That keyword is already used as a survey trigger.', 'error')
+            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
 
         rule = KeywordAutomationRule(
             keyword=normalized_keyword,
@@ -1771,6 +1788,9 @@ def keyword_rule_edit(rule_id):
         ).first()
         if existing:
             flash('That keyword already exists.', 'error')
+            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+        if _keyword_conflicts_with_survey(normalized_keyword):
+            flash('That keyword is already used as a survey trigger.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
 
         rule.keyword = normalized_keyword
@@ -1862,6 +1882,9 @@ def survey_flow_add():
         if SurveyFlow.query.filter_by(trigger_keyword=trigger_keyword).first():
             flash('That survey trigger keyword already exists.', 'error')
             return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+        if _keyword_conflicts_with_rule(trigger_keyword):
+            flash('That survey trigger keyword is already used by a keyword automation.', 'error')
+            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
 
         survey = SurveyFlow(
             name=name,
@@ -1917,6 +1940,9 @@ def survey_flow_edit(survey_id):
         ).first()
         if keyword_conflict:
             flash('That survey trigger keyword already exists.', 'error')
+            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+        if _keyword_conflicts_with_rule(trigger_keyword):
+            flash('That survey trigger keyword is already used by a keyword automation.', 'error')
             return render_template('inbox/survey_form.html', survey=survey, form_data=None)
 
         survey.name = name
