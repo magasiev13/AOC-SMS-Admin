@@ -438,7 +438,10 @@
                 const existingTimezone = getCookieValue('client_timezone');
                 if (existingTimezone !== resolvedTimezone) {
                     document.cookie = `client_timezone=${encodeURIComponent(resolvedTimezone)}; path=/; max-age=31536000; samesite=lax`;
-                    window.location.reload();
+                    const updatedTimezone = getCookieValue('client_timezone');
+                    if (updatedTimezone === resolvedTimezone) {
+                        window.location.reload();
+                    }
                 }
             }
         } catch (e) {

@@ -172,7 +172,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         response = self.client.get("/inbox/keywords")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'data-confirm="Delete this keyword rule?"', response.data)
+        self.assertGreaterEqual(response.data.count(b'data-confirm="Delete this keyword rule?"'), 2)
         self.assertNotIn(b"onclick=\"return confirm('Delete this keyword rule?');\"", response.data)
 
     def test_surveys_list_uses_data_confirm_attribute(self) -> None:
@@ -181,7 +181,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         response = self.client.get("/inbox/surveys")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'data-confirm="Deactivate this survey flow?"', response.data)
+        self.assertGreaterEqual(response.data.count(b'data-confirm="Deactivate this survey flow?"'), 2)
         self.assertNotIn(b"onclick=\"return confirm('Deactivate this survey flow?');\"", response.data)
 
     def test_base_confirm_handler_does_not_stop_immediate_propagation(self) -> None:
@@ -189,7 +189,8 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         response = self.client.get("/dashboard")
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"document.addEventListener('click'", response.data)
+        self.assertIn(b"/static/js/app.js", response.data)
+        self.assertNotIn(b"const confirmTrigger = event.target.closest('[data-confirm]')", response.data)
         self.assertNotIn(b"stopImmediatePropagation", response.data)
 
 
