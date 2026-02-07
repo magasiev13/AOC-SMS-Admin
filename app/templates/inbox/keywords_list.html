@@ -63,7 +63,7 @@
                                 <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="btn btn-sm btn-outline-danger" type="submit"
-                                            onclick="return confirm('Delete this keyword rule?');">
+                                            data-confirm="Delete this keyword rule?">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </form>

@@ -156,7 +156,7 @@ class InboxThread(db.Model):
     phone = db.Column(db.String(20), nullable=False, unique=True, index=True)
     contact_name = db.Column(db.String(100), nullable=True)
     unread_count = db.Column(db.Integer, default=0, nullable=False)
-    last_message_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    last_message_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
     last_message_preview = db.Column(db.Text, nullable=True)
     last_direction = db.Column(db.String(10), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
@@ -271,6 +271,10 @@ class SurveySession(db.Model):
     started_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     last_activity_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     completed_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_survey_sessions_phone_status', 'phone', 'status'),
+    )
 
     survey = db.relationship('SurveyFlow', back_populates='sessions')
     thread = db.relationship('InboxThread')

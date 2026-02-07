@@ -1807,11 +1807,7 @@ def keyword_rule_edit(rule_id):
             flash('Auto-reply message is required.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
 
-        existing = KeywordAutomationRule.query.filter(
-            KeywordAutomationRule.keyword == normalized_keyword,
-            KeywordAutomationRule.id != rule.id,
-        ).first()
-        if existing:
+        if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
             flash('That keyword already exists.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
         if _keyword_conflicts_with_survey(normalized_keyword):
@@ -1904,7 +1900,7 @@ def survey_flow_add():
         if SurveyFlow.query.filter_by(name=name).first():
             flash('A survey with this name already exists.', 'error')
             return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
-        if SurveyFlow.query.filter_by(trigger_keyword=trigger_keyword).first():
+        if _keyword_conflicts_with_survey(trigger_keyword):
             flash('That survey trigger keyword already exists.', 'error')
             return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
         if _keyword_conflicts_with_rule(trigger_keyword):
@@ -1959,11 +1955,7 @@ def survey_flow_edit(survey_id):
             flash('A survey with this name already exists.', 'error')
             return render_template('inbox/survey_form.html', survey=survey, form_data=None)
 
-        keyword_conflict = SurveyFlow.query.filter(
-            SurveyFlow.trigger_keyword == trigger_keyword,
-            SurveyFlow.id != survey.id,
-        ).first()
-        if keyword_conflict:
+        if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
             flash('That survey trigger keyword already exists.', 'error')
             return render_template('inbox/survey_form.html', survey=survey, form_data=None)
         if _keyword_conflicts_with_rule(trigger_keyword):
