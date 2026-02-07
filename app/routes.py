@@ -64,23 +64,25 @@ def _is_safe_url(target):
 
 
 def _keyword_conflicts_with_survey(trigger_keyword: str, *, exclude_survey_id: int | None = None) -> bool:
-    normalized_trigger = db.func.upper(db.func.trim(trigger_keyword))
-    query = SurveyFlow.query.filter(
-        db.func.upper(db.func.trim(SurveyFlow.trigger_keyword)) == normalized_trigger
-    )
+    normalized_trigger = normalize_keyword(trigger_keyword)
+    query = SurveyFlow.query
     if exclude_survey_id is not None:
         query = query.filter(SurveyFlow.id != exclude_survey_id)
-    return query.first() is not None
+    return any(
+        normalize_keyword(survey.trigger_keyword) == normalized_trigger
+        for survey in query.all()
+    )
 
 
 def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = None) -> bool:
-    normalized_keyword = db.func.upper(db.func.trim(keyword))
-    query = KeywordAutomationRule.query.filter(
-        db.func.upper(db.func.trim(KeywordAutomationRule.keyword)) == normalized_keyword
-    )
+    normalized_keyword = normalize_keyword(keyword)
+    query = KeywordAutomationRule.query
     if exclude_rule_id is not None:
         query = query.filter(KeywordAutomationRule.id != exclude_rule_id)
-    return query.first() is not None
+    return any(
+        normalize_keyword(rule.keyword) == normalized_keyword
+        for rule in query.all()
+    )
 
 
 # Health check endpoint
