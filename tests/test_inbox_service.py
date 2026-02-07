@@ -97,7 +97,7 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(messages[1].direction, "outbound")
         self.assertEqual(messages[1].body, "Support is on the way.")
 
-        refreshed = self.KeywordAutomationRule.query.get(rule.id)
+        refreshed = self.db.session.get(self.KeywordAutomationRule, rule.id)
         self.assertEqual(refreshed.match_count, 1)
         self.assertIsNotNone(refreshed.last_matched_at)
 
@@ -178,7 +178,7 @@ class TestInboxService(unittest.TestCase):
         responses = self.SurveyResponse.query.filter_by(phone="+15550001111").all()
         self.assertEqual(len(responses), 2)
 
-        refreshed_survey = self.SurveyFlow.query.get(survey.id)
+        refreshed_survey = self.db.session.get(self.SurveyFlow, survey.id)
         self.assertEqual(refreshed_survey.start_count, 1)
         self.assertEqual(refreshed_survey.completion_count, 1)
 

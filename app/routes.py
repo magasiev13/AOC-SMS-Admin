@@ -466,7 +466,7 @@ def users_add():
 @login_required
 @require_roles('admin')
 def users_edit(user_id):
-    user = AppUser.query.get_or_404(user_id)
+    user = db.get_or_404(AppUser, user_id)
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -510,7 +510,7 @@ def users_edit(user_id):
 @login_required
 @require_roles('admin')
 def users_delete(user_id):
-    user = AppUser.query.get_or_404(user_id)
+    user = db.get_or_404(AppUser, user_id)
 
     if user.id == current_user.id:
         flash('You cannot delete your own account.', 'error')
@@ -624,7 +624,7 @@ def community_add():
 @login_required
 @require_roles('admin')
 def community_edit(member_id):
-    member = CommunityMember.query.get_or_404(member_id)
+    member = db.get_or_404(CommunityMember, member_id)
     
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
@@ -665,7 +665,7 @@ def community_edit(member_id):
 @login_required
 @require_roles('admin')
 def community_delete(member_id):
-    member = CommunityMember.query.get_or_404(member_id)
+    member = db.get_or_404(CommunityMember, member_id)
     db.session.delete(member)
     db.session.commit()
     flash('Community member deleted.', 'success')
@@ -764,7 +764,7 @@ def community_import():
 @login_required
 @require_roles('admin')
 def community_unsubscribe(member_id):
-    member = CommunityMember.query.get_or_404(member_id)
+    member = db.get_or_404(CommunityMember, member_id)
     existing = UnsubscribedContact.query.filter_by(phone=member.phone).first()
     if existing:
         flash('That number is already unsubscribed.', 'warning')
@@ -835,7 +835,7 @@ def event_add():
 @bp.route('/events/<int:event_id>')
 @login_required
 def event_detail(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
     unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
     return render_template('events/detail.html', event=event, registrations=registrations, unsubscribed_phones=unsubscribed_phones)
@@ -844,7 +844,7 @@ def event_detail(event_id):
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
 @login_required
 def event_edit(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
@@ -877,7 +877,7 @@ def event_edit(event_id):
 @login_required
 @require_roles('admin')
 def event_delete(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     db.session.delete(event)
     db.session.commit()
     flash('Event deleted.', 'success')
@@ -887,7 +887,7 @@ def event_delete(event_id):
 @bp.route('/events/<int:event_id>/register', methods=['POST'])
 @login_required
 def event_register(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     name = request.form.get('name', '').strip() or None
     phone = request.form.get('phone', '').strip()
     
@@ -957,7 +957,7 @@ def event_registration_unsubscribe(event_id, registration_id):
 @bp.route('/events/<int:event_id>/import', methods=['POST'])
 @login_required
 def event_import_registrations(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     
     if 'file' not in request.files:
         flash('No file uploaded.', 'error')
@@ -1007,7 +1007,7 @@ def event_import_registrations(event_id):
 @bp.route('/events/<int:event_id>/export')
 @login_required
 def event_export_registrations(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = db.get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1073,7 +1073,7 @@ def logs_list():
 @login_required
 def log_detail(log_id):
     try:
-        log = MessageLog.query.get_or_404(log_id)
+        log = db.get_or_404(MessageLog, log_id)
     except OperationalError as exc:
         from flask import current_app
         current_app.logger.warning(
@@ -1197,7 +1197,7 @@ def scheduled_list():
 @login_required
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
-    scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
+    scheduled = db.get_or_404(ScheduledMessage, scheduled_id)
     
     if scheduled.status not in {'pending', 'processing'}:
         flash('Only pending or processing messages can be cancelled.', 'error')
@@ -1213,7 +1213,7 @@ def scheduled_cancel(scheduled_id):
 @login_required
 @require_roles('admin')
 def scheduled_delete(scheduled_id):
-    scheduled = ScheduledMessage.query.get_or_404(scheduled_id)
+    scheduled = db.get_or_404(ScheduledMessage, scheduled_id)
     db.session.delete(scheduled)
     db.session.commit()
     flash('Scheduled message deleted.', 'success')
@@ -1565,7 +1565,7 @@ def unsubscribed_export():
 @login_required
 @require_roles('admin')
 def unsubscribed_delete(entry_id):
-    entry = UnsubscribedContact.query.get(entry_id)
+    entry = db.session.get(UnsubscribedContact, entry_id)
     if entry is None:
         flash('Entry already deleted or not found.', 'warning')
         return redirect(url_for('main.unsubscribed_list'))
@@ -1672,7 +1672,7 @@ def inbox_list():
     if selected_thread_id:
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
         if selected_thread is None:
-            selected_thread = InboxThread.query.get(selected_thread_id)
+            selected_thread = db.session.get(InboxThread, selected_thread_id)
     elif threads:
         selected_thread = threads[0]
 
@@ -1792,7 +1792,7 @@ def keyword_rule_add():
 @login_required
 @require_roles('admin', 'social_manager')
 def keyword_rule_edit(rule_id):
-    rule = KeywordAutomationRule.query.get_or_404(rule_id)
+    rule = db.get_or_404(KeywordAutomationRule, rule_id)
 
     if request.method == 'POST':
         keyword = request.form.get('keyword', '')
@@ -1828,7 +1828,7 @@ def keyword_rule_edit(rule_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def keyword_rule_delete(rule_id):
-    rule = KeywordAutomationRule.query.get_or_404(rule_id)
+    rule = db.get_or_404(KeywordAutomationRule, rule_id)
     db.session.delete(rule)
     db.session.commit()
     flash('Keyword automation deleted.', 'success')
@@ -1927,7 +1927,7 @@ def survey_flow_add():
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_edit(survey_id):
-    survey = SurveyFlow.query.get_or_404(survey_id)
+    survey = db.get_or_404(SurveyFlow, survey_id)
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
@@ -1979,7 +1979,7 @@ def survey_flow_edit(survey_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_deactivate(survey_id):
-    survey = SurveyFlow.query.get_or_404(survey_id)
+    survey = db.get_or_404(SurveyFlow, survey_id)
     survey.is_active = False
 
     now = utc_now()

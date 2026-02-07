@@ -121,7 +121,11 @@ def enforce_password_change():
 @login_manager.user_loader
 def load_user(user_id):
     """Load user by ID."""
-    return AppUser.query.get(int(user_id))
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    return db.session.get(AppUser, user_id_int)
 
 
 @bp.route('/login', methods=['GET', 'POST'])

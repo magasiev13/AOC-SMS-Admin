@@ -118,7 +118,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used as a survey trigger", response.data)
 
-        refreshed = self.KeywordAutomationRule.query.get(rule.id)
+        refreshed = self.db.session.get(self.KeywordAutomationRule, rule.id)
         self.assertEqual(refreshed.keyword, "HELP")
 
     def test_survey_add_rejects_existing_keyword_rule(self) -> None:
@@ -163,7 +163,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
 
-        refreshed = self.SurveyFlow.query.get(survey.id)
+        refreshed = self.db.session.get(self.SurveyFlow, survey.id)
         self.assertEqual(refreshed.trigger_keyword, "RSVP")
 
     def test_keywords_list_uses_data_confirm_attribute(self) -> None:

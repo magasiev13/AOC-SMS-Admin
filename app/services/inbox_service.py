@@ -43,7 +43,7 @@ def parse_survey_questions(raw_questions: str) -> list[str]:
 
 
 def mark_thread_read(thread_id: int) -> None:
-    thread = InboxThread.query.get(thread_id)
+    thread = db.session.get(InboxThread, thread_id)
     if not thread:
         return
     thread.unread_count = 0
@@ -51,7 +51,7 @@ def mark_thread_read(thread_id: int) -> None:
 
 
 def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> dict:
-    thread = InboxThread.query.get(thread_id)
+    thread = db.session.get(InboxThread, thread_id)
     if thread is None:
         return {'success': False, 'error': 'thread_not_found'}
 
