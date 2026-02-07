@@ -11,13 +11,13 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-primary">
+<a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-primary page-action-primary">
     <i class="bi bi-pencil me-1"></i>Edit
 </a>
-<a href="{{ url_for('main.event_export_registrations', event_id=event.id) }}" class="btn btn-outline-secondary">
+<a href="{{ url_for('main.event_export_registrations', event_id=event.id) }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
-<a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">
+<a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-arrow-left me-1"></i>Back
 </a>
 {% endblock %}
@@ -73,7 +73,7 @@
             <div class="card-header">
                 <h6 class="mb-0"><i class="bi bi-people me-2"></i>Registrations ({{ registrations|length }})</h6>
             </div>
-            <div class="table-responsive">
+            <div class="table-responsive d-none d-lg-block">
                 <table class="table table-sm mb-0" data-sortable="client">
                     <thead class="table-light">
                         <tr>
@@ -143,6 +143,44 @@
                         {% endif %}
                     </tbody>
                 </table>
+            </div>
+            <div class="card-list d-lg-none">
+                {% if registrations %}
+                    {% for reg in registrations %}
+                    {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1">{{ reg.name or '-' }}</h6>
+                                <div class="text-muted small"><code>{{ reg.phone }}</code></div>
+                                <div class="mt-2">
+                                    {% if is_unsubscribed %}
+                                    <span class="badge bg-secondary">Unsubscribed</span>
+                                    {% else %}
+                                    <span class="badge bg-success">Active</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                            {% if not is_unsubscribed %}
+                            <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" aria-label="Unsubscribe registration">
+                                <i class="bi bi-person-x"></i> Unsubscribe
+                            </button>
+                            {% endif %}
+                            <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" aria-label="Remove registration" data-confirm="Remove this registration?">
+                                <i class="bi bi-x"></i> Remove
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                <div class="empty-state py-4">
+                    <i class="bi bi-people empty-state__icon"></i>
+                    <div class="empty-state__title">No registrations yet</div>
+                    <div class="empty-state__text">Use the Add Registration form above or import a CSV list.</div>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>

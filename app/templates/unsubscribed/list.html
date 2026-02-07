@@ -12,19 +12,19 @@
 
 {% block page_actions %}
 {% if can_manage_unsubscribed %}
-<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline" data-backfill-form>
+<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline page-action-secondary" data-backfill-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit" class="btn btn-outline-warning" data-backfill-button>
         <i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs
     </button>
 </form>
-<a href="{{ url_for('main.unsubscribed_import') }}" class="btn btn-outline-primary">
+<a href="{{ url_for('main.unsubscribed_import') }}" class="btn btn-outline-primary page-action-secondary">
     <i class="bi bi-upload me-1"></i>Import CSV
 </a>
-<a href="{{ url_for('main.unsubscribed_export') }}" class="btn btn-outline-secondary">
+<a href="{{ url_for('main.unsubscribed_export') }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
-<a href="{{ url_for('main.unsubscribed_add') }}" class="btn btn-primary">
+<a href="{{ url_for('main.unsubscribed_add') }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-plus-lg me-1"></i>Add to Suppression
 </a>
 {% endif %}
@@ -65,7 +65,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         </form>
     </div>
-    <div class="table-responsive">
+    <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable" data-sortable="server" data-sort-default="created_at" data-sort-default-dir="desc">
             <thead class="table-light">
                 <tr>
@@ -179,6 +179,51 @@
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+    <div class="card-list d-lg-none">
+        {% if entries %}
+            {% for entry in entries %}
+            <div class="card-list-item">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <h6 class="mb-1">{{ entry.name or '-' }}</h6>
+                        <div class="text-muted small"><code>{{ entry.phone }}</code></div>
+                        <div class="text-muted small mt-1">{{ entry.reason or '-' }}</div>
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
+                            <span class="badge bg-light text-dark">{{ entry.source or '-' }}</span>
+                        </div>
+                        <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
+                    </div>
+                    <div class="d-flex flex-column align-items-end gap-2">
+                        {% if entry.entry_type == 'unsubscribed' %}
+                        <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                        {% else %}
+                        <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                        {% endif %}
+                    </div>
+                </div>
+                {% if can_manage_unsubscribed and entry.entry_type == 'unsubscribed' %}
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                    <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove entry">
+                            <i class="bi bi-trash"></i> Remove
+                        </button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="empty-state py-4">
+            <i class="bi bi-person-x empty-state__icon"></i>
+            <div class="empty-state__title">No suppression entries found</div>
+            {% if can_manage_unsubscribed %}
+            <div class="empty-state__text">Add a contact or import from CSV to get started.</div>
+            {% endif %}
+        </div>
+        {% endif %}
     </div>
 {% if entries %}
     <div class="card-footer d-flex justify-content-between align-items-center text-muted">

@@ -78,7 +78,7 @@
             <div class="card-header">
                 <h6 class="mb-0">Recipient Details</h6>
             </div>
-            <div class="table-responsive">
+            <div class="table-responsive d-none d-lg-block">
                 <table class="table table-sm mb-0" data-sortable="client">
                     <thead class="table-light">
                         <tr>
@@ -152,6 +152,45 @@
                         {% endif %}
                     </tbody>
                 </table>
+            </div>
+            <div class="card-list d-lg-none">
+                {% if details %}
+                    {% for d in details %}
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1">{{ d.name or '-' }}</h6>
+                                <div class="text-muted small"><code>{{ d.phone }}</code></div>
+                            </div>
+                            {% if d.success %}
+                            <span class="badge bg-success">Sent</span>
+                            {% else %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% endif %}
+                        </div>
+                        <div class="mt-2 small text-muted">
+                            Suppression:
+                            {% if not d.success and suppression_status.get(d.normalized_phone) %}
+                            <span class="badge bg-warning text-dark text-uppercase ms-1">
+                                {{ suppression_status.get(d.normalized_phone) }}
+                            </span>
+                            {% else %}
+                            <span class="ms-1">-</span>
+                            {% endif %}
+                        </div>
+                        {% if d.error %}
+                        <div class="mt-2 small text-danger">{{ d.error }}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                <div class="empty-state py-4">
+                    <i class="bi bi-list-check empty-state__icon"></i>
+                    <div class="empty-state__title">No details available</div>
+                    <div class="empty-state__text">No recipient delivery details are recorded for this log entry.</div>
+                    <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Back to Logs</a>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>

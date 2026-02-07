@@ -34,6 +34,7 @@ DESIGN_SYSTEM (.md) UPDATES REQUIRED:
 ## These must be approved and documented before build execution.
 ## IMPLEMENTATION NOTES FOR BUILD AGENT:
 
+## Phase 4: Miscellaneous Notes 
 - dashboard.html: breadcrumbs currently live-indicator (line 8) → replace with static “Overview” label; remove pulsing status from default dashboard header.
 - dashboard.html: move section Send SMS Blast (lines 225-351) above stats/charts (before line 15) so primary action appears first.
 - dashboard.html: remove Quick Links block (lines 130-162) from dashboard body; keep global navigation as the single route switcher.
