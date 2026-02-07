@@ -103,6 +103,45 @@ class TestDbDoctor(unittest.TestCase):
                     except OperationalError as exc:
                         self.fail(f"MessageLog query raised OperationalError after migration: {exc}")
 
+    def test_dbdoctor_applies_cross_table_keyword_conflict_triggers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "sms.db")
+            env = os.environ.copy()
+            env["DATABASE_URL"] = f"sqlite:///{db_path}"
+            env["SECRET_KEY"] = "test-secret"
+            env["FLASK_DEBUG"] = "1"
+
+            apply_result = subprocess.run(
+                [sys.executable, "-m", "app.dbdoctor", "--apply"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(apply_result.returncode, 0, msg=apply_result.stderr)
+
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO survey_flows (
+                        name, trigger_keyword, intro_message, questions_json, completion_message,
+                        is_active, start_count, completion_count, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                    """,
+                    ("RSVP Flow", "RSVP", "Welcome", '["Q1?"]', "Done", 1, 0, 0),
+                )
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        """
+                        INSERT INTO keyword_automation_rules (
+                            keyword, response_body, is_active, match_count, created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+                        """,
+                        ("RSVP", "Auto-reply", 1, 0),
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

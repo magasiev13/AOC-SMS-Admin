@@ -210,7 +210,7 @@ class TestInboxService(unittest.TestCase):
         self.assertIsNone(unsubscribed)
 
     @patch("app.services.inbox_service.get_twilio_service")
-    def test_cancel_during_active_survey_cancels_without_opt_out(self, mock_get_twilio) -> None:
+    def test_cancel_during_active_survey_opts_out_and_cancels_session(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
             name="Cancel Flow",
             trigger_keyword="CHECKIN",
@@ -239,14 +239,14 @@ class TestInboxService(unittest.TestCase):
         cancel_result = self.process_inbound_sms(
             {"From": "+15551112222", "Body": "CANCEL", "MessageSid": "SM-IN-CANCEL-2"}
         )
-        self.assertEqual(cancel_result["status"], "survey_cancelled")
+        self.assertEqual(cancel_result["status"], "opt_out")
 
         session = self.SurveySession.query.filter_by(phone="+15551112222").first()
         self.assertEqual(session.status, "cancelled")
         self.assertIsNotNone(session.completed_at)
 
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15551112222").first()
-        self.assertIsNone(unsubscribed)
+        self.assertIsNotNone(unsubscribed)
 
         thread = self.InboxThread.query.filter_by(phone="+15551112222").first()
         messages = (
@@ -257,7 +257,7 @@ class TestInboxService(unittest.TestCase):
         self.assertTrue(
             any(
                 msg.direction == "outbound"
-                and "Survey cancelled. Text the survey keyword again anytime to restart." in msg.body
+                and "You are unsubscribed and will no longer receive SMS alerts." in msg.body
                 for msg in messages
             )
         )
@@ -305,6 +305,44 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(start_result["status"], "opt_in")
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15554443333").first()
         self.assertIsNone(unsubscribed)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_start_when_already_subscribed_sends_ack(self, mock_get_twilio) -> None:
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM888",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        start_result = self.process_inbound_sms(
+            {"From": "+15550009999", "Body": "START", "MessageSid": "SM-IN-START-1"}
+        )
+        self.assertEqual(start_result["status"], "opt_in")
+
+        thread = self.InboxThread.query.filter_by(phone="+15550009999").first()
+        self.assertIsNotNone(thread)
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.created_at.asc())
+            .all()
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0].direction, "inbound")
+        self.assertEqual(messages[1].direction, "outbound")
+        self.assertIn("already subscribed", messages[1].body)
+
+    def test_model_indexes_match_migration_indexes(self) -> None:
+        from sqlalchemy import inspect
+
+        inspector = inspect(self.db.engine)
+        inbox_thread_indexes = {index["name"] for index in inspector.get_indexes("inbox_threads")}
+        survey_session_indexes = {index["name"] for index in inspector.get_indexes("survey_sessions")}
+
+        self.assertIn("ix_inbox_threads_last_message_at", inbox_thread_indexes)
+        self.assertIn("ix_survey_sessions_phone_status", survey_session_indexes)
 
     def test_webhook_rejects_when_signature_required(self) -> None:
         self.app.config["TWILIO_VALIDATE_INBOUND_SIGNATURE"] = True

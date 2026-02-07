@@ -340,7 +340,22 @@ def process_inbound_sms(payload: dict) -> dict:
     matched_keyword: str | None = None
 
     session = _active_session(phone)
-    if session and normalized in SURVEY_CANCEL_KEYWORDS:
+    if normalized in STOP_KEYWORDS:
+        _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
+        _cancel_active_sessions(phone)
+        sent_replies.append(
+            {
+                'source': 'system',
+                'result': _send_automated_reply(
+                    phone,
+                    thread,
+                    'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
+                    source='system',
+                ),
+            }
+        )
+        status = 'opt_out'
+    elif session and normalized in SURVEY_CANCEL_KEYWORDS:
         now = utc_now()
         session.status = 'cancelled'
         session.completed_at = now
@@ -358,21 +373,6 @@ def process_inbound_sms(payload: dict) -> dict:
             }
         )
         status = 'survey_cancelled'
-    elif normalized in STOP_KEYWORDS:
-        _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
-        _cancel_active_sessions(phone)
-        sent_replies.append(
-            {
-                'source': 'system',
-                'result': _send_automated_reply(
-                    phone,
-                    thread,
-                    'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
-                    source='system',
-                ),
-            }
-        )
-        status = 'opt_out'
     else:
         if session:
             # Active survey responses should take precedence over generic START/YES opt-in keywords.
@@ -392,19 +392,24 @@ def process_inbound_sms(payload: dict) -> dict:
                 )
             status = 'survey_response'
         elif normalized in START_KEYWORDS:
-            if _remove_unsubscribed(phone):
-                sent_replies.append(
-                    {
-                        'source': 'system',
-                        'result': _send_automated_reply(
-                            phone,
-                            thread,
-                            'You are resubscribed and can receive SMS alerts again.',
-                            source='system',
-                        ),
-                    }
-                )
-                status = 'opt_in'
+            was_unsubscribed = _remove_unsubscribed(phone)
+            start_reply = (
+                'You are resubscribed and can receive SMS alerts again.'
+                if was_unsubscribed
+                else 'You are already subscribed and can receive SMS alerts.'
+            )
+            sent_replies.append(
+                {
+                    'source': 'system',
+                    'result': _send_automated_reply(
+                        phone,
+                        thread,
+                        start_reply,
+                        source='system',
+                    ),
+                }
+            )
+            status = 'opt_in'
         else:
             candidates = keyword_candidates(inbound_body)
 
