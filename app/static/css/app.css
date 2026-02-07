@@ -1986,3 +1986,313 @@ tr:hover .row-actions,
     gap: var(--space-1);
   }
 }
+
+/* ===========================================
+   PHASE 2 VISUAL REFINEMENT OVERRIDES
+   =========================================== */
+
+/* Remove decorative brand and pulse animation noise */
+.app-sidebar {
+  background: #0f172a;
+}
+
+.brand-icon {
+  animation: none;
+  box-shadow: none;
+  background: #1f2937;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.app-sidebar-brand:hover .brand-icon,
+.app-sidebar-brand:hover .brand-icon i {
+  transform: none;
+}
+
+.brand-text::after {
+  content: none;
+  animation: none;
+  box-shadow: none;
+}
+
+.live-indicator__dot {
+  animation: none;
+}
+
+/* Preserve one accent while reducing gradient-heavy visual noise */
+.app-sidebar .app-nav-link.active {
+  background: rgba(99, 102, 241, 0.92);
+  box-shadow: none;
+}
+
+.send-card__header {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Normalize stat cards to neutral surfaces + semantic accents */
+.stat-card {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--elevation-1);
+}
+
+.stat-card:hover {
+  transform: none;
+  box-shadow: var(--elevation-1);
+}
+
+.stat-card--primary {
+  background: var(--color-surface);
+  border-left: 4px solid var(--color-primary);
+}
+
+.stat-card--success {
+  background: var(--color-surface);
+  border-left: 4px solid var(--color-success);
+}
+
+.stat-card--warning {
+  background: var(--color-surface);
+  border-left: 4px solid var(--color-warning);
+}
+
+.stat-card--info {
+  background: var(--color-surface);
+  border-left: 4px solid var(--color-info);
+}
+
+.stat-card--purple,
+.stat-card--dark {
+  background: var(--color-surface);
+  border-left: 4px solid var(--color-accent);
+}
+
+.stat-card__icon {
+  color: var(--color-text-muted);
+  opacity: 0.16;
+}
+
+.stat-card__label {
+  color: var(--color-text-muted);
+  opacity: 1;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.stat-card__meta {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.stat-card__meta a {
+  color: var(--color-primary-strong);
+}
+
+.stat-card__progress {
+  background: rgba(100, 116, 139, 0.2);
+}
+
+.stat-card__progress-bar {
+  background: var(--color-primary);
+}
+
+.stat-card--success .stat-card__progress-bar {
+  background: var(--color-success);
+}
+
+.stat-card--warning .stat-card__progress-bar {
+  background: var(--color-warning);
+}
+
+.stat-card--info .stat-card__progress-bar {
+  background: var(--color-info);
+}
+
+/* Keep hover interactions calm and structural */
+.activity-timeline::before {
+  background: var(--color-border);
+}
+
+.activity-item__content:hover {
+  transform: none;
+  box-shadow: var(--elevation-1);
+}
+
+.quick-link:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  border-color: var(--color-primary-light);
+  transform: none;
+  box-shadow: none;
+}
+
+.quick-link:hover .quick-link__icon {
+  color: var(--color-primary);
+}
+
+/* Typography refinement: remove forced uppercase microtype */
+.table thead th {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-muted);
+}
+
+/* Button + badge standardization without decorative gradients */
+.btn {
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.btn-primary:hover,
+.btn-primary:focus {
+  background: var(--color-primary-strong);
+  border-color: var(--color-primary-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-success {
+  background: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.btn-success:hover,
+.btn-success:focus {
+  background: #059669;
+  border-color: #059669;
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.btn-danger:hover,
+.btn-danger:focus {
+  background: #dc2626;
+  border-color: #dc2626;
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus {
+  background: rgba(99, 102, 241, 0.08);
+  color: var(--color-primary-strong);
+  border-color: var(--color-primary);
+  box-shadow: none;
+}
+
+.btn-outline-secondary:hover,
+.btn-outline-secondary:focus {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.btn-outline-danger:hover,
+.btn-outline-danger:focus {
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+  border-color: #dc2626;
+}
+
+.btn-outline-warning:hover,
+.btn-outline-warning:focus {
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+  border-color: #d97706;
+}
+
+.badge.bg-success {
+  background: #059669 !important;
+}
+
+.badge.bg-danger {
+  background: #dc2626 !important;
+}
+
+.badge.bg-warning {
+  background: #d97706 !important;
+}
+
+.badge.bg-primary {
+  background: var(--color-primary) !important;
+}
+
+.badge.bg-secondary {
+  background: #475569 !important;
+}
+
+.badge.bg-info {
+  background: #0891b2 !important;
+}
+
+.badge.bg-light {
+  background: var(--color-surface-muted) !important;
+  color: var(--color-text-muted) !important;
+  border: 1px solid var(--color-border);
+}
+
+/* Essential row actions remain visible on all input types */
+.row-actions {
+  opacity: 1;
+}
+
+.table-hover tbody tr:hover .row-actions,
+.table-hover tbody tr:focus-within .row-actions,
+tr:hover .row-actions,
+.card-list-item:hover .row-actions {
+  opacity: 1;
+}
+
+/* Spacing rhythm normalization for cards and sections */
+.app-content {
+  padding: var(--space-5);
+}
+
+.app-page-header {
+  margin-bottom: var(--space-5);
+}
+
+.card-header,
+.card-footer {
+  padding: var(--space-3) var(--space-4);
+}
+
+.card-body,
+.chart-card,
+.send-card__body {
+  padding: var(--space-4);
+}
+
+.filter-bar {
+  gap: var(--space-2);
+}
+
+@media (max-width: 991.98px) {
+  .app-content {
+    padding: var(--space-4);
+  }
+
+  .card-body,
+  .chart-card,
+  .send-card__body {
+    padding: var(--space-3);
+  }
+
+  .card-header,
+  .card-footer {
+    padding: var(--space-3);
+  }
+}

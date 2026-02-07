@@ -69,6 +69,11 @@ def health():
     return 'OK', 200
 
 
+@bp.route('/favicon.ico')
+def favicon():
+    return redirect(url_for('static', filename='favicon.svg'), code=302)
+
+
 # Redirect root to dashboard
 @bp.route('/')
 @login_required
