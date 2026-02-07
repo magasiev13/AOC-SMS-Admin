@@ -42,6 +42,41 @@ jobs:
           sudo systemctl is-active --quiet sms-worker
           sudo systemctl is-active --quiet sms-scheduler.timer
 
+          echo "==> Dependency assertions"
+          CLICK_VERSION="$(sudo -u smsadmin /opt/sms-admin/venv/bin/python -c "from importlib.metadata import version; print(version('click'))")"
+          if [ "$CLICK_VERSION" != "8.1.7" ]; then
+            echo "❌ click version mismatch: expected 8.1.7, got $CLICK_VERSION"
+            exit 1
+          fi
+
+          echo "==> RQ parser assertion (must emit no stderr warnings)"
+          RQ_HELP_OUT="$(mktemp /tmp/rq_help_out.XXXXXX)"
+          RQ_HELP_ERR="$(mktemp /tmp/rq_help_err.XXXXXX)"
+          sudo -u smsadmin /opt/sms-admin/venv/bin/rq worker --help >"$RQ_HELP_OUT" 2>"$RQ_HELP_ERR"
+          if [ -s "$RQ_HELP_ERR" ]; then
+            echo "❌ rq worker --help produced stderr output:"
+            cat "$RQ_HELP_ERR"
+            rm -f "$RQ_HELP_OUT" "$RQ_HELP_ERR"
+            exit 1
+          fi
+          rm -f "$RQ_HELP_OUT" "$RQ_HELP_ERR"
+
+          echo "==> Timer assertions"
+          grep -q "^OnUnitActiveSec=30$" /etc/systemd/system/sms-scheduler.timer || {
+            echo "❌ sms-scheduler.timer OnUnitActiveSec is not 30"
+            exit 1
+          }
+          TIMER_PROPS="$(systemctl show sms-scheduler.timer -p AccuracyUSec -p RandomizedDelayUSec)"
+          echo "$TIMER_PROPS"
+          echo "$TIMER_PROPS" | grep -q "^AccuracyUSec=1s$" || {
+            echo "❌ sms-scheduler.timer AccuracyUSec is not 1s"
+            exit 1
+          }
+          echo "$TIMER_PROPS" | grep -q "^RandomizedDelayUSec=0$" || {
+            echo "❌ sms-scheduler.timer RandomizedDelayUSec is not 0"
+            exit 1
+          }
+
           # Strong signal that scheduled sending works: run oneshot once and confirm it succeeded
           sudo systemctl start sms-scheduler.service || true
           RESULT="$(sudo systemctl show -p Result --value sms-scheduler.service || true)"

@@ -10,3 +10,5 @@ Werkzeug==3.0.1
 APScheduler==3.10.4
 redis==5.0.1
 rq==1.15.1
+# rq 1.15.x emits duplicate option warnings with newer click releases.
+click==8.1.7

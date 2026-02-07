@@ -7,6 +7,10 @@ Documentation=man:systemd.timer(5)
 OnBootSec=30
 # Run every 30 seconds for timely message delivery
 OnUnitActiveSec=30
+# Avoid systemd's default 1 minute coalescing so 30-second cadence is honored
+AccuracySec=1s
+# Keep cadence deterministic; no extra random timer jitter
+RandomizedDelaySec=0
 # Persist timer state across reboots (catches up missed runs)
 Persistent=true
 
