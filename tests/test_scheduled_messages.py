@@ -211,6 +211,43 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "sent")
 
+    def test_post_processing_failure_does_not_flip_sent_message_to_failed(self):
+        """Suppression post-processing errors should not change a sent message back to failed."""
+        member = CommunityMember(name="Test User", phone="+15551234567")
+        db.session.add(member)
+
+        due_time = utc_now_naive() - timedelta(seconds=30)
+        scheduled = ScheduledMessage(
+            message_body="Post process failure test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        mock_result = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15551234567", "success": True, "error": None}],
+        }
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio, patch(
+            "app.services.suppression_service.process_failure_details",
+            side_effect=RuntimeError("post-processing boom"),
+        ):
+            mock_service = MagicMock()
+            mock_service.send_bulk.return_value = mock_result
+            mock_twilio.return_value = mock_service
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "sent")
+        self.assertIsNotNone(updated.message_log_id)
+
         
 if __name__ == "__main__":
     unittest.main()

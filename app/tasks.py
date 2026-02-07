@@ -1,5 +1,6 @@
 import json
-import time
+
+from flask import current_app
 from rq import get_current_job
 from app import create_app, db
 from app.models import MessageLog
@@ -38,10 +39,16 @@ def _persist_progress(
     db.session.commit()
 
 
+def _append_error_detail(details: list, error_message: str) -> list:
+    payload = list(details) if isinstance(details, list) else []
+    payload.append({'error': error_message})
+    return payload
+
+
 def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: float = 0.1) -> None:
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
-        log = MessageLog.query.get(log_id)
+        log = db.session.get(MessageLog, log_id)
         if not log:
             raise ValueError(f"MessageLog {log_id} not found")
 
@@ -77,7 +84,14 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
             log.details = json.dumps(combined_details)
             log.status = 'sent' if log.failure_count == 0 else 'failed'
             db.session.commit()
-            process_failure_details(combined_details, log.id)
+            try:
+                process_failure_details(combined_details, log.id)
+            except Exception as exc:
+                current_app.logger.exception(
+                    "Failed processing suppression details for log_id=%s after successful send: %s",
+                    log.id,
+                    exc,
+                )
         except TwilioTransientError as exc:
             combined_details = existing_details
             if exc.results:
@@ -89,17 +103,38 @@ def send_bulk_job(log_id: int, recipient_data: list, final_message: str, delay: 
                 db.session.commit()
             if _should_mark_failed():
                 log.status = 'failed'
-                error_detail = {'error': str(exc)}
-                combined_details = (combined_details if exc.results else existing_details) + [error_detail]
+                base_details = combined_details if exc.results else existing_details
+                combined_details = _append_error_detail(base_details, str(exc))
+                log.total_recipients = len(recipient_data)
+                log.failure_count = max((log.failure_count or 0), existing_failure + 1)
                 log.details = json.dumps(combined_details)
                 db.session.commit()
-            process_failure_details(combined_details, log.id)
+            try:
+                process_failure_details(combined_details, log.id)
+            except Exception as process_exc:
+                current_app.logger.exception(
+                    "Failed processing suppression details for log_id=%s after transient send error: %s",
+                    log.id,
+                    process_exc,
+                )
             raise
         except Exception as exc:
+            combined_details = _load_details(log) or existing_details
+            combined_details = _append_error_detail(combined_details, str(exc))
+            log.total_recipients = len(recipient_data)
+            log.success_count = max(log.success_count or 0, existing_success)
+            log.failure_count = max(log.failure_count or 0, existing_failure + 1)
             log.status = 'failed'
-            log.details = json.dumps([{'error': str(exc)}])
+            log.details = json.dumps(combined_details)
             db.session.commit()
-            process_failure_details([{'error': str(exc)}], log.id)
+            try:
+                process_failure_details(combined_details, log.id)
+            except Exception as process_exc:
+                current_app.logger.exception(
+                    "Failed processing suppression details for log_id=%s after non-transient send error: %s",
+                    log.id,
+                    process_exc,
+                )
 
 
 def backfill_suppressions_job() -> dict:

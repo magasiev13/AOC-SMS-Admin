@@ -15,7 +15,7 @@ def apply(connection, logger) -> None:
 
     if existing_conflicts:
         logger.warning(
-            "Migration 007_enforce_cross_table_keyword_uniqueness: found %s existing keyword conflict(s) "
+            "Migration 008_enforce_cross_table_keyword_uniqueness: found %s existing keyword conflict(s) "
             "between keyword_automation_rules and survey_flows. New conflicts will be blocked.",
             existing_conflicts,
         )
@@ -95,5 +95,5 @@ def apply(connection, logger) -> None:
     )
 
     logger.info(
-        "Migration 007_enforce_cross_table_keyword_uniqueness: created cross-table keyword conflict triggers."
+        "Migration 008_enforce_cross_table_keyword_uniqueness: created cross-table keyword conflict triggers."
     )

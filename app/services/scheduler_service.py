@@ -202,13 +202,20 @@ def send_scheduled_messages(app):
                 scheduled.message_log_id = log.id
                 db.session.commit()
 
-                process_failure_details(result.get('details', []), log.id)
-                
                 sent_count += 1
                 logger.info(
                     "[Scheduler] Message id=%d SENT: %d/%d successful (status: processing -> sent)",
                     scheduled.id, result['success_count'], result['total']
                 )
+
+                try:
+                    process_failure_details(result.get('details', []), log.id)
+                except Exception as e:
+                    logger.exception(
+                        "[Scheduler] Message id=%d sent, but suppression post-processing failed: %s",
+                        scheduled.id,
+                        e,
+                    )
                 
             except Exception as e:
                 scheduled.status = 'failed'

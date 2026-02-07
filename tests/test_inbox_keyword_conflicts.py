@@ -81,7 +81,7 @@ class TestInboxKeywordConflicts(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"already used by a survey trigger", response.data)
+        self.assertIn(b"already used as a survey trigger", response.data)
         self.assertEqual(self.KeywordAutomationRule.query.count(), 0)
 
     def test_survey_add_rejects_existing_keyword_rule(self) -> None:
@@ -133,7 +133,7 @@ class TestInboxKeywordConflicts(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"already used by a survey trigger", response.data)
+        self.assertIn(b"already used as a survey trigger", response.data)
         refreshed_rule = self.db.session.get(self.KeywordAutomationRule, rule.id)
         self.assertEqual(refreshed_rule.keyword, "HELP")
 

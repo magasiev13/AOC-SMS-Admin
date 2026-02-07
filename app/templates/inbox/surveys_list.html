@@ -119,7 +119,7 @@
                     <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-sm btn-outline-warning" type="submit"
-                                onclick="return confirm('Deactivate this survey flow?');">
+                                data-confirm="Deactivate this survey flow?">
                             <i class="bi bi-pause-circle"></i> Deactivate
                         </button>
                     </form>
