@@ -210,6 +210,19 @@
             });
         });
 
+        document.addEventListener('click', (event) => {
+            const confirmTrigger = event.target.closest('[data-confirm]');
+            if (!confirmTrigger) {
+                return;
+            }
+
+            const confirmMessage = confirmTrigger.getAttribute('data-confirm') || 'Are you sure?';
+            if (!window.confirm(confirmMessage)) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+        });
+
         const iconEls = document.querySelectorAll('i.bi');
         iconEls.forEach((iconEl) => {
             iconEl.setAttribute('aria-hidden', 'true');
