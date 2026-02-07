@@ -1789,7 +1789,7 @@ def keyword_rule_edit(rule_id):
         if existing:
             flash('That keyword already exists.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
-        if _keyword_conflicts_with_survey(normalized_keyword):
+        if normalized_keyword != rule.keyword and _keyword_conflicts_with_survey(normalized_keyword):
             flash('That keyword is already used as a survey trigger.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
 
