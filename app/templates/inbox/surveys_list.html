@@ -9,10 +9,10 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary">
+<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-magic me-1"></i>Keyword Rules
 </a>
-<a href="{{ url_for('main.survey_flow_add') }}" class="btn btn-primary">
+<a href="{{ url_for('main.survey_flow_add') }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-plus-lg me-1"></i>Add Survey Flow
 </a>
 {% endblock %}
@@ -30,7 +30,7 @@
 </div>
 
 <div class="card app-card">
-    <div class="table-responsive">
+    <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
@@ -89,6 +89,51 @@
                 {% endif %}
             </tbody>
         </table>
+    </div>
+    <div class="card-list d-lg-none">
+        {% if surveys %}
+            {% for survey in surveys %}
+            <div class="card-list-item">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <h6 class="mb-1">{{ survey.name }}</h6>
+                        <div class="text-muted small"><code>{{ survey.trigger_keyword }}</code></div>
+                        {% if survey.intro_message %}
+                        <div class="text-muted small mt-1">{{ survey.intro_message|truncate(80) }}</div>
+                        {% endif %}
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <span class="badge bg-light text-dark">{{ survey.questions|length }} questions</span>
+                            <span class="badge bg-light text-dark">{{ survey.start_count or 0 }} starts</span>
+                            <span class="badge bg-light text-dark">{{ survey.completion_count or 0 }} completions</span>
+                            <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
+                                {{ 'Active' if survey.is_active else 'Inactive' }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                    <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-pencil"></i> Edit
+                    </a>
+                    {% if survey.is_active %}
+                    <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-warning" type="submit"
+                                onclick="return confirm('Deactivate this survey flow?');">
+                            <i class="bi bi-pause-circle"></i> Deactivate
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="empty-state py-4">
+            <i class="bi bi-list-check empty-state__icon"></i>
+            <div class="empty-state__title">No survey flows found</div>
+            <div class="empty-state__text">Add your first survey to automate question flows.</div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

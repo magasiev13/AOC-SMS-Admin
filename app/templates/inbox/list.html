@@ -9,10 +9,10 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-primary">
+<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-primary page-action-secondary">
     <i class="bi bi-magic me-1"></i>Keyword Rules
 </a>
-<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-primary">
+<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-list-check me-1"></i>Survey Flows
 </a>
 {% endblock %}
@@ -34,11 +34,11 @@
             </div>
         </div>
 
-        <div class="card app-card">
-            <div class="list-group list-group-flush">
+        <div class="card app-card inbox-threads-card">
+            <div class="list-group list-group-flush inbox-thread-list">
                 {% if threads %}
                     {% for thread in threads %}
-                    <a class="list-group-item list-group-item-action {% if selected_thread and thread.id == selected_thread.id %}active{% endif %}"
+                    <a class="list-group-item list-group-item-action inbox-thread-item {% if selected_thread and thread.id == selected_thread.id %}active{% endif %}"
                        href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
                         <div class="d-flex justify-content-between align-items-center gap-2">
                             <div>
@@ -51,10 +51,10 @@
                             <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
                             {% endif %}
                         </div>
-                        <div class="small text-muted mt-1">
+                        <div class="small text-muted mt-1 inbox-thread-preview">
                             {{ thread.last_message_preview or 'No messages yet' }}
                         </div>
-                        <div class="small text-muted">{{ thread.last_message_at|localtime('%b %d, %H:%M') }}</div>
+                        <div class="small text-muted inbox-thread-time">{{ thread.last_message_at|localtime('%b %d, %H:%M') }}</div>
                     </a>
                     {% endfor %}
                 {% else %}
@@ -93,7 +93,7 @@
                 </div>
                 {% endif %}
 
-                <div id="inboxMessagePane" class="flex-grow-1 overflow-auto border rounded p-3 bg-light-subtle">
+                <div id="inboxMessagePane" class="flex-grow-1 overflow-auto border rounded p-3 bg-light-subtle inbox-message-pane">
                     {% if messages %}
                         {% for message in messages %}
                         <div class="d-flex mb-3 {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
@@ -119,7 +119,7 @@
                     {% endif %}
                 </div>
 
-                <form method="POST" action="{{ url_for('main.inbox_reply', thread_id=selected_thread.id) }}" class="mt-3">
+                <form method="POST" action="{{ url_for('main.inbox_reply', thread_id=selected_thread.id) }}" class="mt-3 inbox-reply-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <label for="replyBody" class="form-label">Send reply</label>
                     <div class="input-group">
