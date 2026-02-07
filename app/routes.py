@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import login_required, current_user
-from sqlalchemy import DateTime, Integer, String, Text, text
+from sqlalchemy import DateTime, Integer, String, Text, func, text
 from sqlalchemy.exc import OperationalError
 
 from app import csrf, db
@@ -63,26 +63,43 @@ def _is_safe_url(target):
     return redirect_url.scheme in ('http', 'https') and host_url.netloc == redirect_url.netloc
 
 
+def _normalized_keyword_sql(column):
+    """
+    Normalize keyword-like values in SQL to mirror normalize_keyword().
+
+    This keeps conflict checks in the database and avoids loading all rows
+    into Python when legacy rows might contain non-canonical whitespace.
+    """
+    normalized = func.upper(func.trim(column))
+    for token in ('\t', '\n', '\r', '\f', '\v'):
+        normalized = func.replace(normalized, token, ' ')
+    for _ in range(6):
+        normalized = func.replace(normalized, '  ', ' ')
+    return normalized
+
+
 def _keyword_conflicts_with_survey(trigger_keyword: str, *, exclude_survey_id: int | None = None) -> bool:
     normalized_trigger = normalize_keyword(trigger_keyword)
-    query = SurveyFlow.query
+    if not normalized_trigger:
+        return False
+
+    query = SurveyFlow.query.filter(_normalized_keyword_sql(SurveyFlow.trigger_keyword) == normalized_trigger)
     if exclude_survey_id is not None:
         query = query.filter(SurveyFlow.id != exclude_survey_id)
-    return any(
-        normalize_keyword(survey.trigger_keyword) == normalized_trigger
-        for survey in query.all()
-    )
+    return query.first() is not None
 
 
 def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = None) -> bool:
     normalized_keyword = normalize_keyword(keyword)
-    query = KeywordAutomationRule.query
+    if not normalized_keyword:
+        return False
+
+    query = KeywordAutomationRule.query.filter(
+        _normalized_keyword_sql(KeywordAutomationRule.keyword) == normalized_keyword
+    )
     if exclude_rule_id is not None:
         query = query.filter(KeywordAutomationRule.id != exclude_rule_id)
-    return any(
-        normalize_keyword(rule.keyword) == normalized_keyword
-        for rule in query.all()
-    )
+    return query.first() is not None
 
 
 # Health check endpoint
@@ -1793,7 +1810,7 @@ def keyword_rule_edit(rule_id):
         if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
             flash('That keyword already exists.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
-        if normalized_keyword != rule.keyword and _keyword_conflicts_with_survey(normalized_keyword):
+        if _keyword_conflicts_with_survey(normalized_keyword):
             flash('That keyword is already used as a survey trigger.', 'error')
             return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
 
