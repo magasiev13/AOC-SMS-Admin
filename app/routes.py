@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, unquote
 from zoneinfo import ZoneInfo
@@ -100,6 +101,14 @@ def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = 
     if exclude_rule_id is not None:
         query = query.filter(KeywordAutomationRule.id != exclude_rule_id)
     return query.first() is not None
+
+
+def _phone_digits_sql(column):
+    """Normalize stored phone values to digits-only for flexible search matching."""
+    normalized = func.replace(column, '+', '')
+    for token in ('(', ')', '-', ' ', '.'):
+        normalized = func.replace(normalized, token, '')
+    return normalized
 
 
 # Health check endpoint
@@ -572,11 +581,20 @@ def community_list():
     
     if search:
         escaped = escape_like(search)
+        pattern = f'%{escaped}%'
+        search_filters = [
+            CommunityMember.name.ilike(pattern, escape='\\'),
+            CommunityMember.phone.ilike(pattern, escape='\\'),
+        ]
+        normalized_search_phone = normalize_phone(search)
+        if validate_phone(normalized_search_phone):
+            search_filters.append(CommunityMember.phone == normalized_search_phone)
+        search_digits = re.sub(r'\D', '', search)
+        if search_digits:
+            digits_pattern = f'%{escape_like(search_digits)}%'
+            search_filters.append(_phone_digits_sql(CommunityMember.phone).ilike(digits_pattern, escape='\\'))
         query = query.filter(
-            db.or_(
-                CommunityMember.name.ilike(f'%{escaped}%', escape='\\'),
-                CommunityMember.phone.ilike(f'%{escaped}%', escape='\\')
-            )
+            db.or_(*search_filters)
         )
     
     members = query.order_by(CommunityMember.name, CommunityMember.phone).all()

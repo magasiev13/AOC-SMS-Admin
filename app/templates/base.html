@@ -26,7 +26,9 @@
                 {% block app_search %}
                 <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                     <i class="bi bi-search"></i>
-                    <input class="form-control" type="search" name="search" placeholder="Search contacts" aria-label="Search contacts">
+                    <input class="form-control" type="text" name="search" placeholder="Search contacts" aria-label="Search contacts"
+                           autocomplete="off" autocapitalize="off" spellcheck="false"
+                           value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                 </form>
                 {% endblock %}
             </div>
@@ -92,7 +94,9 @@
                         {% block app_search_mobile %}
                         <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                             <i class="bi bi-search"></i>
-                            <input class="form-control" type="search" name="search" placeholder="Search contacts" aria-label="Search contacts">
+                            <input class="form-control" type="text" name="search" placeholder="Search contacts" aria-label="Search contacts"
+                                   autocomplete="off" autocapitalize="off" spellcheck="false"
+                                   value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                         </form>
                         {% endblock %}
                         <div class="nav flex-column mt-3">
@@ -216,6 +220,20 @@
                         target.classList.add('is-loading');
                     }
                 });
+            });
+        });
+
+        const sidebarSearchForms = document.querySelectorAll('form.app-search[action*="/community"]');
+        sidebarSearchForms.forEach((form) => {
+            const searchInput = form.querySelector('input[name="search"]');
+            if (!searchInput) {
+                return;
+            }
+            searchInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    form.requestSubmit();
+                }
             });
         });
 
