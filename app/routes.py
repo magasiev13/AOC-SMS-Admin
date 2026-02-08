@@ -102,6 +102,43 @@ def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = 
     return query.first() is not None
 
 
+def _community_name_map_for_phones(phones: set[str]) -> dict[str, str]:
+    if not phones:
+        return {}
+
+    members = CommunityMember.query.filter(CommunityMember.phone.in_(phones)).all()
+    community_name_map = {}
+    for member in members:
+        name = (member.name or '').strip()
+        if name:
+            community_name_map[member.phone] = name
+    return community_name_map
+
+
+def _build_thread_display_names(
+    threads: list[InboxThread],
+    selected_thread: InboxThread | None = None,
+) -> dict[int, str]:
+    phones = {thread.phone for thread in threads if thread.phone}
+    if selected_thread and selected_thread.phone:
+        phones.add(selected_thread.phone)
+
+    community_name_map = _community_name_map_for_phones(phones)
+    display_names: dict[int, str] = {}
+
+    for thread in threads:
+        thread_name = (thread.contact_name or '').strip()
+        display_names[thread.id] = community_name_map.get(thread.phone) or thread_name or thread.phone
+
+    if selected_thread and selected_thread.id not in display_names:
+        selected_name = (selected_thread.contact_name or '').strip()
+        display_names[selected_thread.id] = (
+            community_name_map.get(selected_thread.phone) or selected_name or selected_thread.phone
+        )
+
+    return display_names
+
+
 # Health check endpoint
 @bp.route('/health')
 def health():
@@ -1668,10 +1705,11 @@ def inbox_list():
     if search:
         escaped = escape_like(search)
         pattern = f'%{escaped}%'
-        query = query.filter(
+        query = query.outerjoin(CommunityMember, CommunityMember.phone == InboxThread.phone).filter(
             db.or_(
                 InboxThread.phone.ilike(pattern, escape='\\'),
                 InboxThread.contact_name.ilike(pattern, escape='\\'),
+                CommunityMember.name.ilike(pattern, escape='\\'),
             )
         )
 
@@ -1697,14 +1735,26 @@ def inbox_list():
             status='active',
         ).order_by(SurveySession.started_at.desc()).all()
 
+    thread_display_names = _build_thread_display_names(threads, selected_thread=selected_thread)
+    latest_message_id = db.session.query(func.max(InboxMessage.id)).scalar() or 0
+
     return render_template(
         'inbox/list.html',
         threads=threads,
         selected_thread=selected_thread,
         messages=messages,
         active_sessions=active_sessions,
+        thread_display_names=thread_display_names,
+        inbox_status_latest_message_id=latest_message_id,
         search=search,
     )
+
+
+@bp.route('/inbox/status')
+@login_required
+def inbox_status():
+    latest_message_id = db.session.query(func.max(InboxMessage.id)).scalar() or 0
+    return jsonify({'latest_message_id': int(latest_message_id)})
 
 
 @bp.route('/inbox/<int:thread_id>/reply', methods=['POST'])
