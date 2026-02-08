@@ -18,6 +18,9 @@
 {% endblock %}
 
 {% block content %}
+<div id="inboxStatusMeta" class="d-none"
+     data-latest-message-id="{{ inbox_status_latest_message_id }}"
+     data-status-url="{{ url_for('main.inbox_status') }}"></div>
 <div class="row g-3">
     <div class="col-lg-4">
         <div class="card app-card mb-3">
@@ -38,12 +41,13 @@
             <div class="list-group list-group-flush inbox-thread-list">
                 {% if threads %}
                     {% for thread in threads %}
+                    {% set thread_label = thread_display_names.get(thread.id, thread.contact_name or thread.phone) %}
                     <a class="list-group-item list-group-item-action inbox-thread-item {% if selected_thread and thread.id == selected_thread.id %}active{% endif %}"
                        href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
                         <div class="d-flex justify-content-between align-items-center gap-2">
                             <div>
-                                <div class="fw-semibold">{{ thread.contact_name or thread.phone }}</div>
-                                {% if thread.contact_name %}
+                                <div class="fw-semibold">{{ thread_label }}</div>
+                                {% if thread_label != thread.phone %}
                                 <div class="small text-muted">{{ thread.phone }}</div>
                                 {% endif %}
                             </div>
@@ -70,10 +74,11 @@
     <div class="col-lg-8">
         <div class="card app-card h-100">
             {% if selected_thread %}
+            {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
             <div class="card-header d-flex justify-content-between align-items-center">
                 <div>
-                    <div class="fw-semibold">{{ selected_thread.contact_name or selected_thread.phone }}</div>
-                    {% if selected_thread.contact_name %}
+                    <div class="fw-semibold">{{ selected_label }}</div>
+                    {% if selected_label != selected_thread.phone %}
                     <div class="small text-muted">{{ selected_thread.phone }}</div>
                     {% endif %}
                 </div>
@@ -147,6 +152,59 @@
     const pane = document.getElementById('inboxMessagePane');
     if (pane) {
         pane.scrollTop = pane.scrollHeight;
+    }
+
+    const inboxStatusMeta = document.getElementById('inboxStatusMeta');
+    if (inboxStatusMeta) {
+        const statusUrl = inboxStatusMeta.dataset.statusUrl || '';
+        const baselineMessageId = Number(inboxStatusMeta.dataset.latestMessageId || 0);
+        let pollIntervalId = null;
+        let pollStartTimeoutId = null;
+        let statusCheckInFlight = false;
+        let isReloading = false;
+
+        function stopInboxPolling() {
+            if (pollStartTimeoutId) {
+                window.clearTimeout(pollStartTimeoutId);
+                pollStartTimeoutId = null;
+            }
+            if (pollIntervalId) {
+                window.clearInterval(pollIntervalId);
+                pollIntervalId = null;
+            }
+        }
+
+        async function checkInboxStatus() {
+            if (document.hidden || !statusUrl || statusCheckInFlight || isReloading) {
+                return;
+            }
+
+            statusCheckInFlight = true;
+            try {
+                const response = await fetch(statusUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                if (!response.ok) {
+                    return;
+                }
+
+                const payload = await response.json();
+                const latestMessageId = Number(payload.latest_message_id || 0);
+                if (latestMessageId !== baselineMessageId) {
+                    isReloading = true;
+                    stopInboxPolling();
+                    window.location.reload();
+                }
+            } catch (error) {
+                console.error('Inbox status check failed:', error);
+            } finally {
+                statusCheckInFlight = false;
+            }
+        }
+
+        pollStartTimeoutId = window.setTimeout(() => {
+            pollIntervalId = window.setInterval(checkInboxStatus, 3000);
+        }, 1000);
     }
 </script>
 {% endblock %}
