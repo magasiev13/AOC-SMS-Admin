@@ -1705,12 +1705,16 @@ def inbox_list():
     if search:
         escaped = escape_like(search)
         pattern = f'%{escaped}%'
-        query = query.outerjoin(CommunityMember, CommunityMember.phone == InboxThread.phone).filter(
-            db.or_(
-                InboxThread.phone.ilike(pattern, escape='\\'),
-                InboxThread.contact_name.ilike(pattern, escape='\\'),
-                CommunityMember.name.ilike(pattern, escape='\\'),
+        query = (
+            query.outerjoin(CommunityMember, CommunityMember.phone == InboxThread.phone)
+            .filter(
+                db.or_(
+                    InboxThread.phone.ilike(pattern, escape='\\'),
+                    InboxThread.contact_name.ilike(pattern, escape='\\'),
+                    CommunityMember.name.ilike(pattern, escape='\\'),
+                )
             )
+            .distinct()
         )
 
     threads = query.order_by(InboxThread.last_message_at.desc()).limit(200).all()
