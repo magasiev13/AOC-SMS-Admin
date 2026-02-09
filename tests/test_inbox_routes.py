@@ -1,4 +1,6 @@
+import csv
 import importlib
+import io
 import os
 import tempfile
 import unittest
@@ -140,6 +142,66 @@ class TestInboxRoutes(unittest.TestCase):
         self.db.session.add(response)
         self.db.session.flush()
         return survey, session, response
+
+    def _create_survey_flow(self, *, name: str, keyword: str, questions: list[str]):
+        survey = self.SurveyFlow(
+            name=name,
+            trigger_keyword=keyword,
+            intro_message="Welcome",
+            completion_message="Done",
+            is_active=True,
+        )
+        survey.set_questions(questions)
+        self.db.session.add(survey)
+        self.db.session.flush()
+        return survey
+
+    def _create_survey_submission(
+        self,
+        *,
+        survey,
+        phone: str,
+        answers: list[str],
+        status: str = "completed",
+        completed_at: datetime | None = None,
+        contact_name: str | None = None,
+    ):
+        thread = self.InboxThread.query.filter_by(phone=phone).first()
+        if not thread:
+            thread = self._create_thread(phone=phone, contact_name=contact_name)
+        elif contact_name is not None:
+            thread.contact_name = contact_name
+
+        submitted_at = completed_at or datetime.now(timezone.utc)
+        session = self.SurveySession(
+            survey_id=survey.id,
+            thread_id=thread.id,
+            phone=phone,
+            status=status,
+            current_question_index=min(len(answers), len(survey.questions)),
+            started_at=submitted_at - timedelta(minutes=2),
+            last_activity_at=submitted_at,
+            completed_at=submitted_at if status in {"completed", "cancelled"} else None,
+        )
+        self.db.session.add(session)
+        self.db.session.flush()
+
+        for index, answer in enumerate(answers):
+            if index >= len(survey.questions):
+                break
+            response = self.SurveyResponse(
+                session_id=session.id,
+                survey_id=survey.id,
+                phone=phone,
+                question_index=index,
+                question_prompt=survey.questions[index],
+                answer=answer,
+                created_at=submitted_at,
+            )
+            self.db.session.add(response)
+
+        self.db.session.flush()
+        return session
 
     def test_inbox_status_requires_login(self) -> None:
         response = self.client.get("/inbox/status", follow_redirects=False)
@@ -453,6 +515,264 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertNotIn("selectAllThreads", html)
         self.assertNotIn("bulkThreadDeleteForm", html)
         self.assertNotIn(f"/inbox/messages/{message.id}/delete", html)
+
+    def test_survey_submissions_requires_login(self) -> None:
+        survey = self._create_survey_flow(
+            name="Submission Login Guard",
+            keyword="LOGIN GUARD",
+            questions=["What is your name?"],
+        )
+        self.db.session.commit()
+
+        page_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions", follow_redirects=False)
+        self.assertEqual(page_response.status_code, 302)
+        self.assertIn("/login", page_response.headers.get("Location", ""))
+
+        export_response = self.client.get(
+            f"/inbox/surveys/{survey.id}/submissions/export",
+            follow_redirects=False,
+        )
+        self.assertEqual(export_response.status_code, 302)
+        self.assertIn("/login", export_response.headers.get("Location", ""))
+
+    def test_survey_submissions_requires_privileged_role(self) -> None:
+        survey = self._create_survey_flow(
+            name="Submission Role Guard",
+            keyword="ROLE GUARD",
+            questions=["What is your name?"],
+        )
+        self.db.session.commit()
+
+        self._login_as("viewer", "viewer-pass")
+
+        page_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions", follow_redirects=False)
+        self.assertEqual(page_response.status_code, 403)
+
+        export_response = self.client.get(
+            f"/inbox/surveys/{survey.id}/submissions/export",
+            follow_redirects=False,
+        )
+        self.assertEqual(export_response.status_code, 403)
+
+    def test_survey_submissions_page_shows_completed_latest_rows_and_history(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Submission Board",
+            keyword="SUBMISSION BOARD",
+            questions=["What is your name?", "Will you attend?"],
+        )
+        self.db.session.add(self.CommunityMember(name="Alex Rivera", phone="+17205550100"))
+
+        now = datetime.now(timezone.utc)
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550100",
+            answers=["Alex", "YES"],
+            completed_at=now,
+            contact_name="Thread Alex",
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550100",
+            answers=["Old Alex", "NO"],
+            completed_at=now - timedelta(days=1),
+            contact_name="Thread Alex",
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550101",
+            answers=["Casey", "YES"],
+            completed_at=now - timedelta(hours=1),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550102",
+            answers=["Active Taylor"],
+            status="active",
+            completed_at=now - timedelta(minutes=20),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550103",
+            answers=["Cancelled Jordan"],
+            status="cancelled",
+            completed_at=now - timedelta(minutes=10),
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox/surveys/{survey.id}/submissions")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Alex Rivera", html)
+        self.assertIn("+17205550101", html)
+        self.assertIn("Previous Submissions", html)
+        self.assertIn("Old Alex", html)
+        self.assertNotIn("Active Taylor", html)
+        self.assertNotIn("Cancelled Jordan", html)
+        self.assertEqual(html.count('id="surveySubmission17205550100"'), 1)
+        self.assertEqual(html.count('id="surveySubmission'), 2)
+        self.assertIn("2 attendee(s)", html)
+        self.assertIn("3 completed submission(s)", html)
+        self.assertIn("1 repeat submitter(s)", html)
+
+    def test_survey_submissions_display_name_fallback_order(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Fallback Order Survey",
+            keyword="FALLBACK ORDER",
+            questions=["What is your name?"],
+        )
+        self.db.session.add(self.CommunityMember(name="Community Winner", phone="+17205550200"))
+        now = datetime.now(timezone.utc)
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550200",
+            answers=["Answer One"],
+            completed_at=now,
+            contact_name="Thread Should Not Show",
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550201",
+            answers=["Answer Two"],
+            completed_at=now - timedelta(minutes=1),
+            contact_name="Thread Name",
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550202",
+            answers=["Answer Fallback"],
+            completed_at=now - timedelta(minutes=2),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550203",
+            answers=[""],
+            completed_at=now - timedelta(minutes=3),
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox/surveys/{survey.id}/submissions")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Community Winner", html)
+        self.assertNotIn("Thread Should Not Show", html)
+        self.assertIn("Thread Name", html)
+        self.assertIn("Answer Fallback", html)
+        self.assertIn("+17205550203", html)
+
+    def test_survey_submissions_search_matches_answers_phone_and_name(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Search Survey",
+            keyword="SEARCH SURVEY",
+            questions=["What is your name?"],
+        )
+        self.db.session.add(self.CommunityMember(name="Lookup Name", phone="+17205550300"))
+        now = datetime.now(timezone.utc)
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550300",
+            answers=["Alpha Token"],
+            completed_at=now,
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550301",
+            answers=["Beta Token"],
+            completed_at=now - timedelta(minutes=1),
+        )
+        self.db.session.commit()
+
+        answer_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions?search=alpha token")
+        self.assertEqual(answer_response.status_code, 200)
+        answer_html = answer_response.get_data(as_text=True)
+        self.assertIn("+17205550300", answer_html)
+        self.assertNotIn("+17205550301", answer_html)
+
+        phone_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions?search=550301")
+        self.assertEqual(phone_response.status_code, 200)
+        phone_html = phone_response.get_data(as_text=True)
+        self.assertIn("+17205550301", phone_html)
+        self.assertNotIn("+17205550300", phone_html)
+
+        name_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions?search=lookup name")
+        self.assertEqual(name_response.status_code, 200)
+        name_html = name_response.get_data(as_text=True)
+        self.assertIn("+17205550300", name_html)
+        self.assertNotIn("+17205550301", name_html)
+
+    def test_survey_submissions_export_includes_all_completed_and_latest_flag(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Export Survey",
+            keyword="EXPORT SURVEY",
+            questions=["What is your name?", "How many guests?"],
+        )
+        now = datetime.now(timezone.utc)
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550400",
+            answers=["Alex", "2"],
+            completed_at=now - timedelta(days=2),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550400",
+            answers=["Alex Updated", "4"],
+            completed_at=now - timedelta(days=1),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550401",
+            answers=["Casey", "1"],
+            completed_at=now,
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550402",
+            answers=["ActiveIgnore", "0"],
+            status="active",
+            completed_at=now - timedelta(minutes=15),
+        )
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550403",
+            answers=["CancelledIgnore", "0"],
+            status="cancelled",
+            completed_at=now - timedelta(minutes=10),
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox/surveys/{survey.id}/submissions/export")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((response.headers.get("Content-Type") or "").startswith("text/csv"))
+        self.assertIn("survey_", response.headers.get("Content-Disposition", ""))
+
+        content = response.get_data(as_text=True)
+        reader = csv.DictReader(io.StringIO(content))
+        rows = list(reader)
+        self.assertEqual(len(rows), 3)
+        self.assertIn("submission_id", reader.fieldnames)
+        self.assertIn("phone", reader.fieldnames)
+        self.assertIn("display_name", reader.fieldnames)
+        self.assertIn("submitted_at_utc", reader.fieldnames)
+        self.assertIn("is_latest_for_phone", reader.fieldnames)
+        self.assertIn("What is your name?", reader.fieldnames)
+        self.assertIn("How many guests?", reader.fieldnames)
+
+        phone_one_rows = [row for row in rows if row["phone"] == "+17205550400"]
+        self.assertEqual(len(phone_one_rows), 2)
+        self.assertEqual(sum(1 for row in phone_one_rows if row["is_latest_for_phone"] == "true"), 1)
+
+        phone_two_rows = [row for row in rows if row["phone"] == "+17205550401"]
+        self.assertEqual(len(phone_two_rows), 1)
+        self.assertEqual(phone_two_rows[0]["is_latest_for_phone"], "true")
+
+        for row in rows:
+            values = " ".join(row.values())
+            self.assertNotIn("ActiveIgnore", values)
+            self.assertNotIn("CancelledIgnore", values)
 
     def test_inbox_mutation_requires_login(self) -> None:
         thread = self._create_thread(phone="+17205550013")

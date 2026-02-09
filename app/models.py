@@ -228,12 +228,14 @@ class SurveyFlow(db.Model):
     intro_message = db.Column(db.Text, nullable=True)
     questions_json = db.Column(db.Text, nullable=False, default='[]')
     completion_message = db.Column(db.Text, nullable=True)
+    linked_event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     start_count = db.Column(db.Integer, default=0, nullable=False)
     completion_count = db.Column(db.Integer, default=0, nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
+    linked_event = db.relationship('Event')
     sessions = db.relationship('SurveySession', back_populates='survey')
     responses = db.relationship('SurveyResponse', back_populates='survey')
 

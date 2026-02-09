@@ -125,6 +125,25 @@ Recipients registered for specific events (separate from community members).
 **Constraints:**
 - UNIQUE(event_id, phone) - Same phone can't register twice for same event
 
+### SurveyFlow
+
+Inbound multi-step survey definitions started by keyword.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | Integer | PRIMARY KEY | Auto-increment ID |
+| `name` | String(120) | NOT NULL, UNIQUE | Survey display name |
+| `trigger_keyword` | String(40) | NOT NULL, UNIQUE | Keyword that starts survey |
+| `intro_message` | Text | nullable | Optional first message |
+| `questions_json` | Text | NOT NULL | JSON array of prompts |
+| `completion_message` | Text | nullable | Optional completion message |
+| `linked_event_id` | Integer | FK(events.id), nullable, INDEX | Optional event to upsert registrations on completion |
+| `is_active` | Boolean | NOT NULL, default=True | Survey enabled state |
+| `start_count` | Integer | NOT NULL, default=0 | Number of survey starts |
+| `completion_count` | Integer | NOT NULL, default=0 | Number of completed sessions |
+| `created_at` | DateTime | default=utc_now | Record creation timestamp |
+| `updated_at` | DateTime | default=utc_now, onupdate | Last update timestamp |
+
 ### UnsubscribedContact
 
 Phone numbers that have opted out and should not receive messages.

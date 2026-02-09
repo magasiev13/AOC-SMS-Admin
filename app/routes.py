@@ -1,12 +1,25 @@
 import csv
 import io
 import json
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, unquote
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    flash,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    stream_with_context,
+    url_for,
+)
 from flask_login import login_required, current_user
 from sqlalchemy import DateTime, Integer, String, Text, func, text
 from sqlalchemy.exc import OperationalError
@@ -26,6 +39,7 @@ from app.models import (
     ScheduledMessage,
     SuppressedContact,
     SurveyFlow,
+    SurveyResponse,
     SurveySession,
     UnsubscribedContact,
     utc_now,
@@ -169,6 +183,378 @@ def _phone_digits_sql(column):
     for token in ('(', ')', '-', ' ', '.'):
         normalized = func.replace(normalized, token, '')
     return normalized
+
+
+def _survey_submission_search_phones(survey_id: int, search: str) -> set[str]:
+    search_text = search.strip()
+    if not search_text:
+        return set()
+
+    escaped = escape_like(search_text)
+    pattern = f'%{escaped}%'
+    phones: set[str] = set()
+
+    session_rows = (
+        db.session.query(SurveySession.phone)
+        .filter(
+            SurveySession.survey_id == survey_id,
+            SurveySession.status == 'completed',
+            SurveySession.phone.ilike(pattern, escape='\\'),
+        )
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in session_rows if phone)
+
+    response_rows = (
+        db.session.query(SurveyResponse.phone)
+        .filter(
+            SurveyResponse.survey_id == survey_id,
+            SurveyResponse.answer.ilike(pattern, escape='\\'),
+        )
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in response_rows if phone)
+
+    community_rows = (
+        db.session.query(CommunityMember.phone)
+        .filter(CommunityMember.name.ilike(pattern, escape='\\'))
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in community_rows if phone)
+
+    thread_rows = (
+        db.session.query(InboxThread.phone)
+        .filter(InboxThread.contact_name.ilike(pattern, escape='\\'))
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in thread_rows if phone)
+
+    return phones
+
+
+def _build_survey_submission_data(
+    survey: SurveyFlow,
+    *,
+    search: str = '',
+    page: int = 1,
+    per_page: int = 50,
+) -> dict[str, object]:
+    questions = survey.questions
+    completed_filters = [
+        SurveySession.survey_id == survey.id,
+        SurveySession.status == 'completed',
+    ]
+    search_text = search.strip()
+    search_phones = _survey_submission_search_phones(survey.id, search_text) if search_text else set()
+    if search_text and not search_phones:
+        return {
+            'questions': questions,
+            'latest_rows': [],
+            'history_by_phone': {},
+            'latest_session_by_phone': {},
+            'unique_attendees': 0,
+            'total_completed': 0,
+            'repeat_submitters': 0,
+            'page': 1,
+            'total_pages': 0,
+            'per_page': per_page,
+        }
+
+    if search_phones:
+        completed_filters.append(SurveySession.phone.in_(search_phones))
+
+    total_completed = (
+        db.session.query(func.count(SurveySession.id))
+        .filter(*completed_filters)
+        .scalar()
+        or 0
+    )
+    unique_attendees = (
+        db.session.query(func.count(func.distinct(SurveySession.phone)))
+        .filter(*completed_filters)
+        .scalar()
+        or 0
+    )
+    repeat_submitters = 0
+    if unique_attendees:
+        counts_subquery = (
+            db.session.query(
+                SurveySession.phone.label('phone'),
+                func.count(SurveySession.id).label('submission_count'),
+            )
+            .filter(*completed_filters)
+            .group_by(SurveySession.phone)
+            .subquery()
+        )
+        repeat_submitters = (
+            db.session.query(func.count())
+            .select_from(counts_subquery)
+            .filter(counts_subquery.c.submission_count > 1)
+            .scalar()
+            or 0
+        )
+
+    if not unique_attendees:
+        return {
+            'questions': questions,
+            'latest_rows': [],
+            'history_by_phone': {},
+            'latest_session_by_phone': {},
+            'unique_attendees': 0,
+            'total_completed': 0,
+            'repeat_submitters': 0,
+            'page': 1,
+            'total_pages': 0,
+            'per_page': per_page,
+        }
+
+    total_pages = math.ceil(unique_attendees / per_page) if per_page else 1
+    safe_page = max(1, min(page, total_pages))
+    offset = (safe_page - 1) * per_page
+
+    row_num = func.row_number().over(
+        partition_by=SurveySession.phone,
+        order_by=(SurveySession.completed_at.desc(), SurveySession.id.desc()),
+    ).label('row_num')
+    latest_subquery = (
+        db.session.query(
+            SurveySession.id.label('session_id'),
+            SurveySession.phone.label('phone'),
+            SurveySession.thread_id.label('thread_id'),
+            SurveySession.completed_at.label('completed_at'),
+            SurveySession.last_activity_at.label('last_activity_at'),
+            SurveySession.started_at.label('started_at'),
+            row_num,
+        )
+        .filter(*completed_filters)
+        .subquery()
+    )
+    latest_sessions = (
+        db.session.query(SurveySession)
+        .join(latest_subquery, SurveySession.id == latest_subquery.c.session_id)
+        .filter(latest_subquery.c.row_num == 1)
+        .order_by(
+            latest_subquery.c.completed_at.desc().nullslast(),
+            latest_subquery.c.session_id.desc(),
+        )
+        .limit(per_page)
+        .offset(offset)
+        .all()
+    )
+
+    if not latest_sessions:
+        return {
+            'questions': questions,
+            'latest_rows': [],
+            'history_by_phone': {},
+            'latest_session_by_phone': {},
+            'unique_attendees': unique_attendees,
+            'total_completed': total_completed,
+            'repeat_submitters': repeat_submitters,
+            'page': safe_page,
+            'total_pages': total_pages,
+            'per_page': per_page,
+        }
+
+    phones = {session.phone for session in latest_sessions if session.phone}
+    completed_filter_for_phones = completed_filters + [SurveySession.phone.in_(phones)]
+    submission_counts = {
+        phone: count
+        for phone, count in (
+            db.session.query(SurveySession.phone, func.count(SurveySession.id))
+            .filter(*completed_filter_for_phones)
+            .group_by(SurveySession.phone)
+            .all()
+        )
+    }
+
+    session_rows = (
+        SurveySession.query.filter(*completed_filter_for_phones)
+        .order_by(SurveySession.completed_at.desc(), SurveySession.id.desc())
+        .all()
+    )
+    session_ids = [session.id for session in session_rows]
+    responses = (
+        SurveyResponse.query.filter(SurveyResponse.session_id.in_(session_ids))
+        .order_by(SurveyResponse.session_id.asc(), SurveyResponse.question_index.asc(), SurveyResponse.id.asc())
+        .all()
+    )
+
+    answers_by_session: dict[int, dict[int, str]] = {}
+    for response in responses:
+        answer_map = answers_by_session.setdefault(response.session_id, {})
+        if response.question_index not in answer_map:
+            answer_map[response.question_index] = (response.answer or '').strip()
+
+    community_name_map = _community_name_map_for_phones(phones)
+    thread_name_map = {
+        thread.phone: (thread.contact_name or '').strip()
+        for thread in InboxThread.query.filter(InboxThread.phone.in_(phones)).all()
+        if (thread.contact_name or '').strip()
+    }
+
+    latest_session_by_phone = {session.phone: session.id for session in latest_sessions if session.phone}
+    latest_rows: list[dict[str, object]] = []
+    history_by_phone: dict[str, list[dict[str, object]]] = {}
+
+    for session in session_rows:
+        answer_map = answers_by_session.get(session.id, {})
+        answers = [answer_map.get(index, '') for index in range(len(questions))]
+        first_answer = next((answer for answer in answers if answer), '')
+        display_name = (
+            community_name_map.get(session.phone)
+            or thread_name_map.get(session.phone)
+            or first_answer
+            or session.phone
+        )
+        answer_preview_items = [answer for answer in answers if answer][:2]
+        answers_preview = '; '.join(answer_preview_items)
+        if len(answers_preview) > 120:
+            answers_preview = f"{answers_preview[:117].rstrip()}..."
+
+        submitted_at = session.completed_at or session.last_activity_at or session.started_at
+        submitted_at_iso = submitted_at.isoformat() if submitted_at else ''
+
+        row = {
+            'session_id': session.id,
+            'phone': session.phone,
+            'display_name': display_name,
+            'submitted_at': submitted_at,
+            'submitted_at_iso': submitted_at_iso,
+            'answers': answers,
+            'qa_pairs': [
+                {'prompt': question, 'answer': answers[index] if index < len(answers) else ''}
+                for index, question in enumerate(questions)
+            ],
+            'answers_preview': answers_preview,
+            'thread_id': session.thread_id,
+        }
+        if latest_session_by_phone.get(session.phone) == session.id:
+            row['submission_count'] = submission_counts.get(session.phone, 0)
+            row['phone_dom_id'] = re.sub(r'[^0-9]', '', str(session.phone)) or f"phone{session.id}"
+            latest_rows.append(row)
+        else:
+            history_by_phone.setdefault(str(session.phone), []).append(row)
+
+    return {
+        'questions': questions,
+        'latest_rows': latest_rows,
+        'history_by_phone': history_by_phone,
+        'latest_session_by_phone': latest_session_by_phone,
+        'unique_attendees': unique_attendees,
+        'total_completed': total_completed,
+        'repeat_submitters': repeat_submitters,
+        'page': safe_page,
+        'total_pages': total_pages,
+        'per_page': per_page,
+    }
+
+
+def _iter_survey_submission_export_rows(survey: SurveyFlow) -> object:
+    questions = survey.questions
+    question_headers = [question if question else f'question_{index + 1}' for index, question in enumerate(questions)]
+    header_row = [
+        'submission_id',
+        'phone',
+        'display_name',
+        'submitted_at_utc',
+        'is_latest_for_phone',
+        *question_headers,
+    ]
+
+    def row_generator():
+        yield header_row
+        row_num = func.row_number().over(
+            partition_by=SurveySession.phone,
+            order_by=(SurveySession.completed_at.desc(), SurveySession.id.desc()),
+        ).label('row_num')
+        base_query = (
+            db.session.query(SurveySession, row_num)
+            .filter(
+                SurveySession.survey_id == survey.id,
+                SurveySession.status == 'completed',
+            )
+            .order_by(SurveySession.completed_at.desc(), SurveySession.id.desc())
+        )
+        batch_size = 500
+        offset = 0
+        while True:
+            batch = base_query.limit(batch_size).offset(offset).all()
+            if not batch:
+                break
+            sessions = [session for session, _ in batch]
+            row_nums = {session.id: row_number for session, row_number in batch}
+            phones = {session.phone for session in sessions if session.phone}
+            community_name_map = _community_name_map_for_phones(phones)
+            thread_name_map = {
+                thread.phone: (thread.contact_name or '').strip()
+                for thread in InboxThread.query.filter(InboxThread.phone.in_(phones)).all()
+                if (thread.contact_name or '').strip()
+            }
+
+            session_ids = [session.id for session in sessions]
+            responses = (
+                SurveyResponse.query.filter(SurveyResponse.session_id.in_(session_ids))
+                .order_by(SurveyResponse.session_id.asc(), SurveyResponse.question_index.asc(), SurveyResponse.id.asc())
+                .all()
+            )
+            answers_by_session: dict[int, dict[int, str]] = {}
+            for response in responses:
+                answer_map = answers_by_session.setdefault(response.session_id, {})
+                if response.question_index not in answer_map:
+                    answer_map[response.question_index] = (response.answer or '').strip()
+
+            for session in sessions:
+                answer_map = answers_by_session.get(session.id, {})
+                answers = [answer_map.get(index, '') for index in range(len(questions))]
+                first_answer = next((answer for answer in answers if answer), '')
+                display_name = (
+                    community_name_map.get(session.phone)
+                    or thread_name_map.get(session.phone)
+                    or first_answer
+                    or session.phone
+                )
+                submitted_at = session.completed_at or session.last_activity_at or session.started_at
+                submitted_at_utc = submitted_at.isoformat() if submitted_at else ''
+                is_latest_for_phone = row_nums.get(session.id) == 1
+                yield [
+                    session.id,
+                    session.phone,
+                    display_name,
+                    submitted_at_utc,
+                    'true' if is_latest_for_phone else 'false',
+                    *answers,
+                ]
+            offset += batch_size
+
+    return row_generator()
+
+
+def _stream_csv_rows(rows: object) -> object:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    for row in rows:
+        output.seek(0)
+        output.truncate(0)
+        writer.writerow(row)
+        yield output.getvalue()
+
+
+def _survey_form_events() -> list[Event]:
+    return Event.query.order_by(Event.date.desc(), Event.title.asc()).all()
+
+
+def _render_survey_form(*, survey: SurveyFlow | None, form_data: dict | None):
+    return render_template(
+        'inbox/survey_form.html',
+        survey=survey,
+        form_data=form_data,
+        events=_survey_form_events(),
+    )
 
 
 # Health check endpoint
@@ -2018,6 +2404,41 @@ def survey_flows_list():
     return render_template('inbox/surveys_list.html', surveys=surveys, search=search)
 
 
+@bp.route('/inbox/surveys/<int:survey_id>/submissions')
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_submissions(survey_id):
+    survey = db.get_or_404(SurveyFlow, survey_id)
+    search = request.args.get('search', '').strip()
+    page = request.args.get('page', type=int) or 1
+    payload = _build_survey_submission_data(survey, search=search, page=page)
+    return render_template(
+        'inbox/survey_submissions.html',
+        survey=survey,
+        search=search,
+        questions=payload['questions'],
+        latest_rows=payload['latest_rows'],
+        history_by_phone=payload['history_by_phone'],
+        unique_attendees=payload['unique_attendees'],
+        total_completed=payload['total_completed'],
+        repeat_submitters=payload['repeat_submitters'],
+        page=payload['page'],
+        total_pages=payload['total_pages'],
+        per_page=payload['per_page'],
+    )
+
+
+@bp.route('/inbox/surveys/<int:survey_id>/submissions/export')
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_submissions_export(survey_id):
+    survey = db.get_or_404(SurveyFlow, survey_id)
+    rows = _iter_survey_submission_export_rows(survey)
+    response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename="survey_{survey.id}_submissions.csv"'
+    return response
+
+
 @bp.route('/inbox/surveys/add', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin', 'social_manager')
@@ -2029,6 +2450,10 @@ def survey_flow_add():
         'completion_message': '',
         'questions': '',
         'is_active': True,
+        'event_link_mode': 'none',
+        'existing_event_id': '',
+        'new_event_title': '',
+        'new_event_date': '',
     }
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
@@ -2038,6 +2463,12 @@ def survey_flow_add():
         questions_raw = request.form.get('questions', '')
         questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'
+        event_link_mode = (request.form.get('event_link_mode') or 'none').strip().lower()
+        if event_link_mode not in {'none', 'existing', 'new'}:
+            event_link_mode = 'none'
+        existing_event_id = request.form.get('existing_event_id', type=int)
+        new_event_title = request.form.get('new_event_title', '').strip()
+        new_event_date_raw = request.form.get('new_event_date', '').strip()
 
         form_data = {
             'name': name,
@@ -2046,32 +2477,65 @@ def survey_flow_add():
             'completion_message': completion_message or '',
             'questions': questions_raw,
             'is_active': is_active,
+            'event_link_mode': event_link_mode,
+            'existing_event_id': str(existing_event_id or ''),
+            'new_event_title': new_event_title,
+            'new_event_date': new_event_date_raw,
         }
+
+        linked_event_id = None
+        new_event_date = None
+        if event_link_mode == 'existing':
+            if not existing_event_id:
+                flash('Select an existing event to link this survey.', 'error')
+                return _render_survey_form(survey=None, form_data=form_data)
+            linked_event = db.session.get(Event, existing_event_id)
+            if linked_event is None:
+                flash('Selected event was not found.', 'error')
+                return _render_survey_form(survey=None, form_data=form_data)
+            linked_event_id = linked_event.id
+        elif event_link_mode == 'new':
+            if not new_event_title:
+                flash('Event title is required when creating a new linked event.', 'error')
+                return _render_survey_form(survey=None, form_data=form_data)
+            if new_event_date_raw:
+                try:
+                    new_event_date = datetime.strptime(new_event_date_raw, '%Y-%m-%d').date()
+                except ValueError:
+                    flash('Invalid linked event date format.', 'error')
+                    return _render_survey_form(survey=None, form_data=form_data)
 
         if not name:
             flash('Survey name is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
         if not trigger_keyword:
             flash('Survey trigger keyword is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
         if not questions:
             flash('At least one survey question is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
         if SurveyFlow.query.filter_by(name=name).first():
             flash('A survey with this name already exists.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
         if _keyword_conflicts_with_survey(trigger_keyword):
             flash('That survey trigger keyword already exists.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
         if _keyword_conflicts_with_rule(trigger_keyword):
             flash('That survey trigger keyword is already used by a keyword automation.', 'error')
-            return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+            return _render_survey_form(survey=None, form_data=form_data)
+
+        if event_link_mode == 'new':
+            linked_event = Event(title=new_event_title, date=new_event_date)
+            db.session.add(linked_event)
+            db.session.flush()
+            linked_event_id = linked_event.id
 
         survey = SurveyFlow(
             name=name,
             trigger_keyword=trigger_keyword,
             intro_message=intro_message,
             completion_message=completion_message,
+            linked_event_id=linked_event_id,
             is_active=is_active,
         )
         survey.set_questions(questions)
@@ -2080,7 +2544,7 @@ def survey_flow_add():
         flash('Survey flow created.', 'success')
         return redirect(url_for('main.survey_flows_list'))
 
-    return render_template('inbox/survey_form.html', survey=None, form_data=form_data)
+    return _render_survey_form(survey=None, form_data=form_data)
 
 
 @bp.route('/inbox/surveys/<int:survey_id>/edit', methods=['GET', 'POST'])
@@ -2088,6 +2552,7 @@ def survey_flow_add():
 @require_roles('admin', 'social_manager')
 def survey_flow_edit(survey_id):
     survey = db.get_or_404(SurveyFlow, survey_id)
+    form_data = None
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
@@ -2096,16 +2561,57 @@ def survey_flow_edit(survey_id):
         questions_raw = request.form.get('questions', '')
         questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'
+        event_link_mode = (request.form.get('event_link_mode') or 'none').strip().lower()
+        if event_link_mode not in {'none', 'existing', 'new'}:
+            event_link_mode = 'none'
+        existing_event_id = request.form.get('existing_event_id', type=int)
+        new_event_title = request.form.get('new_event_title', '').strip()
+        new_event_date_raw = request.form.get('new_event_date', '').strip()
+
+        form_data = {
+            'name': name,
+            'trigger_keyword': trigger_keyword,
+            'intro_message': intro_message or '',
+            'completion_message': completion_message or '',
+            'questions': questions_raw,
+            'is_active': is_active,
+            'event_link_mode': event_link_mode,
+            'existing_event_id': str(existing_event_id or ''),
+            'new_event_title': new_event_title,
+            'new_event_date': new_event_date_raw,
+        }
+
+        linked_event_id = None
+        new_event_date = None
+        if event_link_mode == 'existing':
+            if not existing_event_id:
+                flash('Select an existing event to link this survey.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
+            linked_event = db.session.get(Event, existing_event_id)
+            if linked_event is None:
+                flash('Selected event was not found.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
+            linked_event_id = linked_event.id
+        elif event_link_mode == 'new':
+            if not new_event_title:
+                flash('Event title is required when creating a new linked event.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
+            if new_event_date_raw:
+                try:
+                    new_event_date = datetime.strptime(new_event_date_raw, '%Y-%m-%d').date()
+                except ValueError:
+                    flash('Invalid linked event date format.', 'error')
+                    return _render_survey_form(survey=survey, form_data=form_data)
 
         if not name:
             flash('Survey name is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
         if not trigger_keyword:
             flash('Survey trigger keyword is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
         if not questions:
             flash('At least one survey question is required.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
 
         name_conflict = SurveyFlow.query.filter(
             SurveyFlow.name == name,
@@ -2113,26 +2619,33 @@ def survey_flow_edit(survey_id):
         ).first()
         if name_conflict:
             flash('A survey with this name already exists.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
 
         if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
             flash('That survey trigger keyword already exists.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
         if _keyword_conflicts_with_rule(trigger_keyword):
             flash('That survey trigger keyword is already used by a keyword automation.', 'error')
-            return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+            return _render_survey_form(survey=survey, form_data=form_data)
+
+        if event_link_mode == 'new':
+            linked_event = Event(title=new_event_title, date=new_event_date)
+            db.session.add(linked_event)
+            db.session.flush()
+            linked_event_id = linked_event.id
 
         survey.name = name
         survey.trigger_keyword = trigger_keyword
         survey.intro_message = intro_message
         survey.completion_message = completion_message
+        survey.linked_event_id = linked_event_id
         survey.is_active = is_active
         survey.set_questions(questions)
         db.session.commit()
         flash('Survey flow updated.', 'success')
         return redirect(url_for('main.survey_flows_list'))
 
-    return render_template('inbox/survey_form.html', survey=survey, form_data=None)
+    return _render_survey_form(survey=survey, form_data=form_data)
 
 
 @bp.route('/inbox/surveys/<int:survey_id>/deactivate', methods=['POST'])

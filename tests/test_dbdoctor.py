@@ -142,6 +142,33 @@ class TestDbDoctor(unittest.TestCase):
                         ("RSVP", "Auto-reply", 1, 0),
                     )
 
+    def test_dbdoctor_ensures_survey_flow_linked_event_column(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = os.path.join(temp_dir, "sms.db")
+            env = os.environ.copy()
+            env["DATABASE_URL"] = f"sqlite:///{db_path}"
+            env["SECRET_KEY"] = "test-secret"
+            env["FLASK_DEBUG"] = "1"
+
+            apply_result = subprocess.run(
+                [sys.executable, "-m", "app.dbdoctor", "--apply"],
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(apply_result.returncode, 0, msg=apply_result.stderr)
+
+            with sqlite3.connect(db_path) as connection:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(survey_flows)")
+                }
+                index_names = {
+                    row[1] for row in connection.execute("PRAGMA index_list(survey_flows)")
+                }
+
+            self.assertIn("linked_event_id", columns)
+            self.assertIn("ix_survey_flows_linked_event_id", index_names)
+
 
 if __name__ == "__main__":
     unittest.main()
