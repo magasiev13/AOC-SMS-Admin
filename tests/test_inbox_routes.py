@@ -247,7 +247,7 @@ class TestInboxRoutes(unittest.TestCase):
         updated = self.db.session.get(self.InboxThread, thread.id)
         self.assertIsNone(updated.contact_name)
 
-    def test_inbox_message_delete_rebuilds_thread_rollup(self) -> None:
+    def test_inbox_messages_bulk_delete_rebuilds_thread_rollup(self) -> None:
         self._login()
         thread = self._create_thread(phone="+17205550003")
         now = datetime.now(timezone.utc)
@@ -270,8 +270,8 @@ class TestInboxRoutes(unittest.TestCase):
         self.db.session.commit()
 
         response = self.client.post(
-            f"/inbox/messages/{latest_message.id}/delete",
-            data={"thread_id": thread.id, "search": ""},
+            "/inbox/messages/bulk-delete",
+            data={"thread_id": thread.id, "message_ids": [str(latest_message.id)], "search": ""},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 302)
@@ -308,27 +308,6 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIsNone(self.db.session.get(self.InboxMessage, message.id))
         self.assertIsNone(self.db.session.get(self.SurveySession, session.id))
         self.assertIsNone(self.db.session.get(self.SurveyResponse, response.id))
-
-    def test_inbox_threads_bulk_delete(self) -> None:
-        self._login()
-        thread_one = self._create_thread(phone="+17205550005")
-        thread_two = self._create_thread(phone="+17205550006")
-        self._create_message(thread=thread_one, body="One", direction="inbound")
-        self._create_message(thread=thread_two, body="Two", direction="outbound")
-        self.db.session.commit()
-
-        response = self.client.post(
-            "/inbox/threads/bulk-delete",
-            data={
-                "thread_ids": [str(thread_one.id), str(thread_two.id)],
-                "thread": str(thread_one.id),
-                "search": "x",
-            },
-            follow_redirects=False,
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.InboxThread.query.count(), 0)
-        self.assertEqual(self.InboxMessage.query.count(), 0)
 
     def test_inbox_messages_bulk_delete_scopes_to_selected_thread(self) -> None:
         self._login()
@@ -383,18 +362,10 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(updated_thread.last_message_preview, "Keep me")
         self.assertEqual(updated_thread.last_direction, "outbound")
 
-    def test_inbox_bulk_delete_no_selection_shows_warning(self) -> None:
+    def test_inbox_messages_bulk_delete_no_selection_shows_warning(self) -> None:
         self._login()
         thread = self._create_thread(phone="+17205550009")
         self.db.session.commit()
-
-        response_threads = self.client.post(
-            "/inbox/threads/bulk-delete",
-            data={"thread": str(thread.id), "search": ""},
-            follow_redirects=True,
-        )
-        self.assertEqual(response_threads.status_code, 200)
-        self.assertIn(b"No threads selected.", response_threads.data)
 
         response_messages = self.client.post(
             "/inbox/messages/bulk-delete",
@@ -403,6 +374,13 @@ class TestInboxRoutes(unittest.TestCase):
         )
         self.assertEqual(response_messages.status_code, 200)
         self.assertIn(b"No messages selected.", response_messages.data)
+
+    def test_removed_inbox_delete_routes_return_404(self) -> None:
+        self._login()
+        response_threads = self.client.post("/inbox/threads/bulk-delete", follow_redirects=False)
+        self.assertEqual(response_threads.status_code, 404)
+        response_message = self.client.post("/inbox/messages/1/delete", follow_redirects=False)
+        self.assertEqual(response_message.status_code, 404)
 
     def test_social_manager_can_update_and_delete_inbox_records(self) -> None:
         thread = self._create_thread(phone="+17205550010")
@@ -421,12 +399,12 @@ class TestInboxRoutes(unittest.TestCase):
         updated = self.db.session.get(self.InboxThread, thread.id)
         self.assertEqual(updated.contact_name, "Social Updated")
 
-        response_message_delete = self.client.post(
-            f"/inbox/messages/{message.id}/delete",
-            data={"thread_id": str(thread.id), "search": ""},
+        response_message_bulk_delete = self.client.post(
+            "/inbox/messages/bulk-delete",
+            data={"thread_id": str(thread.id), "message_ids": [str(message.id)], "search": ""},
             follow_redirects=False,
         )
-        self.assertEqual(response_message_delete.status_code, 302)
+        self.assertEqual(response_message_bulk_delete.status_code, 302)
         self.assertIsNone(self.db.session.get(self.InboxMessage, message.id))
 
         response_thread_delete = self.client.post(
@@ -452,11 +430,29 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(update_response.status_code, 403)
 
         delete_response = self.client.post(
-            f"/inbox/messages/{message.id}/delete",
-            data={"thread_id": str(thread.id)},
+            "/inbox/messages/bulk-delete",
+            data={"thread_id": str(thread.id), "message_ids": [str(message.id)]},
             follow_redirects=False,
         )
         self.assertEqual(delete_response.status_code, 403)
+
+    def test_inbox_ui_has_single_delete_model(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550014")
+        message = self._create_message(thread=thread, body="Visible", direction="inbound")
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox?thread={thread.id}")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertEqual(html.count("Delete Thread"), 1)
+        self.assertNotIn("Delete Selected", html)
+        self.assertIn("Delete selected messages", html)
+        self.assertIn('id="bulkMessageDeleteButton"', html)
+        self.assertIn('aria-label="Delete selected messages" disabled', html)
+        self.assertNotIn("selectAllThreads", html)
+        self.assertNotIn("bulkThreadDeleteForm", html)
+        self.assertNotIn(f"/inbox/messages/{message.id}/delete", html)
 
     def test_inbox_mutation_requires_login(self) -> None:
         thread = self._create_thread(phone="+17205550013")

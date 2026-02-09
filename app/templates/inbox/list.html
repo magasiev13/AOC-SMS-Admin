@@ -38,56 +38,32 @@
         </div>
 
         <div class="card app-card inbox-threads-card">
-            {% if threads %}
-            <form id="bulkThreadDeleteForm" method="POST" action="{{ url_for('main.inbox_threads_bulk_delete') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input type="hidden" name="search" value="{{ search }}">
-                {% if selected_thread %}
-                <input type="hidden" name="thread" value="{{ selected_thread.id }}">
-                {% endif %}
-            </form>
-            <div class="card-header d-flex justify-content-between align-items-center gap-2">
-                <div class="form-check mb-0">
-                    <input class="form-check-input" type="checkbox" id="selectAllThreads" aria-label="Select all threads">
-                    <label class="form-check-label small" for="selectAllThreads">Select all</label>
-                </div>
-                <button class="btn btn-sm btn-outline-danger" type="submit" form="bulkThreadDeleteForm"
-                        data-confirm="Delete selected threads and all related messages/survey data?">
-                    <i class="bi bi-trash me-1"></i>Delete Selected
-                </button>
-            </div>
-            {% endif %}
             <div class="list-group list-group-flush inbox-thread-list">
                 {% if threads %}
                     {% for thread in threads %}
                     {% set thread_label = thread_display_names.get(thread.id, thread.contact_name or thread.phone) %}
                     {% set thread_is_active = selected_thread and thread.id == selected_thread.id %}
                     <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}">
-                        <div class="d-flex align-items-start gap-2">
-                            <input class="form-check-input mt-1 js-thread-select" type="checkbox" name="thread_ids"
-                                   value="{{ thread.id }}" form="bulkThreadDeleteForm"
-                                   aria-label="Select thread {{ thread_label }}">
-                            <a class="text-decoration-none flex-grow-1 {% if thread_is_active %}text-white{% else %}text-reset{% endif %}"
-                               href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
-                                <div class="d-flex justify-content-between align-items-center gap-2">
-                                    <div>
-                                        <div class="fw-semibold">{{ thread_label }}</div>
-                                        {% if thread_label != thread.phone %}
-                                        <div class="small {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">{{ thread.phone }}</div>
-                                        {% endif %}
-                                    </div>
-                                    {% if thread.unread_count %}
-                                    <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
+                        <a class="text-decoration-none d-block {% if thread_is_active %}text-white{% else %}text-reset{% endif %}"
+                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
+                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                <div>
+                                    <div class="fw-semibold">{{ thread_label }}</div>
+                                    {% if thread_label != thread.phone %}
+                                    <div class="small {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">{{ thread.phone }}</div>
                                     {% endif %}
                                 </div>
-                                <div class="small mt-1 inbox-thread-preview {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
-                                    {{ thread.last_message_preview or 'No messages yet' }}
-                                </div>
-                                <div class="small inbox-thread-time {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
-                                    {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
-                                </div>
-                            </a>
-                        </div>
+                                {% if thread.unread_count %}
+                                <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="small mt-1 inbox-thread-preview {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                                {{ thread.last_message_preview or 'No messages yet' }}
+                            </div>
+                            <div class="small inbox-thread-time {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                                {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
+                            </div>
+                        </a>
                     </div>
                     {% endfor %}
                 {% else %}
@@ -162,9 +138,10 @@
                                aria-label="Select all messages in thread">
                         <label class="form-check-label small" for="selectAllMessages">Select all messages</label>
                     </div>
-                    <button class="btn btn-sm btn-outline-danger" type="submit" form="bulkMessageDeleteForm"
-                            data-confirm="Delete selected messages?">
-                        <i class="bi bi-trash me-1"></i>Delete Selected
+                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-outline-danger" type="submit"
+                            form="bulkMessageDeleteForm" data-confirm="Delete selected messages?"
+                            aria-label="Delete selected messages" disabled>
+                        <i class="bi bi-trash me-1"></i>Delete selected messages
                     </button>
                 </div>
 
@@ -178,25 +155,14 @@
                                        aria-label="Select message {{ message.id }}">
                                 <div class="p-2 rounded {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}" style="max-width: 80%;">
                                     <div class="small mb-1">{{ message.body }}</div>
-                                    <div class="d-flex justify-content-between align-items-start gap-2">
-                                        <div class="small {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
-                                            {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
-                                            {% if message.matched_keyword %}
-                                                • keyword: <code>{{ message.matched_keyword }}</code>
-                                            {% endif %}
-                                            {% if message.direction == 'outbound' and message.delivery_status %}
-                                                • {{ message.delivery_status }}
-                                            {% endif %}
-                                        </div>
-                                        <form method="POST" action="{{ url_for('main.inbox_message_delete', message_id=message.id) }}">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <input type="hidden" name="search" value="{{ search }}">
-                                            <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
-                                            <button class="btn btn-sm {% if message.direction == 'outbound' %}btn-outline-light{% else %}btn-outline-danger{% endif %} py-0 px-2"
-                                                    type="submit" data-confirm="Delete this message?">
-                                                <i class="bi bi-trash"></i>
-                                            </button>
-                                        </form>
+                                    <div class="small {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
+                                        {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
+                                        {% if message.matched_keyword %}
+                                            • keyword: <code>{{ message.matched_keyword }}</code>
+                                        {% endif %}
+                                        {% if message.direction == 'outbound' and message.delivery_status %}
+                                            • {{ message.delivery_status }}
+                                        {% endif %}
                                     </div>
                                     {% if message.delivery_error %}
                                     <div class="small mt-1 text-warning-emphasis">{{ message.delivery_error }}</div>
@@ -243,14 +209,14 @@
     function bindSelectAll(selectAllId, itemSelector) {
         const selectAll = document.getElementById(selectAllId);
         if (!selectAll) {
-            return;
+            return [];
         }
 
         const items = Array.from(document.querySelectorAll(itemSelector));
         if (!items.length) {
             selectAll.checked = false;
             selectAll.disabled = true;
-            return;
+            return [];
         }
 
         selectAll.addEventListener('change', () => {
@@ -264,10 +230,22 @@
                 selectAll.checked = items.every((entry) => entry.checked);
             });
         });
+
+        return items;
     }
 
-    bindSelectAll('selectAllThreads', '.js-thread-select');
-    bindSelectAll('selectAllMessages', '.js-message-select');
+    const messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
+    const bulkMessageDeleteButton = document.getElementById('bulkMessageDeleteButton');
+    if (bulkMessageDeleteButton) {
+        const syncBulkMessageDeleteState = () => {
+            const hasSelection = messageSelectionItems.some((entry) => entry.checked);
+            bulkMessageDeleteButton.disabled = !hasSelection;
+        };
+        syncBulkMessageDeleteState();
+        messageSelectionItems.forEach((entry) => {
+            entry.addEventListener('change', syncBulkMessageDeleteState);
+        });
+    }
 
     const inboxStatusMeta = document.getElementById('inboxStatusMeta');
     if (inboxStatusMeta) {
