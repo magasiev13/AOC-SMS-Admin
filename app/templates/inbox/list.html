@@ -21,8 +21,8 @@
 <div id="inboxStatusMeta" class="d-none"
      data-latest-message-id="{{ inbox_status_latest_message_id }}"
      data-status-url="{{ url_for('main.inbox_status') }}"></div>
-<div class="row g-3">
-    <div class="col-lg-4">
+<div class="row g-3 inbox-layout">
+    <div class="col-lg-4 {% if selected_thread %}d-none d-lg-block{% endif %}">
         <div class="card app-card mb-3">
             <div class="card-body">
                 <form method="GET" class="filter-bar">
@@ -38,60 +38,76 @@
         </div>
 
         <div class="card app-card inbox-threads-card">
-            <div class="list-group list-group-flush inbox-thread-list">
+            <div id="inboxThreadList" class="list-group list-group-flush inbox-thread-list" role="list" aria-label="Inbox threads">
                 {% if threads %}
                     {% for thread in threads %}
                     {% set thread_label = thread_display_names.get(thread.id, thread.contact_name or thread.phone) %}
                     {% set thread_is_active = selected_thread and thread.id == selected_thread.id %}
-                    <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}">
-                        <a class="text-decoration-none d-block {% if thread_is_active %}text-white{% else %}text-reset{% endif %}"
-                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
+                    <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}" role="listitem">
+                        <a class="text-decoration-none d-block inbox-thread-link"
+                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}"
+                           data-inbox-loading-trigger
+                           {% if thread_is_active %}aria-current="page"{% endif %}>
                             <div class="d-flex justify-content-between align-items-center gap-2">
                                 <div>
                                     <div class="fw-semibold">{{ thread_label }}</div>
                                     {% if thread_label != thread.phone %}
-                                    <div class="small {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">{{ thread.phone }}</div>
+                                    <div class="small inbox-thread-phone">{{ thread.phone }}</div>
                                     {% endif %}
                                 </div>
                                 {% if thread.unread_count %}
                                 <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
                                 {% endif %}
                             </div>
-                            <div class="small mt-1 inbox-thread-preview {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                            <div class="small mt-1 inbox-thread-preview">
                                 {{ thread.last_message_preview or 'No messages yet' }}
                             </div>
-                            <div class="small inbox-thread-time {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                            <div class="small inbox-thread-time">
                                 {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
                             </div>
                         </a>
                     </div>
                     {% endfor %}
                 {% else %}
-                <div class="p-4 text-center text-muted">
-                    <i class="bi bi-chat-left-text fs-3 d-block mb-2"></i>
-                    No conversations yet.
+                <div class="empty-state">
+                    <i class="bi bi-chat-left-text empty-state__icon" aria-hidden="true"></i>
+                    <p class="empty-state__title">No conversations yet</p>
+                    <p class="empty-state__text">Inbound messages will appear here when contacts reply.</p>
                 </div>
                 {% endif %}
+            </div>
+            <div id="inboxThreadListSkeleton" class="inbox-thread-list-skeleton d-none p-3" aria-hidden="true">
+                <div class="inbox-skeleton-line inbox-skeleton-line--title"></div>
+                <div class="inbox-skeleton-line"></div>
+                <div class="inbox-skeleton-line"></div>
+                <div class="inbox-skeleton-line inbox-skeleton-line--title"></div>
+                <div class="inbox-skeleton-line"></div>
+                <div class="inbox-skeleton-line"></div>
             </div>
         </div>
     </div>
 
-    <div class="col-lg-8">
+    <div class="col-lg-8 {% if not selected_thread %}d-none d-lg-block{% endif %}">
         <div class="card app-card h-100">
             {% if selected_thread %}
             {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <div>
-                    <div class="fw-semibold">{{ selected_label }}</div>
+            <div class="d-lg-none px-3 pt-3">
+                <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search) }}">
+                    <i class="bi bi-arrow-left me-1"></i>Back to threads
+                </a>
+            </div>
+            <div class="card-header inbox-thread-header d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
+                <div class="inbox-thread-header-text">
+                    <div class="fw-semibold inbox-thread-header-title">{{ selected_label }}</div>
                     {% if selected_label != selected_thread.phone %}
-                    <div class="small text-muted">{{ selected_thread.phone }}</div>
+                    <div class="small text-muted inbox-thread-header-meta">{{ selected_thread.phone }}</div>
                     {% endif %}
                 </div>
-                <div class="d-flex align-items-center gap-3">
-                    <div class="text-muted small">
+                <div class="d-flex flex-wrap align-items-center gap-2 gap-sm-3 inbox-thread-header-actions">
+                    <div class="text-muted small inbox-thread-updated">
                         Last updated {{ selected_thread.last_message_at|localtime('%b %d, %H:%M') }}
                     </div>
-                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}">
+                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="d-none d-lg-block">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ search }}">
                         <button class="btn btn-sm btn-outline-danger" type="submit"
@@ -100,6 +116,19 @@
                         </button>
                     </form>
                 </div>
+            </div>
+            <div class="px-3 pt-2 d-lg-none">
+                <details class="inbox-mobile-actions">
+                    <summary class="small">Thread actions</summary>
+                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="mt-2 mb-0">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="search" value="{{ search }}">
+                        <button class="btn btn-sm btn-outline-danger w-100" type="submit"
+                                data-confirm="Delete this thread and all related messages/survey data?">
+                            <i class="bi bi-trash me-1"></i>Delete thread
+                        </button>
+                    </form>
+                </details>
             </div>
 
             <div class="card-body d-flex flex-column" style="min-height: 480px;">
@@ -132,13 +161,13 @@
                     <input type="hidden" name="search" value="{{ search }}">
                     <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
                 </form>
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-2">
                     <div class="form-check mb-0">
                         <input class="form-check-input" type="checkbox" id="selectAllMessages"
                                aria-label="Select all messages in thread">
                         <label class="form-check-label small" for="selectAllMessages">Select all messages</label>
                     </div>
-                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-outline-danger" type="submit"
+                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-outline-danger inbox-bulk-delete-btn" type="submit"
                             form="bulkMessageDeleteForm" data-confirm="Delete selected messages?"
                             aria-label="Delete selected messages" disabled>
                         <i class="bi bi-trash me-1"></i>Delete selected messages
@@ -148,14 +177,14 @@
                 <div id="inboxMessagePane" class="flex-grow-1 overflow-auto border rounded p-3 bg-light-subtle inbox-message-pane">
                     {% if messages %}
                         {% for message in messages %}
-                        <div class="d-flex mb-3 {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
-                            <div class="d-flex align-items-start gap-2 {% if message.direction == 'outbound' %}flex-row-reverse{% endif %}">
-                                <input class="form-check-input mt-2 js-message-select" type="checkbox" name="message_ids"
+                        <div class="d-flex mb-3 inbox-message-row {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
+                            <div class="d-flex align-items-start inbox-message-row__inner {% if message.direction == 'outbound' %}flex-row-reverse{% endif %}">
+                                <input class="form-check-input js-message-select inbox-message-select" type="checkbox" name="message_ids"
                                        value="{{ message.id }}" form="bulkMessageDeleteForm"
                                        aria-label="Select message {{ message.id }}">
-                                <div class="p-2 rounded {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}" style="max-width: 80%;">
+                                <div class="p-2 rounded inbox-message-bubble {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}">
                                     <div class="small mb-1">{{ message.body }}</div>
-                                    <div class="small {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
+                                    <div class="small inbox-message-meta {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
                                         {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
                                         {% if message.matched_keyword %}
                                             • keyword: <code>{{ message.matched_keyword }}</code>
@@ -165,15 +194,29 @@
                                         {% endif %}
                                     </div>
                                     {% if message.delivery_error %}
-                                    <div class="small mt-1 text-warning-emphasis">{{ message.delivery_error }}</div>
+                                    <div class="small mt-1 inbox-delivery-error {% if message.direction == 'outbound' %}inbox-delivery-error--on-primary{% endif %}">
+                                        Delivery error: {{ message.delivery_error }}
+                                    </div>
                                     {% endif %}
                                 </div>
                             </div>
                         </div>
                         {% endfor %}
                     {% else %}
-                    <div class="text-center text-muted py-5">No messages yet for this thread.</div>
+                    <div class="empty-state py-4">
+                        <i class="bi bi-chat-square-text empty-state__icon" aria-hidden="true"></i>
+                        <p class="empty-state__title">No messages in this thread</p>
+                        <p class="empty-state__text">Messages and replies for this contact will appear here.</p>
+                    </div>
                     {% endif %}
+                </div>
+                <div id="inboxMessagePaneSkeleton" class="inbox-message-pane inbox-message-pane-skeleton border rounded p-3 bg-light-subtle d-none" aria-hidden="true">
+                    <div class="inbox-skeleton-line inbox-skeleton-line--title"></div>
+                    <div class="inbox-skeleton-line"></div>
+                    <div class="inbox-skeleton-line inbox-skeleton-line--short"></div>
+                    <div class="inbox-skeleton-line inbox-skeleton-line--title mt-3"></div>
+                    <div class="inbox-skeleton-line"></div>
+                    <div class="inbox-skeleton-line inbox-skeleton-line--short"></div>
                 </div>
 
                 <form method="POST" action="{{ url_for('main.inbox_reply', thread_id=selected_thread.id) }}" class="mt-3 inbox-reply-form">
@@ -189,9 +232,12 @@
                 </form>
             </div>
             {% else %}
-            <div class="card-body text-center text-muted py-5">
-                <i class="bi bi-chat-left-text fs-1 d-block mb-3"></i>
-                Select a thread to view messages.
+            <div class="card-body">
+                <div class="empty-state">
+                    <i class="bi bi-chat-left-text empty-state__icon" aria-hidden="true"></i>
+                    <p class="empty-state__title">Select a thread to view messages</p>
+                    <p class="empty-state__text">Choose a conversation from the inbox list to see details and send a reply.</p>
+                </div>
             </div>
             {% endif %}
         </div>
@@ -206,7 +252,32 @@
         pane.scrollTop = pane.scrollHeight;
     }
 
-    function bindSelectAll(selectAllId, itemSelector) {
+    const inboxLayout = document.querySelector('.inbox-layout');
+    const inboxThreadList = document.getElementById('inboxThreadList');
+    const inboxThreadListSkeleton = document.getElementById('inboxThreadListSkeleton');
+    const inboxMessagePane = document.getElementById('inboxMessagePane');
+    const inboxMessagePaneSkeleton = document.getElementById('inboxMessagePaneSkeleton');
+
+    const showInboxLoadingState = () => {
+        if (!inboxLayout) {
+            return;
+        }
+        inboxLayout.classList.add('inbox-layout-loading');
+        if (inboxThreadList && inboxThreadListSkeleton) {
+            inboxThreadList.classList.add('d-none');
+            inboxThreadListSkeleton.classList.remove('d-none');
+        }
+        if (inboxMessagePane && inboxMessagePaneSkeleton) {
+            inboxMessagePane.classList.add('d-none');
+            inboxMessagePaneSkeleton.classList.remove('d-none');
+        }
+    };
+
+    document.querySelectorAll('[data-inbox-loading-trigger]').forEach((trigger) => {
+        trigger.addEventListener('click', showInboxLoadingState);
+    });
+
+    function bindSelectAll(selectAllId, itemSelector, onSelectAllChange) {
         const selectAll = document.getElementById(selectAllId);
         if (!selectAll) {
             return [];
@@ -223,6 +294,9 @@
             items.forEach((item) => {
                 item.checked = selectAll.checked;
             });
+            if (onSelectAllChange) {
+                onSelectAllChange();
+            }
         });
 
         items.forEach((item) => {
@@ -234,17 +308,24 @@
         return items;
     }
 
-    const messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
     const bulkMessageDeleteButton = document.getElementById('bulkMessageDeleteButton');
+    let messageSelectionItems = [];
     if (bulkMessageDeleteButton) {
         const syncBulkMessageDeleteState = () => {
             const hasSelection = messageSelectionItems.some((entry) => entry.checked);
             bulkMessageDeleteButton.disabled = !hasSelection;
         };
+        messageSelectionItems = bindSelectAll(
+            'selectAllMessages',
+            '.js-message-select',
+            syncBulkMessageDeleteState
+        );
         syncBulkMessageDeleteState();
         messageSelectionItems.forEach((entry) => {
             entry.addEventListener('change', syncBulkMessageDeleteState);
         });
+    } else {
+        messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
     }
 
     const inboxStatusMeta = document.getElementById('inboxStatusMeta');
