@@ -4,6 +4,7 @@ from flask import current_app
 
 from app import db
 from app.models import (
+    EventRegistration,
     InboxMessage,
     InboxThread,
     KeywordAutomationRule,
@@ -320,6 +321,42 @@ def _cancel_active_sessions(phone: str) -> int:
     return len(sessions)
 
 
+def _event_registration_name_for_session(session: SurveySession) -> str | None:
+    for response in session.responses:
+        answer = (response.answer or '').strip()
+        if answer:
+            return answer[:100]
+    if session.thread:
+        thread_name = (session.thread.contact_name or '').strip()
+        if thread_name:
+            return thread_name[:100]
+    return None
+
+
+def _sync_linked_event_registration(session: SurveySession) -> None:
+    survey = session.survey
+    if not survey or not survey.linked_event_id:
+        return
+
+    registration_name = _event_registration_name_for_session(session)
+    existing = EventRegistration.query.filter_by(
+        event_id=survey.linked_event_id,
+        phone=session.phone,
+    ).first()
+    if existing:
+        if registration_name and existing.name != registration_name:
+            existing.name = registration_name
+        return
+
+    db.session.add(
+        EventRegistration(
+            event_id=survey.linked_event_id,
+            name=registration_name,
+            phone=session.phone,
+        )
+    )
+
+
 def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[SurveySession, list[str]]:
     _cancel_active_sessions(phone)
     now = utc_now()
@@ -346,6 +383,7 @@ def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[
         session.status = 'completed'
         session.completed_at = now
         survey.completion_count = (survey.completion_count or 0) + 1
+        _sync_linked_event_registration(session)
         if survey.completion_message:
             replies.append(survey.completion_message.strip())
     return session, replies
@@ -381,6 +419,7 @@ def _advance_survey(session: SurveySession, inbound_text: str) -> list[str]:
         session.status = 'completed'
         session.completed_at = now
         survey.completion_count = (survey.completion_count or 0) + 1
+        _sync_linked_event_registration(session)
         if survey.completion_message:
             replies.append(survey.completion_message.strip())
     return replies

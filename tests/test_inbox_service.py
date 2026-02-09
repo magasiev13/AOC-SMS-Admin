@@ -18,6 +18,8 @@ class TestInboxService(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import (
+            Event,
+            EventRegistration,
             InboxMessage,
             InboxThread,
             KeywordAutomationRule,
@@ -29,6 +31,8 @@ class TestInboxService(unittest.TestCase):
         from app.services.inbox_service import process_inbound_sms
 
         self.db = db
+        self.Event = Event
+        self.EventRegistration = EventRegistration
         self.InboxMessage = InboxMessage
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
@@ -181,6 +185,132 @@ class TestInboxService(unittest.TestCase):
         refreshed_survey = self.db.session.get(self.SurveyFlow, survey.id)
         self.assertEqual(refreshed_survey.start_count, 1)
         self.assertEqual(refreshed_survey.completion_count, 1)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_linked_survey_completion_creates_event_registration(self, mock_get_twilio) -> None:
+        event = self.Event(title="Spring Gala")
+        self.db.session.add(event)
+        self.db.session.flush()
+
+        survey = self.SurveyFlow(
+            name="Linked RSVP",
+            trigger_keyword="JOIN GALA",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            linked_event_id=event.id,
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?", "How many guests?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM900",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15557770001", "Body": "JOIN GALA", "MessageSid": "SM-IN-LINK-1"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770001", "Body": "Alex", "MessageSid": "SM-IN-LINK-2"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770001", "Body": "2", "MessageSid": "SM-IN-LINK-3"}
+        )
+
+        registration = self.EventRegistration.query.filter_by(
+            event_id=event.id,
+            phone="+15557770001",
+        ).first()
+        self.assertIsNotNone(registration)
+        self.assertEqual(registration.name, "Alex")
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_linked_survey_completion_upserts_event_registration_by_phone(self, mock_get_twilio) -> None:
+        event = self.Event(title="Summer Meetup")
+        self.db.session.add(event)
+        self.db.session.flush()
+
+        survey = self.SurveyFlow(
+            name="Linked RSVP Upsert",
+            trigger_keyword="SUMMER RSVP",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            linked_event_id=event.id,
+            is_active=True,
+        )
+        survey.set_questions(["Name?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM901",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15557770002", "Body": "SUMMER RSVP", "MessageSid": "SM-IN-UP-1"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770002", "Body": "Alex", "MessageSid": "SM-IN-UP-2"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770002", "Body": "SUMMER RSVP", "MessageSid": "SM-IN-UP-3"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770002", "Body": "Jordan", "MessageSid": "SM-IN-UP-4"}
+        )
+
+        registrations = self.EventRegistration.query.filter_by(
+            event_id=event.id,
+            phone="+15557770002",
+        ).all()
+        self.assertEqual(len(registrations), 1)
+        self.assertEqual(registrations[0].name, "Jordan")
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_unlinked_survey_does_not_create_event_registration(self, mock_get_twilio) -> None:
+        event = self.Event(title="Unlinked Event")
+        self.db.session.add(event)
+
+        survey = self.SurveyFlow(
+            name="Plain Survey",
+            trigger_keyword="PLAIN SURVEY",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["Name?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM902",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15557770003", "Body": "PLAIN SURVEY", "MessageSid": "SM-IN-NL-1"}
+        )
+        self.process_inbound_sms(
+            {"From": "+15557770003", "Body": "Casey", "MessageSid": "SM-IN-NL-2"}
+        )
+
+        registration = self.EventRegistration.query.filter_by(phone="+15557770003").first()
+        self.assertIsNone(registration)
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_survey_trigger_whitespace_normalization_matches_inbound(self, mock_get_twilio) -> None:

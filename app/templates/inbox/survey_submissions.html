@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}{{ survey.name }} Submissions - SMS Admin{% endblock %}
+
+{% block page_title %}{{ survey.name }} Submissions{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<span>Automations</span> /
+<a href="{{ url_for('main.survey_flows_list') }}">Surveys</a> /
+<span>Submissions</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.survey_flow_submissions_export', survey_id=survey.id) }}" class="btn btn-outline-secondary page-action-secondary">
+    <i class="bi bi-download me-1"></i>Export CSV
+</a>
+<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card mb-4">
+    <div class="card-body survey-submissions-header">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3 survey-submissions-stats">
+            <span class="badge bg-light text-dark survey-submissions-chip">{{ unique_attendees }} attendee(s)</span>
+            <span class="badge bg-light text-dark survey-submissions-chip">{{ total_completed }} completed submission(s)</span>
+            <span class="badge bg-light text-dark survey-submissions-chip">{{ repeat_submitters }} repeat submitter(s)</span>
+            <span class="badge bg-light text-dark survey-submissions-chip"><code>{{ survey.trigger_keyword }}</code></span>
+        </div>
+        <form method="GET" class="filter-bar survey-submissions-filter">
+            <div class="input-group">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input
+                    type="text"
+                    class="form-control"
+                    name="search"
+                    value="{{ search }}"
+                    placeholder="Search attendee, phone, or answers"
+                >
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card app-card">
+    <div class="table-responsive d-none d-lg-block">
+        <table class="table table-hover mb-0 survey-submissions-table" data-sortable="client">
+            <thead class="table-light">
+                <tr>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="attendee">
+                            <span>Attendee</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="phone">
+                        <button type="button" class="sort-button" data-sort-key="phone">
+                            <span>Phone</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="date">
+                        <button type="button" class="sort-button" data-sort-key="latest">
+                            <span>Latest Submitted</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="answers">
+                            <span>Answer Preview</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th data-sort-type="number">
+                        <button type="button" class="sort-button" data-sort-key="count">
+                            <span>Submissions</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    <th width="90">Action</th>
+                </tr>
+            </thead>
+            <tbody class="table-data">
+                {% if latest_rows %}
+                    {% for row in latest_rows %}
+                    <tr>
+                        <td data-sort-value="{{ row.display_name }}">
+                            <div class="fw-semibold">{{ row.display_name }}</div>
+                        </td>
+                        <td data-sort-value="{{ row.phone }}">
+                            <code>{{ row.phone }}</code>
+                        </td>
+                        <td data-sort-value="{{ row.submitted_at_iso }}">
+                            {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}
+                        </td>
+                        <td data-sort-value="{{ row.answers_preview }}">
+                            <div class="survey-answer-preview">{{ row.answers_preview or '-' }}</div>
+                        </td>
+                        <td data-sort-value="{{ row.submission_count }}">
+                            <span class="badge bg-light text-dark survey-submissions-count">{{ row.submission_count }}</span>
+                        </td>
+                        <td>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                data-bs-toggle="offcanvas"
+                                data-bs-target="#surveySubmission{{ row.phone_dom_id }}"
+                            >
+                                View
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-4">
+                        No completed submissions found.
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card-list d-lg-none">
+        {% if latest_rows %}
+            {% for row in latest_rows %}
+            <div class="card-list-item survey-submissions-card">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                        <h6 class="mb-1">{{ row.display_name }}</h6>
+                        <div class="text-muted small"><code>{{ row.phone }}</code></div>
+                        <div class="text-muted small mt-2">
+                            Latest: {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}
+                        </div>
+                        <div class="text-muted small mt-1 survey-answer-preview">
+                            {{ row.answers_preview or '-' }}
+                        </div>
+                        <div class="mt-2">
+                            <span class="badge bg-light text-dark survey-submissions-count">{{ row.submission_count }} submission(s)</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        data-bs-toggle="offcanvas"
+                        data-bs-target="#surveySubmission{{ row.phone_dom_id }}"
+                    >
+                        <i class="bi bi-eye me-1"></i>View
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="empty-state py-4">
+            <i class="bi bi-list-check empty-state__icon"></i>
+            <div class="empty-state__title">No completed submissions found</div>
+            <div class="empty-state__text">Survey completions will appear here.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if latest_rows %}
+    {% for row in latest_rows %}
+    {% set row_history = history_by_phone.get(row.phone, []) %}
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="surveySubmission{{ row.phone_dom_id }}">
+        <div class="offcanvas-header">
+            <h5 class="offcanvas-title">{{ row.display_name }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+        </div>
+        <div class="offcanvas-body survey-submission-panel">
+            <p class="mb-2"><strong>Phone:</strong> <code>{{ row.phone }}</code></p>
+            <p class="mb-2"><strong>Latest submission:</strong> {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}</p>
+            <p class="mb-3"><strong>Total submissions:</strong> {{ row.submission_count }}</p>
+
+            <h6 class="mb-2">Latest Answers</h6>
+            {% if row.qa_pairs %}
+                {% for qa in row.qa_pairs %}
+                <div class="survey-submission-qa">
+                    <div class="survey-submission-qa__prompt">{{ qa.prompt }}</div>
+                    <div class="survey-submission-qa__answer">{{ qa.answer or '-' }}</div>
+                </div>
+                {% endfor %}
+            {% else %}
+            <div class="text-muted small">No question prompts configured.</div>
+            {% endif %}
+
+            {% if row_history %}
+            <hr>
+            <h6 class="mb-2">Previous Submissions</h6>
+            {% for previous in row_history %}
+            <div class="survey-submission-history-item">
+                <div class="small text-muted mb-2">{{ previous.submitted_at|localtime('%b %d, %Y %H:%M') }}</div>
+                {% for qa in previous.qa_pairs %}
+                <div class="survey-submission-qa">
+                    <div class="survey-submission-qa__prompt">{{ qa.prompt }}</div>
+                    <div class="survey-submission-qa__answer">{{ qa.answer or '-' }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+{% endif %}
+{% endblock %}

@@ -8,6 +8,10 @@
     {% set questions_value = form_data.questions %}
     {% set completion_value = form_data.completion_message %}
     {% set active_value = form_data.is_active %}
+    {% set event_link_mode_value = form_data.event_link_mode %}
+    {% set existing_event_id_value = form_data.existing_event_id %}
+    {% set new_event_title_value = form_data.new_event_title %}
+    {% set new_event_date_value = form_data.new_event_date %}
 {% elif survey %}
     {% set name_value = survey.name %}
     {% set trigger_value = survey.trigger_keyword %}
@@ -15,6 +19,10 @@
     {% set questions_value = survey.questions|join('\n') %}
     {% set completion_value = survey.completion_message or '' %}
     {% set active_value = survey.is_active %}
+    {% set event_link_mode_value = 'existing' if survey.linked_event_id else 'none' %}
+    {% set existing_event_id_value = survey.linked_event_id or '' %}
+    {% set new_event_title_value = '' %}
+    {% set new_event_date_value = '' %}
 {% else %}
     {% set name_value = '' %}
     {% set trigger_value = '' %}
@@ -22,6 +30,10 @@
     {% set questions_value = '' %}
     {% set completion_value = '' %}
     {% set active_value = True %}
+    {% set event_link_mode_value = 'none' %}
+    {% set existing_event_id_value = '' %}
+    {% set new_event_title_value = '' %}
+    {% set new_event_date_value = '' %}
 {% endif %}
 
 {% block title %}{{ 'Edit' if is_edit else 'Add' }} Survey Flow - SMS Admin{% endblock %}
@@ -67,6 +79,90 @@
                 <textarea class="form-control" id="completion_message" name="completion_message" rows="2" maxlength="1600">{{ completion_value }}</textarea>
             </div>
 
+            <div class="mb-3">
+                <label class="form-label survey-event-sync__label">Event Registration Sync</label>
+                <fieldset class="survey-event-sync mb-0">
+                    <legend class="visually-hidden">Event registration sync mode</legend>
+
+                    <div class="survey-event-sync__option-group">
+                        <div class="survey-event-sync__option">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                       id="event_link_none" value="none"
+                                       {% if event_link_mode_value == 'none' %}checked{% endif %}>
+                                <label class="form-check-label" for="event_link_none">
+                                    Do not link to an event
+                                </label>
+                            </div>
+                            <p class="survey-event-sync__hint mb-0">
+                                Keep completions in survey submissions only.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="survey-event-sync__option-group">
+                        <div class="survey-event-sync__option">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                       id="event_link_existing" value="existing"
+                                       {% if event_link_mode_value == 'existing' %}checked{% endif %}>
+                                <label class="form-check-label" for="event_link_existing">
+                                    Link to an existing event
+                                </label>
+                            </div>
+                            <p class="survey-event-sync__hint mb-0">
+                                Auto-upsert each completion into event registrations.
+                            </p>
+                        </div>
+                        <div id="existingEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'existing' %}d-none{% endif %}">
+                            <label for="existing_event_id" class="form-label">Select Event</label>
+                            <select class="form-select" id="existing_event_id" name="existing_event_id">
+                                <option value="">Select an event</option>
+                                {% for event in events %}
+                                <option value="{{ event.id }}"
+                                        {% if (existing_event_id_value|string) == (event.id|string) %}selected{% endif %}>
+                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="survey-event-sync__option-group">
+                        <div class="survey-event-sync__option">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                       id="event_link_new" value="new"
+                                       {% if event_link_mode_value == 'new' %}checked{% endif %}>
+                                <label class="form-check-label" for="event_link_new">
+                                    Create and link a new event
+                                </label>
+                            </div>
+                            <p class="survey-event-sync__hint mb-0">
+                                Create an event now and register completions automatically.
+                            </p>
+                        </div>
+                        <div id="newEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'new' %}d-none{% endif %}">
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <label for="new_event_title" class="form-label">New Event Title</label>
+                                    <input type="text" class="form-control" id="new_event_title" name="new_event_title"
+                                           maxlength="200" value="{{ new_event_title_value }}" placeholder="Community Meeting">
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <label for="new_event_date" class="form-label">New Event Date (Optional)</label>
+                                    <input type="date" class="form-control" id="new_event_date" name="new_event_date"
+                                           value="{{ new_event_date_value }}">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </fieldset>
+                <div class="form-text survey-event-sync__footnote">
+                    Linked surveys automatically upsert completed responses into event registrations by phone.
+                </div>
+            </div>
+
             <div class="form-check mb-3">
                 <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
                 <label class="form-check-label" for="is_active">Active</label>
@@ -81,4 +177,40 @@
         </form>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const eventModeInputs = document.querySelectorAll('.js-event-link-mode');
+    const eventModeOptions = document.querySelectorAll('.survey-event-sync__option');
+    const existingEventFields = document.getElementById('existingEventFields');
+    const newEventFields = document.getElementById('newEventFields');
+
+    function syncEventLinkMode() {
+        const selected = document.querySelector('.js-event-link-mode:checked');
+        const mode = selected ? selected.value : 'none';
+
+        eventModeOptions.forEach((option) => {
+            option.classList.remove('is-selected');
+        });
+        if (selected) {
+            const selectedOption = selected.closest('.survey-event-sync__option');
+            if (selectedOption) {
+                selectedOption.classList.add('is-selected');
+            }
+        }
+
+        if (existingEventFields) {
+            existingEventFields.classList.toggle('d-none', mode !== 'existing');
+        }
+        if (newEventFields) {
+            newEventFields.classList.toggle('d-none', mode !== 'new');
+        }
+    }
+
+    eventModeInputs.forEach((input) => {
+        input.addEventListener('change', syncEventLinkMode);
+    });
+    syncEventLinkMode();
+</script>
 {% endblock %}

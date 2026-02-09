@@ -16,10 +16,11 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser, KeywordAutomationRule, SurveyFlow
+        from app.models import AppUser, Event, KeywordAutomationRule, SurveyFlow
 
         self.db = db
         self.AppUser = AppUser
+        self.Event = Event
         self.KeywordAutomationRule = KeywordAutomationRule
         self.SurveyFlow = SurveyFlow
 
@@ -81,6 +82,12 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.db.session.add(rule)
         self.db.session.commit()
         return rule
+
+    def _create_event(self, *, title: str):
+        event = self.Event(title=title)
+        self.db.session.add(event)
+        self.db.session.commit()
+        return event
 
     def test_keyword_rule_add_rejects_existing_survey_keyword(self) -> None:
         self._login()
@@ -177,12 +184,115 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
     def test_surveys_list_uses_data_confirm_attribute(self) -> None:
         self._login()
-        self._create_survey(name="RSVP Flow", trigger_keyword="RSVP")
+        survey = self._create_survey(name="RSVP Flow", trigger_keyword="RSVP")
 
         response = self.client.get("/inbox/surveys")
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(response.data.count(b'data-confirm="Deactivate this survey flow?"'), 2)
         self.assertNotIn(b"onclick=\"return confirm('Deactivate this survey flow?');\"", response.data)
+        submissions_href = f'/inbox/surveys/{survey.id}/submissions'.encode()
+        self.assertGreaterEqual(response.data.count(submissions_href), 2)
+
+    def test_survey_add_links_existing_event(self) -> None:
+        self._login()
+        event = self._create_event(title="Volunteer Day")
+
+        response = self.client.post(
+            "/inbox/surveys/add",
+            data={
+                "name": "Volunteer RSVP",
+                "trigger_keyword": "VOL RSVP",
+                "intro_message": "Welcome",
+                "questions": "What is your name?\nHow many guests?",
+                "completion_message": "Done",
+                "event_link_mode": "existing",
+                "existing_event_id": str(event.id),
+                "is_active": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        created = self.SurveyFlow.query.filter_by(name="Volunteer RSVP").first()
+        self.assertIsNotNone(created)
+        self.assertEqual(created.linked_event_id, event.id)
+
+    def test_survey_add_creates_and_links_new_event(self) -> None:
+        self._login()
+
+        response = self.client.post(
+            "/inbox/surveys/add",
+            data={
+                "name": "Town Hall RSVP",
+                "trigger_keyword": "TOWN RSVP",
+                "intro_message": "Welcome",
+                "questions": "What is your name?",
+                "completion_message": "Done",
+                "event_link_mode": "new",
+                "new_event_title": "Town Hall",
+                "new_event_date": "2026-05-01",
+                "is_active": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        created = self.SurveyFlow.query.filter_by(name="Town Hall RSVP").first()
+        self.assertIsNotNone(created)
+        self.assertIsNotNone(created.linked_event_id)
+        linked_event = self.db.session.get(self.Event, created.linked_event_id)
+        self.assertIsNotNone(linked_event)
+        self.assertEqual(linked_event.title, "Town Hall")
+        self.assertEqual(str(linked_event.date), "2026-05-01")
+
+    def test_survey_add_existing_mode_requires_valid_event(self) -> None:
+        self._login()
+
+        response = self.client.post(
+            "/inbox/surveys/add",
+            data={
+                "name": "Invalid Link Survey",
+                "trigger_keyword": "INVALID LINK",
+                "intro_message": "",
+                "questions": "What is your name?",
+                "completion_message": "",
+                "event_link_mode": "existing",
+                "existing_event_id": "999999",
+                "is_active": "on",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Selected event was not found", response.data)
+        self.assertIsNone(self.SurveyFlow.query.filter_by(name="Invalid Link Survey").first())
+
+    def test_survey_edit_can_switch_to_new_linked_event(self) -> None:
+        self._login()
+        survey = self._create_survey(name="Switch Link Survey", trigger_keyword="SWITCH LINK")
+
+        response = self.client.post(
+            f"/inbox/surveys/{survey.id}/edit",
+            data={
+                "name": "Switch Link Survey",
+                "trigger_keyword": "SWITCH LINK",
+                "intro_message": "Welcome",
+                "questions": "What is your name?",
+                "completion_message": "Done",
+                "event_link_mode": "new",
+                "new_event_title": "Switched Event",
+                "new_event_date": "",
+                "is_active": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        refreshed = self.db.session.get(self.SurveyFlow, survey.id)
+        self.assertIsNotNone(refreshed.linked_event_id)
+        linked_event = self.db.session.get(self.Event, refreshed.linked_event_id)
+        self.assertIsNotNone(linked_event)
+        self.assertEqual(linked_event.title, "Switched Event")
 
     def test_base_confirm_handler_does_not_stop_immediate_propagation(self) -> None:
         self._login()

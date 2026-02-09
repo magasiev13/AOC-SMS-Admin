@@ -40,7 +40,7 @@
                     <th>Starts</th>
                     <th>Completions</th>
                     <th>Status</th>
-                    <th width="180">Actions</th>
+                    <th width="240">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -63,16 +63,19 @@
                             </span>
                         </td>
                         <td>
-                            <div class="d-flex gap-2">
-                                <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-pencil"></i>
+                            <div class="d-flex gap-2 survey-flow-actions">
+                                <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-sm btn-outline-primary" aria-label="Edit survey flow">
+                                    <i class="bi bi-pencil me-1"></i>Edit
+                                </a>
+                                <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="View submissions">
+                                    <i class="bi bi-list-ul me-1"></i>Submissions
                                 </a>
                                 {% if survey.is_active %}
                                 <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="btn btn-sm btn-outline-warning" type="submit"
                                             data-confirm="Deactivate this survey flow?">
-                                        <i class="bi bi-pause-circle"></i>
+                                        <i class="bi bi-pause-circle me-1"></i>Deactivate
                                     </button>
                                 </form>
                                 {% endif %}
@@ -113,14 +116,17 @@
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                     <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-pencil"></i> Edit
+                        <i class="bi bi-pencil me-1"></i>Edit
+                    </a>
+                    <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-list-ul me-1"></i>Submissions
                     </a>
                     {% if survey.is_active %}
                     <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-sm btn-outline-warning" type="submit"
                                 data-confirm="Deactivate this survey flow?">
-                            <i class="bi bi-pause-circle"></i> Deactivate
+                            <i class="bi bi-pause-circle me-1"></i>Deactivate
                         </button>
                     </form>
                     {% endif %}
