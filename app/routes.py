@@ -45,6 +45,7 @@ from app.models import (
     utc_now,
 )
 from app.services.inbox_service import (
+    delete_survey_flow_with_dependencies,
     delete_messages_in_thread,
     delete_thread_with_dependencies,
     mark_thread_read,
@@ -2680,6 +2681,33 @@ def survey_flow_edit(survey_id):
         return redirect(url_for('main.survey_flows_list'))
 
     return _render_survey_form(survey=survey, form_data=form_data)
+
+
+@bp.route('/inbox/surveys/<int:survey_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def survey_flow_delete(survey_id):
+    survey = db.get_or_404(SurveyFlow, survey_id)
+    if survey.linked_event_id:
+        flash(
+            'This survey is linked to an event. Edit it and choose "Do not link to an event" before deleting.',
+            'error',
+        )
+        return redirect(url_for('main.survey_flows_list'))
+
+    result = delete_survey_flow_with_dependencies(survey.id)
+    if result is None:
+        flash('Survey flow not found.', 'error')
+    else:
+        flash(
+            (
+                'Survey flow deleted '
+                f"({result['sessions']} session(s), "
+                f"{result['responses']} response(s))."
+            ),
+            'success',
+        )
+    return redirect(url_for('main.survey_flows_list'))
 
 
 @bp.route('/inbox/surveys/<int:survey_id>/deactivate', methods=['POST'])

@@ -70,6 +70,13 @@
                                 <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="View submissions">
                                     <i class="bi bi-list-ul me-1"></i>Submissions
                                 </a>
+                                <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit"
+                                            data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
+                                        <i class="bi bi-trash me-1"></i>Delete
+                                    </button>
+                                </form>
                                 {% if survey.is_active %}
                                 <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -121,6 +128,13 @@
                     <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-list-ul me-1"></i>Submissions
                     </a>
+                    <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"
+                                data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
+                            <i class="bi bi-trash me-1"></i>Delete
+                        </button>
+                    </form>
                     {% if survey.is_active %}
                     <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

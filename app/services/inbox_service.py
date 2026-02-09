@@ -136,6 +136,25 @@ def delete_thread_with_dependencies(thread_id: int) -> dict[str, int] | None:
     }
 
 
+def delete_survey_flow_with_dependencies(survey_id: int) -> dict[str, int] | None:
+    survey = db.session.get(SurveyFlow, survey_id)
+    if survey is None:
+        return None
+
+    session_count = SurveySession.query.filter_by(survey_id=survey.id).count()
+    response_count = SurveyResponse.query.filter_by(survey_id=survey.id).count()
+
+    SurveyResponse.query.filter_by(survey_id=survey.id).delete(synchronize_session=False)
+    SurveySession.query.filter_by(survey_id=survey.id).delete(synchronize_session=False)
+    db.session.delete(survey)
+    db.session.commit()
+    return {
+        'surveys': 1,
+        'sessions': session_count,
+        'responses': response_count,
+    }
+
+
 def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> dict:
     thread = db.session.get(InboxThread, thread_id)
     if thread is None:
