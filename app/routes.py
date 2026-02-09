@@ -1865,60 +1865,6 @@ def inbox_thread_delete(thread_id):
     return _redirect_to_inbox()
 
 
-@bp.route('/inbox/threads/bulk-delete', methods=['POST'])
-@login_required
-@require_roles('admin', 'social_manager')
-def inbox_threads_bulk_delete():
-    selected_thread_id = request.form.get('thread', type=int)
-    thread_ids = _parse_int_ids(request.form.getlist('thread_ids'))
-    if not thread_ids:
-        flash('No threads selected.', 'warning')
-        return _redirect_to_inbox(thread_id=selected_thread_id)
-
-    deleted_threads = 0
-    deleted_messages = 0
-    deleted_sessions = 0
-    deleted_responses = 0
-    for thread_id in thread_ids:
-        result = delete_thread_with_dependencies(thread_id)
-        if result is None:
-            continue
-        deleted_threads += result['threads']
-        deleted_messages += result['messages']
-        deleted_sessions += result['sessions']
-        deleted_responses += result['responses']
-
-    if deleted_threads == 0:
-        flash('No matching threads found to delete.', 'warning')
-        return _redirect_to_inbox()
-
-    flash(
-        (
-            f'Deleted {deleted_threads} thread(s), {deleted_messages} message(s), '
-            f'{deleted_sessions} survey session(s), and {deleted_responses} survey response(s).'
-        ),
-        'success',
-    )
-
-    redirect_thread_id = selected_thread_id
-    if redirect_thread_id and redirect_thread_id in thread_ids:
-        redirect_thread_id = None
-    return _redirect_to_inbox(thread_id=redirect_thread_id)
-
-
-@bp.route('/inbox/messages/<int:message_id>/delete', methods=['POST'])
-@login_required
-@require_roles('admin', 'social_manager')
-def inbox_message_delete(message_id):
-    message = db.get_or_404(InboxMessage, message_id)
-    deleted = delete_messages_in_thread(message.thread_id, [message.id])
-    if deleted:
-        flash('Message deleted.', 'success')
-    else:
-        flash('Message could not be deleted.', 'error')
-    return _redirect_to_inbox(thread_id=message.thread_id)
-
-
 @bp.route('/inbox/messages/bulk-delete', methods=['POST'])
 @login_required
 @require_roles('admin', 'social_manager')
