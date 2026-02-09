@@ -167,6 +167,18 @@ def _parse_int_ids(raw_values: list[str]) -> list[int]:
     return sorted(set(ids))
 
 
+def _parse_survey_preview_indexes(raw_values: list[str], *, question_count: int) -> list[int]:
+    indexes: list[int] = []
+    for raw in raw_values:
+        try:
+            index = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < question_count:
+            indexes.append(index)
+    return sorted(set(indexes))
+
+
 def _redirect_to_inbox(*, thread_id: int | None = None) -> object:
     search = request.form.get('search', '').strip()
     query_args = {}
@@ -242,8 +254,13 @@ def _build_survey_submission_data(
     search: str = '',
     page: int = 1,
     per_page: int = 50,
+    preview_question_indexes: list[int] | None = None,
 ) -> dict[str, object]:
     questions = survey.questions
+    selected_preview_indexes = _parse_survey_preview_indexes(
+        [str(index) for index in (preview_question_indexes or [])],
+        question_count=len(questions),
+    )
     completed_filters = [
         SurveySession.survey_id == survey.id,
         SurveySession.status == 'completed',
@@ -262,6 +279,7 @@ def _build_survey_submission_data(
             'page': 1,
             'total_pages': 0,
             'per_page': per_page,
+            'preview_question_indexes': selected_preview_indexes,
         }
 
     if search_phones:
@@ -310,6 +328,7 @@ def _build_survey_submission_data(
             'page': 1,
             'total_pages': 0,
             'per_page': per_page,
+            'preview_question_indexes': selected_preview_indexes,
         }
 
     total_pages = math.ceil(unique_attendees / per_page) if per_page else 1
@@ -358,6 +377,7 @@ def _build_survey_submission_data(
             'page': safe_page,
             'total_pages': total_pages,
             'per_page': per_page,
+            'preview_question_indexes': selected_preview_indexes,
         }
 
     phones = {session.phone for session in latest_sessions if session.phone}
@@ -411,7 +431,10 @@ def _build_survey_submission_data(
             or first_answer
             or session.phone
         )
-        answer_preview_items = [answer for answer in answers if answer][:2]
+        if selected_preview_indexes:
+            answer_preview_items = [answers[index] for index in selected_preview_indexes if answers[index]]
+        else:
+            answer_preview_items = [answer for answer in answers if answer][:2]
         answers_preview = '; '.join(answer_preview_items)
         if len(answers_preview) > 120:
             answers_preview = f"{answers_preview[:117].rstrip()}..."
@@ -451,6 +474,7 @@ def _build_survey_submission_data(
         'page': safe_page,
         'total_pages': total_pages,
         'per_page': per_page,
+        'preview_question_indexes': selected_preview_indexes,
     }
 
 
@@ -2411,12 +2435,22 @@ def survey_flow_submissions(survey_id):
     survey = db.get_or_404(SurveyFlow, survey_id)
     search = request.args.get('search', '').strip()
     page = request.args.get('page', type=int) or 1
-    payload = _build_survey_submission_data(survey, search=search, page=page)
+    preview_question_indexes = _parse_survey_preview_indexes(
+        request.args.getlist('preview_q'),
+        question_count=len(survey.questions),
+    )
+    payload = _build_survey_submission_data(
+        survey,
+        search=search,
+        page=page,
+        preview_question_indexes=preview_question_indexes,
+    )
     return render_template(
         'inbox/survey_submissions.html',
         survey=survey,
         search=search,
         questions=payload['questions'],
+        preview_question_indexes=payload['preview_question_indexes'],
         latest_rows=payload['latest_rows'],
         history_by_phone=payload['history_by_phone'],
         unique_attendees=payload['unique_attendees'],
