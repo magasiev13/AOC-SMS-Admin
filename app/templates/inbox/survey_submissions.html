@@ -40,6 +40,46 @@
                     placeholder="Search attendee, phone, or answers"
                 >
             </div>
+            {% if questions %}
+            <div class="survey-preview-selector">
+                <div class="survey-preview-selector__label">Answer preview includes:</div>
+                <div class="survey-preview-selector__options">
+                    {% for question in questions %}
+                    <div class="form-check form-check-inline survey-preview-selector__option mb-0">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            name="preview_q"
+                            id="preview_q_{{ loop.index0 }}"
+                            value="{{ loop.index0 }}"
+                            {% if loop.index0 in preview_question_indexes %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="preview_q_{{ loop.index0 }}" title="{{ question }}">
+                            {{ question }}
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="survey-preview-selector__actions">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Apply preview fields</button>
+                    {% if preview_question_indexes %}
+                    <a
+                        href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id, search=search) }}"
+                        class="btn btn-sm btn-link px-0"
+                    >
+                        Reset to default preview
+                    </a>
+                    {% endif %}
+                </div>
+                <div class="small text-muted">
+                    {% if preview_question_indexes %}
+                    Showing selected question answers in the preview column.
+                    {% else %}
+                    Default preview shows the first two non-empty answers.
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
         </form>
     </div>
 </div>
@@ -169,7 +209,7 @@
 <nav class="mt-3" aria-label="Survey submissions pagination">
     <ul class="pagination justify-content-center">
         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id, search=search, page=page-1) }}">
+            <a class="page-link" href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id, search=search, page=page-1, preview_q=preview_question_indexes) }}">
                 Previous
             </a>
         </li>
@@ -177,7 +217,7 @@
             <span class="page-link">Page {{ page }} of {{ total_pages }}</span>
         </li>
         <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-            <a class="page-link" href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id, search=search, page=page+1) }}">
+            <a class="page-link" href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id, search=search, page=page+1, preview_q=preview_question_indexes) }}">
                 Next
             </a>
         </li>

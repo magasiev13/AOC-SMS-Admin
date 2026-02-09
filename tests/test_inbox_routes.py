@@ -702,6 +702,38 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIn("+17205550300", name_html)
         self.assertNotIn("+17205550301", name_html)
 
+    def test_survey_submissions_preview_can_target_selected_questions(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Preview Selector Survey",
+            keyword="PREVIEW SELECT",
+            questions=["What is your name?", "Are you paid?", "How many guests?"],
+        )
+        now = datetime.now(timezone.utc)
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550320",
+            answers=["Mozy", "Paid", "5"],
+            completed_at=now,
+        )
+        self.db.session.commit()
+
+        default_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions")
+        self.assertEqual(default_response.status_code, 200)
+        default_html = default_response.get_data(as_text=True)
+        self.assertIn("Mozy; Paid", default_html)
+
+        selected_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions?preview_q=0&preview_q=2")
+        self.assertEqual(selected_response.status_code, 200)
+        selected_html = selected_response.get_data(as_text=True)
+        self.assertIn("Mozy; 5", selected_html)
+        self.assertNotIn("Mozy; Paid", selected_html)
+
+        invalid_response = self.client.get(f"/inbox/surveys/{survey.id}/submissions?preview_q=99")
+        self.assertEqual(invalid_response.status_code, 200)
+        invalid_html = invalid_response.get_data(as_text=True)
+        self.assertIn("Mozy; Paid", invalid_html)
+
     def test_survey_submissions_export_includes_all_completed_and_latest_flag(self) -> None:
         self._login()
         survey = self._create_survey_flow(

@@ -2752,6 +2752,53 @@ a:focus-visible,
   max-width: none;
 }
 
+.survey-preview-selector {
+  margin-top: var(--space-3);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.survey-preview-selector__label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-1);
+  font-weight: 600;
+}
+
+.survey-preview-selector__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.survey-preview-selector__option {
+  margin-right: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  max-width: 32rem;
+}
+
+.survey-preview-selector__option .form-check-input {
+  margin-top: 0.125rem;
+}
+
+.survey-preview-selector__option .form-check-label {
+  font-size: var(--font-size-1);
+  max-width: 28ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.survey-preview-selector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .survey-submissions-table td {
   vertical-align: middle;
 }
@@ -2840,6 +2887,10 @@ a:focus-visible,
 
   .survey-submissions-filter .input-group {
     max-width: none;
+  }
+
+  .survey-preview-selector__option {
+    max-width: 100%;
   }
 }
 
