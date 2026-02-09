@@ -492,6 +492,7 @@ GET /inbox/surveys/add
 POST /inbox/surveys/add
 GET /inbox/surveys/<survey_id>/edit
 POST /inbox/surveys/<survey_id>/edit
+POST /inbox/surveys/<survey_id>/delete
 POST /inbox/surveys/<survey_id>/deactivate
 GET /inbox/surveys/<survey_id>/submissions
 GET /inbox/surveys/<survey_id>/submissions/export
@@ -503,6 +504,10 @@ Survey add/edit forms support optional event linkage:
 - `new_event_title` and optional `new_event_date` when creating a new linked event
 
 When linked, completed survey sessions upsert the sender into `event_registrations` for the linked event (keyed by `event_id + phone`).
+
+Survey deletion permanently removes the survey flow and all related `survey_sessions` and `survey_responses`.
+
+If a survey is linked to an event, it must be unlinked (`event_link_mode=none`) before it can be deleted.
 
 ---
 
