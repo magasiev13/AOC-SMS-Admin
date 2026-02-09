@@ -1,12 +1,25 @@
 import csv
 import io
 import json
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, unquote
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    flash,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    stream_with_context,
+    url_for,
+)
 from flask_login import login_required, current_user
 from sqlalchemy import DateTime, Integer, String, Text, func, text
 from sqlalchemy.exc import OperationalError
@@ -172,25 +185,199 @@ def _phone_digits_sql(column):
     return normalized
 
 
-def _build_survey_submission_data(survey: SurveyFlow, *, search: str = '') -> dict[str, object]:
-    questions = survey.questions
-    completed_sessions = (
-        SurveySession.query.filter_by(survey_id=survey.id, status='completed')
-        .order_by(SurveySession.completed_at.desc(), SurveySession.id.desc())
+def _survey_submission_search_phones(survey_id: int, search: str) -> set[str]:
+    search_text = search.strip()
+    if not search_text:
+        return set()
+
+    escaped = escape_like(search_text)
+    pattern = f'%{escaped}%'
+    phones: set[str] = set()
+
+    session_rows = (
+        db.session.query(SurveySession.phone)
+        .filter(
+            SurveySession.survey_id == survey_id,
+            SurveySession.status == 'completed',
+            SurveySession.phone.ilike(pattern, escape='\\'),
+        )
+        .distinct()
         .all()
     )
-    if not completed_sessions:
+    phones.update(phone for (phone,) in session_rows if phone)
+
+    response_rows = (
+        db.session.query(SurveyResponse.phone)
+        .filter(
+            SurveyResponse.survey_id == survey_id,
+            SurveyResponse.answer.ilike(pattern, escape='\\'),
+        )
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in response_rows if phone)
+
+    community_rows = (
+        db.session.query(CommunityMember.phone)
+        .filter(CommunityMember.name.ilike(pattern, escape='\\'))
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in community_rows if phone)
+
+    thread_rows = (
+        db.session.query(InboxThread.phone)
+        .filter(InboxThread.contact_name.ilike(pattern, escape='\\'))
+        .distinct()
+        .all()
+    )
+    phones.update(phone for (phone,) in thread_rows if phone)
+
+    return phones
+
+
+def _build_survey_submission_data(
+    survey: SurveyFlow,
+    *,
+    search: str = '',
+    page: int = 1,
+    per_page: int = 50,
+) -> dict[str, object]:
+    questions = survey.questions
+    completed_filters = [
+        SurveySession.survey_id == survey.id,
+        SurveySession.status == 'completed',
+    ]
+    search_text = search.strip()
+    search_phones = _survey_submission_search_phones(survey.id, search_text) if search_text else set()
+    if search_text and not search_phones:
         return {
             'questions': questions,
-            'all_completed_rows': [],
             'latest_rows': [],
             'history_by_phone': {},
+            'latest_session_by_phone': {},
             'unique_attendees': 0,
             'total_completed': 0,
             'repeat_submitters': 0,
+            'page': 1,
+            'total_pages': 0,
+            'per_page': per_page,
         }
 
-    session_ids = [session.id for session in completed_sessions]
+    if search_phones:
+        completed_filters.append(SurveySession.phone.in_(search_phones))
+
+    total_completed = (
+        db.session.query(func.count(SurveySession.id))
+        .filter(*completed_filters)
+        .scalar()
+        or 0
+    )
+    unique_attendees = (
+        db.session.query(func.count(func.distinct(SurveySession.phone)))
+        .filter(*completed_filters)
+        .scalar()
+        or 0
+    )
+    repeat_submitters = 0
+    if unique_attendees:
+        counts_subquery = (
+            db.session.query(
+                SurveySession.phone.label('phone'),
+                func.count(SurveySession.id).label('submission_count'),
+            )
+            .filter(*completed_filters)
+            .group_by(SurveySession.phone)
+            .subquery()
+        )
+        repeat_submitters = (
+            db.session.query(func.count())
+            .select_from(counts_subquery)
+            .filter(counts_subquery.c.submission_count > 1)
+            .scalar()
+            or 0
+        )
+
+    if not unique_attendees:
+        return {
+            'questions': questions,
+            'latest_rows': [],
+            'history_by_phone': {},
+            'latest_session_by_phone': {},
+            'unique_attendees': 0,
+            'total_completed': 0,
+            'repeat_submitters': 0,
+            'page': 1,
+            'total_pages': 0,
+            'per_page': per_page,
+        }
+
+    total_pages = math.ceil(unique_attendees / per_page) if per_page else 1
+    safe_page = max(1, min(page, total_pages))
+    offset = (safe_page - 1) * per_page
+
+    row_num = func.row_number().over(
+        partition_by=SurveySession.phone,
+        order_by=(SurveySession.completed_at.desc(), SurveySession.id.desc()),
+    ).label('row_num')
+    latest_subquery = (
+        db.session.query(
+            SurveySession.id.label('session_id'),
+            SurveySession.phone.label('phone'),
+            SurveySession.thread_id.label('thread_id'),
+            SurveySession.completed_at.label('completed_at'),
+            SurveySession.last_activity_at.label('last_activity_at'),
+            SurveySession.started_at.label('started_at'),
+            row_num,
+        )
+        .filter(*completed_filters)
+        .subquery()
+    )
+    latest_sessions = (
+        db.session.query(SurveySession)
+        .join(latest_subquery, SurveySession.id == latest_subquery.c.session_id)
+        .filter(latest_subquery.c.row_num == 1)
+        .order_by(
+            latest_subquery.c.completed_at.desc().nullslast(),
+            latest_subquery.c.session_id.desc(),
+        )
+        .limit(per_page)
+        .offset(offset)
+        .all()
+    )
+
+    if not latest_sessions:
+        return {
+            'questions': questions,
+            'latest_rows': [],
+            'history_by_phone': {},
+            'latest_session_by_phone': {},
+            'unique_attendees': unique_attendees,
+            'total_completed': total_completed,
+            'repeat_submitters': repeat_submitters,
+            'page': safe_page,
+            'total_pages': total_pages,
+            'per_page': per_page,
+        }
+
+    phones = {session.phone for session in latest_sessions if session.phone}
+    completed_filter_for_phones = completed_filters + [SurveySession.phone.in_(phones)]
+    submission_counts = {
+        phone: count
+        for phone, count in (
+            db.session.query(SurveySession.phone, func.count(SurveySession.id))
+            .filter(*completed_filter_for_phones)
+            .group_by(SurveySession.phone)
+            .all()
+        )
+    }
+
+    session_rows = (
+        SurveySession.query.filter(*completed_filter_for_phones)
+        .order_by(SurveySession.completed_at.desc(), SurveySession.id.desc())
+        .all()
+    )
+    session_ids = [session.id for session in session_rows]
     responses = (
         SurveyResponse.query.filter(SurveyResponse.session_id.in_(session_ids))
         .order_by(SurveyResponse.session_id.asc(), SurveyResponse.question_index.asc(), SurveyResponse.id.asc())
@@ -203,7 +390,6 @@ def _build_survey_submission_data(survey: SurveyFlow, *, search: str = '') -> di
         if response.question_index not in answer_map:
             answer_map[response.question_index] = (response.answer or '').strip()
 
-    phones = {session.phone for session in completed_sessions if session.phone}
     community_name_map = _community_name_map_for_phones(phones)
     thread_name_map = {
         thread.phone: (thread.contact_name or '').strip()
@@ -211,10 +397,11 @@ def _build_survey_submission_data(survey: SurveyFlow, *, search: str = '') -> di
         if (thread.contact_name or '').strip()
     }
 
-    all_completed_rows: list[dict[str, object]] = []
-    submission_counts: dict[str, int] = {}
-    for session in completed_sessions:
-        submission_counts[session.phone] = submission_counts.get(session.phone, 0) + 1
+    latest_session_by_phone = {session.phone: session.id for session in latest_sessions if session.phone}
+    latest_rows: list[dict[str, object]] = []
+    history_by_phone: dict[str, list[dict[str, object]]] = {}
+
+    for session in session_rows:
         answer_map = answers_by_session.get(session.id, {})
         answers = [answer_map.get(index, '') for index in range(len(questions))]
         first_answer = next((answer for answer in answers if answer), '')
@@ -232,73 +419,129 @@ def _build_survey_submission_data(survey: SurveyFlow, *, search: str = '') -> di
         submitted_at = session.completed_at or session.last_activity_at or session.started_at
         submitted_at_iso = submitted_at.isoformat() if submitted_at else ''
 
-        all_completed_rows.append(
-            {
-                'session_id': session.id,
-                'phone': session.phone,
-                'display_name': display_name,
-                'submitted_at': submitted_at,
-                'submitted_at_iso': submitted_at_iso,
-                'answers': answers,
-                'qa_pairs': [
-                    {'prompt': question, 'answer': answers[index] if index < len(answers) else ''}
-                    for index, question in enumerate(questions)
-                ],
-                'answers_preview': answers_preview,
-                'thread_id': session.thread_id,
-            }
-        )
-
-    latest_rows: list[dict[str, object]] = []
-    history_by_phone: dict[str, list[dict[str, object]]] = {}
-    latest_session_by_phone: dict[str, int] = {}
-
-    for row in all_completed_rows:
-        phone = str(row['phone'])
-        if phone not in latest_session_by_phone:
-            latest_session_by_phone[phone] = int(row['session_id'])
-            row['submission_count'] = submission_counts.get(phone, 0)
-            row['phone_dom_id'] = re.sub(r'[^0-9]', '', phone) or f"phone{row['session_id']}"
+        row = {
+            'session_id': session.id,
+            'phone': session.phone,
+            'display_name': display_name,
+            'submitted_at': submitted_at,
+            'submitted_at_iso': submitted_at_iso,
+            'answers': answers,
+            'qa_pairs': [
+                {'prompt': question, 'answer': answers[index] if index < len(answers) else ''}
+                for index, question in enumerate(questions)
+            ],
+            'answers_preview': answers_preview,
+            'thread_id': session.thread_id,
+        }
+        if latest_session_by_phone.get(session.phone) == session.id:
+            row['submission_count'] = submission_counts.get(session.phone, 0)
+            row['phone_dom_id'] = re.sub(r'[^0-9]', '', str(session.phone)) or f"phone{session.id}"
             latest_rows.append(row)
-            continue
-        history_by_phone.setdefault(phone, []).append(row)
-
-    search_text = search.strip().casefold()
-    if search_text:
-        filtered_latest_rows: list[dict[str, object]] = []
-        filtered_history_by_phone: dict[str, list[dict[str, object]]] = {}
-        for row in latest_rows:
-            phone = str(row['phone'])
-            history_rows = history_by_phone.get(phone, [])
-            haystack: list[str] = [
-                phone,
-                str(row['display_name']),
-                str(row['answers_preview']),
-            ]
-            haystack.extend(str(answer) for answer in row.get('answers', []) if answer)
-            for history_row in history_rows:
-                haystack.append(str(history_row['display_name']))
-                haystack.append(str(history_row['answers_preview']))
-                haystack.extend(str(answer) for answer in history_row.get('answers', []) if answer)
-            if any(search_text in value.casefold() for value in haystack if value):
-                filtered_latest_rows.append(row)
-                filtered_history_by_phone[phone] = history_rows
-        latest_rows = filtered_latest_rows
-        history_by_phone = filtered_history_by_phone
-
-    total_completed = sum(int(row.get('submission_count') or 0) for row in latest_rows)
-    repeat_submitters = sum(1 for row in latest_rows if int(row.get('submission_count') or 0) > 1)
+        else:
+            history_by_phone.setdefault(str(session.phone), []).append(row)
 
     return {
         'questions': questions,
-        'all_completed_rows': all_completed_rows,
         'latest_rows': latest_rows,
         'history_by_phone': history_by_phone,
         'latest_session_by_phone': latest_session_by_phone,
-        'unique_attendees': len(latest_rows),
+        'unique_attendees': unique_attendees,
         'total_completed': total_completed,
         'repeat_submitters': repeat_submitters,
+        'page': safe_page,
+        'total_pages': total_pages,
+        'per_page': per_page,
     }
+
+
+def _iter_survey_submission_export_rows(survey: SurveyFlow) -> object:
+    questions = survey.questions
+    question_headers = [question if question else f'question_{index + 1}' for index, question in enumerate(questions)]
+    header_row = [
+        'submission_id',
+        'phone',
+        'display_name',
+        'submitted_at_utc',
+        'is_latest_for_phone',
+        *question_headers,
+    ]
+
+    def row_generator():
+        yield header_row
+        row_num = func.row_number().over(
+            partition_by=SurveySession.phone,
+            order_by=(SurveySession.completed_at.desc(), SurveySession.id.desc()),
+        ).label('row_num')
+        base_query = (
+            db.session.query(SurveySession, row_num)
+            .filter(
+                SurveySession.survey_id == survey.id,
+                SurveySession.status == 'completed',
+            )
+            .order_by(SurveySession.completed_at.desc(), SurveySession.id.desc())
+        )
+        batch_size = 500
+        offset = 0
+        while True:
+            batch = base_query.limit(batch_size).offset(offset).all()
+            if not batch:
+                break
+            sessions = [session for session, _ in batch]
+            row_nums = {session.id: row_number for session, row_number in batch}
+            phones = {session.phone for session in sessions if session.phone}
+            community_name_map = _community_name_map_for_phones(phones)
+            thread_name_map = {
+                thread.phone: (thread.contact_name or '').strip()
+                for thread in InboxThread.query.filter(InboxThread.phone.in_(phones)).all()
+                if (thread.contact_name or '').strip()
+            }
+
+            session_ids = [session.id for session in sessions]
+            responses = (
+                SurveyResponse.query.filter(SurveyResponse.session_id.in_(session_ids))
+                .order_by(SurveyResponse.session_id.asc(), SurveyResponse.question_index.asc(), SurveyResponse.id.asc())
+                .all()
+            )
+            answers_by_session: dict[int, dict[int, str]] = {}
+            for response in responses:
+                answer_map = answers_by_session.setdefault(response.session_id, {})
+                if response.question_index not in answer_map:
+                    answer_map[response.question_index] = (response.answer or '').strip()
+
+            for session in sessions:
+                answer_map = answers_by_session.get(session.id, {})
+                answers = [answer_map.get(index, '') for index in range(len(questions))]
+                first_answer = next((answer for answer in answers if answer), '')
+                display_name = (
+                    community_name_map.get(session.phone)
+                    or thread_name_map.get(session.phone)
+                    or first_answer
+                    or session.phone
+                )
+                submitted_at = session.completed_at or session.last_activity_at or session.started_at
+                submitted_at_utc = submitted_at.isoformat() if submitted_at else ''
+                is_latest_for_phone = row_nums.get(session.id) == 1
+                yield [
+                    session.id,
+                    session.phone,
+                    display_name,
+                    submitted_at_utc,
+                    'true' if is_latest_for_phone else 'false',
+                    *answers,
+                ]
+            offset += batch_size
+
+    return row_generator()
+
+
+def _stream_csv_rows(rows: object) -> object:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    for row in rows:
+        output.seek(0)
+        output.truncate(0)
+        writer.writerow(row)
+        yield output.getvalue()
 
 
 def _survey_form_events() -> list[Event]:
@@ -2167,7 +2410,8 @@ def survey_flows_list():
 def survey_flow_submissions(survey_id):
     survey = db.get_or_404(SurveyFlow, survey_id)
     search = request.args.get('search', '').strip()
-    payload = _build_survey_submission_data(survey, search=search)
+    page = request.args.get('page', type=int) or 1
+    payload = _build_survey_submission_data(survey, search=search, page=page)
     return render_template(
         'inbox/survey_submissions.html',
         survey=survey,
@@ -2178,6 +2422,9 @@ def survey_flow_submissions(survey_id):
         unique_attendees=payload['unique_attendees'],
         total_completed=payload['total_completed'],
         repeat_submitters=payload['repeat_submitters'],
+        page=payload['page'],
+        total_pages=payload['total_pages'],
+        per_page=payload['per_page'],
     )
 
 
@@ -2186,45 +2433,9 @@ def survey_flow_submissions(survey_id):
 @require_roles('admin', 'social_manager')
 def survey_flow_submissions_export(survey_id):
     survey = db.get_or_404(SurveyFlow, survey_id)
-    payload = _build_survey_submission_data(survey)
-    all_rows = payload['all_completed_rows']
-    latest_session_by_phone = payload['latest_session_by_phone']
-    questions = payload['questions']
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    question_headers = [question if question else f'question_{index + 1}' for index, question in enumerate(questions)]
-    writer.writerow(
-        [
-            'submission_id',
-            'phone',
-            'display_name',
-            'submitted_at_utc',
-            'is_latest_for_phone',
-            *question_headers,
-        ]
-    )
-
-    for row in all_rows:
-        phone = str(row['phone'])
-        submitted_at = row.get('submitted_at')
-        submitted_at_utc = submitted_at.isoformat() if submitted_at else ''
-        is_latest_for_phone = int(row['session_id']) == int(latest_session_by_phone.get(phone, -1))
-        writer.writerow(
-            [
-                row['session_id'],
-                phone,
-                row['display_name'],
-                submitted_at_utc,
-                'true' if is_latest_for_phone else 'false',
-                *row.get('answers', []),
-            ]
-        )
-
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = f'survey_{survey.id}_submissions.csv'
+    rows = _iter_survey_submission_export_rows(survey)
+    response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename="survey_{survey.id}_submissions.csv"'
     return response
 
 
