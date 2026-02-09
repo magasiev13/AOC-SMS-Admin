@@ -466,7 +466,14 @@ If `TWILIO_VALIDATE_INBOUND_SIGNATURE=1`, requests require a valid `X-Twilio-Sig
 GET /inbox
 GET /inbox?search=%2B1555&thread=12
 POST /inbox/<thread_id>/reply
+POST /inbox/threads/<thread_id>/update
+POST /inbox/threads/<thread_id>/delete
+POST /inbox/threads/bulk-delete
+POST /inbox/messages/<message_id>/delete
+POST /inbox/messages/bulk-delete
 ```
+
+Inbox mutations (`reply`, `thread update/delete`, `message delete`) require `admin` or `social_manager`.
 
 ### Keyword Automations
 
@@ -538,6 +545,7 @@ Most form submissions return redirects with flash messages:
 | View logs | ✓ | ✓ |
 | View inbox | ✓ | ✓ |
 | Reply from inbox | ✓ | ✓ |
+| Update/delete inbox threads/messages | ✓ | ✓ |
 | Manage keyword/survey automations | ✓ | ✓ |
 | View community | ✓ | ✓ |
 | Add/edit community | ✓ | ✗ |

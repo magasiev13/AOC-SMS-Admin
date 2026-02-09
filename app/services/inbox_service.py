@@ -50,6 +50,91 @@ def mark_thread_read(thread_id: int) -> None:
     db.session.commit()
 
 
+def update_thread_contact_name(thread_id: int, contact_name: str | None) -> InboxThread | None:
+    thread = db.session.get(InboxThread, thread_id)
+    if thread is None:
+        return None
+
+    thread.contact_name = (contact_name or '').strip() or None
+    thread.updated_at = utc_now()
+    db.session.commit()
+    return thread
+
+
+def _refresh_thread_rollup(thread: InboxThread) -> None:
+    latest_message = (
+        InboxMessage.query.filter_by(thread_id=thread.id)
+        .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
+        .first()
+    )
+    if latest_message is None:
+        thread.last_message_preview = None
+        thread.last_direction = None
+        thread.unread_count = 0
+        if thread.last_message_at is None:
+            thread.last_message_at = utc_now()
+        thread.updated_at = utc_now()
+        return
+
+    thread.last_message_at = latest_message.created_at or utc_now()
+    thread.last_message_preview = (latest_message.body or '')[:180]
+    thread.last_direction = latest_message.direction
+    inbound_count = InboxMessage.query.filter_by(thread_id=thread.id, direction='inbound').count()
+    thread.unread_count = min(thread.unread_count or 0, inbound_count)
+    thread.updated_at = utc_now()
+
+
+def delete_messages_in_thread(thread_id: int, message_ids: list[int]) -> int:
+    thread = db.session.get(InboxThread, thread_id)
+    if thread is None:
+        return 0
+
+    resolved_message_ids = sorted({int(message_id) for message_id in message_ids if message_id})
+    if not resolved_message_ids:
+        return 0
+
+    messages = InboxMessage.query.filter(
+        InboxMessage.thread_id == thread.id,
+        InboxMessage.id.in_(resolved_message_ids),
+    ).all()
+    if not messages:
+        return 0
+
+    deleted_count = len(messages)
+    for message in messages:
+        db.session.delete(message)
+
+    db.session.flush()
+    _refresh_thread_rollup(thread)
+    db.session.commit()
+    return deleted_count
+
+
+def delete_thread_with_dependencies(thread_id: int) -> dict[str, int] | None:
+    thread = db.session.get(InboxThread, thread_id)
+    if thread is None:
+        return None
+
+    message_count = InboxMessage.query.filter_by(thread_id=thread.id).count()
+    sessions = SurveySession.query.filter_by(thread_id=thread.id).all()
+    session_ids = [session.id for session in sessions]
+    response_count = 0
+    if session_ids:
+        response_count = SurveyResponse.query.filter(SurveyResponse.session_id.in_(session_ids)).count()
+
+    for session in sessions:
+        db.session.delete(session)
+
+    db.session.delete(thread)
+    db.session.commit()
+    return {
+        'threads': 1,
+        'messages': message_count,
+        'sessions': len(sessions),
+        'responses': response_count,
+    }
+
+
 def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> dict:
     thread = db.session.get(InboxThread, thread_id)
     if thread is None:

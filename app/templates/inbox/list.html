@@ -38,28 +38,57 @@
         </div>
 
         <div class="card app-card inbox-threads-card">
+            {% if threads %}
+            <form id="bulkThreadDeleteForm" method="POST" action="{{ url_for('main.inbox_threads_bulk_delete') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="search" value="{{ search }}">
+                {% if selected_thread %}
+                <input type="hidden" name="thread" value="{{ selected_thread.id }}">
+                {% endif %}
+            </form>
+            <div class="card-header d-flex justify-content-between align-items-center gap-2">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="selectAllThreads" aria-label="Select all threads">
+                    <label class="form-check-label small" for="selectAllThreads">Select all</label>
+                </div>
+                <button class="btn btn-sm btn-outline-danger" type="submit" form="bulkThreadDeleteForm"
+                        data-confirm="Delete selected threads and all related messages/survey data?">
+                    <i class="bi bi-trash me-1"></i>Delete Selected
+                </button>
+            </div>
+            {% endif %}
             <div class="list-group list-group-flush inbox-thread-list">
                 {% if threads %}
                     {% for thread in threads %}
                     {% set thread_label = thread_display_names.get(thread.id, thread.contact_name or thread.phone) %}
-                    <a class="list-group-item list-group-item-action inbox-thread-item {% if selected_thread and thread.id == selected_thread.id %}active{% endif %}"
-                       href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
-                        <div class="d-flex justify-content-between align-items-center gap-2">
-                            <div>
-                                <div class="fw-semibold">{{ thread_label }}</div>
-                                {% if thread_label != thread.phone %}
-                                <div class="small text-muted">{{ thread.phone }}</div>
-                                {% endif %}
-                            </div>
-                            {% if thread.unread_count %}
-                            <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
-                            {% endif %}
+                    {% set thread_is_active = selected_thread and thread.id == selected_thread.id %}
+                    <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}">
+                        <div class="d-flex align-items-start gap-2">
+                            <input class="form-check-input mt-1 js-thread-select" type="checkbox" name="thread_ids"
+                                   value="{{ thread.id }}" form="bulkThreadDeleteForm"
+                                   aria-label="Select thread {{ thread_label }}">
+                            <a class="text-decoration-none flex-grow-1 {% if thread_is_active %}text-white{% else %}text-reset{% endif %}"
+                               href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}">
+                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                    <div>
+                                        <div class="fw-semibold">{{ thread_label }}</div>
+                                        {% if thread_label != thread.phone %}
+                                        <div class="small {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">{{ thread.phone }}</div>
+                                        {% endif %}
+                                    </div>
+                                    {% if thread.unread_count %}
+                                    <span class="badge bg-danger rounded-pill">{{ thread.unread_count }}</span>
+                                    {% endif %}
+                                </div>
+                                <div class="small mt-1 inbox-thread-preview {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                                    {{ thread.last_message_preview or 'No messages yet' }}
+                                </div>
+                                <div class="small inbox-thread-time {% if thread_is_active %}text-white-50{% else %}text-muted{% endif %}">
+                                    {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
+                                </div>
+                            </a>
                         </div>
-                        <div class="small text-muted mt-1 inbox-thread-preview">
-                            {{ thread.last_message_preview or 'No messages yet' }}
-                        </div>
-                        <div class="small text-muted inbox-thread-time">{{ thread.last_message_at|localtime('%b %d, %H:%M') }}</div>
-                    </a>
+                    </div>
                     {% endfor %}
                 {% else %}
                 <div class="p-4 text-center text-muted">
@@ -82,12 +111,36 @@
                     <div class="small text-muted">{{ selected_thread.phone }}</div>
                     {% endif %}
                 </div>
-                <div class="text-muted small">
-                    Last updated {{ selected_thread.last_message_at|localtime('%b %d, %H:%M') }}
+                <div class="d-flex align-items-center gap-3">
+                    <div class="text-muted small">
+                        Last updated {{ selected_thread.last_message_at|localtime('%b %d, %H:%M') }}
+                    </div>
+                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="search" value="{{ search }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit"
+                                data-confirm="Delete this thread and all related messages/survey data?">
+                            <i class="bi bi-trash me-1"></i>Delete Thread
+                        </button>
+                    </form>
                 </div>
             </div>
 
             <div class="card-body d-flex flex-column" style="min-height: 480px;">
+                <form method="POST" action="{{ url_for('main.inbox_thread_update', thread_id=selected_thread.id) }}" class="mb-3">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="search" value="{{ search }}">
+                    <label for="threadContactName" class="form-label">Thread contact name</label>
+                    <div class="input-group">
+                        <input id="threadContactName" name="contact_name" class="form-control" type="text"
+                               value="{{ selected_thread.contact_name or '' }}" maxlength="100"
+                               placeholder="Optional display name">
+                        <button class="btn btn-outline-primary" type="submit">
+                            <i class="bi bi-save me-1"></i>Save
+                        </button>
+                    </div>
+                </form>
+
                 {% if active_sessions %}
                 <div class="alert alert-info py-2">
                     <i class="bi bi-info-circle me-1"></i>
@@ -98,24 +151,57 @@
                 </div>
                 {% endif %}
 
+                <form id="bulkMessageDeleteForm" method="POST" action="{{ url_for('main.inbox_messages_bulk_delete') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="search" value="{{ search }}">
+                    <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
+                </form>
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="selectAllMessages"
+                               aria-label="Select all messages in thread">
+                        <label class="form-check-label small" for="selectAllMessages">Select all messages</label>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" form="bulkMessageDeleteForm"
+                            data-confirm="Delete selected messages?">
+                        <i class="bi bi-trash me-1"></i>Delete Selected
+                    </button>
+                </div>
+
                 <div id="inboxMessagePane" class="flex-grow-1 overflow-auto border rounded p-3 bg-light-subtle inbox-message-pane">
                     {% if messages %}
                         {% for message in messages %}
                         <div class="d-flex mb-3 {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
-                            <div class="p-2 rounded {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}" style="max-width: 80%;">
-                                <div class="small mb-1">{{ message.body }}</div>
-                                <div class="small {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
-                                    {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
-                                    {% if message.matched_keyword %}
-                                        • keyword: <code>{{ message.matched_keyword }}</code>
-                                    {% endif %}
-                                    {% if message.direction == 'outbound' and message.delivery_status %}
-                                        • {{ message.delivery_status }}
+                            <div class="d-flex align-items-start gap-2 {% if message.direction == 'outbound' %}flex-row-reverse{% endif %}">
+                                <input class="form-check-input mt-2 js-message-select" type="checkbox" name="message_ids"
+                                       value="{{ message.id }}" form="bulkMessageDeleteForm"
+                                       aria-label="Select message {{ message.id }}">
+                                <div class="p-2 rounded {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}" style="max-width: 80%;">
+                                    <div class="small mb-1">{{ message.body }}</div>
+                                    <div class="d-flex justify-content-between align-items-start gap-2">
+                                        <div class="small {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
+                                            {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
+                                            {% if message.matched_keyword %}
+                                                • keyword: <code>{{ message.matched_keyword }}</code>
+                                            {% endif %}
+                                            {% if message.direction == 'outbound' and message.delivery_status %}
+                                                • {{ message.delivery_status }}
+                                            {% endif %}
+                                        </div>
+                                        <form method="POST" action="{{ url_for('main.inbox_message_delete', message_id=message.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="search" value="{{ search }}">
+                                            <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
+                                            <button class="btn btn-sm {% if message.direction == 'outbound' %}btn-outline-light{% else %}btn-outline-danger{% endif %} py-0 px-2"
+                                                    type="submit" data-confirm="Delete this message?">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                    {% if message.delivery_error %}
+                                    <div class="small mt-1 text-warning-emphasis">{{ message.delivery_error }}</div>
                                     {% endif %}
                                 </div>
-                                {% if message.delivery_error %}
-                                <div class="small mt-1 text-warning-emphasis">{{ message.delivery_error }}</div>
-                                {% endif %}
                             </div>
                         </div>
                         {% endfor %}
@@ -153,6 +239,35 @@
     if (pane) {
         pane.scrollTop = pane.scrollHeight;
     }
+
+    function bindSelectAll(selectAllId, itemSelector) {
+        const selectAll = document.getElementById(selectAllId);
+        if (!selectAll) {
+            return;
+        }
+
+        const items = Array.from(document.querySelectorAll(itemSelector));
+        if (!items.length) {
+            selectAll.checked = false;
+            selectAll.disabled = true;
+            return;
+        }
+
+        selectAll.addEventListener('change', () => {
+            items.forEach((item) => {
+                item.checked = selectAll.checked;
+            });
+        });
+
+        items.forEach((item) => {
+            item.addEventListener('change', () => {
+                selectAll.checked = items.every((entry) => entry.checked);
+            });
+        });
+    }
+
+    bindSelectAll('selectAllThreads', '.js-thread-select');
+    bindSelectAll('selectAllMessages', '.js-message-select');
 
     const inboxStatusMeta = document.getElementById('inboxStatusMeta');
     if (inboxStatusMeta) {

@@ -31,10 +31,13 @@ from app.models import (
     utc_now,
 )
 from app.services.inbox_service import (
+    delete_messages_in_thread,
+    delete_thread_with_dependencies,
     mark_thread_read,
     parse_survey_questions,
     process_inbound_sms,
     send_thread_reply,
+    update_thread_contact_name,
 )
 from app.services.recipient_service import (
     filter_suppressed_recipients,
@@ -138,6 +141,26 @@ def _build_thread_display_names(
         )
 
     return display_names
+
+
+def _parse_int_ids(raw_values: list[str]) -> list[int]:
+    ids: list[int] = []
+    for raw in raw_values:
+        try:
+            ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(ids))
+
+
+def _redirect_to_inbox(*, thread_id: int | None = None) -> object:
+    search = request.form.get('search', '').strip()
+    query_args = {}
+    if thread_id:
+        query_args['thread'] = thread_id
+    if search:
+        query_args['search'] = search
+    return redirect(url_for('main.inbox_list', **query_args))
 
 
 def _phone_digits_sql(column):
@@ -1803,6 +1826,117 @@ def inbox_reply(thread_id):
         flash(f'Reply could not be delivered: {error}', 'error')
 
     return redirect(url_for('main.inbox_list', thread=thread_id))
+
+
+@bp.route('/inbox/threads/<int:thread_id>/update', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_thread_update(thread_id):
+    thread = db.get_or_404(InboxThread, thread_id)
+    contact_name = request.form.get('contact_name')
+    updated = update_thread_contact_name(thread.id, contact_name)
+    if updated is None:
+        flash('Thread not found.', 'error')
+        return _redirect_to_inbox()
+
+    flash('Thread contact updated.', 'success')
+    return _redirect_to_inbox(thread_id=thread.id)
+
+
+@bp.route('/inbox/threads/<int:thread_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_thread_delete(thread_id):
+    thread = db.get_or_404(InboxThread, thread_id)
+    result = delete_thread_with_dependencies(thread.id)
+    if result is None:
+        flash('Thread not found.', 'error')
+        return _redirect_to_inbox()
+
+    flash(
+        (
+            'Thread deleted '
+            f"({result['messages']} message(s), "
+            f"{result['sessions']} survey session(s), "
+            f"{result['responses']} survey response(s))."
+        ),
+        'success',
+    )
+    return _redirect_to_inbox()
+
+
+@bp.route('/inbox/threads/bulk-delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_threads_bulk_delete():
+    selected_thread_id = request.form.get('thread', type=int)
+    thread_ids = _parse_int_ids(request.form.getlist('thread_ids'))
+    if not thread_ids:
+        flash('No threads selected.', 'warning')
+        return _redirect_to_inbox(thread_id=selected_thread_id)
+
+    deleted_threads = 0
+    deleted_messages = 0
+    deleted_sessions = 0
+    deleted_responses = 0
+    for thread_id in thread_ids:
+        result = delete_thread_with_dependencies(thread_id)
+        if result is None:
+            continue
+        deleted_threads += result['threads']
+        deleted_messages += result['messages']
+        deleted_sessions += result['sessions']
+        deleted_responses += result['responses']
+
+    if deleted_threads == 0:
+        flash('No matching threads found to delete.', 'warning')
+        return _redirect_to_inbox()
+
+    flash(
+        (
+            f'Deleted {deleted_threads} thread(s), {deleted_messages} message(s), '
+            f'{deleted_sessions} survey session(s), and {deleted_responses} survey response(s).'
+        ),
+        'success',
+    )
+
+    redirect_thread_id = selected_thread_id
+    if redirect_thread_id and redirect_thread_id in thread_ids:
+        redirect_thread_id = None
+    return _redirect_to_inbox(thread_id=redirect_thread_id)
+
+
+@bp.route('/inbox/messages/<int:message_id>/delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_message_delete(message_id):
+    message = db.get_or_404(InboxMessage, message_id)
+    deleted = delete_messages_in_thread(message.thread_id, [message.id])
+    if deleted:
+        flash('Message deleted.', 'success')
+    else:
+        flash('Message could not be deleted.', 'error')
+    return _redirect_to_inbox(thread_id=message.thread_id)
+
+
+@bp.route('/inbox/messages/bulk-delete', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_messages_bulk_delete():
+    thread_id = request.form.get('thread_id', type=int)
+    if not thread_id:
+        flash('Thread is required.', 'error')
+        return _redirect_to_inbox()
+
+    db.get_or_404(InboxThread, thread_id)
+    message_ids = _parse_int_ids(request.form.getlist('message_ids'))
+    if not message_ids:
+        flash('No messages selected.', 'warning')
+        return _redirect_to_inbox(thread_id=thread_id)
+
+    deleted = delete_messages_in_thread(thread_id, message_ids)
+    flash(f'Deleted {deleted} message(s).', 'success')
+    return _redirect_to_inbox(thread_id=thread_id)
 
 
 @bp.route('/inbox/keywords')
