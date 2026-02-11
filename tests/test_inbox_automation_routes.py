@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 
 class TestInboxAutomationRouteValidation(unittest.TestCase):
@@ -16,11 +17,21 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser, Event, InboxThread, KeywordAutomationRule, SurveyFlow, SurveyResponse, SurveySession
+        from app.models import (
+            AppUser,
+            Event,
+            InboxMessage,
+            InboxThread,
+            KeywordAutomationRule,
+            SurveyFlow,
+            SurveyResponse,
+            SurveySession,
+        )
 
         self.db = db
         self.AppUser = AppUser
         self.Event = Event
+        self.InboxMessage = InboxMessage
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
         self.SurveyFlow = SurveyFlow
@@ -124,6 +135,23 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.db.session.add(event)
         self.db.session.commit()
         return event
+
+    def _create_inbound_keyword_match(self, *, keyword: str, phone: str):
+        thread = self.InboxThread(phone=phone, contact_name="Keyword Contact")
+        self.db.session.add(thread)
+        self.db.session.flush()
+
+        message = self.InboxMessage(
+            thread_id=thread.id,
+            phone=phone,
+            direction="inbound",
+            body=f"Trigger {keyword}",
+            matched_keyword=keyword,
+            created_at=datetime.now(timezone.utc),
+        )
+        self.db.session.add(message)
+        self.db.session.commit()
+        return thread, message
 
     def test_keyword_rule_add_rejects_existing_survey_keyword(self) -> None:
         self._login()
@@ -283,6 +311,77 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertIsNotNone(self.db.session.get(self.SurveyFlow, survey.id))
+
+    def test_dashboard_top_keywords_hides_deleted_keyword_rule(self) -> None:
+        self._login()
+        rule = self._create_rule(keyword="HELP")
+        self._create_inbound_keyword_match(keyword="HELP", phone="+17205550101")
+
+        before_delete = self.client.get("/dashboard")
+        self.assertEqual(before_delete.status_code, 200)
+        self.assertIn(b"<code>HELP</code>", before_delete.data)
+
+        delete_response = self.client.post(
+            f"/inbox/keywords/{rule.id}/delete",
+            follow_redirects=False,
+        )
+        self.assertEqual(delete_response.status_code, 302)
+
+        after_delete = self.client.get("/dashboard")
+        self.assertEqual(after_delete.status_code, 200)
+        self.assertNotIn(b"<code>HELP</code>", after_delete.data)
+
+    def test_dashboard_top_keywords_hides_deleted_survey_flow(self) -> None:
+        self._login()
+        survey = self._create_survey(name="RSVP Survey", trigger_keyword="RSVP")
+        self._create_inbound_keyword_match(keyword="RSVP", phone="+17205550102")
+
+        before_delete = self.client.get("/dashboard")
+        self.assertEqual(before_delete.status_code, 200)
+        self.assertIn(b"<code>RSVP</code>", before_delete.data)
+
+        delete_response = self.client.post(
+            f"/inbox/surveys/{survey.id}/delete",
+            follow_redirects=False,
+        )
+        self.assertEqual(delete_response.status_code, 302)
+
+        after_delete = self.client.get("/dashboard")
+        self.assertEqual(after_delete.status_code, 200)
+        self.assertNotIn(b"<code>RSVP</code>", after_delete.data)
+
+    def test_dashboard_top_keywords_hides_deactivated_triggers(self) -> None:
+        self._login()
+        rule = self._create_rule(keyword="HELP")
+        survey = self._create_survey(name="RSVP Survey", trigger_keyword="RSVP")
+        self._create_inbound_keyword_match(keyword="HELP", phone="+17205550103")
+        self._create_inbound_keyword_match(keyword="RSVP", phone="+17205550104")
+
+        before_deactivate = self.client.get("/dashboard")
+        self.assertEqual(before_deactivate.status_code, 200)
+        self.assertIn(b"<code>HELP</code>", before_deactivate.data)
+        self.assertIn(b"<code>RSVP</code>", before_deactivate.data)
+
+        rule_deactivate = self.client.post(
+            f"/inbox/keywords/{rule.id}/edit",
+            data={
+                "keyword": "HELP",
+                "response_body": "Auto-reply",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(rule_deactivate.status_code, 302)
+
+        survey_deactivate = self.client.post(
+            f"/inbox/surveys/{survey.id}/deactivate",
+            follow_redirects=False,
+        )
+        self.assertEqual(survey_deactivate.status_code, 302)
+
+        after_deactivate = self.client.get("/dashboard")
+        self.assertEqual(after_deactivate.status_code, 200)
+        self.assertNotIn(b"<code>HELP</code>", after_deactivate.data)
+        self.assertNotIn(b"<code>RSVP</code>", after_deactivate.data)
 
     def test_survey_add_links_existing_event(self) -> None:
         self._login()

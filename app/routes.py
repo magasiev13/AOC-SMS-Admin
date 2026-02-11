@@ -21,7 +21,7 @@ from flask import (
     url_for,
 )
 from flask_login import login_required, current_user
-from sqlalchemy import DateTime, Integer, String, Text, func, text
+from sqlalchemy import DateTime, Integer, String, Text, func, select, text
 from sqlalchemy.exc import OperationalError
 
 from app import csrf, db
@@ -120,6 +120,19 @@ def _keyword_conflicts_with_rule(keyword: str, *, exclude_rule_id: int | None = 
     if exclude_rule_id is not None:
         query = query.filter(KeywordAutomationRule.id != exclude_rule_id)
     return query.first() is not None
+
+
+def _is_active_trigger_keyword(column):
+    active_rule_keywords = select(KeywordAutomationRule.keyword).where(
+        KeywordAutomationRule.is_active.is_(True)
+    )
+    active_survey_keywords = select(SurveyFlow.trigger_keyword).where(
+        SurveyFlow.is_active.is_(True)
+    )
+    return db.or_(
+        column.in_(active_rule_keywords),
+        column.in_(active_survey_keywords),
+    )
 
 
 def _community_name_map_for_phones(phones: set[str]) -> dict[str, str]:
@@ -694,6 +707,7 @@ def dashboard():
                 InboxMessage.direction == 'inbound',
                 InboxMessage.created_at >= seven_days_ago,
                 InboxMessage.matched_keyword.isnot(None),
+                _is_active_trigger_keyword(InboxMessage.matched_keyword),
             ).group_by(
                 InboxMessage.matched_keyword,
             ).order_by(
