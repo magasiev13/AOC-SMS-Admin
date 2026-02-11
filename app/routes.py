@@ -68,6 +68,7 @@ from app.utils import (
     normalize_keyword,
     normalize_phone,
     parse_recipients_csv,
+    sanitize_csv_cell,
     validate_phone,
 )
 
@@ -565,7 +566,7 @@ def _stream_csv_rows(rows: object) -> object:
     for row in rows:
         output.seek(0)
         output.truncate(0)
-        writer.writerow(row)
+        writer.writerow([sanitize_csv_cell(cell) for cell in row])
         yield output.getvalue()
 
 
@@ -1170,7 +1171,11 @@ def community_export():
     writer = csv.writer(output)
     writer.writerow(['name', 'phone', 'created_at'])
     for member in members:
-        writer.writerow([member.name or '', member.phone, member.created_at.isoformat() if member.created_at else ''])
+        writer.writerow([
+            sanitize_csv_cell(member.name or ''),
+            sanitize_csv_cell(member.phone),
+            sanitize_csv_cell(member.created_at.isoformat() if member.created_at else ''),
+        ])
 
     response = make_response(output.getvalue())
     response.headers['Content-Type'] = 'text/csv'
@@ -1502,7 +1507,11 @@ def event_export_registrations(event_id):
     writer = csv.writer(output)
     writer.writerow(['name', 'phone', 'created_at'])
     for reg in registrations:
-        writer.writerow([reg.name or '', reg.phone, reg.created_at.isoformat() if reg.created_at else ''])
+        writer.writerow([
+            sanitize_csv_cell(reg.name or ''),
+            sanitize_csv_cell(reg.phone),
+            sanitize_csv_cell(reg.created_at.isoformat() if reg.created_at else ''),
+        ])
 
     response = make_response(output.getvalue())
     response.headers['Content-Type'] = 'text/csv'
@@ -2045,11 +2054,11 @@ def unsubscribed_export():
     writer.writerow(['name', 'phone', 'reason', 'source', 'created_at'])
     for entry in entries:
         writer.writerow([
-            entry.name or '',
-            entry.phone,
-            entry.reason or '',
-            entry.source,
-            entry.created_at.isoformat() if entry.created_at else '',
+            sanitize_csv_cell(entry.name or ''),
+            sanitize_csv_cell(entry.phone),
+            sanitize_csv_cell(entry.reason or ''),
+            sanitize_csv_cell(entry.source),
+            sanitize_csv_cell(entry.created_at.isoformat() if entry.created_at else ''),
         ])
 
     response = make_response(output.getvalue())
