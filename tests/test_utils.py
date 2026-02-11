@@ -10,10 +10,11 @@ from app.utils import (
     find_invalid_template_tokens,
     normalize_keyword,
     normalize_phone,
-    validate_phone,
     parse_recipients_csv,
     parse_phones_csv,
     render_message_template,
+    sanitize_csv_cell,
+    validate_phone,
 )
 
 
@@ -46,6 +47,26 @@ class TestEscapeLike(unittest.TestCase):
     def test_escapes_backslash_and_wildcards(self) -> None:
         value = "foo\\bar%_"
         self.assertEqual(escape_like(value), "foo\\\\bar\\%\\_")
+
+
+class TestSanitizeCsvCell(unittest.TestCase):
+    def test_none_becomes_empty_string(self) -> None:
+        self.assertEqual(sanitize_csv_cell(None), "")
+
+    def test_formula_prefixes_are_escaped(self) -> None:
+        self.assertEqual(sanitize_csv_cell("=SUM(A1:A2)"), "'=SUM(A1:A2)")
+        self.assertEqual(sanitize_csv_cell("+12345"), "'+12345")
+        self.assertEqual(sanitize_csv_cell("-10"), "'-10")
+        self.assertEqual(sanitize_csv_cell("@cmd"), "'@cmd")
+
+    def test_control_character_prefixes_are_escaped(self) -> None:
+        self.assertEqual(sanitize_csv_cell("\t=1+1"), "'\t=1+1")
+        self.assertEqual(sanitize_csv_cell("\nhello"), "'\nhello")
+        self.assertEqual(sanitize_csv_cell("\rhello"), "'\rhello")
+
+    def test_regular_values_are_not_changed(self) -> None:
+        self.assertEqual(sanitize_csv_cell("hello"), "hello")
+        self.assertEqual(sanitize_csv_cell("12345"), "12345")
 
 
 class TestNormalizeKeyword(unittest.TestCase):

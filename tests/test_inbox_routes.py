@@ -793,11 +793,11 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIn("What is your name?", reader.fieldnames)
         self.assertIn("How many guests?", reader.fieldnames)
 
-        phone_one_rows = [row for row in rows if row["phone"] == "+17205550400"]
+        phone_one_rows = [row for row in rows if row["phone"].lstrip("'") == "+17205550400"]
         self.assertEqual(len(phone_one_rows), 2)
         self.assertEqual(sum(1 for row in phone_one_rows if row["is_latest_for_phone"] == "true"), 1)
 
-        phone_two_rows = [row for row in rows if row["phone"] == "+17205550401"]
+        phone_two_rows = [row for row in rows if row["phone"].lstrip("'") == "+17205550401"]
         self.assertEqual(len(phone_two_rows), 1)
         self.assertEqual(phone_two_rows[0]["is_latest_for_phone"], "true")
 
@@ -805,6 +805,31 @@ class TestInboxRoutes(unittest.TestCase):
             values = " ".join(row.values())
             self.assertNotIn("ActiveIgnore", values)
             self.assertNotIn("CancelledIgnore", values)
+
+    def test_survey_submissions_export_escapes_formula_injection_cells(self) -> None:
+        self._login()
+        survey = self._create_survey_flow(
+            name="Escape Survey",
+            keyword="ESCAPE SURVEY",
+            questions=["What is your name?"],
+        )
+        formula = '=HYPERLINK("http://attacker.local/","click")'
+        self._create_survey_submission(
+            survey=survey,
+            phone="+17205550999",
+            answers=[formula],
+            completed_at=datetime.now(timezone.utc),
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox/surveys/{survey.id}/submissions/export")
+        self.assertEqual(response.status_code, 200)
+
+        reader = csv.DictReader(io.StringIO(response.get_data(as_text=True)))
+        rows = list(reader)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["What is your name?"], f"'{formula}")
+        self.assertEqual(rows[0]["display_name"], f"'{formula}")
 
     def test_inbox_mutation_requires_login(self) -> None:
         thread = self._create_thread(phone="+17205550013")

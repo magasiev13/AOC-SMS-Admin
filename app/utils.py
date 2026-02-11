@@ -10,6 +10,7 @@ _TEMPLATE_TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _TEMPLATE_TOKEN_SCAN_RE = re.compile(r"\{([^{}]+)\}")
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
 
 
 def escape_like(value: str) -> str:
@@ -103,6 +104,25 @@ def find_invalid_template_tokens(template: str) -> list[str]:
                 invalid_tokens.append(raw)
                 seen.add(raw)
     return invalid_tokens
+
+
+def sanitize_csv_cell(value: object) -> str:
+    """
+    Prevent CSV/formula injection when opening exports in spreadsheet clients.
+
+    Any cell beginning with characters interpreted as formulas is prefixed with
+    a single quote so it is treated as literal text.
+    """
+    if value is None:
+        return ""
+
+    text = str(value)
+    if not text:
+        return text
+
+    if text[0] in _CSV_FORMULA_PREFIXES or text[0] in ("\t", "\r", "\n"):
+        return f"'{text}"
+    return text
 
 
 def _looks_like_phone(value: str) -> bool:
