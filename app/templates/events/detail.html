@@ -115,7 +115,8 @@
                             <td>
                                 <div class="d-flex flex-wrap gap-1">
                                     {% if not is_unsubscribed %}
-                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe registration">
+                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe registration"
+                                            data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
                                         <i class="bi bi-person-x"></i>
                                     </button>
                                     {% endif %}
@@ -138,7 +139,13 @@
                         {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="4" class="text-center text-muted py-3">No registrations yet.</td>
+                            <td colspan="4" class="py-5">
+                                <div class="empty-state">
+                                    <i class="bi bi-people empty-state__icon"></i>
+                                    <div class="empty-state__title">No registrations yet</div>
+                                    <div class="empty-state__text">Use the form or CSV import to add registrations.</div>
+                                </div>
+                            </td>
                         </tr>
                         {% endif %}
                     </tbody>
@@ -164,7 +171,8 @@
                         </div>
                         <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                             {% if not is_unsubscribed %}
-                            <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" aria-label="Unsubscribe registration">
+                            <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" aria-label="Unsubscribe registration"
+                                    data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
                                 <i class="bi bi-person-x"></i> Unsubscribe
                             </button>
                             {% endif %}

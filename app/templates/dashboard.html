@@ -5,7 +5,7 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block breadcrumbs %}
-<span class="live-indicator"><span class="live-indicator__dot"></span> Live</span>
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a>
 {% endblock %}
 
 {% block content %}
@@ -124,40 +124,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-        </section>
-
-        <!-- Quick Links -->
-        <section class="mb-4 dashboard-section dashboard-section-links">
-            <div class="quick-links">
-                <a href="{{ url_for('main.inbox_list') }}" class="quick-link">
-                    <i class="bi bi-chat-left-text quick-link__icon"></i>
-                    <span class="quick-link__label">Inbox</span>
-                </a>
-                <a href="{{ url_for('main.keyword_rules_list') }}" class="quick-link">
-                    <i class="bi bi-magic quick-link__icon"></i>
-                    <span class="quick-link__label">Automations</span>
-                </a>
-                <a href="{{ url_for('main.community_list') }}" class="quick-link">
-                    <i class="bi bi-people quick-link__icon"></i>
-                    <span class="quick-link__label">Community</span>
-                </a>
-                <a href="{{ url_for('main.events_list') }}" class="quick-link">
-                    <i class="bi bi-calendar-event quick-link__icon"></i>
-                    <span class="quick-link__label">Events ({{ events|length }})</span>
-                </a>
-                <a href="{{ url_for('main.scheduled_list') }}" class="quick-link">
-                    <i class="bi bi-clock quick-link__icon"></i>
-                    <span class="quick-link__label">Scheduled</span>
-                </a>
-                <a href="{{ url_for('main.logs_list') }}" class="quick-link">
-                    <i class="bi bi-journal-text quick-link__icon"></i>
-                    <span class="quick-link__label">Logs</span>
-                </a>
-                <a href="{{ url_for('main.unsubscribed_list') }}" class="quick-link">
-                    <i class="bi bi-person-x quick-link__icon"></i>
-                    <span class="quick-link__label">Suppression</span>
-                </a>
             </div>
         </section>
 
@@ -404,6 +370,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
     const messageBody = document.getElementById('message_body');
     const charCount = document.getElementById('charCount');
