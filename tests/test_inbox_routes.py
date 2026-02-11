@@ -98,12 +98,14 @@ class TestInboxRoutes(unittest.TestCase):
         body: str,
         direction: str,
         created_at: datetime | None = None,
+        matched_keyword: str | None = None,
     ):
         message = self.InboxMessage(
             thread_id=thread.id,
             phone=thread.phone,
             direction=direction,
             body=body,
+            matched_keyword=matched_keyword,
             created_at=created_at or datetime.now(timezone.utc),
         )
         self.db.session.add(message)
@@ -277,6 +279,77 @@ class TestInboxRoutes(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("Jordan Blake", html)
         self.assertIn(thread.phone, html)
+
+    def test_inbox_message_shows_active_keyword_label(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550090")
+        self._create_survey_flow(
+            name="Active Keyword Survey",
+            keyword="ACTIVE KEY",
+            questions=["Question 1?"],
+        )
+        self._create_message(
+            thread=thread,
+            body="Trigger active keyword",
+            direction="inbound",
+            matched_keyword="ACTIVE KEY",
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox?thread={thread.id}")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("keyword: <code>ACTIVE KEY</code>", html)
+        self.assertNotIn("keyword hidden", html)
+
+    def test_inbox_message_hides_inactive_keyword_with_reveal(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550091")
+        survey = self._create_survey_flow(
+            name="Inactive Keyword Survey",
+            keyword="INACTIVE KEY",
+            questions=["Question 1?"],
+        )
+        survey.is_active = False
+        self._create_message(
+            thread=thread,
+            body="Trigger inactive keyword",
+            direction="inbound",
+            matched_keyword="INACTIVE KEY",
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox?thread={thread.id}")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("keyword hidden", html)
+        self.assertIn("inactive", html)
+        self.assertIn("Show historical keyword", html)
+        self.assertIn("Historical keyword: <code>INACTIVE KEY</code>", html)
+
+    def test_inbox_message_hides_deleted_keyword_with_reveal(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550092")
+        survey = self._create_survey_flow(
+            name="Deleted Keyword Survey",
+            keyword="DELETED KEY",
+            questions=["Question 1?"],
+        )
+        self._create_message(
+            thread=thread,
+            body="Trigger deleted keyword",
+            direction="inbound",
+            matched_keyword="DELETED KEY",
+        )
+        self.db.session.delete(survey)
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox?thread={thread.id}")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("keyword hidden", html)
+        self.assertIn("Show historical keyword", html)
+        self.assertIn("Historical keyword: <code>DELETED KEY</code>", html)
 
     def test_inbox_thread_update_contact_name(self) -> None:
         self._login()

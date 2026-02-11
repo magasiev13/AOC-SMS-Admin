@@ -135,6 +135,19 @@ def _is_active_trigger_keyword(column):
     )
 
 
+def _active_trigger_keywords_set() -> set[str]:
+    active_keywords_query = select(KeywordAutomationRule.keyword).where(
+        KeywordAutomationRule.is_active.is_(True)
+    ).union(
+        select(SurveyFlow.trigger_keyword).where(SurveyFlow.is_active.is_(True))
+    )
+    return {
+        keyword
+        for keyword in db.session.execute(active_keywords_query).scalars().all()
+        if keyword
+    }
+
+
 def _community_name_map_for_phones(phones: set[str]) -> dict[str, str]:
     if not phones:
         return {}
@@ -2203,12 +2216,14 @@ def inbox_list():
 
     messages = []
     active_sessions = []
+    active_trigger_keywords: set[str] = set()
     if selected_thread:
         if selected_thread.unread_count:
             mark_thread_read(selected_thread.id)
             selected_thread.unread_count = 0
 
         messages = InboxMessage.query.filter_by(thread_id=selected_thread.id).order_by(InboxMessage.created_at.asc()).all()
+        active_trigger_keywords = _active_trigger_keywords_set()
         active_sessions = SurveySession.query.filter_by(
             thread_id=selected_thread.id,
             status='active',
@@ -2223,6 +2238,7 @@ def inbox_list():
         selected_thread=selected_thread,
         messages=messages,
         active_sessions=active_sessions,
+        active_trigger_keywords=active_trigger_keywords,
         thread_display_names=thread_display_names,
         inbox_status_latest_message_id=latest_message_id,
         search=search,
