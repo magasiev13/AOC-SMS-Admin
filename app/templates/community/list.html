@@ -133,7 +133,8 @@
                                     <i class="bi bi-pencil"></i>
                                 </a>
                                 {% if not is_unsubscribed %}
-                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe member">
+                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe member"
+                                        data-confirm="Unsubscribe {{ member.name or member.phone }}? This will add them to the suppression list.">
                                     <i class="bi bi-person-x"></i>
                                 </button>
                                 {% endif %}
@@ -229,7 +230,8 @@
                         <i class="bi bi-pencil"></i> Edit
                     </a>
                     {% if not is_unsubscribed %}
-                    <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning">
+                    <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning"
+                            data-confirm="Unsubscribe {{ member.name or member.phone }}? This will add them to the suppression list.">
                         <i class="bi bi-person-x"></i> Unsubscribe
                     </button>
                     {% endif %}

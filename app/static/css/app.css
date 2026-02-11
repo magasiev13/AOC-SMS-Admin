@@ -2960,6 +2960,16 @@ a:focus-visible,
   }
 }
 
+/* Message body preview (log detail) */
+.message-body-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--font-size-2);
+  line-height: var(--line-height-3);
+  color: var(--color-text);
+}
+
 /* Respect user motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,
