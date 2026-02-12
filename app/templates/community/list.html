@@ -47,7 +47,9 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
-            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
+            <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                <span id="selectedCount">0</span> selected
+            </span>
             <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
                 <i class="bi bi-trash me-1"></i>Delete selected
@@ -287,11 +289,11 @@
 
 {% if can_manage_community %}
 <!-- Delete Confirmation Modal -->
-<div class="modal fade" id="deleteModal" tabindex="-1">
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Confirm Delete</h5>
+                <h5 class="modal-title" id="deleteModalTitle">Confirm Delete</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -305,11 +307,11 @@
     </div>
 </div>
 
-<div class="modal fade" id="bulkDeleteModal" tabindex="-1">
+<div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Confirm Bulk Delete</h5>
+                <h5 class="modal-title" id="bulkDeleteModalTitle">Confirm Bulk Delete</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">

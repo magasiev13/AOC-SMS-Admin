@@ -1405,6 +1405,32 @@ def event_delete(event_id):
     return redirect(url_for('main.events_list'))
 
 
+@bp.route('/events/bulk-delete', methods=['POST'])
+@login_required
+@require_roles('admin')
+def events_bulk_delete():
+    raw_ids = request.form.getlist('event_ids')
+    event_ids = []
+    for raw in raw_ids:
+        try:
+            event_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+
+    event_ids = sorted(set(event_ids))
+    if not event_ids:
+        flash('No events selected.', 'warning')
+        return redirect(url_for('main.events_list'))
+
+    events = Event.query.filter(Event.id.in_(event_ids)).all()
+    for event in events:
+        db.session.delete(event)
+
+    db.session.commit()
+    flash(f'Deleted {len(events)} event(s).', 'success')
+    return redirect(url_for('main.events_list'))
+
+
 @bp.route('/events/<int:event_id>/register', methods=['POST'])
 @login_required
 def event_register(event_id):
@@ -1767,6 +1793,37 @@ def scheduled_bulk_delete():
     deleted = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).delete(synchronize_session=False)
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
+    return redirect(url_for('main.scheduled_list'))
+
+
+@bp.route('/scheduled/bulk-cancel', methods=['POST'])
+@login_required
+@require_roles('admin')
+def scheduled_bulk_cancel():
+    ids_str = request.form.get('scheduled_ids', '')
+    if not ids_str:
+        flash('No messages selected.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+
+    try:
+        ids = [int(i) for i in ids_str.split(',') if i.strip()]
+    except ValueError:
+        flash('Invalid selection.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+
+    if not ids:
+        flash('No messages selected.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+
+    updated = ScheduledMessage.query.filter(
+        ScheduledMessage.id.in_(ids),
+        ScheduledMessage.status.in_(['pending', 'processing']),
+    ).update(
+        {ScheduledMessage.status: 'cancelled'},
+        synchronize_session=False,
+    )
+    db.session.commit()
+    flash(f'Cancelled {updated} scheduled message(s).', 'success')
     return redirect(url_for('main.scheduled_list'))
 
 

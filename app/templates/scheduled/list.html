@@ -40,7 +40,13 @@
                 <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
             </div>
             <div class="bulk-selection-actions" id="pendingBulkSelectionActions">
-                <span class="text-muted"><span id="pendingSelectedCount">0</span> selected</span>
+                <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="pendingSelectedCount">0</span> selected
+                </span>
+                <button type="button" class="btn btn-sm btn-warning" id="pendingBulkCancelBtn"
+                        data-bs-toggle="modal" data-bs-target="#pendingBulkCancelModal">
+                    <i class="bi bi-x-circle me-1"></i>Cancel selected
+                </button>
             </div>
         </div>
     </div>
@@ -191,7 +197,9 @@
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select none</button>
             </div>
             <div class="bulk-selection-actions" id="pastBulkSelectionActions">
-                <span class="text-muted"><span id="pastSelectedCount">0</span> selected</span>
+                <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="pastSelectedCount">0</span> selected
+                </span>
                 <button type="button" class="btn btn-sm btn-danger" id="pastBulkDeleteBtn"
                         data-bs-toggle="modal" data-bs-target="#pastBulkDeleteModal">
                     <i class="bi bi-trash me-1"></i>Delete selected
@@ -345,7 +353,7 @@
 {% endif %}
 
 <!-- Action Confirmation Modal -->
-<div class="modal fade" id="actionModal" tabindex="-1">
+<div class="modal fade" id="actionModal" tabindex="-1" aria-labelledby="actionModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
@@ -363,12 +371,35 @@
     </div>
 </div>
 
-<!-- Bulk Delete Modal for Past Messages -->
-<div class="modal fade" id="pastBulkDeleteModal" tabindex="-1">
+<!-- Bulk Cancel Modal for Pending Messages -->
+<div class="modal fade" id="pendingBulkCancelModal" tabindex="-1" aria-labelledby="pendingBulkCancelModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Delete Selected</h5>
+                <h5 class="modal-title" id="pendingBulkCancelModalTitle">Cancel Selected</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                Cancel <strong id="pendingBulkCancelCount">0</strong> scheduled messages?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button>
+                <button type="submit" form="pendingBulkCancelForm" class="btn btn-warning">Yes, cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+<form id="pendingBulkCancelForm" method="POST" action="{{ url_for('main.scheduled_bulk_cancel') }}" style="display:none;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="scheduled_ids" id="pendingBulkCancelIds" value="">
+</form>
+
+<!-- Bulk Delete Modal for Past Messages -->
+<div class="modal fade" id="pastBulkDeleteModal" tabindex="-1" aria-labelledby="pastBulkDeleteModalTitle">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="pastBulkDeleteModalTitle">Delete Selected</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -500,6 +531,17 @@
 
     setupBulkControls('pending');
     setupBulkControls('past');
+
+    // Bulk cancel modal handler for pending messages
+    const pendingBulkCancelModal = document.getElementById('pendingBulkCancelModal');
+    if (pendingBulkCancelModal) {
+        pendingBulkCancelModal.addEventListener('show.bs.modal', function() {
+            const boxes = Array.from(document.querySelectorAll('.js-select-row[data-bulk-group="pending"]:checked'));
+            const ids = boxes.map(b => b.value).filter(Boolean);
+            document.getElementById('pendingBulkCancelCount').textContent = ids.length;
+            document.getElementById('pendingBulkCancelIds').value = ids.join(',');
+        });
+    }
 
     // Bulk delete modal handler for past messages
     const pastBulkDeleteModal = document.getElementById('pastBulkDeleteModal');

@@ -54,9 +54,12 @@ class TestEventsRoutes(unittest.TestCase):
         os.environ.pop("DATABASE_URL", None)
 
     def _login(self) -> None:
+        self._login_as("admin", "admin-pass")
+
+    def _login_as(self, username: str, password: str) -> None:
         response = self.client.post(
             "/login",
-            data={"username": "admin", "password": "admin-pass"},
+            data={"username": username, "password": password},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 302)
@@ -98,6 +101,54 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(f'data-event-title="{event.title}"'.encode(), response.data)
         self.assertIn(f"delete-event-mobile-{event.id}".encode(), response.data)
+
+    def test_events_list_bulk_delete_controls_visible_for_admin(self) -> None:
+        self._login()
+
+        event = self.Event(title="Board Meeting")
+        self.db.session.add(event)
+        self.db.session.commit()
+
+        response = self.client.get("/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'id="bulkDeleteBtn"', response.data)
+        self.assertIn(b"Delete selected", response.data)
+        self.assertIn(b'/events/bulk-delete', response.data)
+
+    def test_events_list_hides_bulk_delete_controls_for_social_manager(self) -> None:
+        manager = self.AppUser(username="manager", role="social_manager", must_change_password=False)
+        manager.set_password("manager-pass")
+        self.db.session.add(manager)
+        self.db.session.add(self.Event(title="Neighborhood Cleanup"))
+        self.db.session.commit()
+
+        self._login_as("manager", "manager-pass")
+        response = self.client.get("/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'id="bulkDeleteBtn"', response.data)
+        self.assertNotIn(b'form="bulkDeleteForm"', response.data)
+
+    def test_events_bulk_delete_deletes_selected_rows(self) -> None:
+        self._login()
+
+        keep = self.Event(title="Keep Event")
+        drop_one = self.Event(title="Drop Event One")
+        drop_two = self.Event(title="Drop Event Two")
+        self.db.session.add_all([keep, drop_one, drop_two])
+        self.db.session.commit()
+
+        response = self.client.post(
+            "/events/bulk-delete",
+            data={"event_ids": [str(drop_one.id), str(drop_two.id)]},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        remaining_titles = {event.title for event in self.Event.query.order_by(self.Event.id).all()}
+        self.assertEqual(remaining_titles, {"Keep Event"})
 
 
 if __name__ == "__main__":

@@ -125,6 +125,23 @@ class TestScheduledStatusFiltering(unittest.TestCase):
         self.assertEqual(payload["pending_ids"], [match.id])
         self.assertEqual(payload["pending_count"], 1)
 
+    def test_scheduled_bulk_cancel_only_updates_pending_or_processing(self) -> None:
+        self._login()
+        pending = self._create_scheduled(message_body="Pending message", status="pending")
+        sent = self._create_scheduled(message_body="Sent message", status="sent")
+
+        response = self.client.post(
+            "/scheduled/bulk-cancel",
+            data={"scheduled_ids": f"{pending.id},{sent.id}"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(pending)
+        self.db.session.refresh(sent)
+        self.assertEqual(pending.status, "cancelled")
+        self.assertEqual(sent.status, "sent")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -608,17 +608,13 @@ h6,
 }
 
 .bulk-selection-actions {
-  display: flex;
+  display: none;
   align-items: center;
   gap: var(--space-3);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.15s ease, visibility 0.15s ease;
 }
 
 .bulk-selection-actions.is-visible {
-  opacity: 1;
-  visibility: visible;
+  display: flex;
 }
 
 .bulk-action-bar {

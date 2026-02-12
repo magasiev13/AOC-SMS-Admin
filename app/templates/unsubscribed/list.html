@@ -55,7 +55,9 @@
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
-            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
+            <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                <span id="selectedCount">0</span> selected
+            </span>
             <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
                 <i class="bi bi-trash me-1"></i>Delete selected
@@ -257,11 +259,11 @@
     {% endif %}
 </div>
 
-<div class="modal fade" id="bulkDeleteModal" tabindex="-1">
+<div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Confirm Bulk Delete</h5>
+                <h5 class="modal-title" id="bulkDeleteModalTitle">Confirm Bulk Delete</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -345,7 +347,7 @@
     }
 
     // Bulk selection functionality
-    const checkboxes = document.querySelectorAll('.entry-checkbox');
+    const allEntryCheckboxes = Array.from(document.querySelectorAll('.entry-checkbox'));
     const selectAllCheckbox = document.getElementById('selectAllEntries');
     const selectAllBtn = document.getElementById('selectAllBtn');
     const selectNoneBtn = document.getElementById('selectNoneBtn');
@@ -356,42 +358,77 @@
     const confirmBulkDeleteBtn = document.getElementById('confirmBulkDeleteBtn');
     const bulkDeleteForm = document.getElementById('bulkDeleteForm');
 
+    function isElementVisible(element) {
+        if (!element) return false;
+        if (element.offsetParent !== null) return true;
+        return element.getClientRects().length > 0;
+    }
+
+    function getVisibleEntryCheckboxes() {
+        return allEntryCheckboxes.filter(isElementVisible);
+    }
+
+    function syncMatchingCheckboxes(sourceCheckbox, checked) {
+        allEntryCheckboxes.forEach(function(cb) {
+            if (cb.name === sourceCheckbox.name && cb.value === sourceCheckbox.value) {
+                cb.checked = checked;
+            }
+        });
+    }
+
+    function setCheckedForVisibleEntries(checked) {
+        getVisibleEntryCheckboxes().forEach(function(cb) {
+            syncMatchingCheckboxes(cb, checked);
+        });
+    }
+
     function updateBulkUi() {
-        const checked = document.querySelectorAll('.entry-checkbox:checked');
-        const count = checked.length;
+        const visibleCheckboxes = getVisibleEntryCheckboxes();
+        const count = visibleCheckboxes.filter(function(cb) { return cb.checked; }).length;
         if (selectedCount) selectedCount.textContent = count;
         if (bulkSelectionActions) {
             bulkSelectionActions.classList.toggle('is-visible', count > 0);
         }
         if (bulkDeleteCount) bulkDeleteCount.textContent = count;
         if (selectAllCheckbox) {
-            selectAllCheckbox.checked = checkboxes.length > 0 && count === checkboxes.length;
-            selectAllCheckbox.indeterminate = count > 0 && count < checkboxes.length;
+            selectAllCheckbox.checked = visibleCheckboxes.length > 0 && count === visibleCheckboxes.length;
+            selectAllCheckbox.indeterminate = count > 0 && count < visibleCheckboxes.length;
         }
     }
 
-    checkboxes.forEach(function(cb) {
-        cb.addEventListener('change', updateBulkUi);
+    allEntryCheckboxes.forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            syncMatchingCheckboxes(cb, cb.checked);
+            updateBulkUi();
+        });
     });
 
     if (selectAllCheckbox) {
         selectAllCheckbox.addEventListener('change', function() {
-            checkboxes.forEach(function(cb) { cb.checked = selectAllCheckbox.checked; });
+            setCheckedForVisibleEntries(selectAllCheckbox.checked);
             updateBulkUi();
         });
     }
 
     if (selectAllBtn) {
         selectAllBtn.addEventListener('click', function() {
-            checkboxes.forEach(function(cb) { cb.checked = true; });
+            setCheckedForVisibleEntries(true);
             updateBulkUi();
         });
     }
 
     if (selectNoneBtn) {
         selectNoneBtn.addEventListener('click', function() {
-            checkboxes.forEach(function(cb) { cb.checked = false; });
+            setCheckedForVisibleEntries(false);
             updateBulkUi();
+        });
+    }
+
+    const bulkDeleteModal = document.getElementById('bulkDeleteModal');
+    if (bulkDeleteModal) {
+        bulkDeleteModal.addEventListener('show.bs.modal', function() {
+            const selected = getVisibleEntryCheckboxes().filter(function(cb) { return cb.checked; }).length;
+            if (bulkDeleteCount) bulkDeleteCount.textContent = selected;
         });
     }
 
@@ -401,6 +438,7 @@
         });
     }
 
+    window.addEventListener('resize', updateBulkUi);
     updateBulkUi();
 </script>
 {% endblock %}

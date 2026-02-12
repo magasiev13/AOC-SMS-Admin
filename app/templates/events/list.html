@@ -4,6 +4,8 @@
 
 {% block page_title %}Events{% endblock %}
 
+{% set can_manage_events = current_user.is_admin %}
+
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Events</span>
 {% endblock %}
@@ -29,26 +31,37 @@
 </div>
 
 <div class="card app-card">
-    {% if events %}
+    {% if events and can_manage_events %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
             <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
             <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
-            <span class="text-muted"><span id="selectedCount">0</span> selected</span>
+            <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                <span id="selectedCount">0</span> selected
+            </span>
+            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
+                    data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
+                <i class="bi bi-trash me-1"></i>Delete selected
+            </button>
         </div>
+        <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.events_bulk_delete') }}" style="display:none;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </form>
     </div>
     {% endif %}
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover table-sticky-header mb-0 table-loading" id="eventsTable" data-sortable="client">
             <thead class="table-light">
                 <tr>
+                    {% if can_manage_events %}
                     <th width="40">
                         {% if events %}
                         <input class="form-check-input" type="checkbox" id="selectAllEvents" aria-label="Select all events">
                         {% endif %}
                     </th>
+                    {% endif %}
                     <th data-sort-type="string">
                         <button type="button" class="sort-button" data-sort-key="title">
                             <span>Title</span>
@@ -80,9 +93,13 @@
                 {% if events %}
                     {% for event in events %}
                     <tr>
+                        {% if can_manage_events %}
                         <td>
-                            <input class="form-check-input js-select-row" type="checkbox" id="event-select-{{ event.id }}" name="event_ids" value="{{ event.id }}" aria-label="Select event">
+                            <input class="form-check-input event-checkbox js-select-row" type="checkbox"
+                                   id="event-select-{{ event.id }}" name="event_ids" value="{{ event.id }}"
+                                   form="bulkDeleteForm" aria-label="Select event">
                         </td>
+                        {% endif %}
                         <td data-sort-value="{{ event.title }}">
                             <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="text-decoration-none">
                                 {{ event.title }}
@@ -112,6 +129,7 @@
                                    class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit event">
                                     <i class="bi bi-pencil"></i>
                                 </a>
+                                {% if can_manage_events %}
                                 <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete event"
                                         data-bs-toggle="modal" data-bs-target="#deleteEventModal"
                                         data-form-id="delete-event-{{ event.id }}"
@@ -123,13 +141,14 @@
                                       id="delete-event-{{ event.id }}" style="display:none;">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 </form>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="6" class="py-5">
+                        <td colspan="{{ 6 if can_manage_events else 5 }}" class="py-5">
                             <div class="empty-state">
                                 <i class="bi bi-calendar-x empty-state__icon"></i>
                                 <div class="empty-state__title">No events found</div>
@@ -145,7 +164,9 @@
             <tbody class="table-skeleton-body" aria-hidden="true">
                 {% for _ in range(5) %}
                 <tr>
+                    {% if can_manage_events %}
                     <td><span class="skeleton-block" style="width: 1rem;"></span></td>
+                    {% endif %}
                     <td><span class="skeleton-block w-75"></span></td>
                     <td><span class="skeleton-block w-50"></span></td>
                     <td><span class="skeleton-block w-25"></span></td>
@@ -166,7 +187,11 @@
                         <div class="text-muted small">Date: {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</div>
                         <div class="text-muted small">Registrations: {{ event.registrations|length }}</div>
                     </div>
-                    <input class="form-check-input js-select-row" type="checkbox" id="event-select-mobile-{{ event.id }}" name="event_ids" value="{{ event.id }}" aria-label="Select event">
+                    {% if can_manage_events %}
+                    <input class="form-check-input event-checkbox js-select-row" type="checkbox"
+                           id="event-select-mobile-{{ event.id }}" name="event_ids" value="{{ event.id }}"
+                           form="bulkDeleteForm" aria-label="Select event">
+                    {% endif %}
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                     <button type="button" class="btn btn-sm btn-outline-primary"
@@ -180,6 +205,7 @@
                     <a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-sm btn-outline-secondary">
                         <i class="bi bi-pencil"></i> Edit
                     </a>
+                    {% if can_manage_events %}
                     <button type="button" class="btn btn-sm btn-outline-danger"
                             data-bs-toggle="modal" data-bs-target="#deleteEventModal"
                             data-form-id="delete-event-mobile-{{ event.id }}"
@@ -187,11 +213,14 @@
                             data-registration-count="{{ event.registrations|length }}">
                         <i class="bi bi-trash"></i> Delete
                     </button>
+                    {% endif %}
                 </div>
+                {% if can_manage_events %}
                 <form method="POST" action="{{ url_for('main.event_delete', event_id=event.id) }}"
                       id="delete-event-mobile-{{ event.id }}" style="display:none;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 </form>
+                {% endif %}
             </div>
             {% endfor %}
         {% else %}
@@ -228,12 +257,13 @@
     {% endfor %}
 {% endif %}
 
+{% if can_manage_events %}
 <!-- Delete Confirmation Modal -->
-<div class="modal fade" id="deleteEventModal" tabindex="-1">
+<div class="modal fade" id="deleteEventModal" tabindex="-1" aria-labelledby="deleteEventModalTitle">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">
+                <h5 class="modal-title" id="deleteEventModalTitle">
                     <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Event
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -251,9 +281,31 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalTitle">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="bulkDeleteModalTitle">Delete Selected Events</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                Delete <strong id="bulkDeleteCount">0</strong> selected event(s)?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmBulkDeleteBtn">
+                    <i class="bi bi-trash me-1"></i>Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if can_manage_events %}
 <script>
     let formToSubmit = null;
     const deleteEventModal = document.getElementById('deleteEventModal');
@@ -282,13 +334,14 @@
     const selectedCountEl = document.getElementById('selectedCount');
     const selectAllEvents = document.getElementById('selectAllEvents');
     const bulkSelectionActions = document.getElementById('bulkSelectionActions');
+    const bulkDeleteForm = document.getElementById('bulkDeleteForm');
 
     function isVisible(element) {
         return element.offsetParent !== null;
     }
 
     function getEventCheckboxes() {
-        return Array.from(document.querySelectorAll('.js-select-row')).filter(isVisible);
+        return Array.from(document.querySelectorAll('.event-checkbox')).filter(isVisible);
     }
 
     function updateBulkUi() {
@@ -334,7 +387,27 @@
     document.querySelectorAll('.js-select-row').forEach((box) => {
         box.addEventListener('change', updateBulkUi);
     });
+
+    const bulkDeleteModal = document.getElementById('bulkDeleteModal');
+    if (bulkDeleteModal) {
+        bulkDeleteModal.addEventListener('show.bs.modal', function() {
+            const selected = getEventCheckboxes().filter((box) => box.checked).length;
+            const countEl = document.getElementById('bulkDeleteCount');
+            if (countEl) countEl.textContent = selected;
+        });
+    }
+
+    const confirmBulkDeleteBtn = document.getElementById('confirmBulkDeleteBtn');
+    if (confirmBulkDeleteBtn) {
+        confirmBulkDeleteBtn.addEventListener('click', function() {
+            if (bulkDeleteForm) {
+                bulkDeleteForm.submit();
+            }
+        });
+    }
+
     window.addEventListener('resize', updateBulkUi);
     updateBulkUi();
 </script>
+{% endif %}
 {% endblock %}
