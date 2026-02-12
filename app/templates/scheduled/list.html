@@ -82,7 +82,7 @@
                 {% for msg in pending %}
                 <tr>
                     <td>
-                        <input class="form-check-input js-select-row" type="checkbox" id="pending-select-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending">
+                        <input class="form-check-input js-select-row" type="checkbox" id="pending-select-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">
                         <strong>{{ msg.scheduled_at|localtime }}</strong>
@@ -140,7 +140,7 @@
                     <div class="text-muted small">{{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
                 </div>
-                <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending">
+                <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
             </div>
             <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                 <button type="button" class="btn btn-sm btn-outline-primary"
@@ -245,7 +245,7 @@
                 {% for msg in past %}
                 <tr>
                     <td>
-                        <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
+                        <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
                     <td data-sort-value="{{ msg.status or 'sent' }}">
@@ -316,7 +316,7 @@
                     <div class="text-muted small">{{ msg.status|capitalize }} · {{ msg.target }}</div>
                     <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
                 </div>
-                <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-id="{{ msg.id }}">
+                <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
             </div>
             <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
                 <button type="button" class="btn btn-sm btn-outline-primary"
@@ -479,15 +479,49 @@
         const selectedCountEl = document.getElementById(`${group}SelectedCount`);
         const selectAllCheckbox = document.getElementById(`selectAll${group.charAt(0).toUpperCase()}${group.slice(1)}`);
         const bulkSelectionActions = document.getElementById(`${group}BulkSelectionActions`);
+        const groupSelector = `.js-select-row[data-bulk-group="${group}"]`;
 
-        function getGroupCheckboxes() {
-            return Array.from(document.querySelectorAll(`.js-select-row[data-bulk-group="${group}"]`))
-                .filter(b => b.offsetParent !== null);
+        function getAllGroupCheckboxes() {
+            return Array.from(document.querySelectorAll(groupSelector));
+        }
+
+        function getVisibleGroupCheckboxes() {
+            return getAllGroupCheckboxes().filter(b => b.offsetParent !== null);
+        }
+
+        function setCheckedAcrossDuplicates(sourceCheckbox) {
+            const sourceValue = sourceCheckbox.value;
+            if (!sourceValue) return;
+            getAllGroupCheckboxes()
+                .filter(b => b.value === sourceValue)
+                .forEach(b => {
+                    b.checked = sourceCheckbox.checked;
+                });
+        }
+
+        function setCheckedForVisibleRows(isChecked) {
+            getVisibleGroupCheckboxes().forEach((checkbox) => {
+                checkbox.checked = isChecked;
+                syncGroupCheckboxes(checkbox);
+            });
+        }
+
+        function syncGroupCheckboxes(changedCheckbox) {
+            const recordId = changedCheckbox.dataset.recordId;
+            if (recordId) {
+                document
+                    .querySelectorAll(`.js-select-row[data-bulk-group="${group}"][data-record-id="${recordId}"]`)
+                    .forEach((checkbox) => {
+                        checkbox.checked = changedCheckbox.checked;
+                    });
+                return;
+            }
+            setCheckedAcrossDuplicates(changedCheckbox);
         }
 
         function updateBulkUi() {
             if (!selectedCountEl) return;
-            const boxes = getGroupCheckboxes();
+            const boxes = getVisibleGroupCheckboxes();
             const selected = boxes.filter(b => b.checked).length;
             selectedCountEl.textContent = selected;
             if (bulkSelectionActions) {
@@ -501,8 +535,7 @@
 
         if (selectAllCheckbox) {
             selectAllCheckbox.addEventListener('change', function() {
-                const boxes = getGroupCheckboxes();
-                boxes.forEach(b => { b.checked = selectAllCheckbox.checked; });
+                setCheckedForVisibleRows(selectAllCheckbox.checked);
                 updateBulkUi();
             });
         }
@@ -510,8 +543,7 @@
         const selectAllBtn = document.getElementById(`${group}SelectAllBtn`);
         if (selectAllBtn) {
             selectAllBtn.addEventListener('click', function() {
-                const boxes = getGroupCheckboxes();
-                boxes.forEach(b => { b.checked = true; });
+                setCheckedForVisibleRows(true);
                 updateBulkUi();
             });
         }
@@ -519,25 +551,40 @@
         const selectNoneBtn = document.getElementById(`${group}SelectNoneBtn`);
         if (selectNoneBtn) {
             selectNoneBtn.addEventListener('click', function() {
-                const boxes = getGroupCheckboxes();
-                boxes.forEach(b => { b.checked = false; });
+                setCheckedForVisibleRows(false);
                 updateBulkUi();
             });
         }
 
-        getGroupCheckboxes().forEach(b => b.addEventListener('change', updateBulkUi));
+        getAllGroupCheckboxes().forEach((checkbox) => {
+            checkbox.addEventListener('change', function() {
+                syncGroupCheckboxes(checkbox);
+                updateBulkUi();
+            });
+        });
+        window.addEventListener('resize', updateBulkUi);
         updateBulkUi();
+
+        return {
+            getVisibleCheckedIds() {
+                return Array.from(new Set(
+                    getVisibleGroupCheckboxes()
+                        .filter((box) => box.checked)
+                        .map((box) => box.value)
+                        .filter(Boolean)
+                ));
+            },
+        };
     }
 
-    setupBulkControls('pending');
-    setupBulkControls('past');
+    const pendingBulkControls = setupBulkControls('pending');
+    const pastBulkControls = setupBulkControls('past');
 
     // Bulk cancel modal handler for pending messages
     const pendingBulkCancelModal = document.getElementById('pendingBulkCancelModal');
     if (pendingBulkCancelModal) {
         pendingBulkCancelModal.addEventListener('show.bs.modal', function() {
-            const boxes = Array.from(document.querySelectorAll('.js-select-row[data-bulk-group="pending"]:checked'));
-            const ids = boxes.map(b => b.value).filter(Boolean);
+            const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];
             document.getElementById('pendingBulkCancelCount').textContent = ids.length;
             document.getElementById('pendingBulkCancelIds').value = ids.join(',');
         });
@@ -547,8 +594,7 @@
     const pastBulkDeleteModal = document.getElementById('pastBulkDeleteModal');
     if (pastBulkDeleteModal) {
         pastBulkDeleteModal.addEventListener('show.bs.modal', function() {
-            const boxes = Array.from(document.querySelectorAll('.js-select-row[data-bulk-group="past"]:checked'));
-            const ids = boxes.map(b => b.dataset.id).filter(Boolean);
+            const ids = pastBulkControls ? pastBulkControls.getVisibleCheckedIds() : [];
             document.getElementById('pastBulkDeleteCount').textContent = ids.length;
             document.getElementById('pastBulkDeleteIds').value = ids.join(',');
         });

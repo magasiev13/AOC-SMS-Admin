@@ -97,7 +97,7 @@
                         <td>
                             <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                                    id="event-select-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                                   form="bulkDeleteForm" aria-label="Select event">
+                                   form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
                         </td>
                         {% endif %}
                         <td data-sort-value="{{ event.title }}">
@@ -190,7 +190,7 @@
                     {% if can_manage_events %}
                     <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                            id="event-select-mobile-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                           form="bulkDeleteForm" aria-label="Select event">
+                           form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
                     {% endif %}
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
@@ -344,6 +344,16 @@
         return Array.from(document.querySelectorAll('.event-checkbox')).filter(isVisible);
     }
 
+    function syncEventCheckboxes(changedCheckbox) {
+        const eventId = changedCheckbox.dataset.eventId;
+        if (!eventId) return;
+        document
+            .querySelectorAll(`.event-checkbox[data-event-id="${eventId}"]`)
+            .forEach((checkbox) => {
+                checkbox.checked = changedCheckbox.checked;
+            });
+    }
+
     function updateBulkUi() {
         if (!selectedCountEl) return;
         const boxes = getEventCheckboxes();
@@ -361,7 +371,10 @@
     if (selectAllEvents) {
         selectAllEvents.addEventListener('change', function() {
             const boxes = getEventCheckboxes();
-            boxes.forEach(b => { b.checked = selectAllEvents.checked; });
+            boxes.forEach((box) => {
+                box.checked = selectAllEvents.checked;
+                syncEventCheckboxes(box);
+            });
             updateBulkUi();
         });
     }
@@ -370,7 +383,10 @@
     if (selectAllBtn) {
         selectAllBtn.addEventListener('click', function() {
             const boxes = getEventCheckboxes();
-            boxes.forEach(b => { b.checked = true; });
+            boxes.forEach((box) => {
+                box.checked = true;
+                syncEventCheckboxes(box);
+            });
             updateBulkUi();
         });
     }
@@ -379,13 +395,19 @@
     if (selectNoneBtn) {
         selectNoneBtn.addEventListener('click', function() {
             const boxes = getEventCheckboxes();
-            boxes.forEach(b => { b.checked = false; });
+            boxes.forEach((box) => {
+                box.checked = false;
+                syncEventCheckboxes(box);
+            });
             updateBulkUi();
         });
     }
 
     document.querySelectorAll('.js-select-row').forEach((box) => {
-        box.addEventListener('change', updateBulkUi);
+        box.addEventListener('change', function() {
+            syncEventCheckboxes(box);
+            updateBulkUi();
+        });
     });
 
     const bulkDeleteModal = document.getElementById('bulkDeleteModal');

@@ -98,6 +98,30 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertIn("window.addEventListener('resize', updateBulkUi);", html)
         self.assertNotIn("document.querySelectorAll('.entry-checkbox:checked')", html)
 
+    def test_events_bulk_selection_syncs_hidden_duplicate_checkboxes(self) -> None:
+        html = self._read("app/templates/events/list.html")
+        self.assertIn('data-event-id="{{ event.id }}"', html)
+        self.assertIn('function syncEventCheckboxes(changedCheckbox)', html)
+        self.assertIn("syncEventCheckboxes(box);", html)
+        self.assertIn(".querySelectorAll(`.event-checkbox[data-event-id=\"${eventId}\"]`)", html)
+
+    def test_scheduled_bulk_selection_syncs_duplicate_checkboxes_and_modal_ids(self) -> None:
+        html = self._read("app/templates/scheduled/list.html")
+        self.assertIn('data-record-id="{{ msg.id }}"', html)
+        self.assertIn("function getVisibleGroupCheckboxes()", html)
+        self.assertIn("function setCheckedAcrossDuplicates(sourceCheckbox)", html)
+        self.assertIn('function syncGroupCheckboxes(changedCheckbox)', html)
+        self.assertIn("setCheckedForVisibleRows(selectAllCheckbox.checked);", html)
+        self.assertIn("setCheckedForVisibleRows(true);", html)
+        self.assertIn("setCheckedForVisibleRows(false);", html)
+        self.assertIn("window.addEventListener('resize', updateBulkUi);", html)
+        self.assertIn("const pendingBulkControls = setupBulkControls('pending');", html)
+        self.assertIn("const pastBulkControls = setupBulkControls('past');", html)
+        self.assertIn('const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];', html)
+        self.assertIn('const ids = pastBulkControls ? pastBulkControls.getVisibleCheckedIds() : [];', html)
+        self.assertNotIn(".js-select-row[data-bulk-group=\"pending\"]:checked", html)
+        self.assertNotIn(".js-select-row[data-bulk-group=\"past\"]:checked", html)
+
 
 if __name__ == "__main__":
     unittest.main()
