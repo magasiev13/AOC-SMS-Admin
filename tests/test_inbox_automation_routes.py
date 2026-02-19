@@ -266,7 +266,11 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
     def test_survey_delete_removes_related_data(self) -> None:
         self._login()
         survey = self._create_survey(name="Delete Survey", trigger_keyword="DEL SURVEY")
-        thread, session, response = self._create_survey_submission(survey=survey)
+        thread, session, survey_response = self._create_survey_submission(survey=survey)
+        survey_id = survey.id
+        thread_id = thread.id
+        session_id = session.id
+        response_id = survey_response.id
 
         delete_response = self.client.post(
             f"/inbox/surveys/{survey.id}/delete",
@@ -275,10 +279,10 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(delete_response.status_code, 200)
         self.assertIn(b"Survey flow deleted (1 session(s), 1 response(s)).", delete_response.data)
-        self.assertIsNone(self.db.session.get(self.SurveyFlow, survey.id))
-        self.assertIsNone(self.db.session.get(self.SurveySession, session.id))
-        self.assertIsNone(self.db.session.get(self.SurveyResponse, response.id))
-        self.assertIsNotNone(self.db.session.get(self.InboxThread, thread.id))
+        self.assertIsNone(self.db.session.get(self.SurveyFlow, survey_id))
+        self.assertIsNone(self.db.session.get(self.SurveySession, session_id))
+        self.assertIsNone(self.db.session.get(self.SurveyResponse, response_id))
+        self.assertIsNotNone(self.db.session.get(self.InboxThread, thread_id))
 
     def test_survey_delete_blocks_when_linked_to_event(self) -> None:
         self._login()

@@ -174,7 +174,7 @@ sqlite3 /opt/sms-admin/instance/sms.db "DELETE FROM login_attempts WHERE client_
 **Solution:** Reset via database:
 ```bash
 # Generate new hash
-python3 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('newpassword'))"
+python3.11 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('newpassword'))"
 
 # Update in database
 sqlite3 /opt/sms-admin/instance/sms.db "UPDATE users SET password_hash='pbkdf2:sha256:...' WHERE username='admin';"

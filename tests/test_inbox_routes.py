@@ -250,7 +250,7 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn('<div class="fw-semibold">Alex Rivera</div>', html)
-        self.assertIn(f'<div class="small text-muted">{thread.phone}</div>', html)
+        self.assertIn(f'<div class="small text-muted inbox-thread-phone">{thread.phone}</div>', html)
 
     def test_inbox_community_name_overrides_existing_thread_contact_name(self) -> None:
         self._login()

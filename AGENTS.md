@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-Flask SMS admin app for sending community/event SMS blasts via Twilio. Python 3.11+, SQLAlchemy/SQLite, Redis/RQ worker, systemd timer scheduler. Single-server Debian VPS deployment behind Nginx + Gunicorn.
+Flask SMS admin app for sending community/event SMS blasts via Twilio. Python 3.11 (supported/tested), SQLAlchemy/SQLite, Redis/RQ worker, systemd timer scheduler. Single-server Debian VPS deployment behind Nginx + Gunicorn.
 
 ## STRUCTURE
 

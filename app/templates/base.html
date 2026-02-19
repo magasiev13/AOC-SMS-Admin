@@ -264,7 +264,10 @@
 
                 const moveAllInline = () => {
                     const moved = Array.from(overflow.children);
-                    moved.forEach((actionEl) => inline.appendChild(actionEl));
+                    moved.forEach((actionEl) => {
+                        actionEl.classList.remove('is-overflow-action');
+                        inline.appendChild(actionEl);
+                    });
                     overflow.hidden = true;
                     toggle.hidden = true;
                     toggle.setAttribute('aria-expanded', 'false');
@@ -279,10 +282,8 @@
 
                     let primary = actions.find((actionEl) => actionEl.classList.contains('page-action-primary'));
                     if (!primary) {
-                        primary = actions.find((actionEl) => actionEl.matches('.btn.btn-primary, .btn.btn-danger'));
-                    }
-                    if (!primary) {
-                        primary = actions[actions.length - 1];
+                        primary = actions[0];
+                        primary.classList.add('page-action-primary');
                     }
 
                     const secondaryActions = actions.filter((actionEl) => actionEl !== primary);

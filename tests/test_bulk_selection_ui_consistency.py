@@ -28,6 +28,49 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
                     f"Template has a bulk selection state without an action button: {template_path}",
                 )
 
+    def test_dashboard_send_section_precedes_stats_and_charts(self) -> None:
+        html = self._read("app/templates/dashboard.html")
+        send_index = html.find("dashboard-section-send")
+        stats_index = html.find("dashboard-section-stats")
+        charts_index = html.find("dashboard-section-charts")
+
+        self.assertNotEqual(send_index, -1, "Dashboard send section is missing")
+        self.assertNotEqual(stats_index, -1, "Dashboard stats section is missing")
+        self.assertNotEqual(charts_index, -1, "Dashboard charts section is missing")
+        self.assertLess(send_index, stats_index, "Send section should appear before stats")
+        self.assertLess(send_index, charts_index, "Send section should appear before charts")
+
+    def test_dashboard_breadcrumb_uses_static_overview_label(self) -> None:
+        html = self._read("app/templates/dashboard.html")
+        match = re.search(r"\{% block breadcrumbs %\}(.*?)\{% endblock %\}", html, re.DOTALL)
+        self.assertIsNotNone(match, "Dashboard breadcrumb block is missing")
+        breadcrumb_block = match.group(1)
+        self.assertIn("<span>Overview</span>", breadcrumb_block)
+        self.assertNotIn('url_for(\'main.dashboard\')', breadcrumb_block)
+
+    def test_multi_action_page_headers_define_one_primary_action(self) -> None:
+        templates_dir = self.repo_root / "app" / "templates"
+        block_pattern = re.compile(r"\{% block page_actions %\}(.*?)\{% endblock %\}", re.DOTALL)
+        action_pattern = re.compile(r"^\s*<(a|button|form)\b", re.MULTILINE)
+
+        for template_path in templates_dir.rglob("*.html"):
+            html = template_path.read_text(encoding="utf-8")
+            match = block_pattern.search(html)
+            if not match:
+                continue
+
+            block = match.group(1)
+            action_count = len(action_pattern.findall(block))
+            if action_count <= 1:
+                continue
+
+            primary_count = block.count("page-action-primary")
+            self.assertEqual(
+                primary_count,
+                1,
+                f"Expected exactly one page-action-primary in multi-action header: {template_path}",
+            )
+
     def test_bulk_selection_counts_are_live_regions(self) -> None:
         checks = [
             ("app/templates/community/list.html", "selectedCount"),
@@ -87,6 +130,31 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         visible_match = re.search(r"\.bulk-selection-actions\.is-visible\s*\{(?P<body>.*?)\}", css, re.DOTALL)
         self.assertIsNotNone(visible_match, "Missing .bulk-selection-actions.is-visible CSS rule")
         self.assertIn("display: flex;", visible_match.group("body"))
+
+    def test_critical_css_selectors_are_declared_once(self) -> None:
+        css = self._read("app/static/css/app.css")
+        selectors = {
+            ".brand-icon": r"^\.brand-icon\s*\{",
+            ".brand-text::after": r"^\.brand-text::after\s*\{",
+            ".row-actions": r"^\.row-actions\s*\{",
+            ".card-list-item": r"^\.card-list-item\s*\{",
+            ".stat-card": r"^\.stat-card\s*\{",
+            ".table thead th": r"^\.table thead th\s*\{",
+        }
+        for label, pattern in selectors.items():
+            matches = re.findall(pattern, css, re.MULTILINE)
+            self.assertEqual(
+                len(matches),
+                1,
+                f"Expected one declaration for {label}, found {len(matches)}",
+            )
+
+    def test_deprecated_quick_links_and_live_indicator_styles_removed(self) -> None:
+        css = self._read("app/static/css/app.css")
+        self.assertNotIn(".quick-link", css)
+        self.assertNotIn(".quick-links", css)
+        self.assertNotIn(".live-indicator", css)
+        self.assertNotIn(".live-indicator__dot", css)
 
     def test_unsubscribed_bulk_selection_counts_visible_checkboxes_only(self) -> None:
         html = self._read("app/templates/unsubscribed/list.html")

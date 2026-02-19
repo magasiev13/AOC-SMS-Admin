@@ -2,6 +2,8 @@
 
 Flask application package. Entry point: `create_app()` in `__init__.py`.
 
+Supported runtime for this project is Python 3.11.
+
 ## STRUCTURE
 
 ```
