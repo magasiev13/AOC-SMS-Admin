@@ -10,6 +10,8 @@ ENV_FILE="${APP_ROOT}/.env"
 DEPLOY_USER="${SUDO_USER:-$(id -un)}"
 DEFAULT_REDIS_URL="redis://localhost:6379/0"
 DEFAULT_RQ_QUEUE_NAME="sms"
+REQUIRED_PYTHON="3.11"
+APP_PYTHON_BIN="${APP_ROOT}/venv/bin/python"
 
 echo "============================================"
 echo "  SMS Admin Install Script"
@@ -17,6 +19,23 @@ echo "============================================"
 
 if [[ ! -f "${DBDOCTOR_SRC}" ]]; then
   echo "ERROR: ${DBDOCTOR_SRC} not found. Did you clone the repo to ${REPO_ROOT}?" >&2
+  exit 1
+fi
+
+if [[ ! -x "${APP_PYTHON_BIN}" ]]; then
+  if ! command -v python3.11 >/dev/null 2>&1; then
+    echo "ERROR: ${APP_PYTHON_BIN} not found and python3.11 is not installed." >&2
+    echo "Install python3.11 and python3.11-venv, then rerun install.sh." >&2
+    exit 1
+  fi
+  echo "Creating virtualenv with python3.11 at ${APP_ROOT}/venv ..."
+  sudo -u smsadmin bash -c "cd \"${APP_ROOT}\" && python3.11 -m venv venv"
+fi
+
+APP_PYTHON_VERSION="$("${APP_PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "${APP_PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
+  echo "ERROR: ${APP_PYTHON_BIN} uses Python ${APP_PYTHON_VERSION}; expected ${REQUIRED_PYTHON}." >&2
+  echo "Recreate the venv with python3.11 before running install.sh." >&2
   exit 1
 fi
 
@@ -111,9 +130,14 @@ sudo install -m 0644 "${REPO_ROOT}/deploy/sms.service" /etc/systemd/system/sms.s
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-worker.service" /etc/systemd/system/sms-worker.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-scheduler.service" /etc/systemd/system/sms-scheduler.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-scheduler.timer" /etc/systemd/system/sms-scheduler.timer
+sudo install -m 0755 "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
 sudo install -m 0644 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
+sudo install -m 0644 "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
+sudo chown smsadmin:smsadmin "${APP_ROOT}/deploy/check_python_runtime.sh"
 sudo chown smsadmin:smsadmin "${APP_ROOT}/deploy/run_scheduler_once.sh"
-sudo chmod 644 "${APP_ROOT}/deploy/run_scheduler_once.sh"
+sudo chown smsadmin:smsadmin "${APP_ROOT}/deploy/run_worker.sh"
+sudo chmod 755 "${APP_ROOT}/deploy/check_python_runtime.sh"
+sudo chmod 644 "${APP_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_worker.sh"
 
 sudo systemctl daemon-reload
 echo "✓ Systemd units installed"

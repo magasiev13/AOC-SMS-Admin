@@ -197,6 +197,24 @@ sudo systemctl restart sms
 
 ## Service Issues
 
+### "expected 3.11" / "python version mismatch"
+
+**Cause:** The app venv was created with the wrong Python version.
+
+**Check:**
+```bash
+/opt/sms-admin/venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+```
+
+**Fix:**
+```bash
+sudo systemctl stop sms sms-worker sms-scheduler.timer
+sudo rm -rf /opt/sms-admin/venv
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3.11 -m venv venv'
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
+sudo systemctl start sms sms-worker sms-scheduler.timer
+```
+
 ### sms.service Won't Start
 
 **Check logs:**
