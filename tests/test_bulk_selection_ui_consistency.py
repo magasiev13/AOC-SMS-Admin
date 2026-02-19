@@ -105,8 +105,11 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertIn("syncEventCheckboxes(box);", html)
         self.assertIn("function getVisibleCheckedEventIds()", html)
         self.assertIn("const selectedEventIds = getVisibleCheckedEventIds();", html)
+        self.assertIn("document.querySelectorAll('.event-checkbox[form]').forEach((checkbox) => {", html)
+        self.assertIn("checkbox.removeAttribute('form');", html)
         self.assertIn("querySelectorAll('input[name=\"event_ids\"]')", html)
         self.assertIn(".querySelectorAll(`.event-checkbox[data-event-id=\"${eventId}\"]`)", html)
+        self.assertNotIn('form="bulkDeleteForm" aria-label="Select event"', html)
 
     def test_scheduled_bulk_selection_syncs_duplicate_checkboxes_and_modal_ids(self) -> None:
         html = self._read("app/templates/scheduled/list.html")

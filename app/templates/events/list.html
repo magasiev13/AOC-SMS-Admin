@@ -97,7 +97,7 @@
                         <td>
                             <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                                    id="event-select-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                                   form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
+                                   aria-label="Select event" data-event-id="{{ event.id }}">
                         </td>
                         {% endif %}
                         <td data-sort-value="{{ event.title }}">
@@ -190,7 +190,7 @@
                     {% if can_manage_events %}
                     <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                            id="event-select-mobile-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                           form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
+                           aria-label="Select event" data-event-id="{{ event.id }}">
                     {% endif %}
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
@@ -335,6 +335,10 @@
     const selectAllEvents = document.getElementById('selectAllEvents');
     const bulkSelectionActions = document.getElementById('bulkSelectionActions');
     const bulkDeleteForm = document.getElementById('bulkDeleteForm');
+
+    document.querySelectorAll('.event-checkbox[form]').forEach((checkbox) => {
+        checkbox.removeAttribute('form');
+    });
 
     function isVisible(element) {
         return element.offsetParent !== null;
