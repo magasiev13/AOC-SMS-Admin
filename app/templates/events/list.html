@@ -344,6 +344,15 @@
         return Array.from(document.querySelectorAll('.event-checkbox')).filter(isVisible);
     }
 
+    function getVisibleCheckedEventIds() {
+        return Array.from(new Set(
+            getEventCheckboxes()
+                .filter((box) => box.checked)
+                .map((box) => box.value)
+                .filter(Boolean)
+        ));
+    }
+
     function syncEventCheckboxes(changedCheckbox) {
         const eventId = changedCheckbox.dataset.eventId;
         if (!eventId) return;
@@ -423,6 +432,17 @@
     if (confirmBulkDeleteBtn) {
         confirmBulkDeleteBtn.addEventListener('click', function() {
             if (bulkDeleteForm) {
+                const selectedEventIds = getVisibleCheckedEventIds();
+                bulkDeleteForm
+                    .querySelectorAll('input[name="event_ids"]')
+                    .forEach((input) => input.remove());
+                selectedEventIds.forEach((eventId) => {
+                    const hiddenInput = document.createElement('input');
+                    hiddenInput.type = 'hidden';
+                    hiddenInput.name = 'event_ids';
+                    hiddenInput.value = eventId;
+                    bulkDeleteForm.appendChild(hiddenInput);
+                });
                 bulkDeleteForm.submit();
             }
         });
