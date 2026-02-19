@@ -12,7 +12,7 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.survey_flow_submissions_export', survey_id=survey.id) }}" class="btn btn-outline-secondary page-action-secondary">
+<a href="{{ url_for('main.survey_flow_submissions_export', survey_id=survey.id) }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
 <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary">

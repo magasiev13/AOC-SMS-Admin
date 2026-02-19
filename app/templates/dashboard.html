@@ -5,12 +5,140 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a>
+<span>Overview</span>
 {% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-xl-12 dashboard-layout">
+        <!-- Send SMS Section -->
+        <section class="mb-4 dashboard-section dashboard-section-send">
+            <div class="send-card">
+                <div class="send-card__header">
+                    <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
+                </div>
+                <div class="send-card__body">
+                    <form method="POST" id="sendForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="client_timezone" id="client_timezone">
+                        <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
+                        <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+                        <div class="mb-3">
+                            <label for="message_body" class="form-label">Message</label>
+                            <textarea class="form-control" id="message_body" name="message_body" rows="4"
+                                      placeholder="Enter your message..." required maxlength="1600"></textarea>
+                            <div class="form-text">
+                                <span><span id="charCount">0</span> / 1600 characters</span>
+                                <span class="ms-2">Estimated segments: <span id="segmentCount">0</span> (160 chars per segment, longer messages will split)</span>
+                                <span class="ms-2">Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</span>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Target Audience</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="target" id="targetCommunity"
+                                       value="community" checked>
+                                <label class="form-check-label" for="targetCommunity">
+                                    <i class="bi bi-people me-1"></i>Community Blast
+                                    <span class="text-muted">(all community recipients)</span>
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="target" id="targetEvent"
+                                       value="event">
+                                <label class="form-check-label" for="targetEvent">
+                                    <i class="bi bi-calendar-event me-1"></i>Event Blast
+                                    <span class="text-muted">(registered event attendees)</span>
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Choose Community to reach your master list, or Event to target a single registration list.
+                            </div>
+                        </div>
+
+                        <div class="mb-3" id="eventSelectWrapper" style="display: none;">
+                            <label for="event_id" class="form-label">Select Event</label>
+                            <select class="form-select" id="event_id" name="event_id">
+                                <option value="">-- Select an event --</option>
+                                {% for event in events %}
+                                <option value="{{ event.id }}">
+                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" checked>
+                                <label class="form-check-label" for="includeUnsubscribe">
+                                    <i class="bi bi-shield-check me-1"></i><strong>Include unsubscribe option</strong>
+                                    <span class="text-muted">- Appends "Reply STOP to unsubscribe"</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <details class="advanced-options mb-3">
+                            <summary class="advanced-options__summary">
+                                <i class="bi bi-sliders me-2"></i>Advanced options
+                            </summary>
+                            <div class="mt-3">
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater">
+                                        <label class="form-check-label" for="scheduleLater">
+                                            <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
+                                        </label>
+                                    </div>
+                                    <div class="form-text">
+                                        Schedule sends in your local time ({{ app_timezone }} fallback). Detected timezone:
+                                        <span id="timezoneHint">Unavailable</span>.
+                                    </div>
+                                </div>
+
+                                <div class="mb-3" id="scheduleWrapper" style="display: none;">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <label for="schedule_date" class="form-label">Date</label>
+                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label for="schedule_time" class="form-label">Time</label>
+                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time">
+                                        </div>
+                                    </div>
+                                    <div class="form-text">
+                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. The scheduler checks every 5 seconds in development, 30 seconds in production.
+                                    </div>
+                                </div>
+
+                                {% if admin_test_phone %}
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
+                                        <label class="form-check-label" for="testMode">
+                                            <i class="bi bi-bug me-1"></i><strong>Test Mode</strong> - Send only to my phone ({{ admin_test_phone }})
+                                        </label>
+                                    </div>
+                                    <div class="form-text text-warning">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Uncheck to send to all recipients
+                                    </div>
+                                </div>
+                                {% endif %}
+                            </div>
+                        </details>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg" id="sendBtn">
+                                <i class="bi bi-send-fill me-2"></i>Send Now
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </section>
+
         <!-- Stats Row -->
         <section class="mb-4 dashboard-section dashboard-section-stats">
             <div class="row g-3">
@@ -186,134 +314,6 @@
                         </div>
                         {% endif %}
                     </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Send SMS Section -->
-        <section class="mb-4 dashboard-section dashboard-section-send">
-            <div class="send-card">
-                <div class="send-card__header">
-                    <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
-                </div>
-                <div class="send-card__body">
-                    <form method="POST" id="sendForm">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="client_timezone" id="client_timezone">
-                        <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
-                        <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
-                        <div class="mb-3">
-                            <label for="message_body" class="form-label">Message</label>
-                            <textarea class="form-control" id="message_body" name="message_body" rows="4"
-                                      placeholder="Enter your message..." required maxlength="1600"></textarea>
-                            <div class="form-text">
-                                <span><span id="charCount">0</span> / 1600 characters</span>
-                                <span class="ms-2">Estimated segments: <span id="segmentCount">0</span> (160 chars per segment, longer messages will split)</span>
-                                <span class="ms-2">Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</span>
-                            </div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label class="form-label">Target Audience</label>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="target" id="targetCommunity"
-                                       value="community" checked>
-                                <label class="form-check-label" for="targetCommunity">
-                                    <i class="bi bi-people me-1"></i>Community Blast
-                                    <span class="text-muted">(all community recipients)</span>
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="target" id="targetEvent"
-                                       value="event">
-                                <label class="form-check-label" for="targetEvent">
-                                    <i class="bi bi-calendar-event me-1"></i>Event Blast
-                                    <span class="text-muted">(registered event attendees)</span>
-                                </label>
-                            </div>
-                            <div class="form-text">
-                                Choose Community to reach your master list, or Event to target a single registration list.
-                            </div>
-                        </div>
-
-                        <div class="mb-3" id="eventSelectWrapper" style="display: none;">
-                            <label for="event_id" class="form-label">Select Event</label>
-                            <select class="form-select" id="event_id" name="event_id">
-                                <option value="">-- Select an event --</option>
-                                {% for event in events %}
-                                <option value="{{ event.id }}">
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        <div class="mb-3">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" checked>
-                                <label class="form-check-label" for="includeUnsubscribe">
-                                    <i class="bi bi-shield-check me-1"></i><strong>Include unsubscribe option</strong>
-                                    <span class="text-muted">- Appends "Reply STOP to unsubscribe"</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <details class="advanced-options mb-3">
-                            <summary class="advanced-options__summary">
-                                <i class="bi bi-sliders me-2"></i>Advanced options
-                            </summary>
-                            <div class="mt-3">
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater">
-                                        <label class="form-check-label" for="scheduleLater">
-                                            <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
-                                        </label>
-                                    </div>
-                                    <div class="form-text">
-                                        Schedule sends in your local time ({{ app_timezone }} fallback). Detected timezone:
-                                        <span id="timezoneHint">Unavailable</span>.
-                                    </div>
-                                </div>
-
-                                <div class="mb-3" id="scheduleWrapper" style="display: none;">
-                                    <div class="row">
-                                        <div class="col-md-6">
-                                            <label for="schedule_date" class="form-label">Date</label>
-                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date">
-                                        </div>
-                                        <div class="col-md-6">
-                                            <label for="schedule_time" class="form-label">Time</label>
-                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time">
-                                        </div>
-                                    </div>
-                                    <div class="form-text">
-                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. The scheduler checks every 5 seconds in development, 30 seconds in production.
-                                    </div>
-                                </div>
-
-                                {% if admin_test_phone %}
-                                <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
-                                        <label class="form-check-label" for="testMode">
-                                            <i class="bi bi-bug me-1"></i><strong>Test Mode</strong> - Send only to my phone ({{ admin_test_phone }})
-                                        </label>
-                                    </div>
-                                    <div class="form-text text-warning">
-                                        <i class="bi bi-exclamation-triangle me-1"></i>Uncheck to send to all recipients
-                                    </div>
-                                </div>
-                                {% endif %}
-                            </div>
-                        </details>
-
-                        <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg" id="sendBtn">
-                                <i class="bi bi-send-fill me-2"></i>Send Now
-                            </button>
-                        </div>
-                    </form>
                 </div>
             </div>
         </section>

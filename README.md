@@ -29,7 +29,7 @@ For detailed documentation, see the [`docs/`](docs/) folder:
 
 ## Tech Stack
 
-- **Backend**: Python 3.11+, Flask, SQLAlchemy
+- **Backend**: Python 3.11 (supported/tested), Flask, SQLAlchemy
 - **Database**: SQLite
 - **Queue**: Redis + RQ worker (background sends)
 - **Scheduler**: APScheduler (dev) + systemd timer (prod)
@@ -104,7 +104,7 @@ For detailed schema documentation, see [docs/database.md](docs/database.md).
 
 ```bash
 cd /path/to/AOC-SMS
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -164,7 +164,7 @@ Visit http://127.0.0.1:5000
 sudo apt update && sudo apt upgrade -y
 
 # Install required packages
-sudo apt install -y python3 python3-venv python3-pip nginx certbot python3-certbot-nginx git apache2-utils
+sudo apt install -y python3.11 python3.11-venv python3-pip nginx certbot python3-certbot-nginx git apache2-utils
 ```
 
 ### 2. Create Application User
@@ -185,7 +185,7 @@ sudo chown -R smsadmin:smsadmin /opt/sms-admin
 ### 4. Setup Python Environment
 
 ```bash
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3 -m venv venv'
+sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3.11 -m venv venv'
 sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
 ```
 
@@ -211,7 +211,7 @@ sudo tee /opt/sms-admin/.env >/dev/null << EOF
 TWILIO_ACCOUNT_SID=your_account_sid_here
 TWILIO_AUTH_TOKEN=your_auth_token_here
 TWILIO_FROM_NUMBER=+1234567890
-SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+SECRET_KEY=$(python3.11 -c "import secrets; print(secrets.token_hex(32))")
 FLASK_ENV=production
 EOF
 ```
