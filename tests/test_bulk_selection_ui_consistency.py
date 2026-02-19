@@ -103,7 +103,13 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertIn('data-event-id="{{ event.id }}"', html)
         self.assertIn('function syncEventCheckboxes(changedCheckbox)', html)
         self.assertIn("syncEventCheckboxes(box);", html)
+        self.assertIn("function getVisibleCheckedEventIds()", html)
+        self.assertIn("const selectedEventIds = getVisibleCheckedEventIds();", html)
+        self.assertIn("document.querySelectorAll('.event-checkbox[form]').forEach((checkbox) => {", html)
+        self.assertIn("checkbox.removeAttribute('form');", html)
+        self.assertIn("querySelectorAll('input[name=\"event_ids\"]')", html)
         self.assertIn(".querySelectorAll(`.event-checkbox[data-event-id=\"${eventId}\"]`)", html)
+        self.assertNotIn('form="bulkDeleteForm" aria-label="Select event"', html)
 
     def test_scheduled_bulk_selection_syncs_duplicate_checkboxes_and_modal_ids(self) -> None:
         html = self._read("app/templates/scheduled/list.html")
@@ -117,7 +123,9 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertIn("window.addEventListener('resize', updateBulkUi);", html)
         self.assertIn("const pendingBulkControls = setupBulkControls('pending');", html)
         self.assertIn("const pastBulkControls = setupBulkControls('past');", html)
+        self.assertIn("function updatePendingBulkCancelSelection()", html)
         self.assertIn('const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];', html)
+        self.assertIn("pendingBulkCancelForm.addEventListener('submit', function() {", html)
         self.assertIn('const ids = pastBulkControls ? pastBulkControls.getVisibleCheckedIds() : [];', html)
         self.assertNotIn(".js-select-row[data-bulk-group=\"pending\"]:checked", html)
         self.assertNotIn(".js-select-row[data-bulk-group=\"past\"]:checked", html)

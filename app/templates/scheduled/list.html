@@ -580,13 +580,24 @@
     const pendingBulkControls = setupBulkControls('pending');
     const pastBulkControls = setupBulkControls('past');
 
+    function updatePendingBulkCancelSelection() {
+        const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];
+        document.getElementById('pendingBulkCancelCount').textContent = ids.length;
+        document.getElementById('pendingBulkCancelIds').value = ids.join(',');
+    }
+
     // Bulk cancel modal handler for pending messages
     const pendingBulkCancelModal = document.getElementById('pendingBulkCancelModal');
     if (pendingBulkCancelModal) {
         pendingBulkCancelModal.addEventListener('show.bs.modal', function() {
-            const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];
-            document.getElementById('pendingBulkCancelCount').textContent = ids.length;
-            document.getElementById('pendingBulkCancelIds').value = ids.join(',');
+            updatePendingBulkCancelSelection();
+        });
+    }
+
+    const pendingBulkCancelForm = document.getElementById('pendingBulkCancelForm');
+    if (pendingBulkCancelForm) {
+        pendingBulkCancelForm.addEventListener('submit', function() {
+            updatePendingBulkCancelSelection();
         });
     }
 
