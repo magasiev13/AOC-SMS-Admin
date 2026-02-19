@@ -59,6 +59,7 @@ sudo chown -R smsadmin:smsadmin /opt/sms-admin
 ```bash
 sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3.11 -m venv venv'
 sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
+sudo -u smsadmin /opt/sms-admin/venv/bin/python -c "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')"
 ```
 
 ### 5. Configure Environment
@@ -161,6 +162,7 @@ User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 EnvironmentFile=/opt/sms-admin/.env
+ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
 ExecStartPre=/usr/local/bin/dbdoctor --apply
 ExecStart=/opt/sms-admin/venv/bin/gunicorn \
     --workers 2 \
@@ -188,6 +190,7 @@ User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 EnvironmentFile=/opt/sms-admin/.env
+ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
 ExecStart=/opt/sms-admin/venv/bin/rq worker sms
 Restart=always
 
@@ -227,7 +230,8 @@ User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 EnvironmentFile=/opt/sms-admin/.env
-ExecStart=/opt/sms-admin/deploy/run_scheduler_once.sh
+ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
+ExecStart=/bin/bash /opt/sms-admin/deploy/run_scheduler_once.sh
 ```
 
 ## Verification

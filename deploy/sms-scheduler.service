@@ -9,6 +9,7 @@ Group=smsadmin
 WorkingDirectory=/opt/sms-admin
 Environment="PATH=/opt/sms-admin/venv/bin:/usr/local/bin:/usr/bin:/bin"
 EnvironmentFile=-/opt/sms-admin/.env
+ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
 ExecStart=/bin/bash /opt/sms-admin/deploy/run_scheduler_once.sh
 
 # Logging - all output goes to journal

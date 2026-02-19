@@ -9,6 +9,7 @@ WorkingDirectory=/opt/sms-admin
 Environment="SCHEDULER_ENABLED=0"
 Environment="RQ_QUEUE_NAME=sms"
 EnvironmentFile=/opt/sms-admin/.env
+ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
 ExecStartPre=/opt/sms-admin/venv/bin/python -m app.dbdoctor --apply
 ExecStart=/bin/bash /opt/sms-admin/deploy/run_worker.sh
 Restart=on-failure

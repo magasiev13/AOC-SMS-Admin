@@ -3,6 +3,8 @@ set -euo pipefail
 
 PATH=/usr/bin:/bin:/opt/sms-admin/venv/bin
 
+/opt/sms-admin/deploy/check_python_runtime.sh
+
 if [ -f /opt/sms-admin/.env ]; then
   set -a
   . /opt/sms-admin/.env

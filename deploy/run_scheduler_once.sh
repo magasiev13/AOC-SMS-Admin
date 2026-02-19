@@ -5,16 +5,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${APP_ROOT:-/opt/sms-admin}"
 VENV_PYTHON="${APP_ROOT}/venv/bin/python"
 ENV_FILE="${APP_ROOT}/.env"
 
-# Verify venv exists
-if [[ ! -x "${VENV_PYTHON}" ]]; then
-    echo "[sms-scheduler] ERROR: Python not found at ${VENV_PYTHON}" >&2
-    exit 1
-fi
+"${APP_ROOT}/deploy/check_python_runtime.sh"
 
 # Load environment file if it exists
 if [[ -f "${ENV_FILE}" ]]; then

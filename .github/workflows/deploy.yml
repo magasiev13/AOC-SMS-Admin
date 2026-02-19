@@ -43,6 +43,12 @@ jobs:
           sudo systemctl is-active --quiet sms-scheduler.timer
 
           echo "==> Dependency assertions"
+          PYTHON_VERSION="$(sudo -u smsadmin /opt/sms-admin/venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+          if [ "$PYTHON_VERSION" != "3.11" ]; then
+            echo "❌ python version mismatch: expected 3.11, got $PYTHON_VERSION"
+            exit 1
+          fi
+
           CLICK_VERSION="$(sudo -u smsadmin /opt/sms-admin/venv/bin/python -c "from importlib.metadata import version; print(version('click'))")"
           if [ "$CLICK_VERSION" != "8.1.7" ]; then
             echo "❌ click version mismatch: expected 8.1.7, got $CLICK_VERSION"

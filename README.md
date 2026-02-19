@@ -117,6 +117,7 @@ Optional helper (Codex-friendly; preserves existing `.env`):
 
 The helper script creates/uses the local `venv`, installs Python dependencies, and only copies
 `.env.example` to `.env` if `.env` does not already exist.
+It fails fast if your interpreter or existing `venv` is not Python 3.11.
 
 ### 2. Configure Environment
 
@@ -129,7 +130,7 @@ Required environment variables:
 - `TWILIO_ACCOUNT_SID` - Your Twilio Account SID
 - `TWILIO_AUTH_TOKEN` - Your Twilio Auth Token
 - `TWILIO_FROM_NUMBER` - Your Twilio phone number (E.164 format, e.g., +1234567890)
-- `SECRET_KEY` - Flask secret key (generate with `python -c "import secrets; print(secrets.token_hex(32))"`)
+- `SECRET_KEY` - Flask secret key (generate with `python3.11 -c "import secrets; print(secrets.token_hex(32))"`)
 
 ### 3. Run Development Server
 
