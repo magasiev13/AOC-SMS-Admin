@@ -60,7 +60,7 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
             data={
                 "username": "new-user",
                 "role": "social_manager",
-                "password": "new-pass",
+                "password": "new-password-123",
             },
             follow_redirects=False,
         )
@@ -77,7 +77,7 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
             data={
                 "username": "new-user-2",
                 "role": "social_manager",
-                "password": "new-pass",
+                "password": "new-password-123",
                 "must_change_password": "on",
             },
             follow_redirects=False,

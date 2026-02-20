@@ -118,6 +118,7 @@ Optional helper (Codex-friendly; preserves existing `.env`):
 The helper script creates/uses the local `venv`, installs Python dependencies, and only copies
 `.env.example` to `.env` if `.env` does not already exist.
 It fails fast if your interpreter or existing `venv` is not Python 3.11.
+It also installs `pytest` and `pytest-cov` so local test runs work out of the box.
 
 ### 2. Configure Environment
 
@@ -453,14 +454,14 @@ Phone formats accepted: `+1234567890`, `(323) 630-0201`, `720-383-2388`, `323630
 ## Testing
 
 ```bash
-# Run all tests
-pytest
+# Run this repo's tests with automatic venv/dependency checks
+./run/test.sh
 
 # Run with coverage
-pytest --cov=app
+./run/test.sh --cov=app
 
 # Run specific test file
-pytest tests/test_utils.py
+./run/test.sh tests/test_utils.py
 ```
 
 ## Assumptions

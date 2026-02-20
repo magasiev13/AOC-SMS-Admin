@@ -43,7 +43,8 @@ if [[ "${VENV_PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
 fi
 
 "${PYTHON_BIN}" -m pip install -r "${REPO_ROOT}/requirements.txt"
-echo "Installed Python dependencies."
+"${PYTHON_BIN}" -m pip install pytest pytest-cov
+echo "Installed Python dependencies, pytest, and pytest-cov."
 
 if [[ -f "${ENV_FILE}" ]]; then
   echo "Keeping existing .env file."
@@ -61,5 +62,6 @@ cat <<'EOF'
 Next steps:
 1. Edit .env with your credentials.
 2. Activate venv: source venv/bin/activate
-3. Run the app: flask --app wsgi:app run --debug
+3. Run tests: ./run/test.sh
+4. Run the app: flask --app wsgi:app run --debug
 EOF

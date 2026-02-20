@@ -4,12 +4,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DBDOCTOR_SRC="${REPO_ROOT}/bin/dbdoctor"
 DBDOCTOR_DEST="${DBDOCTOR_DEST:-/usr/local/bin/dbdoctor}"
+DEPLOY_SCRIPT_SRC="${REPO_ROOT}/deploy/deploy_sms_admin.sh"
+DEPLOY_SCRIPT_DEST="${DEPLOY_SCRIPT_DEST:-/usr/local/bin/deploy_sms_admin.sh}"
 APP_ROOT="/opt/sms-admin"
 INSTANCE_DIR="${APP_ROOT}/instance"
 ENV_FILE="${APP_ROOT}/.env"
 DEPLOY_USER="${SUDO_USER:-$(id -un)}"
 DEFAULT_REDIS_URL="redis://localhost:6379/0"
 DEFAULT_RQ_QUEUE_NAME="sms"
+DEFAULT_TRUSTED_HOSTS="${DEFAULT_TRUSTED_HOSTS:-sms.theitwingman.com}"
 REQUIRED_PYTHON="3.11"
 APP_PYTHON_BIN="${APP_ROOT}/venv/bin/python"
 
@@ -19,6 +22,10 @@ echo "============================================"
 
 if [[ ! -f "${DBDOCTOR_SRC}" ]]; then
   echo "ERROR: ${DBDOCTOR_SRC} not found. Did you clone the repo to ${REPO_ROOT}?" >&2
+  exit 1
+fi
+if [[ ! -f "${DEPLOY_SCRIPT_SRC}" ]]; then
+  echo "ERROR: ${DEPLOY_SCRIPT_SRC} not found. Did you clone the repo to ${REPO_ROOT}?" >&2
   exit 1
 fi
 
@@ -43,6 +50,10 @@ fi
 sudo install -m 0755 "${DBDOCTOR_SRC}" "${DBDOCTOR_DEST}"
 echo "✓ Installed dbdoctor to ${DBDOCTOR_DEST}"
 
+# Install deploy helper CLI
+sudo install -m 0755 "${DEPLOY_SCRIPT_SRC}" "${DEPLOY_SCRIPT_DEST}"
+echo "✓ Installed deploy script to ${DEPLOY_SCRIPT_DEST}"
+
 # Ensure .env file exists with correct permissions
 sudo touch "${ENV_FILE}"
 sudo chown root:smsadmin "${ENV_FILE}"
@@ -60,11 +71,43 @@ ensure_env_key() {
   local value="$2"
   if ! sudo grep -qE "^${key}=" "${ENV_FILE}"; then
     echo "${key}=${value}" | sudo tee -a "${ENV_FILE}" >/dev/null
+    echo "✓ Appended missing key ${key}"
+  fi
+}
+
+warn_if_non_recommended() {
+  local key="$1"
+  local recommended="$2"
+  local current
+  current="$(sudo grep -E "^${key}=" "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true)"
+  if [[ -n "${current}" && "${current}" != "${recommended}" ]]; then
+    echo "⚠ ${key} is '${current}' (recommended: '${recommended}')"
   fi
 }
 
 ensure_env_key "REDIS_URL" "${DEFAULT_REDIS_URL}"
 ensure_env_key "RQ_QUEUE_NAME" "${DEFAULT_RQ_QUEUE_NAME}"
+ensure_env_key "AUTH_ATTEMPT_WINDOW_SECONDS" "300"
+ensure_env_key "AUTH_LOCKOUT_SECONDS" "900"
+ensure_env_key "AUTH_MAX_ATTEMPTS_IP_ACCOUNT" "5"
+ensure_env_key "AUTH_MAX_ATTEMPTS_ACCOUNT" "8"
+ensure_env_key "AUTH_MAX_ATTEMPTS_IP" "30"
+ensure_env_key "SESSION_IDLE_TIMEOUT_MINUTES" "30"
+ensure_env_key "REMEMBER_COOKIE_DURATION_DAYS" "7"
+ensure_env_key "AUTH_PASSWORD_MIN_LENGTH" "12"
+ensure_env_key "AUTH_PASSWORD_POLICY_ENFORCE" "1"
+ensure_env_key "TRUSTED_HOSTS" "${DEFAULT_TRUSTED_HOSTS}"
+
+warn_if_non_recommended "AUTH_ATTEMPT_WINDOW_SECONDS" "300"
+warn_if_non_recommended "AUTH_LOCKOUT_SECONDS" "900"
+warn_if_non_recommended "AUTH_MAX_ATTEMPTS_IP_ACCOUNT" "5"
+warn_if_non_recommended "AUTH_MAX_ATTEMPTS_ACCOUNT" "8"
+warn_if_non_recommended "AUTH_MAX_ATTEMPTS_IP" "30"
+warn_if_non_recommended "SESSION_IDLE_TIMEOUT_MINUTES" "30"
+warn_if_non_recommended "REMEMBER_COOKIE_DURATION_DAYS" "7"
+warn_if_non_recommended "AUTH_PASSWORD_MIN_LENGTH" "12"
+warn_if_non_recommended "AUTH_PASSWORD_POLICY_ENFORCE" "1"
+warn_if_non_recommended "TRUSTED_HOSTS" "${DEFAULT_TRUSTED_HOSTS}"
 
 # ============================================
 # Fix SQLite database permissions

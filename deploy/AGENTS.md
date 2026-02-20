@@ -7,6 +7,7 @@ Debian VPS deployment via systemd + Nginx + Gunicorn. CI via GitHub Actions.
 ```
 deploy/
 ├── install.sh              # Automated deploy: deps, env, migrations, systemd setup
+├── deploy_sms_admin.sh     # Pull/update/migrate/restart deploy helper (+ security env append)
 ├── sms.service             # systemd: Gunicorn web app (ExecStartPre runs dbdoctor)
 ├── sms-worker.service      # systemd: RQ background worker
 ├── sms-scheduler.service   # systemd: Oneshot scheduler (triggered by timer)
@@ -29,7 +30,7 @@ deploy/
 ## CI PIPELINE (.github/workflows/deploy.yml)
 
 - Triggers on push to `main` or manual dispatch
-- SSH to VPS → run deploy script → verify services → health check
+- SSH to VPS → install `deploy/deploy_sms_admin.sh` to `/usr/local/bin/deploy_sms_admin.sh` → run deploy script → verify services → health check
 - Post-deploy assertions: services active, timer configured, scheduler runs, health endpoint 200
 
 ## CONVENTIONS

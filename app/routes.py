@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import math
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse, unquote
@@ -81,6 +82,77 @@ def _is_safe_url(target):
     host_url = urlparse(request.host_url)
     redirect_url = urlparse(urljoin(request.host_url, target))
     return redirect_url.scheme in ('http', 'https') and host_url.netloc == redirect_url.netloc
+
+
+def _is_explicit_production() -> bool:
+    return os.environ.get("FLASK_ENV", "").strip().lower() == "production"
+
+
+def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
+    key_prefix = f"{key}="
+    try:
+        with open(env_path, "r+", encoding="utf-8") as env_file:
+            lines = env_file.readlines()
+            filtered_lines = [
+                line
+                for line in lines
+                if not line.strip().startswith(key_prefix)
+            ]
+            if len(filtered_lines) == len(lines):
+                return False
+
+            env_file.seek(0)
+            env_file.writelines(filtered_lines)
+            env_file.truncate()
+            env_file.flush()
+            os.fsync(env_file.fileno())
+            return True
+    except OSError:
+        return None
+
+
+def _cleanup_bootstrap_admin_password_if_needed() -> None:
+    if current_app.config.get("DEBUG"):
+        return
+    if not _is_explicit_production():
+        return
+
+    admin_username = (current_app.config.get("ADMIN_USERNAME") or "").strip()
+    if not admin_username or current_user.username != admin_username:
+        return
+
+    env_path = os.environ.get("SMS_ADMIN_ENV_FILE", "/opt/sms-admin/.env")
+    removed = _remove_env_key_in_place(env_path, "ADMIN_PASSWORD")
+    if removed is None:
+        current_app.logger.warning(
+            "Could not remove ADMIN_PASSWORD from %s after password change.",
+            env_path,
+        )
+        return
+    if removed is False:
+        return
+
+    os.environ.pop("ADMIN_PASSWORD", None)
+    current_app.config["ADMIN_PASSWORD"] = None
+    current_app.logger.info(
+        "Removed bootstrap ADMIN_PASSWORD from %s after admin password change.",
+        env_path,
+    )
+
+
+def _password_policy_error(password: str, username: str | None = None) -> str | None:
+    if not current_app.config.get('AUTH_PASSWORD_POLICY_ENFORCE', True):
+        return None
+
+    minimum_length = int(current_app.config.get('AUTH_PASSWORD_MIN_LENGTH', 12))
+    if len(password) < minimum_length:
+        return f'Password must be at least {minimum_length} characters long.'
+
+    normalized_username = (username or '').strip().lower()
+    if normalized_username and normalized_username in password.lower():
+        return 'Password cannot contain the username.'
+
+    return None
 
 
 def _normalized_keyword_sql(column):
@@ -953,6 +1025,10 @@ def users_add():
         if not password:
             flash('Password is required.', 'error')
             return render_template('users/form.html', user=None)
+        password_error = _password_policy_error(password, username)
+        if password_error:
+            flash(password_error, 'error')
+            return render_template('users/form.html', user=None)
 
         existing = AppUser.query.filter_by(username=username).first()
         if existing:
@@ -1005,6 +1081,10 @@ def users_edit(user_id):
         user.role = role
         user.must_change_password = must_change_password
         if password:
+            password_error = _password_policy_error(password, username)
+            if password_error:
+                flash(password_error, 'error')
+                return render_template('users/form.html', user=user)
             user.set_password(password)
 
         db.session.commit()
@@ -1055,6 +1135,10 @@ def change_password():
         if new_password != confirm_password:
             flash('New password and confirmation do not match.', 'error')
             return render_template('auth/change_password.html')
+        password_error = _password_policy_error(new_password, current_user.username)
+        if password_error:
+            flash(password_error, 'error')
+            return render_template('auth/change_password.html')
 
         if not current_user.check_password(current_password):
             flash('Current password is incorrect.', 'error')
@@ -1063,6 +1147,7 @@ def change_password():
         current_user.set_password(new_password)
         current_user.must_change_password = False
         db.session.commit()
+        _cleanup_bootstrap_admin_password_if_needed()
 
         flash('Password updated successfully.', 'success')
         return redirect(url_for('main.dashboard'))
