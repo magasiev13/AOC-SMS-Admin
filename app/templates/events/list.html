@@ -97,7 +97,7 @@
                         <td>
                             <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                                    id="event-select-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                                   form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
+                                   aria-label="Select event" data-event-id="{{ event.id }}">
                         </td>
                         {% endif %}
                         <td data-sort-value="{{ event.title }}">
@@ -190,7 +190,7 @@
                     {% if can_manage_events %}
                     <input class="form-check-input event-checkbox js-select-row" type="checkbox"
                            id="event-select-mobile-{{ event.id }}" name="event_ids" value="{{ event.id }}"
-                           form="bulkDeleteForm" aria-label="Select event" data-event-id="{{ event.id }}">
+                           aria-label="Select event" data-event-id="{{ event.id }}">
                     {% endif %}
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
@@ -336,12 +336,25 @@
     const bulkSelectionActions = document.getElementById('bulkSelectionActions');
     const bulkDeleteForm = document.getElementById('bulkDeleteForm');
 
+    document.querySelectorAll('.event-checkbox[form]').forEach((checkbox) => {
+        checkbox.removeAttribute('form');
+    });
+
     function isVisible(element) {
         return element.offsetParent !== null;
     }
 
     function getEventCheckboxes() {
         return Array.from(document.querySelectorAll('.event-checkbox')).filter(isVisible);
+    }
+
+    function getVisibleCheckedEventIds() {
+        return Array.from(new Set(
+            getEventCheckboxes()
+                .filter((box) => box.checked)
+                .map((box) => box.value)
+                .filter(Boolean)
+        ));
     }
 
     function syncEventCheckboxes(changedCheckbox) {
@@ -423,6 +436,17 @@
     if (confirmBulkDeleteBtn) {
         confirmBulkDeleteBtn.addEventListener('click', function() {
             if (bulkDeleteForm) {
+                const selectedEventIds = getVisibleCheckedEventIds();
+                bulkDeleteForm
+                    .querySelectorAll('input[name="event_ids"]')
+                    .forEach((input) => input.remove());
+                selectedEventIds.forEach((eventId) => {
+                    const hiddenInput = document.createElement('input');
+                    hiddenInput.type = 'hidden';
+                    hiddenInput.name = 'event_ids';
+                    hiddenInput.value = eventId;
+                    bulkDeleteForm.appendChild(hiddenInput);
+                });
                 bulkDeleteForm.submit();
             }
         });
