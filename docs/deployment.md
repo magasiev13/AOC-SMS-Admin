@@ -275,19 +275,11 @@ sudo -u smsadmin dbdoctor --doctor
 ## Updating
 
 ```bash
-cd /opt/sms-admin
-
-# Pull latest code
-sudo -u smsadmin git pull
-
-# Update dependencies
-sudo -u smsadmin bash -c 'source venv/bin/activate && pip install -r requirements.txt'
-
-# Apply migrations
-sudo -u smsadmin dbdoctor --apply
-
-# Restart services
-sudo systemctl restart sms sms-worker
+# Recommended: use the deploy helper installed from this repo.
+# It pulls latest code, appends missing security hardening env keys,
+# warns on non-recommended existing values, installs dependencies,
+# applies migrations, and restarts services.
+sudo /usr/local/bin/deploy_sms_admin.sh
 ```
 
 ## Backup

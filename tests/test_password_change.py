@@ -6,6 +6,8 @@ import unittest
 class TestPasswordChangeFlow(unittest.TestCase):
     def setUp(self) -> None:
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
+        self._original_flask_env = os.environ.get("FLASK_ENV")
+        self._original_sms_admin_env_file = os.environ.get("SMS_ADMIN_ENV_FILE")
         os.environ["FLASK_DEBUG"] = "1"
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
@@ -44,6 +46,14 @@ class TestPasswordChangeFlow(unittest.TestCase):
             os.environ.pop("FLASK_DEBUG", None)
         else:
             os.environ["FLASK_DEBUG"] = self._original_flask_debug
+        if self._original_flask_env is None:
+            os.environ.pop("FLASK_ENV", None)
+        else:
+            os.environ["FLASK_ENV"] = self._original_flask_env
+        if self._original_sms_admin_env_file is None:
+            os.environ.pop("SMS_ADMIN_ENV_FILE", None)
+        else:
+            os.environ["SMS_ADMIN_ENV_FILE"] = self._original_sms_admin_env_file
         os.environ.pop("DATABASE_URL", None)
 
     def _login(self, password: str) -> None:
@@ -96,6 +106,40 @@ class TestPasswordChangeFlow(unittest.TestCase):
         user = self.AppUser.query.filter_by(username="forced").first()
         self.assertIsNotNone(user)
         self.assertTrue(user.must_change_password)
+
+    def test_production_change_removes_bootstrap_admin_password_from_env_file(self) -> None:
+        env_path = os.path.join(self._temp_dir.name, "prod.env")
+        with open(env_path, "w", encoding="utf-8") as env_file:
+            env_file.write("FLASK_ENV=production\n")
+            env_file.write("ADMIN_USERNAME=forced\n")
+            env_file.write("ADMIN_PASSWORD=bootstrap-secret\n")
+            env_file.write("OTHER_KEY=keep\n")
+
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SMS_ADMIN_ENV_FILE"] = env_path
+        os.environ["ADMIN_PASSWORD"] = "bootstrap-secret"
+        self.app.config["DEBUG"] = False
+        self.app.config["ADMIN_USERNAME"] = "forced"
+        self.app.config["ADMIN_PASSWORD"] = "bootstrap-secret"
+
+        self._login("old-password")
+        response = self.client.post(
+            "/account/password",
+            data={
+                "current_password": "old-password",
+                "new_password": "new-password-123",
+                "confirm_password": "new-password-123",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with open(env_path, "r", encoding="utf-8") as env_file:
+            env_contents = env_file.read()
+        self.assertNotIn("ADMIN_PASSWORD=", env_contents)
+        self.assertIn("OTHER_KEY=keep", env_contents)
+        self.assertIsNone(os.environ.get("ADMIN_PASSWORD"))
+        self.assertIsNone(self.app.config.get("ADMIN_PASSWORD"))
 
 
 if __name__ == "__main__":

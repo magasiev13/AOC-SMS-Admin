@@ -34,7 +34,11 @@ jobs:
             "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
           set -euo pipefail
 
-          echo "==> Deploy: pull + deps + restart"
+          echo "==> Bootstrap deploy script from repo"
+          sudo -u smsadmin bash -c 'cd /opt/sms-admin && git pull --ff-only'
+          sudo install -m 0755 /opt/sms-admin/deploy/deploy_sms_admin.sh /usr/local/bin/deploy_sms_admin.sh
+
+          echo "==> Deploy: pull + deps + restart + hardening env sync"
           sudo /usr/local/bin/deploy_sms_admin.sh
 
           echo "==> Service status"
@@ -96,6 +100,24 @@ jobs:
 
           echo "==> Health check (Gunicorn direct)"
           curl -fsS http://127.0.0.1:8000/health >/dev/null
+
+          echo "==> Security hardening env key assertions"
+          for key in \
+            AUTH_ATTEMPT_WINDOW_SECONDS \
+            AUTH_LOCKOUT_SECONDS \
+            AUTH_MAX_ATTEMPTS_IP_ACCOUNT \
+            AUTH_MAX_ATTEMPTS_ACCOUNT \
+            AUTH_MAX_ATTEMPTS_IP \
+            SESSION_IDLE_TIMEOUT_MINUTES \
+            REMEMBER_COOKIE_DURATION_DAYS \
+            AUTH_PASSWORD_MIN_LENGTH \
+            AUTH_PASSWORD_POLICY_ENFORCE \
+            TRUSTED_HOSTS; do
+            grep -q "^${key}=" /opt/sms-admin/.env || {
+              echo "❌ missing ${key} in /opt/sms-admin/.env"
+              exit 1
+            }
+          done
 
           echo "✅ Deploy complete and healthy"
           REMOTE

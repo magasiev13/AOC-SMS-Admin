@@ -86,6 +86,27 @@ If `DATABASE_URL` is unset, the app defaults to `instance/sms.db` under the proj
 | `SESSION_COOKIE_SAMESITE` | `Lax` | Cookie SameSite policy |
 | `SESSION_COOKIE_SECURE` | `1` (prod), `0` (dev) | Require HTTPS for cookies |
 
+### Login Hardening (Recommended for Production)
+
+| Variable | Recommended | Non-technical description |
+|----------|-------------|---------------------------|
+| `AUTH_ATTEMPT_WINDOW_SECONDS` | `300` | Time window (in seconds) used to count failed sign-ins. |
+| `AUTH_LOCKOUT_SECONDS` | `900` | How long a lockout lasts after too many failed sign-ins. |
+| `AUTH_MAX_ATTEMPTS_IP_ACCOUNT` | `5` | Failed sign-ins allowed for one username from one IP before lockout starts. |
+| `AUTH_MAX_ATTEMPTS_ACCOUNT` | `8` | Failed sign-ins allowed for one username across all IPs before lockout starts. |
+| `AUTH_MAX_ATTEMPTS_IP` | `30` | Failed sign-ins allowed from one IP across all usernames before lockout starts. |
+| `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Maximum idle time before a session expires. |
+| `REMEMBER_COOKIE_DURATION_DAYS` | `7` | How long “Remember me” keeps a user logged in. |
+| `AUTH_PASSWORD_MIN_LENGTH` | `12` | Minimum password length accepted in user forms. |
+| `AUTH_PASSWORD_POLICY_ENFORCE` | `1` | Turns password policy checks on (`1`) or off (`0`). |
+| `TRUSTED_HOSTS` | `sms.theitwingman.com` | Comma-separated hostnames the app should trust in production requests. |
+
+### Production Deploy Behavior For Security Keys
+
+- Deploy appends missing hardening keys to existing `/opt/sms-admin/.env`.
+- Existing values are never overwritten automatically.
+- If an existing value is not the recommended value, deploy prints a warning for manual review.
+
 ## Configuration Class
 
 `app/config.py` defines the `Config` class:
@@ -104,6 +125,18 @@ class Config:
     REMEMBER_COOKIE_HTTPONLY = True
     REMEMBER_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
     REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
+    SESSION_IDLE_TIMEOUT_MINUTES = int(os.environ.get('SESSION_IDLE_TIMEOUT_MINUTES', '30'))
+    REMEMBER_COOKIE_DURATION_DAYS = int(os.environ.get('REMEMBER_COOKIE_DURATION_DAYS', '7'))
+
+    AUTH_ATTEMPT_WINDOW_SECONDS = int(os.environ.get('AUTH_ATTEMPT_WINDOW_SECONDS', '300'))
+    AUTH_LOCKOUT_SECONDS = int(os.environ.get('AUTH_LOCKOUT_SECONDS', '900'))
+    AUTH_MAX_ATTEMPTS_IP_ACCOUNT = int(os.environ.get('AUTH_MAX_ATTEMPTS_IP_ACCOUNT', '5'))
+    AUTH_MAX_ATTEMPTS_ACCOUNT = int(os.environ.get('AUTH_MAX_ATTEMPTS_ACCOUNT', '8'))
+    AUTH_MAX_ATTEMPTS_IP = int(os.environ.get('AUTH_MAX_ATTEMPTS_IP', '30'))
+
+    AUTH_PASSWORD_MIN_LENGTH = int(os.environ.get('AUTH_PASSWORD_MIN_LENGTH', '12'))
+    AUTH_PASSWORD_POLICY_ENFORCE = os.environ.get('AUTH_PASSWORD_POLICY_ENFORCE', '1') == '1'
+    TRUSTED_HOSTS = [h.strip() for h in os.environ.get('TRUSTED_HOSTS', '').split(',') if h.strip()]
 
     # Scheduler
     SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'
@@ -145,6 +178,8 @@ class Config:
 | `SECRET_KEY` | Defaults allowed | **Required** |
 | `ADMIN_PASSWORD` | Optional | **Required** |
 | `SESSION_COOKIE_SECURE` | `False` | `True` |
+| `AUTH_PASSWORD_POLICY_ENFORCE` | Optional | `True` |
+| `TRUSTED_HOSTS` | Optional | **Required** |
 | `SCHEDULER_ENABLED` | `True` | `False` (use systemd timer) |
 
 ## Security Checks
@@ -153,6 +188,8 @@ On startup in production (`DEBUG=False`):
 
 1. **SECRET_KEY validation** - App refuses to start with default dev key
 2. **ADMIN_PASSWORD validation** - Required to create initial admin user
+3. **Security hardening validation** - Critical auth/session values must be in safe ranges
+4. **TRUSTED_HOSTS validation** - Must be set to at least one hostname
 
 ## Example Production .env
 
@@ -166,11 +203,23 @@ TWILIO_FROM_NUMBER=+18005551234
 SECRET_KEY=your-256-bit-random-hex-key
 FLASK_ENV=production
 # Reverse proxy (optional; set to 1 only behind a trusted proxy)
-# TRUST_PROXY=1
+TRUST_PROXY=1
+TRUSTED_HOSTS=sms.example.com
 
 # Admin (required)
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-secure-password
+
+# Login hardening (recommended)
+AUTH_ATTEMPT_WINDOW_SECONDS=300
+AUTH_LOCKOUT_SECONDS=900
+AUTH_MAX_ATTEMPTS_IP_ACCOUNT=5
+AUTH_MAX_ATTEMPTS_ACCOUNT=8
+AUTH_MAX_ATTEMPTS_IP=30
+SESSION_IDLE_TIMEOUT_MINUTES=30
+REMEMBER_COOKIE_DURATION_DAYS=7
+AUTH_PASSWORD_MIN_LENGTH=12
+AUTH_PASSWORD_POLICY_ENFORCE=1
 
 # Optional: Test phone for test mode
 ADMIN_TEST_PHONE=+1234567890
