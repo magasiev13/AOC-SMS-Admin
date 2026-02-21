@@ -86,6 +86,13 @@ class TestLoginHardeningConfig(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Too many failed attempts", response.data)
 
+    def test_successful_login_marks_session_permanent(self) -> None:
+        response = self._post_login("admin", "correct-password-123")
+
+        self.assertEqual(response.status_code, 200)
+        with self.client.session_transaction() as session:
+            self.assertTrue(session.permanent)
+
 
 if __name__ == "__main__":
     unittest.main()
