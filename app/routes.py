@@ -129,15 +129,14 @@ def _cleanup_bootstrap_admin_password_if_needed() -> None:
             env_path,
         )
         return
-    if removed is False:
-        return
 
     os.environ.pop("ADMIN_PASSWORD", None)
     current_app.config["ADMIN_PASSWORD"] = None
-    current_app.logger.info(
-        "Removed bootstrap ADMIN_PASSWORD from %s after admin password change.",
-        env_path,
-    )
+    if removed:
+        current_app.logger.info(
+            "Removed bootstrap ADMIN_PASSWORD from %s after admin password change.",
+            env_path,
+        )
 
 
 def _password_policy_error(password: str, username: str | None = None) -> str | None:
