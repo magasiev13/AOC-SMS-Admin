@@ -90,6 +90,25 @@ class TestConfigSecurityHardening(unittest.TestCase):
                     f"Expected a plain-language comment directly above: {line.strip()}",
                 )
 
+    def test_trusted_hosts_enforced_without_localhost_bypass(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["TRUSTED_HOSTS"] = "sms.example.org"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        app.testing = True
+        client = app.test_client()
+
+        localhost_response = client.get("/", headers={"Host": "localhost"})
+        self.assertEqual(localhost_response.status_code, 400)
+
+        trusted_response = client.get("/", headers={"Host": "sms.example.org"})
+        self.assertNotEqual(trusted_response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
