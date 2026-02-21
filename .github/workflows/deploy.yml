@@ -98,8 +98,29 @@ jobs:
             exit 1
           fi
 
-          echo "==> Health check (Gunicorn direct)"
-          curl -fsS http://127.0.0.1:8000/health >/dev/null
+          echo "==> Health check (Gunicorn direct with trusted host header)"
+          TRUSTED_HOSTS_VALUE="$(grep -E '^TRUSTED_HOSTS=' /opt/sms-admin/.env | tail -n1 | cut -d= -f2- || true)"
+          HEALTH_HOST="$(echo "$TRUSTED_HOSTS_VALUE" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
+          if [ -z "$HEALTH_HOST" ]; then
+            HEALTH_HOST="127.0.0.1"
+          fi
+
+          HEALTH_OK=0
+          for attempt in $(seq 1 20); do
+            if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8000/health >/dev/null; then
+              HEALTH_OK=1
+              break
+            fi
+            echo "Health check attempt ${attempt}/20 failed; retrying..."
+            sleep 2
+          done
+
+          if [ "$HEALTH_OK" -ne 1 ]; then
+            echo "❌ health check failed after retries (Host=${HEALTH_HOST})"
+            sudo systemctl status sms --no-pager || true
+            sudo journalctl -u sms -n 200 --no-pager || true
+            exit 1
+          fi
 
           echo "==> Security hardening env key assertions"
           for key in \
