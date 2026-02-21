@@ -110,7 +110,7 @@
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="d-none d-lg-block">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ search }}">
-                        <button class="btn btn-sm btn-outline-danger" type="submit"
+                        <button class="btn btn-sm btn-soft-danger" type="submit"
                                 data-confirm="Delete this thread and all related messages/survey data?">
                             <i class="bi bi-trash me-1"></i>Delete Thread
                         </button>
@@ -123,7 +123,7 @@
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="mt-2 mb-0">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ search }}">
-                        <button class="btn btn-sm btn-outline-danger w-100" type="submit"
+                        <button class="btn btn-sm btn-soft-danger w-100" type="submit"
                                 data-confirm="Delete this thread and all related messages/survey data?">
                             <i class="bi bi-trash me-1"></i>Delete thread
                         </button>
@@ -167,7 +167,7 @@
                                aria-label="Select all messages in thread">
                         <label class="form-check-label small" for="selectAllMessages">Select all messages</label>
                     </div>
-                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-outline-danger inbox-bulk-delete-btn" type="submit"
+                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-soft-danger inbox-bulk-delete-btn" type="submit"
                             form="bulkMessageDeleteForm" data-confirm="Delete selected messages?"
                             aria-label="Delete selected messages" disabled>
                         <i class="bi bi-trash me-1"></i>Delete selected messages

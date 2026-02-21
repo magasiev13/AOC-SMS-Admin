@@ -120,7 +120,7 @@
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
-                    <th width="90">Action</th>
+                    <th width="120">Actions</th>
                 </tr>
             </thead>
             <tbody class="table-data">
@@ -145,11 +145,11 @@
                         <td>
                             <button
                                 type="button"
-                                class="btn btn-sm btn-outline-primary"
+                                class="btn btn-sm btn-outline-primary survey-submissions-view-btn"
                                 data-bs-toggle="offcanvas"
                                 data-bs-target="#surveySubmission{{ row.phone_dom_id }}"
                             >
-                                View
+                                <i class="bi bi-eye me-1"></i>View
                             </button>
                         </td>
                     </tr>
@@ -184,7 +184,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <div class="row-actions automation-actions automation-actions--mobile mt-3">
                     <button
                         type="button"
                         class="btn btn-sm btn-outline-primary"
