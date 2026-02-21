@@ -30,6 +30,14 @@
                     </div>
 
                     <div class="mb-3">
+                        <label for="phone" class="form-label">Phone <span class="text-danger">*</span></label>
+                        <input type="tel" class="form-control" id="phone" name="phone" required autocomplete="tel"
+                               value="{{ user.phone if user else '' }}"
+                               placeholder="+15551234567">
+                        <div class="form-text">Used for security alerts (password reset, lockout, password change).</div>
+                    </div>
+
+                    <div class="mb-3">
                         <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
                         <select class="form-select" id="role" name="role" required>
                             <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>

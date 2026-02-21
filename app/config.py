@@ -87,6 +87,14 @@ class Config:
     # Setting this to 0 allows weak passwords to be created in the UI.
     AUTH_PASSWORD_POLICY_ENFORCE = _env_bool('AUTH_PASSWORD_POLICY_ENFORCE', '1')
 
+    # Auth Event / Password Hardening
+    PASSWORD_HISTORY_COUNT = _env_int('PASSWORD_HISTORY_COUNT', '3')
+    AUTH_ALERTS_ENABLED = _env_bool('AUTH_ALERTS_ENABLED', '1')
+    AUTH_EVENT_RETENTION_DAYS = _env_int('AUTH_EVENT_RETENTION_DAYS', '180')
+    # Alias settings used by the auth security service.
+    AUTH_LOCKOUT_MAX_ATTEMPTS = _env_int('AUTH_LOCKOUT_MAX_ATTEMPTS', str(AUTH_MAX_ATTEMPTS_IP_ACCOUNT))
+    AUTH_LOCKOUT_WINDOW_SECONDS = _env_int('AUTH_LOCKOUT_WINDOW_SECONDS', str(AUTH_ATTEMPT_WINDOW_SECONDS))
+
     # Proxy / Host
     # Set your allowed production hostnames (comma-separated), e.g. sms.example.com.
     # Leaving this empty in production can allow unsafe Host header usage.

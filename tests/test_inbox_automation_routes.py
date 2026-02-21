@@ -48,9 +48,19 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.db.create_all()
         self.client = self.app.test_client()
 
-        admin = self.AppUser(username="admin", role="admin", must_change_password=False)
+        admin = self.AppUser(
+            username="admin",
+            phone="+15550000010",
+            role="admin",
+            must_change_password=False,
+        )
         admin.set_password("admin-pass")
-        viewer = self.AppUser(username="viewer", role="viewer", must_change_password=False)
+        viewer = self.AppUser(
+            username="viewer",
+            phone="+15550000011",
+            role="viewer",
+            must_change_password=False,
+        )
         viewer.set_password("viewer-pass")
         self.db.session.add_all([admin, viewer])
         self.db.session.commit()

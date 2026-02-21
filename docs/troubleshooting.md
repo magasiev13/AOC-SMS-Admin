@@ -169,6 +169,11 @@ TWILIO_FROM_NUMBER=+1xxxx
 sqlite3 /opt/sms-admin/instance/sms.db "DELETE FROM login_attempts WHERE client_ip='x.x.x.x';"
 ```
 
+If account-scoped lockouts are enabled, also clear username-scoped entries:
+```bash
+sqlite3 /opt/sms-admin/instance/sms.db "DELETE FROM login_attempts WHERE client_ip='__account__' AND username='admin';"
+```
+
 ### Forgot Password
 
 **Solution:** Reset via database:

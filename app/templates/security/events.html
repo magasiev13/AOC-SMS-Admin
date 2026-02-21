@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Security Events - SMS Admin{% endblock %}
+{% block page_title %}Security Events{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Security Events</span>
+{% endblock %}
+
+{% block content %}
+<div class="card app-card mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label for="username" class="form-label">Username</label>
+                <input type="text" class="form-control" id="username" name="username" value="{{ filters.username }}">
+            </div>
+            <div class="col-md-2">
+                <label for="event_type" class="form-label">Event type</label>
+                <select class="form-select" id="event_type" name="event_type">
+                    <option value="">All</option>
+                    {% for value in event_type_options %}
+                    <option value="{{ value }}" {% if filters.event_type == value %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="outcome" class="form-label">Outcome</label>
+                <select class="form-select" id="outcome" name="outcome">
+                    <option value="">All</option>
+                    {% for value in outcome_options %}
+                    <option value="{{ value }}" {% if filters.outcome == value %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="date_from" class="form-label">From</label>
+                <input type="date" class="form-control" id="date_from" name="date_from" value="{{ filters.date_from }}">
+            </div>
+            <div class="col-md-2">
+                <label for="date_to" class="form-label">To</label>
+                <input type="date" class="form-control" id="date_to" name="date_to" value="{{ filters.date_to }}">
+            </div>
+            <div class="col-md-1 d-grid">
+                <button type="submit" class="btn btn-primary">Filter</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card app-card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Time (UTC)</th>
+                    <th>Event</th>
+                    <th>Outcome</th>
+                    <th>User</th>
+                    <th>IP</th>
+                    <th>Metadata</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if events %}
+                    {% for event in events %}
+                    <tr>
+                        <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }}</td>
+                        <td>{{ event.event_type }}</td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if event.outcome == 'success' else ('warning text-dark' if event.outcome == 'blocked' else 'danger') }}">
+                                {{ event.outcome }}
+                            </span>
+                        </td>
+                        <td>{{ event.username or '-' }}</td>
+                        <td>{{ event.client_ip or '-' }}</td>
+                        <td>
+                            <code class="small">{{ event.metadata_json or '-' }}</code>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">No security events found.</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

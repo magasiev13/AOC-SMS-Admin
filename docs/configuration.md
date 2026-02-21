@@ -85,6 +85,18 @@ If `DATABASE_URL` is unset, the app defaults to `instance/sms.db` under the proj
 |----------|---------|-------------|
 | `SESSION_COOKIE_SAMESITE` | `Lax` | Cookie SameSite policy |
 | `SESSION_COOKIE_SECURE` | `1` (prod), `0` (dev) | Require HTTPS for cookies |
+| `REMEMBER_COOKIE_DURATION_DAYS` | `7` | Remember-me session lifetime |
+
+### Auth Hardening
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PASSWORD_HISTORY_COUNT` | `3` | Number of prior passwords blocked for reuse |
+| `AUTH_ALERTS_ENABLED` | `1` | Enable SMS security alerts |
+| `AUTH_EVENT_RETENTION_DAYS` | `180` | Auth event retention window |
+| `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Failed login attempts before lockout |
+| `AUTH_LOCKOUT_WINDOW_SECONDS` | `300` | Failure counting window |
+| `AUTH_LOCKOUT_SECONDS` | `600` | Lockout duration |
 
 ### Login Hardening (Recommended for Production)
 
@@ -137,6 +149,11 @@ class Config:
     AUTH_PASSWORD_MIN_LENGTH = int(os.environ.get('AUTH_PASSWORD_MIN_LENGTH', '12'))
     AUTH_PASSWORD_POLICY_ENFORCE = os.environ.get('AUTH_PASSWORD_POLICY_ENFORCE', '1') == '1'
     TRUSTED_HOSTS = [h.strip() for h in os.environ.get('TRUSTED_HOSTS', '').split(',') if h.strip()]
+    PASSWORD_HISTORY_COUNT = int(os.environ.get('PASSWORD_HISTORY_COUNT', '3'))
+    AUTH_ALERTS_ENABLED = os.environ.get('AUTH_ALERTS_ENABLED', '1') == '1'
+    AUTH_EVENT_RETENTION_DAYS = int(os.environ.get('AUTH_EVENT_RETENTION_DAYS', '180'))
+    AUTH_LOCKOUT_MAX_ATTEMPTS = int(os.environ.get('AUTH_LOCKOUT_MAX_ATTEMPTS', '5'))
+    AUTH_LOCKOUT_WINDOW_SECONDS = int(os.environ.get('AUTH_LOCKOUT_WINDOW_SECONDS', '300'))
 
     # Scheduler
     SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'

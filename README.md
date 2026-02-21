@@ -12,6 +12,7 @@ A production-ready, single-user SMS admin web application for sending community 
 - **Automatic Suppression**: Auto-detect and suppress invalid numbers and opt-outs
 - **Unsubscribe Management**: Track and respect opt-outs across all sends
 - **Role-Based Access**: Admin and social manager roles with appropriate permissions
+- **Security Hardening**: Password complexity/reuse controls, account lockout tracking, nonce-based session revocation, and security audit events
 - **Secure**: Environment-based secrets, Flask-Login authentication, CSRF protection, HTTPS
 
 ## Documentation

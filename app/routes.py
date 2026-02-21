@@ -18,10 +18,11 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     stream_with_context,
     url_for,
 )
-from flask_login import login_required, current_user
+from flask_login import current_user, login_required, logout_user
 from sqlalchemy import DateTime, Integer, String, Text, func, select, text
 from sqlalchemy.exc import OperationalError
 
@@ -29,6 +30,7 @@ from app import csrf, db
 from app.auth import require_roles
 
 from app.models import (
+    AuthEvent,
     AppUser,
     CommunityMember,
     Event,
@@ -44,6 +46,12 @@ from app.models import (
     SurveySession,
     UnsubscribedContact,
     utc_now,
+)
+from app.services.auth_security_service import (
+    is_password_reused,
+    password_policy_errors,
+    record_auth_event,
+    store_password_history,
 )
 from app.services.inbox_service import (
     delete_survey_flow_with_dependencies,
@@ -61,6 +69,7 @@ from app.services.recipient_service import (
     get_unsubscribed_phone_set,
 )
 from app.services.twilio_service import validate_inbound_signature
+from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
@@ -137,21 +146,6 @@ def _cleanup_bootstrap_admin_password_if_needed() -> None:
             "Removed bootstrap ADMIN_PASSWORD from %s after admin password change.",
             env_path,
         )
-
-
-def _password_policy_error(password: str, username: str | None = None) -> str | None:
-    if not current_app.config.get('AUTH_PASSWORD_POLICY_ENFORCE', True):
-        return None
-
-    minimum_length = int(current_app.config.get('AUTH_PASSWORD_MIN_LENGTH', 12))
-    if len(password) < minimum_length:
-        return f'Password must be at least {minimum_length} characters long.'
-
-    normalized_username = (username or '').strip().lower()
-    if normalized_username and normalized_username in password.lower():
-        return 'Password cannot contain the username.'
-
-    return None
 
 
 def _normalized_keyword_sql(column):
@@ -1010,6 +1004,7 @@ def users_add():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
+        phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
         must_change_password = request.form.get('must_change_password') == 'on'
 
@@ -1024,9 +1019,20 @@ def users_add():
         if not password:
             flash('Password is required.', 'error')
             return render_template('users/form.html', user=None)
-        password_error = _password_policy_error(password, username)
-        if password_error:
-            flash(password_error, 'error')
+
+        if not phone_input:
+            flash('Phone number is required.', 'error')
+            return render_template('users/form.html', user=None)
+
+        normalized_phone = normalize_phone(phone_input)
+        if not validate_phone(normalized_phone):
+            flash('Phone number must be a valid E.164 number.', 'error')
+            return render_template('users/form.html', user=None)
+
+        policy_errors = password_policy_errors(password, username=username)
+        if policy_errors:
+            for error in policy_errors:
+                flash(error, 'error')
             return render_template('users/form.html', user=None)
 
         existing = AppUser.query.filter_by(username=username).first()
@@ -1034,7 +1040,17 @@ def users_add():
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=None)
 
-        user = AppUser(username=username, role=role, must_change_password=must_change_password)
+        existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone).first()
+        if existing_phone:
+            flash('A user with this phone number already exists.', 'error')
+            return render_template('users/form.html', user=None)
+
+        user = AppUser(
+            username=username,
+            phone=normalized_phone,
+            role=role,
+            must_change_password=must_change_password,
+        )
         user.set_password(password)
         db.session.add(user)
         db.session.commit()
@@ -1054,6 +1070,7 @@ def users_edit(user_id):
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         role = request.form.get('role', '').strip()
+        phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
         must_change_password = request.form.get('must_change_password') == 'on'
 
@@ -1065,9 +1082,23 @@ def users_edit(user_id):
             flash('Role selection is required.', 'error')
             return render_template('users/form.html', user=user)
 
+        if not phone_input:
+            flash('Phone number is required.', 'error')
+            return render_template('users/form.html', user=user)
+
+        normalized_phone = normalize_phone(phone_input)
+        if not validate_phone(normalized_phone):
+            flash('Phone number must be a valid E.164 number.', 'error')
+            return render_template('users/form.html', user=user)
+
         existing = AppUser.query.filter(AppUser.username == username, AppUser.id != user_id).first()
         if existing:
             flash('A user with this username already exists.', 'error')
+            return render_template('users/form.html', user=user)
+
+        existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone, AppUser.id != user_id).first()
+        if existing_phone:
+            flash('A user with this phone number already exists.', 'error')
             return render_template('users/form.html', user=user)
 
         if user.role == 'admin' and role != 'admin':
@@ -1076,17 +1107,59 @@ def users_edit(user_id):
                 flash('At least one admin user is required.', 'error')
                 return render_template('users/form.html', user=user)
 
+        if password and user.id == current_user.id:
+            flash('Use Account > Change Password to update your own password.', 'error')
+            return render_template('users/form.html', user=user)
+
         user.username = username
+        user.phone = normalized_phone
         user.role = role
         user.must_change_password = must_change_password
+        performed_admin_reset = False
+        old_password_hash = None
         if password:
-            password_error = _password_policy_error(password, username)
-            if password_error:
-                flash(password_error, 'error')
+            policy_errors = password_policy_errors(password, username=username)
+            if policy_errors:
+                for error in policy_errors:
+                    flash(error, 'error')
                 return render_template('users/form.html', user=user)
+            old_password_hash = user.password_hash
             user.set_password(password)
+            user.must_change_password = True
+            user.rotate_session_nonce()
+            performed_admin_reset = True
+            store_password_history(
+                user.id,
+                old_password_hash,
+                current_app.config.get('PASSWORD_HISTORY_COUNT', 3),
+            )
 
         db.session.commit()
+
+        if performed_admin_reset:
+            record_auth_event(
+                'admin_password_reset',
+                outcome='success',
+                user=user,
+                username=user.username,
+                client_ip=request.remote_addr or 'unknown',
+                metadata={'actor_user_id': current_user.id},
+            )
+            alert_result = send_security_alert(user, 'admin_password_reset')
+            if not alert_result.get('success'):
+                record_auth_event(
+                    'alert_sms_failed',
+                    outcome='failed',
+                    user=user,
+                    username=user.username,
+                    client_ip=request.remote_addr or 'unknown',
+                    metadata={
+                        'context': 'admin_password_reset',
+                        'reason': alert_result.get('reason'),
+                        'skipped': alert_result.get('skipped', False),
+                    },
+                )
+
         flash('User updated successfully.', 'success')
         return redirect(url_for('main.users_list'))
 
@@ -1134,24 +1207,101 @@ def change_password():
         if new_password != confirm_password:
             flash('New password and confirmation do not match.', 'error')
             return render_template('auth/change_password.html')
-        password_error = _password_policy_error(new_password, current_user.username)
-        if password_error:
-            flash(password_error, 'error')
+
+        policy_errors = password_policy_errors(new_password, username=current_user.username)
+        if policy_errors:
+            for error in policy_errors:
+                flash(error, 'error')
             return render_template('auth/change_password.html')
 
         if not current_user.check_password(current_password):
             flash('Current password is incorrect.', 'error')
             return render_template('auth/change_password.html')
 
+        if is_password_reused(
+            current_user,
+            new_password,
+            current_app.config.get('PASSWORD_HISTORY_COUNT', 3),
+        ):
+            flash('New password cannot match your current or recently used passwords.', 'error')
+            return render_template('auth/change_password.html')
+
+        old_password_hash = current_user.password_hash
         current_user.set_password(new_password)
         current_user.must_change_password = False
+        current_user.rotate_session_nonce()
+        store_password_history(
+            current_user.id,
+            old_password_hash,
+            current_app.config.get('PASSWORD_HISTORY_COUNT', 3),
+        )
         db.session.commit()
         _cleanup_bootstrap_admin_password_if_needed()
 
-        flash('Password updated successfully.', 'success')
-        return redirect(url_for('main.dashboard'))
+        record_auth_event(
+            'password_changed',
+            outcome='success',
+            user=current_user,
+            username=current_user.username,
+            client_ip=request.remote_addr or 'unknown',
+        )
+        alert_result = send_security_alert(current_user, 'password_changed')
+        if not alert_result.get('success'):
+            record_auth_event(
+                'alert_sms_failed',
+                outcome='failed',
+                user=current_user,
+                username=current_user.username,
+                client_ip=request.remote_addr or 'unknown',
+                metadata={
+                    'context': 'password_changed',
+                    'reason': alert_result.get('reason'),
+                    'skipped': alert_result.get('skipped', False),
+                },
+            )
+
+        logout_user()
+        session.clear()
+        flash('Password updated successfully. Please sign in again.', 'success')
+        return redirect(url_for('auth.login'))
 
     return render_template('auth/change_password.html')
+
+
+@bp.route('/account/security-contact', methods=['GET', 'POST'])
+@login_required
+def security_contact():
+    if request.method == 'POST':
+        phone_input = request.form.get('phone', '').strip()
+        if not phone_input:
+            flash('Phone number is required.', 'error')
+            return render_template('auth/security_contact.html')
+
+        normalized_phone = normalize_phone(phone_input)
+        if not validate_phone(normalized_phone):
+            flash('Phone number must be a valid E.164 number.', 'error')
+            return render_template('auth/security_contact.html')
+
+        existing = AppUser.query.filter(AppUser.phone == normalized_phone, AppUser.id != current_user.id).first()
+        if existing:
+            flash('That phone number is already assigned to another user.', 'error')
+            return render_template('auth/security_contact.html')
+
+        current_user.phone = normalized_phone
+        db.session.commit()
+        record_auth_event(
+            'security_contact_updated',
+            outcome='success',
+            user=current_user,
+            username=current_user.username,
+            client_ip=request.remote_addr or 'unknown',
+        )
+        flash('Security contact saved.', 'success')
+        if current_user.must_change_password:
+            return redirect(url_for('main.change_password'))
+        return redirect(url_for('main.dashboard'))
+
+    return render_template('auth/security_contact.html')
 
 
 # Community Members Management
@@ -1793,6 +1943,68 @@ def logs_status():
         })
 
     return jsonify({'logs': payload})
+
+
+@bp.route('/security/events')
+@login_required
+@require_roles('admin')
+def security_events():
+    username = request.args.get('username', '').strip()
+    event_type = request.args.get('event_type', '').strip()
+    outcome = request.args.get('outcome', '').strip()
+    date_from = request.args.get('date_from', '').strip()
+    date_to = request.args.get('date_to', '').strip()
+
+    query = AuthEvent.query
+    if username:
+        pattern = f"%{escape_like(username)}%"
+        query = query.filter(AuthEvent.username.ilike(pattern, escape='\\'))
+    if event_type:
+        query = query.filter(AuthEvent.event_type == event_type)
+    if outcome:
+        query = query.filter(AuthEvent.outcome == outcome)
+
+    if date_from:
+        try:
+            start = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            query = query.filter(AuthEvent.created_at >= start)
+        except ValueError:
+            flash('Invalid from date filter; expected YYYY-MM-DD.', 'error')
+    if date_to:
+        try:
+            end = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc) + timedelta(days=1)
+            query = query.filter(AuthEvent.created_at < end)
+        except ValueError:
+            flash('Invalid to date filter; expected YYYY-MM-DD.', 'error')
+
+    events = query.order_by(AuthEvent.created_at.desc()).limit(500).all()
+    event_type_options = [
+        row[0]
+        for row in db.session.query(AuthEvent.event_type)
+        .group_by(AuthEvent.event_type)
+        .order_by(AuthEvent.event_type.asc())
+        .all()
+    ]
+    outcome_options = [
+        row[0]
+        for row in db.session.query(AuthEvent.outcome)
+        .group_by(AuthEvent.outcome)
+        .order_by(AuthEvent.outcome.asc())
+        .all()
+    ]
+    return render_template(
+        'security/events.html',
+        events=events,
+        filters={
+            'username': username,
+            'event_type': event_type,
+            'outcome': outcome,
+            'date_from': date_from,
+            'date_to': date_to,
+        },
+        event_type_options=event_type_options,
+        outcome_options=outcome_options,
+    )
 
 
 # Scheduled Messages

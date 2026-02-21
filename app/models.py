@@ -1,4 +1,5 @@
 import json
+import secrets
 from datetime import datetime as dt, timezone
 
 from flask_login import UserMixin
@@ -13,6 +14,10 @@ def utc_now():
     return dt.now(timezone.utc)
 
 
+def new_session_nonce() -> str:
+    return secrets.token_hex(16)
+
+
 class AppUser(UserMixin, db.Model):
     """Application users with role-based access."""
     __tablename__ = 'users'
@@ -20,8 +25,10 @@ class AppUser(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    phone = db.Column(db.String(20), nullable=True, index=True)
     role = db.Column(db.String(30), nullable=False, default='admin')
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
+    session_nonce = db.Column(db.String(64), nullable=False, default=new_session_nonce)
     created_at = db.Column(db.DateTime, default=utc_now)
 
     def set_password(self, password: str) -> None:
@@ -29,6 +36,20 @@ class AppUser(UserMixin, db.Model):
 
     def check_password(self, password: str) -> bool:
         return check_password_hash(self.password_hash, password)
+
+    def get_id(self) -> str:
+        nonce = self.session_nonce or ""
+        return f"{self.id}:{nonce}"
+
+    def rotate_session_nonce(self) -> None:
+        self.session_nonce = new_session_nonce()
+
+    @validates("phone")
+    def _normalize_user_phone(self, key, value):
+        if value is None:
+            return None
+        normalized = normalize_phone(value)
+        return normalized or None
 
     @property
     def is_admin(self) -> bool:
@@ -335,15 +356,71 @@ class ScheduledMessage(db.Model):
         return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'
 
 
+class UserPasswordHistory(db.Model):
+    """Recent password hashes used to prevent password reuse."""
+    __tablename__ = 'user_password_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    user = db.relationship('AppUser')
+
+    def __repr__(self):
+        return f'<UserPasswordHistory user_id={self.user_id} created_at={self.created_at}>'
+
+
+class AuthEvent(db.Model):
+    """Security-relevant auth events for incident review."""
+    __tablename__ = 'auth_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_type = db.Column(db.String(50), nullable=False, index=True)
+    outcome = db.Column(db.String(20), nullable=False, default='success')
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    username = db.Column(db.String(80), nullable=True, index=True)
+    client_ip = db.Column(db.String(45), nullable=True)
+    metadata_json = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    user = db.relationship('AppUser')
+
+    @property
+    def metadata_payload(self) -> dict:
+        if not self.metadata_json:
+            return {}
+        try:
+            payload = json.loads(self.metadata_json)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def set_metadata(self, payload: dict | None) -> None:
+        if not payload:
+            self.metadata_json = None
+            return
+        self.metadata_json = json.dumps(payload)
+
+    def __repr__(self):
+        return f'<AuthEvent {self.event_type} outcome={self.outcome}>'
+
+
 class LoginAttempt(db.Model):
     """Track failed login attempts for rate limiting across workers."""
     __tablename__ = 'login_attempts'
 
     id = db.Column(db.Integer, primary_key=True)
     client_ip = db.Column(db.String(45), nullable=False, index=True)
+    username = db.Column(db.String(80), nullable=False, default='')
     attempt_count = db.Column(db.Integer, default=1, nullable=False)
     first_attempt_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     locked_until = db.Column(db.DateTime, nullable=True)
 
+    __table_args__ = (
+        db.Index('ux_login_attempts_client_ip_username', 'client_ip', 'username', unique=True),
+    )
+
     def __repr__(self):
-        return f'<LoginAttempt {self.client_ip} count={self.attempt_count}>'
+        username = self.username or "<ip-only>"
+        return f'<LoginAttempt {self.client_ip}/{username} count={self.attempt_count}>'
