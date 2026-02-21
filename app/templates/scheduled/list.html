@@ -98,7 +98,7 @@
                     </td>
                     <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
                     <td>
-                        <div class="d-flex flex-wrap gap-2 row-actions">
+                        <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
                                     data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                                     aria-controls="scheduledPreview{{ msg.id }}">
@@ -142,7 +142,7 @@
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
             </div>
-            <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+            <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
                 <button type="button" class="btn btn-sm btn-outline-primary"
                         data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                         aria-controls="scheduledPreview{{ msg.id }}">
@@ -273,7 +273,7 @@
                     </td>
                     <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
                     <td>
-                        <div class="d-flex flex-wrap gap-2 row-actions">
+                        <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
                                     data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                                     aria-controls="scheduledPreview{{ msg.id }}">
@@ -318,7 +318,7 @@
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
             </div>
-            <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+            <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
                 <button type="button" class="btn btn-sm btn-outline-primary"
                         data-bs-toggle="offcanvas" data-bs-target="#scheduledPreview{{ msg.id }}"
                         aria-controls="scheduledPreview{{ msg.id }}">

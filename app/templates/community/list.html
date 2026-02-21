@@ -124,7 +124,7 @@
                         </td>
                         {% if can_manage_community %}
                         <td>
-                            <div class="d-flex flex-wrap gap-1 row-actions">
+                            <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions data-row-actions-primary="2">
                                 <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview member" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview{{ member.id }}"
                                         aria-controls="memberPreview{{ member.id }}">
@@ -222,7 +222,7 @@
                     {% endif %}
                 </div>
                 {% if can_manage_community %}
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions data-row-actions-primary="2">
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview{{ member.id }}"
                             aria-controls="memberPreview{{ member.id }}">

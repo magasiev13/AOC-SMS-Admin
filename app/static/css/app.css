@@ -1,3 +1,6 @@
+/* ===========================================
+   TOKENS
+   =========================================== */
 :root {
   --color-primary: #6366f1;
   --color-primary-strong: #4f46e5;
@@ -111,6 +114,9 @@ h6,
   font-weight: 600;
 }
 
+/* ===========================================
+   LAYOUT
+   =========================================== */
 .app-shell {
   display: flex;
   min-height: 100vh;
@@ -340,7 +346,7 @@ h6,
 
 .app-content {
   flex: 1;
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-5);
   min-width: 0;
 }
 
@@ -348,16 +354,19 @@ h6,
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .app-page-title {
   margin: 0;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
 }
 
 .app-breadcrumbs {
   font-size: var(--font-size-2);
   color: var(--color-text-muted);
+  line-height: var(--line-height-2);
 }
 
 .app-breadcrumbs a {
@@ -419,6 +428,9 @@ h6,
   }
 }
 
+/* ===========================================
+   SHARED COMPONENTS
+   =========================================== */
 .app-card {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -429,10 +441,12 @@ h6,
 .card-header {
   font-size: var(--font-size-2);
   font-weight: 600;
+  padding: var(--space-3) var(--space-4);
 }
 
 .card-footer {
   font-size: var(--font-size-2);
+  padding: var(--space-3) var(--space-4);
 }
 
 .table {
@@ -476,6 +490,18 @@ h6,
 
 .table th {
   font-weight: 600;
+}
+
+.table thead th {
+  background: var(--color-surface-muted);
+  border-bottom: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  padding: var(--space-3) var(--space-4);
+}
+
+.table tbody td {
+  padding: var(--space-3) var(--space-4);
+  line-height: var(--line-height-2);
 }
 
 .table th .sort-button {
@@ -538,7 +564,11 @@ h6,
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+}
+
+.filter-bar .input-group {
+  max-width: 28rem;
 }
 
 .filter-bar .form-control {
@@ -595,13 +625,85 @@ h6,
 }
 
 .row-actions {
-  opacity: 1;
-  transition: opacity 0.2s ease-in-out;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.table-hover tbody tr:hover .row-actions,
-.table-hover tbody tr:focus-within .row-actions {
-  opacity: 1;
+.row-actions form {
+  margin: 0;
+  display: inline-flex;
+}
+
+.row-actions .btn {
+  white-space: nowrap;
+}
+
+.row-actions__primary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-actions .row-actions__overflow-toggle {
+  min-width: 2.5rem;
+  padding: var(--space-1) var(--space-2);
+  line-height: 1.2;
+}
+
+.row-actions__overflow-toggle::after {
+  margin-left: 0.25rem;
+}
+
+.row-actions__overflow-menu {
+  min-width: 12rem;
+  padding: var(--space-1);
+  box-shadow: var(--elevation-2);
+}
+
+.row-actions__overflow-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-2);
+  font-weight: 600;
+  line-height: 1.35;
+  padding: 0.5rem 0.75rem;
+}
+
+.row-actions__menu-form {
+  margin: 0;
+}
+
+.row-actions__menu-form .dropdown-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0.45rem 0.75rem;
+}
+
+@media (max-width: 991.98px) {
+  .row-actions[data-row-actions] {
+    width: 100%;
+  }
+
+  .row-actions[data-row-actions] .row-actions__primary {
+    flex: 1 1 auto;
+  }
+
+  .row-actions[data-row-actions] .row-actions__primary > .btn,
+  .row-actions[data-row-actions] .row-actions__primary > form,
+  .row-actions[data-row-actions] .row-actions__primary > .btn-group {
+    flex: 1 1 auto;
+  }
+
+  .row-actions[data-row-actions] .row-actions__primary > form .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .card-list {
@@ -616,11 +718,24 @@ h6,
   padding: var(--space-4);
   background-color: var(--color-surface);
   box-shadow: var(--elevation-1);
+  display: grid;
+  gap: var(--space-2);
+  line-height: var(--line-height-2);
   transition: background 0.2s ease;
 }
 
 .card-list-item:hover {
   background: rgba(99, 102, 241, 0.04);
+}
+
+.card-list-item h6 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-4);
+  line-height: 1.25;
+}
+
+.card-list-item .small {
+  line-height: var(--line-height-2);
 }
 
 .card-list-item .row-actions {
@@ -850,22 +965,16 @@ h6,
   width: min(380px, 90vw);
 }
 
+/* ===========================================
+   INTERACTION & ACCESSIBILITY
+   =========================================== */
 .btn {
   border-radius: var(--radius-md);
   font-size: var(--font-size-2);
   font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.25;
   padding: var(--space-2) var(--space-3);
-}
-
-.btn-primary {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.btn-primary:hover,
-.btn-primary:focus {
-  background-color: var(--color-primary-strong);
-  border-color: var(--color-primary-strong);
 }
 
 .btn-group-sm > .btn {
@@ -876,7 +985,21 @@ h6,
   border-radius: var(--radius-pill);
   font-size: var(--font-size-1);
   font-weight: 600;
+  line-height: 1.2;
   padding: var(--space-1) var(--space-2);
+}
+
+.form-label {
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-2);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.form-text {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-2);
+  line-height: var(--line-height-2);
 }
 
 .form-control,
@@ -900,6 +1023,10 @@ h6,
 .form-control,
 .form-select {
   padding: var(--space-2) var(--space-3);
+}
+
+textarea.form-control {
+  line-height: var(--line-height-2);
 }
 
 .form-control:focus,
@@ -1038,7 +1165,10 @@ a:focus-visible {
   }
 }
 
-/* ===== DASHBOARD REDESIGN ===== */
+/* ===========================================
+   PAGE-SPECIFIC OVERRIDES
+   =========================================== */
+/* ===== DASHBOARD ===== */
 
 .dashboard-layout {
   display: flex;
@@ -1450,30 +1580,6 @@ a:focus-visible {
   color: var(--color-primary);
 }
 
-/* Empty State */
-.empty-state {
-  text-align: center;
-  padding: var(--space-6) var(--space-4);
-  color: var(--color-text-muted);
-}
-
-.empty-state__icon {
-  font-size: 3rem;
-  color: var(--color-border);
-  margin-bottom: var(--space-3);
-}
-
-.empty-state__title {
-  font-size: var(--font-size-3);
-  font-weight: 600;
-  color: var(--color-text);
-  margin-bottom: var(--space-2);
-}
-
-.empty-state__text {
-  font-size: var(--font-size-2);
-}
-
 /* Sidebar Enhancement */
 .app-sidebar {
   background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
@@ -1527,19 +1633,6 @@ a:focus-visible {
   box-shadow: none;
 }
 
-/* Button Enhancement */
-.btn-primary {
-  background: var(--gradient-primary);
-  border: none;
-  box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
-}
-
-.btn-primary:hover,
-.btn-primary:focus {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-}
-
 /* Donut Chart Legend */
 .chart-legend {
   display: flex;
@@ -1560,249 +1653,6 @@ a:focus-visible {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-}
-
-/* ========================================
-   GLOBAL REDESIGN STYLES
-   Applied across all pages for cohesion
-   ======================================== */
-
-/* Enhanced Card Styling */
-.app-card,
-.card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--elevation-1);
-  background: var(--color-surface);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-.app-card:hover,
-.card:hover {
-  box-shadow: var(--elevation-2);
-}
-
-.card-header {
-  background: var(--color-surface-muted);
-  border-bottom: 1px solid var(--color-border);
-  font-weight: 600;
-  padding: var(--space-3) var(--space-4);
-}
-
-.card-footer {
-  background: var(--color-surface-muted);
-  border-top: 1px solid var(--color-border);
-  font-size: var(--font-size-2);
-}
-
-/* Enhanced Table Styling */
-.table {
-  margin-bottom: 0;
-}
-
-.table thead th {
-  background: var(--color-surface-muted);
-  border-bottom: 2px solid var(--color-border);
-  font-weight: 600;
-  font-size: var(--font-size-2);
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--color-text-muted);
-  padding: var(--space-3) var(--space-4);
-}
-
-.table tbody td {
-  padding: var(--space-3) var(--space-4);
-  vertical-align: middle;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.table-hover tbody tr:hover {
-  background-color: rgba(99, 102, 241, 0.04);
-}
-
-/* Enhanced Badge Styling */
-.badge {
-  font-weight: 500;
-  font-size: var(--font-size-1);
-  padding: 0.35em 0.65em;
-  border-radius: var(--radius-pill);
-}
-
-.badge.bg-success {
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
-}
-
-.badge.bg-danger {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
-}
-
-.badge.bg-warning {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
-  color: #fff !important;
-}
-
-.badge.bg-primary {
-  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
-}
-
-.badge.bg-secondary {
-  background: linear-gradient(135deg, #64748b 0%, #475569 100%) !important;
-}
-
-.badge.bg-info {
-  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%) !important;
-}
-
-/* Enhanced Button Styling */
-.btn {
-  font-weight: 500;
-  border-radius: var(--radius-md);
-  transition: all 0.2s ease;
-}
-
-.btn-primary {
-  background: var(--gradient-primary);
-  border: none;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
-}
-
-.btn-primary:hover {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-  transform: translateY(-1px);
-}
-
-.btn-success {
-  background: var(--gradient-success);
-  border: none;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
-}
-
-.btn-success:hover {
-  background: linear-gradient(135deg, #059669 0%, #0891b2 100%);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-  transform: translateY(-1px);
-}
-
-.btn-danger {
-  background: var(--gradient-danger);
-  border: none;
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
-}
-
-.btn-danger:hover {
-  background: linear-gradient(135deg, #dc2626 0%, #ea580c 100%);
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
-  transform: translateY(-1px);
-}
-
-.btn-outline-primary {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.btn-outline-primary:hover {
-  background: var(--gradient-primary);
-  border-color: transparent;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
-}
-
-.btn-outline-secondary:hover {
-  background: var(--color-text);
-  border-color: var(--color-text);
-}
-
-/* Enhanced Form Styling */
-.form-control,
-.form-select {
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  padding: var(--space-2) var(--space-3);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.form-control:focus,
-.form-select:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-}
-
-.form-label {
-  font-weight: 500;
-  font-size: var(--font-size-2);
-  color: var(--color-text);
-  margin-bottom: var(--space-1);
-}
-
-.input-group-text {
-  background: var(--color-surface-muted);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
-}
-
-/* Enhanced Page Header */
-.app-page-header {
-  margin-bottom: var(--space-5);
-}
-
-.app-page-title {
-  font-size: var(--font-size-5);
-  font-weight: 700;
-  color: var(--color-text);
-  margin: 0;
-}
-
-.app-breadcrumb {
-  font-size: var(--font-size-2);
-  color: var(--color-text-muted);
-}
-
-.app-breadcrumb a {
-  color: var(--color-primary);
-  text-decoration: none;
-}
-
-.app-breadcrumb a:hover {
-  text-decoration: underline;
-}
-
-/* Filter Bar Styling */
-.filter-bar {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.filter-bar .form-control {
-  max-width: 300px;
-}
-
-/* Empty State Styling */
-.empty-state {
-  text-align: center;
-  padding: var(--space-6);
-  color: var(--color-text-muted);
-}
-
-.empty-state__icon {
-  font-size: 3rem;
-  opacity: 0.3;
-  margin-bottom: var(--space-3);
-  display: block;
-}
-
-.empty-state__title {
-  font-size: var(--font-size-4);
-  font-weight: 600;
-  color: var(--color-text);
-  margin-bottom: var(--space-2);
-}
-
-.empty-state__text {
-  font-size: var(--font-size-2);
-  margin-bottom: var(--space-4);
 }
 
 /* Modal Styling */
@@ -1976,7 +1826,8 @@ code {
   }
 
   .app-page-actions-inline > * {
-    flex: 1 1 auto;
+    flex: 1 1 calc(50% - var(--space-2));
+    min-width: 11rem;
   }
 
   .app-page-actions .btn,
@@ -2156,10 +2007,12 @@ code {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  row-gap: var(--space-2);
 }
 
 .automation-actions .btn {
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .automation-actions form {
@@ -2180,6 +2033,32 @@ code {
 .automation-actions__primary .btn:hover,
 .automation-actions__primary .btn:focus {
   border-color: rgba(79, 70, 229, 0.45);
+}
+
+.automation-form-card {
+  max-width: 64rem;
+}
+
+.automation-form-card .card-body {
+  padding-block: calc(var(--space-4) + var(--space-1));
+}
+
+.automation-form {
+  display: grid;
+  gap: calc(var(--space-3) + var(--space-1));
+}
+
+.automation-form .mb-3 {
+  margin-bottom: 0 !important;
+}
+
+.automation-form .form-text {
+  margin-top: var(--space-1);
+}
+
+.automation-form__actions {
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .btn-soft-warning {
@@ -2212,6 +2091,27 @@ code {
   gap: var(--space-2);
 }
 
+@media (max-width: 575.98px) {
+  .filter-bar .input-group {
+    max-width: none;
+    width: 100%;
+  }
+
+  .card-list-item {
+    padding: var(--space-3);
+  }
+
+  .card-list-item h6 {
+    font-size: var(--font-size-3);
+  }
+
+  .automation-form__actions > .btn,
+  .automation-form__actions > a {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
 
 .survey-submissions-view-btn {
   min-width: 5.75rem;
@@ -2221,33 +2121,20 @@ code {
   white-space: nowrap;
 }
 
-/* Spacing rhythm normalization for cards and sections */
-.app-content {
-  padding: var(--space-5);
-}
-
-.app-page-header {
-  margin-bottom: var(--space-5);
-}
-
-.card-header,
-.card-footer {
-  padding: var(--space-3) var(--space-4);
-}
-
+/* Shared spacing rhythm */
 .card-body,
 .chart-card,
 .send-card__body {
   padding: var(--space-4);
 }
 
-.filter-bar {
-  gap: var(--space-2);
-}
-
 @media (max-width: 991.98px) {
   .app-content {
     padding: var(--space-4);
+  }
+
+  .app-page-header {
+    margin-bottom: var(--space-4);
   }
 
   .card-body,

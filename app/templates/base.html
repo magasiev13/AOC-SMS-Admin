@@ -289,7 +289,7 @@
                 const applyMobile = () => {
                     moveAllInline();
                     const actions = Array.from(inline.querySelectorAll(':scope > *'));
-                    if (actions.length <= 1) {
+                    if (actions.length <= 2) {
                         return;
                     }
 
@@ -329,9 +329,141 @@
             });
         }
 
+        function initRowActionOverflow() {
+            const stripActionButtonClasses = (actionEl) => {
+                const removableClasses = [
+                    'btn',
+                    'btn-sm',
+                    'btn-outline-primary',
+                    'btn-outline-secondary',
+                    'btn-outline-danger',
+                    'btn-outline-warning',
+                    'btn-soft-danger',
+                    'btn-soft-warning',
+                    'btn-outline-info',
+                ];
+                actionEl.classList.remove(...removableClasses);
+            };
+
+            const actionTone = (actionNode) => {
+                const classes = actionNode.className || '';
+                if (classes.includes('danger')) {
+                    return 'danger';
+                }
+                if (classes.includes('warning')) {
+                    return 'warning';
+                }
+                return 'neutral';
+            };
+
+            const wrappers = document.querySelectorAll('[data-row-actions]');
+            wrappers.forEach((wrapper) => {
+                if (wrapper.dataset.rowActionsEnhanced === 'true') {
+                    return;
+                }
+
+                const items = Array.from(wrapper.children).filter((child) => {
+                    if (!(child instanceof HTMLElement) || child.hidden) {
+                        return false;
+                    }
+                    if (child.classList.contains('row-actions__primary') || child.classList.contains('row-actions__overflow')) {
+                        return false;
+                    }
+                    if (child.matches('form')) {
+                        return Boolean(child.querySelector('button, a'));
+                    }
+                    return child.matches('a, button, .btn-group');
+                });
+
+                const overflowMin = Number.parseInt(wrapper.dataset.rowActionsMinOverflow || '3', 10);
+                if (items.length < overflowMin) {
+                    return;
+                }
+
+                const primaryCount = Math.max(1, Number.parseInt(wrapper.dataset.rowActionsPrimary || '1', 10));
+                const primaryItems = items.slice(0, primaryCount);
+                const overflowItems = items.slice(primaryCount);
+                if (!overflowItems.length) {
+                    return;
+                }
+
+                wrapper.dataset.rowActionsEnhanced = 'true';
+                wrapper.classList.add('row-actions--with-overflow');
+
+                const primaryContainer = document.createElement('div');
+                primaryContainer.className = 'row-actions__primary';
+                primaryItems.forEach((item) => {
+                    primaryContainer.appendChild(item);
+                });
+
+                const hasSmallGroup = primaryItems.some((item) => {
+                    if (!(item instanceof HTMLElement)) {
+                        return false;
+                    }
+                    return item.classList.contains('btn-group-sm') || Boolean(item.querySelector('.btn-group-sm'));
+                });
+                const hasSmallButtons = primaryItems.some((item) => {
+                    if (!(item instanceof HTMLElement)) {
+                        return false;
+                    }
+                    return item.matches('.btn-sm') || Boolean(item.querySelector('.btn-sm'));
+                });
+                const toggleSizeClass = hasSmallButtons && !hasSmallGroup ? ' btn-sm' : '';
+
+                const overflowContainer = document.createElement('div');
+                overflowContainer.className = 'dropdown row-actions__overflow';
+
+                const overflowToggle = document.createElement('button');
+                overflowToggle.type = 'button';
+                overflowToggle.className = `btn${toggleSizeClass} btn-outline-secondary dropdown-toggle row-actions__overflow-toggle`;
+                overflowToggle.setAttribute('data-bs-toggle', 'dropdown');
+                overflowToggle.setAttribute('aria-expanded', 'false');
+                overflowToggle.innerHTML = '<i class="bi bi-three-dots" aria-hidden="true"></i><span class="visually-hidden">More actions</span>';
+
+                const overflowMenu = document.createElement('div');
+                overflowMenu.className = 'dropdown-menu dropdown-menu-end row-actions__overflow-menu';
+
+                overflowItems.forEach((item) => {
+                    if (item.matches('form')) {
+                        const formButton = item.querySelector('button');
+                        if (!formButton) {
+                            return;
+                        }
+                        const tone = actionTone(formButton);
+                        stripActionButtonClasses(formButton);
+                        formButton.classList.add('dropdown-item', 'row-actions__menu-button');
+                        if (tone === 'danger') {
+                            formButton.classList.add('text-danger');
+                        } else if (tone === 'warning') {
+                            formButton.classList.add('text-warning');
+                        }
+                        item.classList.add('row-actions__menu-form');
+                        overflowMenu.appendChild(item);
+                        return;
+                    }
+
+                    const tone = actionTone(item);
+                    stripActionButtonClasses(item);
+                    item.classList.add('dropdown-item', 'row-actions__menu-button');
+                    if (tone === 'danger') {
+                        item.classList.add('text-danger');
+                    } else if (tone === 'warning') {
+                        item.classList.add('text-warning');
+                    }
+                    overflowMenu.appendChild(item);
+                });
+
+                overflowContainer.appendChild(overflowToggle);
+                overflowContainer.appendChild(overflowMenu);
+                wrapper.appendChild(primaryContainer);
+                wrapper.appendChild(overflowContainer);
+            });
+        }
+
         updateTableScrollHints();
         window.addEventListener('resize', updateTableScrollHints);
         initPageActionOverflow();
+        initRowActionOverflow();
     </script>
     {% block scripts %}{% endblock %}
 </body>

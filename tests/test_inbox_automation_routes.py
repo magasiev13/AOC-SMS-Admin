@@ -254,6 +254,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         response = self.client.get("/inbox/keywords")
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(response.data.count(b'data-confirm="Delete this keyword rule?"'), 2)
+        self.assertGreaterEqual(response.data.count(b"data-row-actions"), 2)
         self.assertNotIn(b"onclick=\"return confirm('Delete this keyword rule?');\"", response.data)
 
     def test_surveys_list_uses_data_confirm_attribute(self) -> None:
@@ -269,6 +270,8 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
             ),
             2,
         )
+        self.assertGreaterEqual(response.data.count(b"data-row-actions"), 2)
+        self.assertGreaterEqual(response.data.count(b'data-row-actions-primary="1"'), 2)
         self.assertNotIn(b"onclick=\"return confirm('Deactivate this survey flow?');\"", response.data)
         submissions_href = f'/inbox/surveys/{survey.id}/submissions'.encode()
         self.assertGreaterEqual(response.data.count(submissions_href), 2)

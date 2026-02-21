@@ -206,7 +206,7 @@
                     </div>
                 </div>
                 {% if can_manage_unsubscribed and entry.entry_type == 'unsubscribed' %}
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
                     <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove entry">
