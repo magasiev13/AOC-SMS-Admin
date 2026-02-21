@@ -73,9 +73,9 @@
                 <a class="app-nav-link" href="{{ url_for('main.change_password') }}">
                     <i class="bi bi-key me-2"></i>Change Password
                 </a>
-                <form method="POST" action="{{ url_for('auth.logout') }}">
+                <form method="POST" action="{{ url_for('auth.logout') }}" class="w-100">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="app-nav-link btn btn-link p-0 text-start w-100">
+                    <button type="submit" class="app-nav-link app-nav-button text-start w-100">
                         <i class="bi bi-box-arrow-right me-2"></i>Logout
                     </button>
                 </form>
@@ -144,9 +144,9 @@
                             <a class="app-nav-link mt-2" href="{{ url_for('main.change_password') }}">
                                 <i class="bi bi-key me-2"></i>Change Password
                             </a>
-                            <form method="POST" action="{{ url_for('auth.logout') }}">
+                            <form method="POST" action="{{ url_for('auth.logout') }}" class="w-100">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="app-nav-link mt-2 btn btn-link p-0 text-start w-100">
+                                <button type="submit" class="app-nav-link app-nav-button mt-2 text-start w-100">
                                     <i class="bi bi-box-arrow-right me-2"></i>Logout
                                 </button>
                             </form>

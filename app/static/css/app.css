@@ -258,6 +258,17 @@ h6,
   box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
 }
 
+.app-nav-button {
+  border: 0;
+  background: transparent;
+  width: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 .app-main {
   display: flex;
   flex-direction: column;

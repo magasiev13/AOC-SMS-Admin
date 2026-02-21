@@ -77,6 +77,16 @@ class TestCommunitySearchSidebar(unittest.TestCase):
         self.assertIn('type="text"', html)
         self.assertIn('autocomplete="off"', html)
 
+    def test_logout_nav_action_matches_sidebar_link_styling(self) -> None:
+        self._login()
+        response = self.client.get("/dashboard")
+        self.assertEqual(response.status_code, 200)
+        html = response.data.decode("utf-8", errors="ignore")
+
+        self.assertIn('class="app-nav-link app-nav-button text-start w-100"', html)
+        self.assertIn('class="app-nav-link app-nav-button mt-2 text-start w-100"', html)
+        self.assertNotIn('btn btn-link p-0', html)
+
     def test_community_search_matches_name(self) -> None:
         self._login()
         response = self.client.get("/community", query_string={"search": "Mariam"})
