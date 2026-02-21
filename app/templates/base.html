@@ -396,12 +396,26 @@
                     primaryContainer.appendChild(item);
                 });
 
+                const hasSmallGroup = primaryItems.some((item) => {
+                    if (!(item instanceof HTMLElement)) {
+                        return false;
+                    }
+                    return item.classList.contains('btn-group-sm') || Boolean(item.querySelector('.btn-group-sm'));
+                });
+                const hasSmallButtons = primaryItems.some((item) => {
+                    if (!(item instanceof HTMLElement)) {
+                        return false;
+                    }
+                    return item.matches('.btn-sm') || Boolean(item.querySelector('.btn-sm'));
+                });
+                const toggleSizeClass = hasSmallButtons && !hasSmallGroup ? ' btn-sm' : '';
+
                 const overflowContainer = document.createElement('div');
                 overflowContainer.className = 'dropdown row-actions__overflow';
 
                 const overflowToggle = document.createElement('button');
                 overflowToggle.type = 'button';
-                overflowToggle.className = 'btn btn-sm btn-outline-secondary dropdown-toggle row-actions__overflow-toggle';
+                overflowToggle.className = `btn${toggleSizeClass} btn-outline-secondary dropdown-toggle row-actions__overflow-toggle`;
                 overflowToggle.setAttribute('data-bs-toggle', 'dropdown');
                 overflowToggle.setAttribute('aria-expanded', 'false');
                 overflowToggle.innerHTML = '<i class="bi bi-three-dots" aria-hidden="true"></i><span class="visually-hidden">More actions</span>';
