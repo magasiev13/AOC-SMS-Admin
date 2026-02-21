@@ -118,8 +118,6 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
         @app.before_request
         def enforce_trusted_hosts():
             host = (request.host or "").split(":", 1)[0].strip().lower()
-            if host in {"127.0.0.1", "localhost"}:
-                return None
             if host not in trusted_hosts:
                 abort(400)
             return None
