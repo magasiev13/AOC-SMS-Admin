@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlparse
 from functools import wraps
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from app import db
 from app.models import AppUser, LoginAttempt
@@ -149,6 +149,9 @@ def require_roles(*roles):
 
 @bp.before_app_request
 def enforce_password_change():
+    if current_user.is_authenticated:
+        session.permanent = True
+
     if not current_user.is_authenticated:
         return None
     if not current_user.must_change_password:
