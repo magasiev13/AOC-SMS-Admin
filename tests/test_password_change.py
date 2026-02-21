@@ -31,7 +31,12 @@ class TestPasswordChangeFlow(unittest.TestCase):
         self.db.create_all()
         self.client = self.app.test_client()
 
-        user = self.AppUser(username="forced", role="admin", must_change_password=True)
+        user = self.AppUser(
+            username="forced",
+            phone="+15550000005",
+            role="admin",
+            must_change_password=True,
+        )
         user.set_password("old-password")
         self.db.session.add(user)
         self.db.session.commit()
@@ -74,20 +79,21 @@ class TestPasswordChangeFlow(unittest.TestCase):
             "/account/password",
             data={
                 "current_password": "old-password",
-                "new_password": "new-password",
-                "confirm_password": "new-password",
+                "new_password": "New-password1!",
+                "confirm_password": "New-password1!",
             },
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertIn("/login", response.headers.get("Location", ""))
 
         user = self.AppUser.query.filter_by(username="forced").first()
         self.assertIsNotNone(user)
         self.assertFalse(user.must_change_password)
 
-        dashboard = self.client.get("/dashboard")
-        self.assertEqual(dashboard.status_code, 200)
+        dashboard = self.client.get("/dashboard", follow_redirects=False)
+        self.assertEqual(dashboard.status_code, 302)
+        self.assertIn("/login", dashboard.headers.get("Location", ""))
 
     def test_incorrect_current_password_is_rejected(self) -> None:
         self._login("old-password")
@@ -95,8 +101,8 @@ class TestPasswordChangeFlow(unittest.TestCase):
             "/account/password",
             data={
                 "current_password": "wrong-password",
-                "new_password": "new-password",
-                "confirm_password": "new-password",
+                "new_password": "New-password1!",
+                "confirm_password": "New-password1!",
             },
             follow_redirects=True,
         )
@@ -127,8 +133,8 @@ class TestPasswordChangeFlow(unittest.TestCase):
             "/account/password",
             data={
                 "current_password": "old-password",
-                "new_password": "new-password-123",
-                "confirm_password": "new-password-123",
+                "new_password": "New-password123!",
+                "confirm_password": "New-password123!",
             },
             follow_redirects=False,
         )
@@ -160,8 +166,8 @@ class TestPasswordChangeFlow(unittest.TestCase):
             "/account/password",
             data={
                 "current_password": "old-password",
-                "new_password": "new-password-123",
-                "confirm_password": "new-password-123",
+                "new_password": "New-password123!",
+                "confirm_password": "New-password123!",
             },
             follow_redirects=False,
         )

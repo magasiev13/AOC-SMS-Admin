@@ -5,6 +5,7 @@ This document describes all HTTP routes in the SMS Admin application.
 ## Authentication
 
 All routes except `/health`, `/login`, and `/webhooks/twilio/inbound` require authentication via Flask-Login session.
+Authenticated users without a security phone are redirected to `/account/security-contact` until configured.
 
 ### Login Flow
 
@@ -17,7 +18,16 @@ username=admin&password=secret&remember=on
 
 **Rate Limiting:**
 - 5 failed attempts within 5 minutes triggers 10-minute lockout
-- Tracked per client IP in database
+- Tracked per client IP and account in database
+
+### Logout Flow
+
+```
+POST /logout
+Content-Type: application/x-www-form-urlencoded
+
+csrf_token=...
+```
 
 ## Public Routes
 
@@ -122,6 +132,25 @@ POST /account/password
 Content-Type: application/x-www-form-urlencoded
 
 current_password=old&new_password=new&confirm_password=new
+```
+
+Successful password change invalidates active sessions and redirects to `/login`.
+
+### Security Contact
+
+```
+GET /account/security-contact
+POST /account/security-contact
+Content-Type: application/x-www-form-urlencoded
+
+phone=+15551234567
+```
+
+### Security Events (Admin Only)
+
+```
+GET /security/events
+GET /security/events?username=admin&event_type=password_changed&outcome=success&date_from=2026-02-01&date_to=2026-02-21
 ```
 
 ---

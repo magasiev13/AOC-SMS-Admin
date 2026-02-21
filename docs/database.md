@@ -75,13 +75,17 @@ Application users with role-based access control.
 | `id` | Integer | PRIMARY KEY | Auto-increment ID |
 | `username` | String(80) | NOT NULL, UNIQUE | Login username |
 | `password_hash` | String(255) | NOT NULL | Hashed password (pbkdf2/scrypt) |
+| `phone` | String(20) | nullable, UNIQUE (non-empty) | Security alert phone number |
 | `role` | String(30) | NOT NULL, default='admin' | User role: 'admin' or 'social_manager' |
 | `must_change_password` | Boolean | NOT NULL, default=False | Force password change on login |
+| `session_nonce` | String(64) | NOT NULL | Session revocation token |
 | `created_at` | DateTime | default=utc_now | Account creation timestamp |
 
 **Methods:**
 - `set_password(password)` - Hash and store password
 - `check_password(password)` - Verify password against hash
+- `get_id()` - Returns nonce-bound session identifier (`id:session_nonce`)
+- `rotate_session_nonce()` - Invalidates all active sessions
 - `is_admin` - Property returning True if role is 'admin'
 - `is_social_manager` - Property returning True if role is 'social_manager'
 
@@ -245,9 +249,36 @@ Tracks failed login attempts for rate limiting across workers.
 |--------|------|-------------|-------------|
 | `id` | Integer | PRIMARY KEY | Auto-increment ID |
 | `client_ip` | String(45) | NOT NULL, INDEX | Client IP address |
+| `username` | String(80) | NOT NULL, default='' | Username scope (`''` for IP scope) |
 | `attempt_count` | Integer | NOT NULL, default=1 | Failed attempt count |
 | `first_attempt_at` | DateTime | NOT NULL, default=utc_now | First attempt timestamp |
 | `locked_until` | DateTime | nullable | Lockout expiration time |
+
+### UserPasswordHistory
+
+Stores previous password hashes per user to block password reuse.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | Integer | PRIMARY KEY | Auto-increment ID |
+| `user_id` | Integer | FK(users.id), NOT NULL | User ID |
+| `password_hash` | String(255) | NOT NULL | Previous password hash |
+| `created_at` | DateTime | NOT NULL, default=utc_now | History entry timestamp |
+
+### AuthEvent
+
+Security audit trail for login, lockout, password updates, and alert failures.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | Integer | PRIMARY KEY | Auto-increment ID |
+| `event_type` | String(50) | NOT NULL, INDEX | Event name (`login_success`, `password_changed`, etc.) |
+| `outcome` | String(20) | NOT NULL | Event outcome (`success`, `failed`, `blocked`) |
+| `user_id` | Integer | FK(users.id), nullable, INDEX | Related user id |
+| `username` | String(80) | nullable, INDEX | Username at event time |
+| `client_ip` | String(45) | nullable | Source IP |
+| `metadata_json` | Text | nullable | Structured context payload |
+| `created_at` | DateTime | NOT NULL, INDEX | Event timestamp |
 
 ## Migration System
 
@@ -280,6 +311,12 @@ python -m app.dbdoctor --doctor
 | Table | Index | Columns |
 |-------|-------|---------|
 | `login_attempts` | `ix_login_attempts_client_ip` | `client_ip` |
+| `login_attempts` | `ux_login_attempts_client_ip_username` | `client_ip, username` |
+| `users` | `ix_users_phone` | `phone` |
+| `users` | `uq_users_phone_nonempty` | `phone` (partial unique) |
+| `user_password_history` | `ix_user_password_history_user_created` | `user_id, created_at` |
+| `auth_events` | `ix_auth_events_created_at` | `created_at` |
+| `auth_events` | `ix_auth_events_event_type` | `event_type` |
 | `community_members` | implicit | `phone` (UNIQUE) |
 | `unsubscribed_contacts` | implicit | `phone` (UNIQUE) |
 | `suppressed_contacts` | implicit | `phone` (UNIQUE) |

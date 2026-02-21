@@ -29,7 +29,12 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
         self.db.create_all()
         self.client = self.app.test_client()
 
-        admin = self.AppUser(username="admin", role="admin", must_change_password=False)
+        admin = self.AppUser(
+            username="admin",
+            phone="+15550000009",
+            role="admin",
+            must_change_password=False,
+        )
         admin.set_password("admin-pass")
         self.db.session.add(admin)
         self.db.session.commit()
@@ -60,7 +65,8 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
             data={
                 "username": "new-user",
                 "role": "social_manager",
-                "password": "new-password-123",
+                "phone": "+15551110001",
+                "password": "Stronger-pass1!",
             },
             follow_redirects=False,
         )
@@ -77,7 +83,8 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
             data={
                 "username": "new-user-2",
                 "role": "social_manager",
-                "password": "new-password-123",
+                "phone": "+15551110002",
+                "password": "Stronger-pass1!",
                 "must_change_password": "on",
             },
             follow_redirects=False,

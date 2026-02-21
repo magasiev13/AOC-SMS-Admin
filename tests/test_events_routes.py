@@ -35,7 +35,12 @@ class TestEventsRoutes(unittest.TestCase):
 
         self.client = self.app.test_client()
 
-        admin = self.AppUser(username="admin", role="admin", must_change_password=False)
+        admin = self.AppUser(
+            username="admin",
+            phone="+15550000002",
+            role="admin",
+            must_change_password=False,
+        )
         admin.set_password("admin-pass")
         self.db.session.add(admin)
         self.db.session.commit()
@@ -117,7 +122,12 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertIn(b'/events/bulk-delete', response.data)
 
     def test_events_list_hides_bulk_delete_controls_for_social_manager(self) -> None:
-        manager = self.AppUser(username="manager", role="social_manager", must_change_password=False)
+        manager = self.AppUser(
+            username="manager",
+            phone="+15550000003",
+            role="social_manager",
+            must_change_password=False,
+        )
         manager.set_password("manager-pass")
         self.db.session.add(manager)
         self.db.session.add(self.Event(title="Neighborhood Cleanup"))

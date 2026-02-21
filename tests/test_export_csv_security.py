@@ -37,7 +37,12 @@ class TestCsvExportSecurity(unittest.TestCase):
         self.db.create_all()
         self.client = self.app.test_client()
 
-        admin = self.AppUser(username="admin", role="admin", must_change_password=False)
+        admin = self.AppUser(
+            username="admin",
+            phone="+15550000006",
+            role="admin",
+            must_change_password=False,
+        )
         admin.set_password("admin-pass")
         self.db.session.add(admin)
         self.db.session.commit()

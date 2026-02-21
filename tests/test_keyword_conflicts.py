@@ -32,7 +32,12 @@ class TestKeywordCrossTableConflicts(unittest.TestCase):
         self.db.create_all()
         self.client = self.app.test_client()
 
-        user = self.AppUser(username="admin", role="admin", must_change_password=False)
+        user = self.AppUser(
+            username="admin",
+            phone="+15550000004",
+            role="admin",
+            must_change_password=False,
+        )
         user.set_password("admin-password")
         self.db.session.add(user)
         self.db.session.commit()

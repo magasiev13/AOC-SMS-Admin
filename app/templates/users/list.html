@@ -32,6 +32,12 @@
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="phone">
+                            <span>Phone</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
                     <th data-sort-type="date">
                         <button type="button" class="sort-button" data-sort-key="created">
                             <span>Created</span>
@@ -55,6 +61,9 @@
                             <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
                                 {{ 'Admin' if user.is_admin else 'Social Media Manager' }}
                             </span>
+                        </td>
+                        <td data-sort-value="{{ user.phone or '' }}">
+                            {{ user.phone or '-' }}
                         </td>
                         <td data-sort-value="{{ user.created_at.isoformat() if user.created_at else '' }}">
                             {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}
@@ -81,7 +90,7 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="4" class="text-center text-muted py-4">
+                        <td colspan="5" class="text-center text-muted py-4">
                             No users found.
                         </td>
                     </tr>
@@ -105,6 +114,7 @@
                             {% endif %}
                         </div>
                         <div class="text-muted small mt-2">Created {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</div>
+                        <div class="text-muted small mt-1">Phone {{ user.phone or '-' }}</div>
                     </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
