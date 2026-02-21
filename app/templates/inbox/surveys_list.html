@@ -63,7 +63,7 @@
                             </span>
                         </td>
                         <td>
-                            <div class="automation-actions">
+                            <div class="automation-actions row-actions" data-row-actions data-row-actions-primary="1">
                                 <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
                                     <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary" aria-label="Edit survey flow">
                                         <i class="bi bi-pencil me-1"></i>Edit
@@ -123,7 +123,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="row-actions automation-actions automation-actions--mobile mt-3">
+                <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions data-row-actions-primary="1">
                     <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
                         <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary">
                             <i class="bi bi-pencil me-1"></i>Edit

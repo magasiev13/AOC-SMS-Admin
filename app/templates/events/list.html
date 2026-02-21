@@ -115,7 +115,7 @@
                             {{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}
                         </td>
                         <td>
-                            <div class="d-flex flex-wrap gap-1 row-actions">
+                            <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions data-row-actions-primary="2">
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Preview" aria-label="Preview event"
                                         data-bs-toggle="offcanvas" data-bs-target="#eventPreview{{ event.id }}"
                                         aria-controls="eventPreview{{ event.id }}">
@@ -193,7 +193,7 @@
                            aria-label="Select event" data-event-id="{{ event.id }}">
                     {% endif %}
                 </div>
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions">
+                <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions data-row-actions-primary="2">
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#eventPreview{{ event.id }}"
                             aria-controls="eventPreview{{ event.id }}">

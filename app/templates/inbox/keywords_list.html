@@ -56,7 +56,7 @@
                         <td>{{ rule.match_count or 0 }}</td>
                         <td>{{ rule.last_matched_at|localtime if rule.last_matched_at else '-' }}</td>
                         <td>
-                            <div class="automation-actions">
+                            <div class="automation-actions row-actions" data-row-actions>
                                 <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
                                     <i class="bi bi-pencil me-1"></i>Edit
                                 </a>
@@ -100,7 +100,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="row-actions automation-actions automation-actions--mobile mt-3">
+                <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions>
                     <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
                         <i class="bi bi-pencil me-1"></i>Edit
                     </a>
