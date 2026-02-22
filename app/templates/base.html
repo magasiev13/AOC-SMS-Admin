@@ -396,19 +396,13 @@
                     primaryContainer.appendChild(item);
                 });
 
-                const hasSmallGroup = primaryItems.some((item) => {
-                    if (!(item instanceof HTMLElement)) {
-                        return false;
-                    }
-                    return item.classList.contains('btn-group-sm') || Boolean(item.querySelector('.btn-group-sm'));
-                });
                 const hasSmallButtons = primaryItems.some((item) => {
                     if (!(item instanceof HTMLElement)) {
                         return false;
                     }
                     return item.matches('.btn-sm') || Boolean(item.querySelector('.btn-sm'));
                 });
-                const toggleSizeClass = hasSmallButtons && !hasSmallGroup ? ' btn-sm' : '';
+                const toggleSizeClass = hasSmallButtons ? ' btn-sm' : '';
 
                 const overflowContainer = document.createElement('div');
                 overflowContainer.className = 'dropdown row-actions__overflow';
