@@ -9,10 +9,10 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary page-action-secondary">
+<a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary page-action-secondary page-action-force-inline">
     <i class="bi bi-magic me-1"></i>Keyword Rules
 </a>
-<a href="{{ url_for('main.survey_flow_add') }}" class="btn btn-primary page-action-primary">
+<a href="{{ url_for('main.survey_flow_add') }}" class="btn btn-primary page-action-primary page-action-force-inline">
     <i class="bi bi-plus-lg me-1"></i>Add Survey Flow
 </a>
 {% endblock %}
