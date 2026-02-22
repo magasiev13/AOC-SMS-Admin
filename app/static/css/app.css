@@ -396,6 +396,9 @@ h6,
 .app-page-actions-inline .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  line-height: 1.2;
 }
 
 .app-page-actions-overflow {
@@ -1840,6 +1843,12 @@ code {
   .app-page-actions-inline > * {
     flex: 1 1 calc(50% - var(--space-2));
     min-width: 11rem;
+  }
+
+
+  .app-page-actions-inline > .page-action-force-inline {
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .app-page-actions .btn,
