@@ -131,6 +131,7 @@ class Config:
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
     TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
     INBOUND_AUTO_REPLY_ENABLED = os.environ.get('INBOUND_AUTO_REPLY_ENABLED', '1') == '1'
+    SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
     
     # Admin test phone for testing messages before full blast
     ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')
