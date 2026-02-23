@@ -1,6 +1,7 @@
 import json
 
 from flask import current_app
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from app import db
@@ -222,8 +223,83 @@ def _normalize_unsubscribed_name(name: str | None) -> str | None:
     return normalized[:100]
 
 
+def _phone_digits_sql(column):
+    normalized = func.replace(column, '+', '')
+    for token in ('(', ')', '-', ' ', '.'):
+        normalized = func.replace(normalized, token, '')
+    return normalized
+
+
+def _phone_lookup_variants(phone: str) -> list[str]:
+    digits = ''.join(char for char in (phone or '') if char.isdigit())
+    if not digits:
+        return []
+
+    variants: list[str] = [digits]
+    if len(digits) == 11 and digits.startswith('1'):
+        variants.append(digits[1:])
+    elif len(digits) == 10:
+        variants.append(f'1{digits}')
+    return list(dict.fromkeys(variants))
+
+
+def _community_member_for_phone(phone: str) -> CommunityMember | None:
+    member = CommunityMember.query.filter_by(phone=phone).first()
+    if member is not None:
+        return member
+
+    variants = _phone_lookup_variants(phone)
+    if not variants:
+        return None
+
+    return (
+        CommunityMember.query
+        .filter(_phone_digits_sql(CommunityMember.phone).in_(variants))
+        .order_by(CommunityMember.id.desc())
+        .first()
+    )
+
+
+def _thread_for_phone(phone: str) -> InboxThread | None:
+    thread = InboxThread.query.filter_by(phone=phone).first()
+    if thread is not None:
+        return thread
+
+    variants = _phone_lookup_variants(phone)
+    if not variants:
+        return None
+
+    return (
+        InboxThread.query
+        .filter(_phone_digits_sql(InboxThread.phone).in_(variants))
+        .order_by(InboxThread.id.desc())
+        .first()
+    )
+
+
+def _event_registrations_for_phone(phone: str) -> list[EventRegistration]:
+    registrations = (
+        EventRegistration.query.filter_by(phone=phone)
+        .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
+        .all()
+    )
+    if registrations:
+        return registrations
+
+    variants = _phone_lookup_variants(phone)
+    if not variants:
+        return []
+
+    return (
+        EventRegistration.query
+        .filter(_phone_digits_sql(EventRegistration.phone).in_(variants))
+        .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
+        .all()
+    )
+
+
 def _resolve_unsubscribed_name(phone: str, thread: InboxThread | None = None) -> str | None:
-    community_member = CommunityMember.query.filter_by(phone=phone).first()
+    community_member = _community_member_for_phone(phone)
     if community_member:
         community_name = _normalize_unsubscribed_name(community_member.name)
         if community_name:
@@ -231,17 +307,13 @@ def _resolve_unsubscribed_name(phone: str, thread: InboxThread | None = None) ->
 
     resolved_thread = thread
     if resolved_thread is None:
-        resolved_thread = InboxThread.query.filter_by(phone=phone).first()
+        resolved_thread = _thread_for_phone(phone)
     if resolved_thread is not None:
         thread_name = _normalize_unsubscribed_name(resolved_thread.contact_name)
         if thread_name:
             return thread_name
 
-    registrations = (
-        EventRegistration.query.filter_by(phone=phone)
-        .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
-        .all()
-    )
+    registrations = _event_registrations_for_phone(phone)
     for registration in registrations:
         registration_name = _normalize_unsubscribed_name(registration.name)
         if registration_name:

@@ -900,6 +900,29 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(unsubscribed.name, "Event Registration Name")
         self.assertEqual(unsubscribed.source, "inbound")
 
+    def test_stop_unsubscribe_matches_community_name_with_legacy_phone_format(self) -> None:
+        self.db.session.add(
+            self.CommunityMember(
+                name="Legacy Community Name",
+                phone="(555) 333-8899",
+            )
+        )
+        self.db.session.commit()
+
+        stop_result = self.process_inbound_sms(
+            {
+                "From": "+15553338899",
+                "Body": "STOP",
+                "MessageSid": "SM-IN-LEGACY-PHONE-STOP",
+            }
+        )
+        self.assertEqual(stop_result["status"], "opt_out")
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15553338899").first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Legacy Community Name")
+        self.assertEqual(unsubscribed.source, "inbound")
+
     def test_stop_unsubscribe_keeps_existing_name(self) -> None:
         self.db.session.add(
             self.UnsubscribedContact(
