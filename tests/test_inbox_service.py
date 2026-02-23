@@ -187,6 +187,145 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(refreshed_survey.completion_count, 1)
 
     @patch("app.services.inbox_service.get_twilio_service")
+    def test_duplicate_message_sid_during_active_survey_is_idempotent(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="RSVP Idempotent Flow",
+            trigger_keyword="RSVP DUP",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?", "How many guests?", "Any notes?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM777A",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15550001112", "Body": "RSVP DUP", "MessageSid": "SM-IN-DUP-START"}
+        )
+        first_answer = self.process_inbound_sms(
+            {"From": "+15550001112", "Body": "Alex", "MessageSid": "SM-IN-DUP-A1"}
+        )
+        duplicate_answer = self.process_inbound_sms(
+            {"From": "+15550001112", "Body": "Alex", "MessageSid": "SM-IN-DUP-A1"}
+        )
+
+        self.assertEqual(first_answer["status"], "survey_response")
+        self.assertEqual(duplicate_answer["status"], "duplicate")
+
+        session = self.SurveySession.query.filter_by(phone="+15550001112").first()
+        self.assertIsNotNone(session)
+        self.assertEqual(session.current_question_index, 1)
+        self.assertEqual(session.status, "active")
+
+        responses = (
+            self.SurveyResponse.query.filter_by(phone="+15550001112")
+            .order_by(self.SurveyResponse.question_index.asc())
+            .all()
+        )
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].answer, "Alex")
+
+        thread = self.InboxThread.query.filter_by(phone="+15550001112").first()
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.id.asc())
+            .all()
+        )
+        outbound_questions = [
+            message.body
+            for message in messages
+            if message.direction == "outbound"
+            and "?" in message.body
+        ]
+        self.assertEqual(outbound_questions.count("How many guests?"), 1)
+        self.assertEqual(outbound_questions.count("Any notes?"), 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_empty_inbound_during_active_survey_does_not_advance(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="RSVP Empty Guard Flow",
+            trigger_keyword="RSVP EMPTY",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?", "How many guests?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM777B",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15550001113", "Body": "RSVP EMPTY", "MessageSid": "SM-IN-EMPTY-START"}
+        )
+        ignored = self.process_inbound_sms(
+            {"From": "+15550001113", "Body": "   ", "MessageSid": "SM-IN-EMPTY-1"}
+        )
+
+        self.assertEqual(ignored["status"], "survey_ignored_empty")
+        session = self.SurveySession.query.filter_by(phone="+15550001113").first()
+        self.assertIsNotNone(session)
+        self.assertEqual(session.current_question_index, 0)
+        self.assertEqual(session.status, "active")
+
+        responses = self.SurveyResponse.query.filter_by(phone="+15550001113").all()
+        self.assertEqual(len(responses), 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_inbound_sms_message_sid_field_is_used_for_idempotency(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="RSVP SmsMessageSid Flow",
+            trigger_keyword="RSVP SMS SID",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?", "How many guests?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM777C",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15550001115", "Body": "RSVP SMS SID", "SmsMessageSid": "SM-IN-SMS-SID-START"}
+        )
+        first_answer = self.process_inbound_sms(
+            {"From": "+15550001115", "Body": "Alex", "SmsMessageSid": "SM-IN-SMS-SID-A1"}
+        )
+        duplicate_answer = self.process_inbound_sms(
+            {"From": "+15550001115", "Body": "Alex", "SmsMessageSid": "SM-IN-SMS-SID-A1"}
+        )
+
+        self.assertEqual(first_answer["status"], "survey_response")
+        self.assertEqual(duplicate_answer["status"], "duplicate")
+
+        responses = self.SurveyResponse.query.filter_by(phone="+15550001115").all()
+        self.assertEqual(len(responses), 1)
+
+    @patch("app.services.inbox_service.get_twilio_service")
     def test_linked_survey_completion_creates_event_registration(self, mock_get_twilio) -> None:
         event = self.Event(title="Spring Gala")
         self.db.session.add(event)

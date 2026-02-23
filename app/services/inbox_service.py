@@ -1,6 +1,7 @@
 import json
 
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.models import (
@@ -21,6 +22,14 @@ from app.utils import normalize_keyword, normalize_phone, validate_phone
 STOP_KEYWORDS = {'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'}
 START_KEYWORDS = {'START', 'UNSTOP', 'YES'}
 SURVEY_CANCEL_KEYWORDS = {'CANCEL', 'QUIT'}
+
+
+class DuplicateMessageSidError(Exception):
+    """Raised when an inbound duplicate MessageSid should be dropped."""
+
+    def __init__(self, existing_message: InboxMessage):
+        self.existing_message = existing_message
+        super().__init__(f"duplicate_message_sid:{existing_message.message_sid}")
 
 
 def keyword_candidates(text: str) -> list[str]:
@@ -215,6 +224,7 @@ def _append_inbox_message(
     delivery_status: str | None = None,
     delivery_error: str | None = None,
     raw_payload: dict | None = None,
+    duplicate_sid_mode: str = 'store_without_sid',
 ) -> InboxMessage:
     now = utc_now()
     payload = json.dumps(raw_payload, ensure_ascii=True) if raw_payload else None
@@ -222,6 +232,14 @@ def _append_inbox_message(
     if resolved_message_sid:
         existing = InboxMessage.query.filter_by(message_sid=resolved_message_sid).first()
         if existing:
+            if duplicate_sid_mode == 'reject':
+                current_app.logger.info(
+                    'Duplicate inbox message SID detected; dropping duplicate message. sid=%s existing_id=%s direction=%s',
+                    resolved_message_sid,
+                    existing.id,
+                    direction,
+                )
+                raise DuplicateMessageSidError(existing)
             current_app.logger.warning(
                 'Duplicate inbox message SID detected; storing message without SID. sid=%s existing_id=%s direction=%s',
                 resolved_message_sid,
@@ -444,10 +462,18 @@ def _advance_survey(session: SurveySession, inbound_text: str) -> list[str]:
     return replies
 
 
+def _extract_inbound_message_sid(payload: dict) -> str | None:
+    for key in ('MessageSid', 'SmsSid', 'SmsMessageSid'):
+        value = (payload.get(key) or '').strip()
+        if value:
+            return value
+    return None
+
+
 def process_inbound_sms(payload: dict) -> dict:
     raw_from = (payload.get('From') or '').strip()
     inbound_body = (payload.get('Body') or '').strip()
-    message_sid = (payload.get('MessageSid') or payload.get('SmsSid') or '').strip() or None
+    message_sid = _extract_inbound_message_sid(payload)
     profile_name = (payload.get('ProfileName') or '').strip()
 
     if not raw_from:
@@ -463,17 +489,30 @@ def process_inbound_sms(payload: dict) -> dict:
             return {'status': 'duplicate', 'thread_id': existing.thread_id}
 
     thread = _get_or_create_thread(phone, profile_name)
-    inbound_message = _append_inbox_message(
-        thread,
-        phone,
-        'inbound',
-        inbound_body,
-        message_sid=message_sid,
-        raw_payload=payload,
-    )
-    db.session.flush()
+    try:
+        inbound_message = _append_inbox_message(
+            thread,
+            phone,
+            'inbound',
+            inbound_body,
+            message_sid=message_sid,
+            raw_payload=payload,
+            duplicate_sid_mode='reject',
+        )
+        db.session.flush()
+    except DuplicateMessageSidError as exc:
+        db.session.rollback()
+        return {'status': 'duplicate', 'thread_id': exc.existing_message.thread_id}
+    except IntegrityError:
+        db.session.rollback()
+        if message_sid:
+            existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
+            if existing:
+                return {'status': 'duplicate', 'thread_id': existing.thread_id}
+        raise
 
     status = 'stored'
+    pending_replies: list[dict[str, object]] = []
     sent_replies: list[dict] = []
     normalized = normalize_keyword(inbound_body)
     matched_keyword: str | None = None
@@ -482,15 +521,11 @@ def process_inbound_sms(payload: dict) -> dict:
     if normalized in STOP_KEYWORDS:
         _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
         _cancel_active_sessions(phone)
-        sent_replies.append(
+        pending_replies.append(
             {
                 'source': 'system',
-                'result': _send_automated_reply(
-                    phone,
-                    thread,
-                    'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
-                    source='system',
-                ),
+                'source_id': None,
+                'body': 'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
             }
         )
         status = 'opt_out'
@@ -499,34 +534,26 @@ def process_inbound_sms(payload: dict) -> dict:
         session.status = 'cancelled'
         session.completed_at = now
         session.last_activity_at = now
-        sent_replies.append(
+        pending_replies.append(
             {
                 'source': 'survey',
-                'result': _send_automated_reply(
-                    phone,
-                    thread,
-                    'Survey cancelled. Text the survey keyword again anytime to restart.',
-                    source='survey',
-                    source_id=session.survey_id,
-                ),
+                'source_id': session.survey_id,
+                'body': 'Survey cancelled. Text the survey keyword again anytime to restart.',
             }
         )
         status = 'survey_cancelled'
+    elif session and not inbound_body:
+        status = 'survey_ignored_empty'
     else:
         if session:
             # Active survey responses should take precedence over generic START/YES opt-in keywords.
             matched_keyword = session.survey.trigger_keyword
             for reply in _advance_survey(session, inbound_body):
-                sent_replies.append(
+                pending_replies.append(
                     {
                         'source': 'survey',
-                        'result': _send_automated_reply(
-                            phone,
-                            thread,
-                            reply,
-                            source='survey',
-                            source_id=session.survey_id,
-                        ),
+                        'source_id': session.survey_id,
+                        'body': reply,
                     }
                 )
             status = 'survey_response'
@@ -537,15 +564,11 @@ def process_inbound_sms(payload: dict) -> dict:
                 if was_unsubscribed
                 else 'You are already subscribed and can receive SMS alerts.'
             )
-            sent_replies.append(
+            pending_replies.append(
                 {
                     'source': 'system',
-                    'result': _send_automated_reply(
-                        phone,
-                        thread,
-                        start_reply,
-                        source='system',
-                    ),
+                    'source_id': None,
+                    'body': start_reply,
                 }
             )
             status = 'opt_in'
@@ -562,16 +585,11 @@ def process_inbound_sms(payload: dict) -> dict:
             if survey:
                 _session, replies = _start_survey(survey, thread, phone)
                 for reply in replies:
-                    sent_replies.append(
+                    pending_replies.append(
                         {
                             'source': 'survey',
-                            'result': _send_automated_reply(
-                                phone,
-                                thread,
-                                reply,
-                                source='survey',
-                                source_id=survey.id,
-                            ),
+                            'source_id': survey.id,
+                            'body': reply,
                         }
                     )
                 status = 'survey_started'
@@ -591,16 +609,11 @@ def process_inbound_sms(payload: dict) -> dict:
                     matched_keyword = candidate
                     rule.match_count = (rule.match_count or 0) + 1
                     rule.last_matched_at = utc_now()
-                    sent_replies.append(
+                    pending_replies.append(
                         {
                             'source': 'keyword',
-                            'result': _send_automated_reply(
-                                phone,
-                                thread,
-                                rule.response_body,
-                                source='keyword',
-                                source_id=rule.id,
-                            ),
+                            'source_id': rule.id,
+                            'body': rule.response_body,
                         }
                     )
                     status = 'keyword_reply'
@@ -608,6 +621,27 @@ def process_inbound_sms(payload: dict) -> dict:
 
     if matched_keyword:
         inbound_message.matched_keyword = matched_keyword
+
+    # Commit survey/session state before sending outbound messages so retries
+    # cannot advance the survey twice if Twilio retries the same webhook.
+    db.session.commit()
+
+    for pending in pending_replies:
+        source = str(pending['source'])
+        source_id = pending.get('source_id')
+        body = str(pending.get('body') or '')
+        sent_replies.append(
+            {
+                'source': source,
+                'result': _send_automated_reply(
+                    phone,
+                    thread,
+                    body,
+                    source=source,
+                    source_id=source_id if isinstance(source_id, int) else None,
+                ),
+            }
+        )
 
     db.session.commit()
     return {
