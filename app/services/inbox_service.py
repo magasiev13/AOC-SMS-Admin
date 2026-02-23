@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.models import (
+    CommunityMember,
     EventRegistration,
     InboxMessage,
     InboxThread,
@@ -15,6 +16,7 @@ from app.models import (
     UnsubscribedContact,
     utc_now,
 )
+from app.services.suppression_service import classify_failure
 from app.services.twilio_service import get_twilio_service
 from app.utils import normalize_keyword, normalize_phone, validate_phone
 
@@ -174,11 +176,29 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
     if not reply_body:
         return {'success': False, 'error': 'empty_message'}
 
+    if UnsubscribedContact.query.filter_by(phone=thread.phone).first():
+        return {
+            'success': False,
+            'status': 'blocked_opt_out',
+            'sid': None,
+            'error': 'Cannot send to unsubscribed recipient. They must reply START to resubscribe.',
+        }
+
     try:
         twilio = get_twilio_service()
         result = twilio.send_message(thread.phone, reply_body)
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
+
+    if not result.get('success'):
+        error_text = result.get('error') or ''
+        if classify_failure(error_text) == 'opt_out':
+            _upsert_unsubscribed(
+                thread.phone,
+                error_text or 'Manual reply blocked by Twilio opt-out',
+                source='message_failure',
+                name=_resolve_unsubscribed_name(thread.phone, thread=thread),
+            )
 
     _append_inbox_message(
         thread,
@@ -193,6 +213,28 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
     )
     db.session.commit()
     return result
+
+
+def _normalize_unsubscribed_name(name: str | None) -> str | None:
+    normalized = (name or '').strip()
+    if not normalized:
+        return None
+    return normalized[:100]
+
+
+def _resolve_unsubscribed_name(phone: str, thread: InboxThread | None = None) -> str | None:
+    community_member = CommunityMember.query.filter_by(phone=phone).first()
+    if community_member:
+        community_name = _normalize_unsubscribed_name(community_member.name)
+        if community_name:
+            return community_name
+
+    if thread is None:
+        thread = InboxThread.query.filter_by(phone=phone).first()
+    if thread is None:
+        return None
+
+    return _normalize_unsubscribed_name(thread.contact_name)
 
 
 def _get_or_create_thread(phone: str, contact_name: str | None = None) -> InboxThread:
@@ -318,17 +360,27 @@ def _send_automated_reply(
     return result
 
 
-def _upsert_unsubscribed(phone: str, reason: str) -> None:
+def _upsert_unsubscribed(
+    phone: str,
+    reason: str,
+    *,
+    source: str = 'inbound',
+    name: str | None = None,
+) -> None:
+    resolved_name = _normalize_unsubscribed_name(name)
     entry = UnsubscribedContact.query.filter_by(phone=phone).first()
     if entry:
         entry.reason = reason or entry.reason
-        entry.source = 'inbound'
+        entry.source = source or entry.source
+        if not entry.name and resolved_name:
+            entry.name = resolved_name
         return
     db.session.add(
         UnsubscribedContact(
+            name=resolved_name,
             phone=phone,
             reason=reason or None,
-            source='inbound',
+            source=source or 'inbound',
         )
     )
 
@@ -647,15 +699,13 @@ def process_inbound_sms(payload: dict) -> dict:
 
     session = _active_session(phone)
     if normalized in STOP_KEYWORDS:
-        _upsert_unsubscribed(phone, 'Inbound STOP keyword received')
-        _cancel_active_sessions(phone)
-        pending_replies.append(
-            {
-                'source': 'system',
-                'source_id': None,
-                'body': 'You are unsubscribed and will no longer receive SMS alerts. Reply START to resubscribe.',
-            }
+        _upsert_unsubscribed(
+            phone,
+            'Inbound STOP keyword received',
+            source='inbound',
+            name=_resolve_unsubscribed_name(phone, thread=thread),
         )
+        _cancel_active_sessions(phone)
         status = 'opt_out'
     elif session and normalized in SURVEY_CANCEL_KEYWORDS:
         now = utc_now()

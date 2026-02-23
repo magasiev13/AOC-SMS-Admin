@@ -154,7 +154,11 @@ TWILIO_FROM_NUMBER=+1xxxx
 
 **Cause:** Recipient replied STOP.
 
-**Behavior:** Automatically added to `unsubscribed_contacts`.
+**Behavior:**
+- Automatically added to `unsubscribed_contacts`.
+- Inbox manual replies are blocked while unsubscribed.
+- The app does not send a custom STOP confirmation SMS; rely on carrier/Twilio opt-out handling.
+- Recipient must reply `START` (or `UNSTOP` / `YES`) to resubscribe before sends can resume.
 
 ---
 

@@ -19,6 +19,7 @@ class TestInboxService(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import (
+            CommunityMember,
             Event,
             EventRegistration,
             InboxMessage,
@@ -29,8 +30,9 @@ class TestInboxService(unittest.TestCase):
             SurveySession,
             UnsubscribedContact,
         )
-        from app.services.inbox_service import process_inbound_sms
+        from app.services.inbox_service import process_inbound_sms, send_thread_reply
 
+        self.CommunityMember = CommunityMember
         self.db = db
         self.Event = Event
         self.EventRegistration = EventRegistration
@@ -42,6 +44,7 @@ class TestInboxService(unittest.TestCase):
         self.SurveyResponse = SurveyResponse
         self.UnsubscribedContact = UnsubscribedContact
         self.process_inbound_sms = process_inbound_sms
+        self.send_thread_reply = send_thread_reply
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
@@ -764,6 +767,8 @@ class TestInboxService(unittest.TestCase):
 
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15551112222").first()
         self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.source, "inbound")
+        self.assertEqual(unsubscribed.reason, "Inbound STOP keyword received")
 
         thread = self.InboxThread.query.filter_by(phone="+15551112222").first()
         messages = (
@@ -771,12 +776,8 @@ class TestInboxService(unittest.TestCase):
             .order_by(self.InboxMessage.created_at.asc())
             .all()
         )
-        self.assertTrue(
-            any(
-                msg.direction == "outbound"
-                and "You are unsubscribed and will no longer receive SMS alerts." in msg.body
-                for msg in messages
-            )
+        self.assertFalse(
+            any("You are unsubscribed and will no longer receive SMS alerts." in msg.body for msg in messages)
         )
 
     @patch("app.services.inbox_service.get_twilio_service")
@@ -797,6 +798,18 @@ class TestInboxService(unittest.TestCase):
 
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15556667777").first()
         self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.source, "inbound")
+        self.assertEqual(unsubscribed.reason, "Inbound STOP keyword received")
+
+        thread = self.InboxThread.query.filter_by(phone="+15556667777").first()
+        self.assertIsNotNone(thread)
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.created_at.asc())
+            .all()
+        )
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].direction, "inbound")
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_stop_then_start_updates_unsubscribe_state(self, mock_get_twilio) -> None:
@@ -815,6 +828,8 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(stop_result["status"], "opt_out")
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15554443333").first()
         self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.source, "inbound")
+        self.assertEqual(unsubscribed.reason, "Inbound STOP keyword received")
 
         start_result = self.process_inbound_sms(
             {"From": "+15554443333", "Body": "START", "MessageSid": "SM-IN-6"}
@@ -822,6 +837,123 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(start_result["status"], "opt_in")
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15554443333").first()
         self.assertIsNone(unsubscribed)
+
+    def test_stop_unsubscribe_prefers_community_name_over_thread_name(self) -> None:
+        self.db.session.add(self.CommunityMember(name="Community Name", phone="+15553334444"))
+        self.db.session.commit()
+
+        stop_result = self.process_inbound_sms(
+            {
+                "From": "+15553334444",
+                "Body": "STOP",
+                "MessageSid": "SM-IN-COMMUNITY-NAME-STOP",
+                "ProfileName": "Thread Name",
+            }
+        )
+        self.assertEqual(stop_result["status"], "opt_out")
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15553334444").first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Community Name")
+        self.assertEqual(unsubscribed.source, "inbound")
+
+    def test_stop_unsubscribe_uses_thread_name_when_community_missing(self) -> None:
+        stop_result = self.process_inbound_sms(
+            {
+                "From": "+15553335555",
+                "Body": "STOP",
+                "MessageSid": "SM-IN-THREAD-NAME-STOP",
+                "ProfileName": "Thread Name",
+            }
+        )
+        self.assertEqual(stop_result["status"], "opt_out")
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15553335555").first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Thread Name")
+        self.assertEqual(unsubscribed.source, "inbound")
+
+    def test_stop_unsubscribe_keeps_existing_name(self) -> None:
+        self.db.session.add(
+            self.UnsubscribedContact(
+                name="Existing Name",
+                phone="+15553336666",
+                reason="Old reason",
+                source="manual",
+            )
+        )
+        self.db.session.commit()
+
+        stop_result = self.process_inbound_sms(
+            {
+                "From": "+15553336666",
+                "Body": "STOP",
+                "MessageSid": "SM-IN-KEEP-NAME-STOP",
+                "ProfileName": "Thread Name",
+            }
+        )
+        self.assertEqual(stop_result["status"], "opt_out")
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15553336666").first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Existing Name")
+        self.assertEqual(unsubscribed.reason, "Inbound STOP keyword received")
+        self.assertEqual(unsubscribed.source, "inbound")
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_send_thread_reply_blocks_when_recipient_is_unsubscribed(self, mock_get_twilio) -> None:
+        thread = self.InboxThread(phone="+15554445555", contact_name="Thread Name")
+        self.db.session.add(thread)
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone=thread.phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        result = self.send_thread_reply(thread.id, "Hello from admin", actor="admin")
+        self.assertFalse(result["success"])
+        self.assertEqual(result["status"], "blocked_opt_out")
+        mock_get_twilio.assert_not_called()
+
+        outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
+        self.assertEqual(outbound_count, 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_send_thread_reply_opt_out_failure_upserts_unsubscribed_with_message_failure_source(self, mock_get_twilio) -> None:
+        thread = self.InboxThread(phone="+15554446666", contact_name="Thread Name")
+        self.db.session.add(thread)
+        self.db.session.add(self.CommunityMember(name="Community Name", phone=thread.phone))
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": False,
+            "sid": None,
+            "status": "failed",
+            "error": "Attempt to send to unsubscribed recipient (21610)",
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.send_thread_reply(thread.id, "Hello from admin", actor="admin")
+        self.assertFalse(result["success"])
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone=thread.phone).first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Community Name")
+        self.assertEqual(unsubscribed.source, "message_failure")
+        self.assertEqual(unsubscribed.reason, "Attempt to send to unsubscribed recipient (21610)")
+
+        outbound_message = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound")
+            .order_by(self.InboxMessage.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(outbound_message)
+        self.assertEqual(outbound_message.delivery_status, "failed")
+        self.assertEqual(outbound_message.delivery_error, "Attempt to send to unsubscribed recipient (21610)")
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_start_when_already_subscribed_sends_ack(self, mock_get_twilio) -> None:

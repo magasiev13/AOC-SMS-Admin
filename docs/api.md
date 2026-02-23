@@ -501,6 +501,7 @@ POST /inbox/messages/bulk-delete
 ```
 
 Inbox mutations (`reply`, `thread update/delete`, `message bulk delete`) require `admin` or `social_manager`.
+Inbox replies are blocked for unsubscribed contacts until they text `START`, `UNSTOP`, or `YES`.
 
 ### Keyword Automations
 
