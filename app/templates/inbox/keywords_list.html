@@ -9,11 +9,13 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary">
-    <i class="bi bi-list-check me-1"></i>Survey Flows
+<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary keywords-page-action">
+    <i class="bi bi-list-check keywords-page-action__icon" aria-hidden="true"></i>
+    <span>Survey Flows</span>
 </a>
-<a href="{{ url_for('main.keyword_rule_add') }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-plus-lg me-1"></i>Add Keyword Rule
+<a href="{{ url_for('main.keyword_rule_add') }}" class="btn btn-primary page-action-primary keywords-page-action">
+    <i class="bi bi-plus-lg keywords-page-action__icon" aria-hidden="true"></i>
+    <span>Add Keyword Rule</span>
 </a>
 {% endblock %}
 
