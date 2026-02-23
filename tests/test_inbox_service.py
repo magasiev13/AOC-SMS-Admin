@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 
@@ -48,6 +49,7 @@ class TestInboxService(unittest.TestCase):
             WTF_CSRF_ENABLED=False,
             TWILIO_VALIDATE_INBOUND_SIGNATURE=False,
             INBOUND_AUTO_REPLY_ENABLED=True,
+            SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS=3,
         )
         self._app_context = self.app.app_context()
         self._app_context.push()
@@ -286,6 +288,154 @@ class TestInboxService(unittest.TestCase):
 
         responses = self.SurveyResponse.query.filter_by(phone="+15550001113").all()
         self.assertEqual(len(responses), 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_rapid_same_text_different_sid_requires_confirmation(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="RSVP Confirm Flow",
+            trigger_keyword="RSVP CONFIRM",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["Question one?", "Question two?", "Question three?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM777D",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15550001116", "Body": "RSVP CONFIRM", "MessageSid": "SM-IN-CONFIRM-START"}
+        )
+        first_answer = self.process_inbound_sms(
+            {"From": "+15550001116", "Body": "YES", "MessageSid": "SM-IN-CONFIRM-A1"}
+        )
+        ambiguous = self.process_inbound_sms(
+            {"From": "+15550001116", "Body": "YES", "MessageSid": "SM-IN-CONFIRM-A2"}
+        )
+
+        self.assertEqual(first_answer["status"], "survey_response")
+        self.assertEqual(ambiguous["status"], "survey_confirmation_required")
+
+        session = self.SurveySession.query.filter_by(phone="+15550001116").first()
+        self.assertIsNotNone(session)
+        self.assertEqual(session.current_question_index, 1)
+        self.assertEqual(session.status, "active")
+
+        responses = (
+            self.SurveyResponse.query.filter_by(phone="+15550001116")
+            .order_by(self.SurveyResponse.question_index.asc())
+            .all()
+        )
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(responses[0].answer, "YES")
+
+        thread = self.InboxThread.query.filter_by(phone="+15550001116").first()
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.id.asc())
+            .all()
+        )
+        self.assertTrue(
+            any(
+                message.direction == "outbound"
+                and "reply: CONFIRM YES" in message.body
+                for message in messages
+            )
+        )
+
+        confirmed = self.process_inbound_sms(
+            {"From": "+15550001116", "Body": "CONFIRM YES", "MessageSid": "SM-IN-CONFIRM-A3"}
+        )
+        self.assertEqual(confirmed["status"], "survey_response")
+
+        session = self.SurveySession.query.filter_by(phone="+15550001116").first()
+        self.assertEqual(session.current_question_index, 2)
+        self.assertEqual(session.status, "active")
+
+        responses = (
+            self.SurveyResponse.query.filter_by(phone="+15550001116")
+            .order_by(self.SurveyResponse.question_index.asc())
+            .all()
+        )
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(responses[1].answer, "YES")
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_same_text_different_sid_after_window_advances_without_confirmation(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="RSVP Confirm Window Flow",
+            trigger_keyword="RSVP WINDOW",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["Question one?", "Question two?", "Question three?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM777E",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        self.process_inbound_sms(
+            {"From": "+15550001117", "Body": "RSVP WINDOW", "MessageSid": "SM-IN-WINDOW-START"}
+        )
+        first_answer = self.process_inbound_sms(
+            {"From": "+15550001117", "Body": "YES", "MessageSid": "SM-IN-WINDOW-A1"}
+        )
+        self.assertEqual(first_answer["status"], "survey_response")
+
+        response = self.SurveyResponse.query.filter_by(
+            phone="+15550001117",
+            question_index=0,
+        ).first()
+        self.assertIsNotNone(response)
+        response.created_at = response.created_at - timedelta(seconds=4)
+        self.db.session.commit()
+
+        second_answer = self.process_inbound_sms(
+            {"From": "+15550001117", "Body": "YES", "MessageSid": "SM-IN-WINDOW-A2"}
+        )
+        self.assertEqual(second_answer["status"], "survey_response")
+
+        session = self.SurveySession.query.filter_by(phone="+15550001117").first()
+        self.assertEqual(session.current_question_index, 2)
+        self.assertEqual(session.status, "active")
+
+        responses = (
+            self.SurveyResponse.query.filter_by(phone="+15550001117")
+            .order_by(self.SurveyResponse.question_index.asc())
+            .all()
+        )
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(responses[1].answer, "YES")
+
+        thread = self.InboxThread.query.filter_by(phone="+15550001117").first()
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.id.asc())
+            .all()
+        )
+        self.assertFalse(
+            any(
+                message.direction == "outbound"
+                and "reply: CONFIRM YES" in message.body
+                for message in messages
+            )
+        )
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_inbound_sms_message_sid_field_is_used_for_idempotency(self, mock_get_twilio) -> None:
