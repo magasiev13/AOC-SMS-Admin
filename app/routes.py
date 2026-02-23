@@ -2176,7 +2176,11 @@ def unsubscribed_list():
     )
     per_page = 50
 
-    unsubscribed_query = UnsubscribedContact.query
+    unsubscribed_query = (
+        UnsubscribedContact.query
+        .outerjoin(CommunityMember, CommunityMember.phone == UnsubscribedContact.phone)
+        .outerjoin(InboxThread, InboxThread.phone == UnsubscribedContact.phone)
+    )
     suppressed_query = SuppressedContact.query
     search_filter_unsubscribed = ''
     search_filter_suppressed = ''
@@ -2189,6 +2193,8 @@ def unsubscribed_list():
         unsubscribed_query = unsubscribed_query.filter(
             db.or_(
                 UnsubscribedContact.name.ilike(pattern, escape='\\'),
+                CommunityMember.name.ilike(pattern, escape='\\'),
+                InboxThread.contact_name.ilike(pattern, escape='\\'),
                 UnsubscribedContact.phone.ilike(pattern, escape='\\'),
                 UnsubscribedContact.reason.ilike(pattern, escape='\\'),
                 UnsubscribedContact.source.ilike(pattern, escape='\\'),
@@ -2205,6 +2211,8 @@ def unsubscribed_list():
         search_filter_unsubscribed = """
             AND (
                 LOWER(u.name) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(cm.name) LIKE LOWER(:pattern) ESCAPE '\\'
+                OR LOWER(it.contact_name) LIKE LOWER(:pattern) ESCAPE '\\'
                 OR LOWER(u.phone) LIKE LOWER(:pattern) ESCAPE '\\'
                 OR LOWER(u.reason) LIKE LOWER(:pattern) ESCAPE '\\'
                 OR LOWER(u.source) LIKE LOWER(:pattern) ESCAPE '\\'
@@ -2261,7 +2269,7 @@ def unsubscribed_list():
         FROM (
             SELECT
                 u.id AS id,
-                u.name AS name,
+                COALESCE(NULLIF(u.name, ''), NULLIF(cm.name, ''), NULLIF(it.contact_name, '')) AS name,
                 u.phone AS phone,
                 u.reason AS reason,
                 'unsubscribed' AS category,
@@ -2269,6 +2277,8 @@ def unsubscribed_list():
                 u.created_at AS created_at,
                 'unsubscribed' AS entry_type
             FROM unsubscribed_contacts u
+            LEFT JOIN community_members cm ON cm.phone = u.phone
+            LEFT JOIN inbox_threads it ON it.phone = u.phone
             WHERE 1 = 1
             {search_filter_unsubscribed}
             UNION ALL

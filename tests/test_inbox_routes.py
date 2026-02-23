@@ -657,6 +657,42 @@ class TestInboxRoutes(unittest.TestCase):
         outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
         self.assertEqual(outbound_count, 0)
 
+    def test_unsubscribed_list_shows_community_name_when_entry_name_blank(self) -> None:
+        self._login()
+        phone = "+13037918169"
+        self.db.session.add(self.CommunityMember(name="Cindi Berberian", phone=phone))
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone=phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.get("/unsubscribed")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Cindi Berberian", html)
+
+    def test_unsubscribed_list_search_matches_community_name_fallback(self) -> None:
+        self._login()
+        phone = "+13037918170"
+        self.db.session.add(self.CommunityMember(name="Cindi Berberian", phone=phone))
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone=phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.get("/unsubscribed?search=Cindi")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Cindi Berberian", html)
+
     def test_survey_submissions_requires_login(self) -> None:
         survey = self._create_survey_flow(
             name="Submission Login Guard",
