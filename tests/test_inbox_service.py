@@ -682,6 +682,51 @@ class TestInboxService(unittest.TestCase):
         self.assertIsNone(unsubscribed)
 
     @patch("app.services.inbox_service.get_twilio_service")
+    def test_confirm_prefix_without_pending_confirmation_is_recorded_verbatim(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="Confirm Prefix Literal Flow",
+            trigger_keyword="CONFIRM LITERAL",
+            intro_message="Welcome.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your name?", "Share your response phrase."])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM556",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        start_result = self.process_inbound_sms(
+            {"From": "+15559990001", "Body": "CONFIRM LITERAL", "MessageSid": "SM-IN-CONF-LIT-1"}
+        )
+        self.assertEqual(start_result["status"], "survey_started")
+
+        first_answer = self.process_inbound_sms(
+            {"From": "+15559990001", "Body": "Taylor", "MessageSid": "SM-IN-CONF-LIT-2"}
+        )
+        self.assertEqual(first_answer["status"], "survey_response")
+
+        second_answer = self.process_inbound_sms(
+            {"From": "+15559990001", "Body": "CONFIRM YES", "MessageSid": "SM-IN-CONF-LIT-3"}
+        )
+        self.assertEqual(second_answer["status"], "survey_response")
+
+        responses = (
+            self.SurveyResponse.query.filter_by(phone="+15559990001")
+            .order_by(self.SurveyResponse.question_index.asc())
+            .all()
+        )
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(responses[1].answer, "CONFIRM YES")
+
+    @patch("app.services.inbox_service.get_twilio_service")
     def test_cancel_during_active_survey_opts_out_and_cancels_session(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
             name="Cancel Flow",

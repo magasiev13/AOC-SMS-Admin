@@ -486,6 +486,37 @@ def _extract_confirmed_survey_answer(inbound_text: str) -> str | None:
     return answer or None
 
 
+def _extract_confirmation_prompt_answer(message_body: str) -> str | None:
+    marker = f'reply: {SURVEY_CONFIRM_PREFIX} '
+    body = (message_body or '').strip()
+    if not body:
+        return None
+
+    marker_index = body.rfind(marker)
+    if marker_index == -1:
+        return None
+
+    answer = body[marker_index + len(marker):].strip()
+    return answer or None
+
+
+def _has_pending_survey_confirmation(session: SurveySession) -> bool:
+    latest_survey_outbound = (
+        InboxMessage.query.filter(
+            InboxMessage.thread_id == session.thread_id,
+            InboxMessage.direction == 'outbound',
+            InboxMessage.automation_source == 'survey',
+            InboxMessage.automation_source_id == session.survey_id,
+        )
+        .order_by(InboxMessage.id.desc())
+        .first()
+    )
+    if latest_survey_outbound is None:
+        return False
+
+    return _extract_confirmation_prompt_answer(latest_survey_outbound.body or '') is not None
+
+
 def _is_ambiguous_rapid_repeat_survey_answer(
     session: SurveySession,
     inbound_message: InboxMessage,
@@ -645,7 +676,12 @@ def process_inbound_sms(payload: dict) -> dict:
         if session:
             # Active survey responses should take precedence over generic START/YES opt-in keywords.
             matched_keyword = session.survey.trigger_keyword
-            confirmed_answer = _extract_confirmed_survey_answer(inbound_body)
+            has_pending_confirmation = _has_pending_survey_confirmation(session)
+            confirmed_answer = (
+                _extract_confirmed_survey_answer(inbound_body)
+                if has_pending_confirmation
+                else None
+            )
             answer_to_record = confirmed_answer or inbound_body
 
             if confirmed_answer is None and _is_ambiguous_rapid_repeat_survey_answer(
