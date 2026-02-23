@@ -407,12 +407,16 @@ h6,
   justify-content: center;
   gap: var(--space-2);
   line-height: 1;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: center;
   border-width: 2px;
   min-height: 48px;
   padding: 0.75rem 1rem;
 }
 
+.keywords-page-action > span {
+  min-width: 0;
+}
 .keywords-page-action.btn-primary {
   border-color: transparent;
 }
