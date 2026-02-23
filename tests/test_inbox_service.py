@@ -873,6 +873,33 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(unsubscribed.name, "Thread Name")
         self.assertEqual(unsubscribed.source, "inbound")
 
+    def test_stop_unsubscribe_uses_event_registration_name_when_other_names_missing(self) -> None:
+        event = self.Event(title="Fallback Event")
+        self.db.session.add(event)
+        self.db.session.flush()
+        self.db.session.add(
+            self.EventRegistration(
+                event_id=event.id,
+                name="Event Registration Name",
+                phone="+15553337777",
+            )
+        )
+        self.db.session.commit()
+
+        stop_result = self.process_inbound_sms(
+            {
+                "From": "+15553337777",
+                "Body": "STOP",
+                "MessageSid": "SM-IN-EVENT-NAME-STOP",
+            }
+        )
+        self.assertEqual(stop_result["status"], "opt_out")
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15553337777").first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Event Registration Name")
+        self.assertEqual(unsubscribed.source, "inbound")
+
     def test_stop_unsubscribe_keeps_existing_name(self) -> None:
         self.db.session.add(
             self.UnsubscribedContact(
@@ -954,6 +981,40 @@ class TestInboxService(unittest.TestCase):
         self.assertIsNotNone(outbound_message)
         self.assertEqual(outbound_message.delivery_status, "failed")
         self.assertEqual(outbound_message.delivery_error, "Attempt to send to unsubscribed recipient (21610)")
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_send_thread_reply_opt_out_failure_uses_event_registration_name_fallback(self, mock_get_twilio) -> None:
+        event = self.Event(title="Manual Reply Fallback Event")
+        self.db.session.add(event)
+        self.db.session.flush()
+        self.db.session.add(
+            self.EventRegistration(
+                event_id=event.id,
+                name="Event Registration Name",
+                phone="+15554447777",
+            )
+        )
+        thread = self.InboxThread(phone="+15554447777")
+        self.db.session.add(thread)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": False,
+            "sid": None,
+            "status": "failed",
+            "error": "Attempt to send to unsubscribed recipient (21610)",
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.send_thread_reply(thread.id, "Hello from admin", actor="admin")
+        self.assertFalse(result["success"])
+
+        unsubscribed = self.UnsubscribedContact.query.filter_by(phone=thread.phone).first()
+        self.assertIsNotNone(unsubscribed)
+        self.assertEqual(unsubscribed.name, "Event Registration Name")
+        self.assertEqual(unsubscribed.source, "message_failure")
+        self.assertEqual(unsubscribed.reason, "Attempt to send to unsubscribed recipient (21610)")
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_start_when_already_subscribed_sends_ack(self, mock_get_twilio) -> None:

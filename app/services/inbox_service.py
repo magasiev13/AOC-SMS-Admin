@@ -229,12 +229,25 @@ def _resolve_unsubscribed_name(phone: str, thread: InboxThread | None = None) ->
         if community_name:
             return community_name
 
-    if thread is None:
-        thread = InboxThread.query.filter_by(phone=phone).first()
-    if thread is None:
-        return None
+    resolved_thread = thread
+    if resolved_thread is None:
+        resolved_thread = InboxThread.query.filter_by(phone=phone).first()
+    if resolved_thread is not None:
+        thread_name = _normalize_unsubscribed_name(resolved_thread.contact_name)
+        if thread_name:
+            return thread_name
 
-    return _normalize_unsubscribed_name(thread.contact_name)
+    registrations = (
+        EventRegistration.query.filter_by(phone=phone)
+        .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
+        .all()
+    )
+    for registration in registrations:
+        registration_name = _normalize_unsubscribed_name(registration.name)
+        if registration_name:
+            return registration_name
+
+    return None
 
 
 def _get_or_create_thread(phone: str, contact_name: str | None = None) -> InboxThread:
