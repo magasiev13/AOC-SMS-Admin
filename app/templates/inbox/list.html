@@ -155,6 +155,12 @@
                     {% endfor %}
                 </div>
                 {% endif %}
+                {% if selected_thread_is_unsubscribed %}
+                <div class="alert alert-warning py-2">
+                    <i class="bi bi-shield-exclamation me-1"></i>
+                    This contact is unsubscribed. They must text <strong>START</strong>, <strong>UNSTOP</strong>, or <strong>YES</strong> to receive messages again.
+                </div>
+                {% endif %}
 
                 <form id="bulkMessageDeleteForm" method="POST" action="{{ url_for('main.inbox_messages_bulk_delete') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -235,8 +241,9 @@
                     <label for="replyBody" class="form-label">Send reply</label>
                     <div class="input-group">
                         <textarea id="replyBody" name="body" class="form-control" rows="2" maxlength="1600"
-                                  placeholder="Type your reply..." required></textarea>
-                        <button class="btn btn-primary" type="submit">
+                                  placeholder="{{ 'Contact must reply START/UNSTOP/YES to resubscribe before you can send.' if selected_thread_is_unsubscribed else 'Type your reply...' }}"
+                                  required{% if selected_thread_is_unsubscribed %} disabled{% endif %}></textarea>
+                        <button class="btn btn-primary" type="submit"{% if selected_thread_is_unsubscribed %} disabled{% endif %}>
                             <i class="bi bi-send me-1"></i>Send
                         </button>
                     </div>

@@ -27,6 +27,7 @@ class TestInboxRoutes(unittest.TestCase):
             SurveyFlow,
             SurveyResponse,
             SurveySession,
+            UnsubscribedContact,
         )
 
         self.db = db
@@ -37,6 +38,7 @@ class TestInboxRoutes(unittest.TestCase):
         self.SurveyFlow = SurveyFlow
         self.SurveySession = SurveySession
         self.SurveyResponse = SurveyResponse
+        self.UnsubscribedContact = UnsubscribedContact
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
@@ -603,6 +605,57 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertNotIn("selectAllThreads", html)
         self.assertNotIn("bulkThreadDeleteForm", html)
         self.assertNotIn(f"/inbox/messages/{message.id}/delete", html)
+
+    def test_inbox_ui_disables_reply_for_unsubscribed_thread(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550015")
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone=thread.phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.get(f"/inbox?thread={thread.id}")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("This contact is unsubscribed.", html)
+        self.assertIn(
+            "Contact must reply START/UNSTOP/YES to resubscribe before you can send.",
+            html,
+        )
+        self.assertIn('<textarea id="replyBody"', html)
+        self.assertIn('id="replyBody" name="body" class="form-control"', html)
+        self.assertIn('disabled></textarea>', html)
+        self.assertIn('<button class="btn btn-primary" type="submit" disabled>', html)
+
+    def test_inbox_reply_post_blocked_for_unsubscribed_thread(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550016")
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone=thread.phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/inbox/{thread.id}/reply",
+            data={"body": "Hello there"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.",
+            response.data,
+        )
+
+        outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
+        self.assertEqual(outbound_count, 0)
 
     def test_survey_submissions_requires_login(self) -> None:
         survey = self._create_survey_flow(

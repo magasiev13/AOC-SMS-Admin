@@ -166,6 +166,7 @@ Phone numbers that have opted out and should not receive messages.
 - `import` - CSV import
 - `community` - Unsubscribed from community list
 - `event:{id}` - Unsubscribed from event registration
+- `inbound` - Inbound STOP/UNSUBSCRIBE/CANCEL keyword received
 - `message_failure` - Auto-detected from Twilio opt-out error
 
 ### SuppressedContact

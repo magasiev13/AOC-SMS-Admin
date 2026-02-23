@@ -2570,6 +2570,7 @@ def inbox_list():
     messages = []
     active_sessions = []
     active_trigger_keywords: set[str] = set()
+    selected_thread_is_unsubscribed = False
     if selected_thread:
         if selected_thread.unread_count:
             mark_thread_read(selected_thread.id)
@@ -2581,6 +2582,9 @@ def inbox_list():
             thread_id=selected_thread.id,
             status='active',
         ).order_by(SurveySession.started_at.desc()).all()
+        selected_thread_is_unsubscribed = (
+            UnsubscribedContact.query.filter_by(phone=selected_thread.phone).first() is not None
+        )
 
     thread_display_names = _build_thread_display_names(threads, selected_thread=selected_thread)
     latest_message_id = db.session.query(func.max(InboxMessage.id)).scalar() or 0
@@ -2592,6 +2596,7 @@ def inbox_list():
         messages=messages,
         active_sessions=active_sessions,
         active_trigger_keywords=active_trigger_keywords,
+        selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
         inbox_status_latest_message_id=latest_message_id,
         search=search,
@@ -2624,6 +2629,8 @@ def inbox_reply(thread_id):
 
     if result.get('success'):
         flash('Reply sent.', 'success')
+    elif result.get('status') == 'blocked_opt_out':
+        flash('Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.', 'warning')
     else:
         error = result.get('error') or 'Unknown error'
         flash(f'Reply could not be delivered: {error}', 'error')
