@@ -56,6 +56,8 @@ class TestSuppressionService(unittest.TestCase):
         self.assertEqual(classify_failure("Reply STOP to opt out"), "opt_out")
         self.assertEqual(classify_failure("Carrier violation: 30005"), "hard_fail")
         self.assertEqual(classify_failure("Service unavailable: 503"), "soft_fail")
+        self.assertEqual(classify_failure("Message blocked by carrier (30007)"), "hard_fail")
+        self.assertEqual(classify_failure("Temporarily blocked due rate limit 429"), "soft_fail")
 
     def test_unsubscribed_contact_upsert_is_idempotent(self) -> None:
         details = [
@@ -160,6 +162,25 @@ class TestSuppressionService(unittest.TestCase):
         self.assertEqual([r["phone"] for r in skipped_suppressed], ["+17205550103"])
         self.assertEqual(unsubscribed_phones, {"+17205550102"})
         self.assertEqual(suppressed_phones, {"+17205550103"})
+
+    def test_process_failure_details_skips_invalid_phone_values(self) -> None:
+        details = [
+            {
+                "success": False,
+                "status": "failed",
+                "error": "Recipient has opted out",
+                "phone": "foo",
+            }
+        ]
+
+        result = process_failure_details(details, source_message_log_id=401)
+        self.assertEqual(result["skipped_no_phone"] + result["skipped_invalid"], 1)
+        self.assertEqual(result["unsubscribed_upserts"], 0)
+
+        from app.models import UnsubscribedContact, SuppressedContact
+
+        self.assertEqual(UnsubscribedContact.query.count(), 0)
+        self.assertEqual(SuppressedContact.query.count(), 0)
 
 
 if __name__ == "__main__":

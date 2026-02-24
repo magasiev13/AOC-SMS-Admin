@@ -1,12 +1,10 @@
 from typing import Literal
 
-import re
-
 from flask import current_app
 
 from app import db
 from app.models import CommunityMember, EventRegistration, SuppressedContact, UnsubscribedContact, utc_now
-from app.utils import normalize_phone
+from app.utils import normalize_phone, validate_phone
 
 
 OptOutCategory = Literal['opt_out', 'hard_fail', 'soft_fail']
@@ -28,8 +26,9 @@ def classify_failure(error_text: str) -> OptOutCategory:
         'unsubscribe',
         'recipient has opted out',
     ]
-    opt_out_tokens = {'stop', 'cancel', 'quit', 'end', 'blocked'}
-    opt_out_codes = {'21610', '30004'}
+    # Keep opt-out detection strict to avoid suppressing valid contacts on
+    # generic carrier blocks/transient failures.
+    opt_out_codes = {'21610'}
     hard_fail_patterns = [
         'invalid',
         'not a valid',
@@ -44,6 +43,7 @@ def classify_failure(error_text: str) -> OptOutCategory:
         'phone number is not',
         'carrier violation',
         '30003',
+        '30004',
         '30005',
         '30007',
     ]
@@ -67,14 +67,9 @@ def classify_failure(error_text: str) -> OptOutCategory:
         '504',
     ]
 
-    def _contains_token(token: str) -> bool:
-        return re.search(rf"\b{re.escape(token)}\b", message) is not None
-
     if any(pattern in message for pattern in opt_out_phrases):
         return 'opt_out'
     if any(code in message for code in opt_out_codes):
-        return 'opt_out'
-    if any(_contains_token(token) for token in opt_out_tokens):
         return 'opt_out'
     if any(pattern in message for pattern in hard_fail_patterns):
         return 'hard_fail'
@@ -122,6 +117,9 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
             normalized_phone = normalize_phone(get_phone(detail))
             if not normalized_phone:
                 counts['skipped_no_phone'] += 1
+                continue
+            if not validate_phone(normalized_phone):
+                counts['skipped_invalid'] += 1
                 continue
 
             category = classify_failure(error_text)
@@ -185,7 +183,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
     current_app.logger.info(
         "Processed failure details: total=%s failed=%s opt_out=%s hard_fail=%s soft_fail=%s "
         "unsubscribed_upserts=%s suppressed_upserts=%s community_member_deletes=%s "
-        "event_registration_deletes=%s skipped_no_phone=%s",
+        "event_registration_deletes=%s skipped_no_phone=%s skipped_invalid=%s",
         counts['total'],
         counts['failed'],
         counts['opt_out'],
@@ -196,6 +194,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
         counts['community_member_deletes'],
         counts['event_registration_deletes'],
         counts['skipped_no_phone'],
+        counts['skipped_invalid'],
     )
 
     return counts
