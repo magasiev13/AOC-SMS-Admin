@@ -1,4 +1,5 @@
 import importlib
+import io
 import os
 import tempfile
 import unittest
@@ -17,12 +18,14 @@ class TestEventsRoutes(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser, Event, SurveyFlow
+        from app.models import AppUser, Event, EventRegistration, SurveyFlow, UnsubscribedContact
 
         self.db = db
         self.AppUser = AppUser
         self.Event = Event
+        self.EventRegistration = EventRegistration
         self.SurveyFlow = SurveyFlow
+        self.UnsubscribedContact = UnsubscribedContact
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
@@ -42,7 +45,21 @@ class TestEventsRoutes(unittest.TestCase):
             must_change_password=False,
         )
         admin.set_password("admin-pass")
-        self.db.session.add(admin)
+        manager = self.AppUser(
+            username="manager",
+            phone="+15550000003",
+            role="social_manager",
+            must_change_password=False,
+        )
+        manager.set_password("manager-pass")
+        viewer = self.AppUser(
+            username="viewer",
+            phone="+15550000004",
+            role="viewer",
+            must_change_password=False,
+        )
+        viewer.set_password("viewer-pass")
+        self.db.session.add_all([admin, manager, viewer])
         self.db.session.commit()
 
     def tearDown(self) -> None:
@@ -122,14 +139,6 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertIn(b'/events/bulk-delete', response.data)
 
     def test_events_list_hides_bulk_delete_controls_for_social_manager(self) -> None:
-        manager = self.AppUser(
-            username="manager",
-            phone="+15550000003",
-            role="social_manager",
-            must_change_password=False,
-        )
-        manager.set_password("manager-pass")
-        self.db.session.add(manager)
         self.db.session.add(self.Event(title="Neighborhood Cleanup"))
         self.db.session.commit()
 
@@ -159,6 +168,63 @@ class TestEventsRoutes(unittest.TestCase):
 
         remaining_titles = {event.title for event in self.Event.query.order_by(self.Event.id).all()}
         self.assertEqual(remaining_titles, {"Keep Event"})
+
+    def test_event_registration_mutation_routes_forbidden_for_viewer(self) -> None:
+        event = self.Event(title="Viewer Cannot Mutate")
+        self.db.session.add(event)
+        self.db.session.flush()
+        registration = self.EventRegistration(event_id=event.id, name="Pat", phone="+15550002001")
+        self.db.session.add(registration)
+        self.db.session.commit()
+
+        self._login_as("viewer", "viewer-pass")
+
+        add_response = self.client.post(
+            f"/events/{event.id}/register",
+            data={"name": "New", "phone": "+15550002002"},
+            follow_redirects=False,
+        )
+        self.assertEqual(add_response.status_code, 403)
+
+        remove_response = self.client.post(
+            f"/events/{event.id}/unregister/{registration.id}",
+            follow_redirects=False,
+        )
+        self.assertEqual(remove_response.status_code, 403)
+
+        unsubscribe_response = self.client.post(
+            f"/events/{event.id}/registrations/{registration.id}/unsubscribe",
+            follow_redirects=False,
+        )
+        self.assertEqual(unsubscribe_response.status_code, 403)
+
+        import_response = self.client.post(
+            f"/events/{event.id}/import",
+            data={"file": (io.BytesIO(b"name,phone\nImport User,720-555-0203"), "event.csv")},
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+        self.assertEqual(import_response.status_code, 403)
+
+        self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
+        self.assertEqual(self.UnsubscribedContact.query.count(), 0)
+
+    def test_event_import_allows_social_manager(self) -> None:
+        event = self.Event(title="Manager Import")
+        self.db.session.add(event)
+        self.db.session.commit()
+
+        self._login_as("manager", "manager-pass")
+        response = self.client.post(
+            f"/events/{event.id}/import",
+            data={"file": (io.BytesIO(b"name,phone\nImport User,720-555-0204"), "event.csv")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Added 1 registrations.", response.data)
+        self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
 
 
 if __name__ == "__main__":

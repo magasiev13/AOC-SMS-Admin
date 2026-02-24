@@ -109,6 +109,13 @@ class TestConfigSecurityHardening(unittest.TestCase):
         trusted_response = client.get("/", headers={"Host": "sms.example.org"})
         self.assertNotEqual(trusted_response.status_code, 400)
 
+    def test_env_example_defaults_to_development(self) -> None:
+        env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")
+        with open(env_example_path, "r", encoding="utf-8") as env_file:
+            content = env_file.read()
+
+        self.assertIn("FLASK_ENV=development", content)
+
 
 if __name__ == "__main__":
     unittest.main()

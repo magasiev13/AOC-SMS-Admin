@@ -7,7 +7,7 @@ from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import db
-from app.utils import normalize_keyword, normalize_phone
+from app.utils import normalize_keyword, normalize_phone, validate_phone
 
 
 def utc_now():
@@ -30,6 +30,9 @@ class AppUser(UserMixin, db.Model):
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     session_nonce = db.Column(db.String(64), nullable=False, default=new_session_nonce)
     created_at = db.Column(db.DateTime, default=utc_now)
+    __table_args__ = (
+        db.Index('ux_users_username_lower', db.func.lower(username), unique=True),
+    )
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
@@ -43,6 +46,13 @@ class AppUser(UserMixin, db.Model):
 
     def rotate_session_nonce(self) -> None:
         self.session_nonce = new_session_nonce()
+
+    @validates("username")
+    def _normalize_username(self, key, value):
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("Username is required.")
+        return normalized
 
     @validates("phone")
     def _normalize_user_phone(self, key, value):
@@ -71,6 +81,13 @@ class CommunityMember(db.Model):
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, default=utc_now)
+
+    @validates("phone")
+    def _normalize_member_phone(self, key, value):
+        normalized = normalize_phone(value)
+        if not validate_phone(normalized):
+            raise ValueError("Community member phone must be a valid E.164 number.")
+        return normalized
     
     def __repr__(self):
         return f'<CommunityMember {self.phone}>'
@@ -86,6 +103,13 @@ class UnsubscribedContact(db.Model):
     reason = db.Column(db.Text, nullable=True)
     source = db.Column(db.String(50), nullable=False, default='manual')
     created_at = db.Column(db.DateTime, default=utc_now)
+
+    @validates("phone")
+    def _normalize_unsubscribed_phone(self, key, value):
+        normalized = normalize_phone(value)
+        if not validate_phone(normalized):
+            raise ValueError("Unsubscribed contact phone must be a valid E.164 number.")
+        return normalized
 
     def __repr__(self):
         return f'<UnsubscribedContact {self.phone}>'
@@ -143,6 +167,13 @@ class EventRegistration(db.Model):
     event = db.relationship('Event', back_populates='registrations')
     
     __table_args__ = (db.UniqueConstraint('event_id', 'phone', name='unique_event_phone'),)
+
+    @validates("phone")
+    def _normalize_registration_phone(self, key, value):
+        normalized = normalize_phone(value)
+        if not validate_phone(normalized):
+            raise ValueError("Event registration phone must be a valid E.164 number.")
+        return normalized
     
     def __repr__(self):
         return f'<EventRegistration event={self.event_id} phone={self.phone}>'

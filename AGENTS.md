@@ -96,10 +96,13 @@ flask --app wsgi:app run --debug       # Dev server
 ./run/up.sh                            # Full stack (web + worker)
 ./run/dev.sh                           # Web only
 
+# Quality (non-test)
+./run/verify.sh                        # Baseline static verification (compileall)
+
 # Test
-pytest                                 # All tests
-pytest --cov=app                       # With coverage
-pytest tests/test_utils.py::TestNormalizePhone::test_us_number_without_country_code
+./run/test.sh                          # All tests (venv + Python 3.11 guardrails)
+./run/test.sh --cov=app                # With coverage
+./run/test.sh tests/test_utils.py::TestNormalizePhone::test_us_number_without_country_code
 
 # DB
 python -m app.dbdoctor --print         # Inspect migrations
