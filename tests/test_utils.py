@@ -28,6 +28,12 @@ class TestNormalizePhone(unittest.TestCase):
     def test_number_with_punctuation(self) -> None:
         self.assertEqual(normalize_phone("(310) 555-1212"), "+13105551212")
 
+    def test_non_numeric_input_returns_empty(self) -> None:
+        self.assertEqual(normalize_phone("foo"), "")
+
+    def test_multiple_plus_prefixes_are_normalized(self) -> None:
+        self.assertEqual(normalize_phone("++++"), "")
+
 
 class TestValidatePhone(unittest.TestCase):
     def test_valid_e164(self) -> None:

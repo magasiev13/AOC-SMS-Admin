@@ -35,22 +35,26 @@ def normalize_phone(phone: str) -> str:
     """
     if not phone:
         return ''
-    
-    # Remove all non-digit characters except +
-    cleaned = re.sub(r'[^\d+]', '', phone.strip())
-    
-    # If it starts with +, keep it; otherwise assume US number
-    if cleaned.startswith('+'):
-        return cleaned
-    
-    # Remove leading 1 if present for US numbers, then add +1
-    if cleaned.startswith('1') and len(cleaned) == 11:
-        return '+' + cleaned
-    elif len(cleaned) == 10:
-        return '+1' + cleaned
-    
-    # For other formats, just add + if not present
-    return '+' + cleaned
+
+    raw = phone.strip()
+    digits = re.sub(r'\D', '', raw)
+    if not digits:
+        return ''
+
+    # If caller already provided an international prefix, preserve it.
+    if raw.startswith('+'):
+        return f'+{digits}'
+
+    # Assume US format for 10-digit local numbers.
+    if len(digits) == 10:
+        return f'+1{digits}'
+
+    # Preserve 11-digit US numbers that already include country code.
+    if len(digits) == 11 and digits.startswith('1'):
+        return f'+{digits}'
+
+    # Fall back to prefixed digits for non-US inputs without '+'
+    return f'+{digits}'
 
 
 def validate_phone(phone: str) -> bool:

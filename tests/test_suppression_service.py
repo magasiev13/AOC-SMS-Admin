@@ -163,6 +163,25 @@ class TestSuppressionService(unittest.TestCase):
         self.assertEqual(unsubscribed_phones, {"+17205550102"})
         self.assertEqual(suppressed_phones, {"+17205550103"})
 
+    def test_process_failure_details_skips_invalid_phone_values(self) -> None:
+        details = [
+            {
+                "success": False,
+                "status": "failed",
+                "error": "Recipient has opted out",
+                "phone": "foo",
+            }
+        ]
+
+        result = process_failure_details(details, source_message_log_id=401)
+        self.assertEqual(result["skipped_no_phone"] + result["skipped_invalid"], 1)
+        self.assertEqual(result["unsubscribed_upserts"], 0)
+
+        from app.models import UnsubscribedContact, SuppressedContact
+
+        self.assertEqual(UnsubscribedContact.query.count(), 0)
+        self.assertEqual(SuppressedContact.query.count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

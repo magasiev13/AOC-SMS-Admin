@@ -4,7 +4,7 @@ from flask import current_app
 
 from app import db
 from app.models import CommunityMember, EventRegistration, SuppressedContact, UnsubscribedContact, utc_now
-from app.utils import normalize_phone
+from app.utils import normalize_phone, validate_phone
 
 
 OptOutCategory = Literal['opt_out', 'hard_fail', 'soft_fail']
@@ -118,6 +118,9 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
             if not normalized_phone:
                 counts['skipped_no_phone'] += 1
                 continue
+            if not validate_phone(normalized_phone):
+                counts['skipped_invalid'] += 1
+                continue
 
             category = classify_failure(error_text)
             counts[category] += 1
@@ -180,7 +183,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
     current_app.logger.info(
         "Processed failure details: total=%s failed=%s opt_out=%s hard_fail=%s soft_fail=%s "
         "unsubscribed_upserts=%s suppressed_upserts=%s community_member_deletes=%s "
-        "event_registration_deletes=%s skipped_no_phone=%s",
+        "event_registration_deletes=%s skipped_no_phone=%s skipped_invalid=%s",
         counts['total'],
         counts['failed'],
         counts['opt_out'],
@@ -191,6 +194,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
         counts['community_member_deletes'],
         counts['event_registration_deletes'],
         counts['skipped_no_phone'],
+        counts['skipped_invalid'],
     )
 
     return counts
