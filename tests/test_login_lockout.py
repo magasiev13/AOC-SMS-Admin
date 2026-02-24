@@ -100,6 +100,38 @@ class TestLoginLockout(unittest.TestCase):
         self.assertIsNotNone(alert_failure_event)
         self.assertEqual(alert_failure_event.metadata_payload.get("context"), "account_lockout")
 
+    def test_case_variant_username_login_uses_normalized_identity(self) -> None:
+        user = self.AppUser(
+            username="CaseUser",
+            phone="+15550004002",
+            role="admin",
+            must_change_password=False,
+        )
+        user.set_password("Case-user1!")
+        self.db.session.add(user)
+        self.db.session.commit()
+
+        failed = self._post_login("caseuser", "wrong-password", "10.2.2.2")
+        self.assertEqual(failed.status_code, 200)
+        self.assertIn(b"Invalid username or password.", failed.data)
+
+        account_scope_before_success = self.LoginAttempt.query.filter_by(
+            client_ip="__account__",
+            username="caseuser",
+        ).first()
+        self.assertIsNotNone(account_scope_before_success)
+        self.assertEqual(account_scope_before_success.attempt_count, 1)
+
+        successful = self._post_login("caseuser", "Case-user1!", "10.2.2.2")
+        self.assertEqual(successful.status_code, 200)
+        self.assertNotIn(b"Invalid username or password.", successful.data)
+
+        account_scope_after_success = self.LoginAttempt.query.filter_by(
+            client_ip="__account__",
+            username="caseuser",
+        ).first()
+        self.assertIsNone(account_scope_after_success)
+
 
 if __name__ == "__main__":
     unittest.main()
