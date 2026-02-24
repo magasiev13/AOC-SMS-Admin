@@ -661,6 +661,26 @@ def _stream_csv_rows(rows: object) -> object:
         yield output.getvalue()
 
 
+def _parse_message_log_details(raw_details: str | None) -> list[dict]:
+    if not raw_details:
+        return []
+
+    try:
+        payload = json.loads(raw_details)
+    except json.JSONDecodeError:
+        return []
+
+    candidates = payload
+    if isinstance(payload, dict):
+        nested = payload.get('details') or payload.get('results')
+        candidates = nested if isinstance(nested, list) else []
+
+    if not isinstance(candidates, list):
+        return []
+
+    return [dict(item) for item in candidates if isinstance(item, dict)]
+
+
 def _survey_form_events() -> list[Event]:
     return Event.query.order_by(Event.date.desc(), Event.title.asc()).all()
 
@@ -1868,17 +1888,12 @@ def log_detail(log_id):
         flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
         return redirect(url_for('main.logs_list'))
 
-    details = []
-    if log.details:
-        try:
-            details = json.loads(log.details)
-        except json.JSONDecodeError as exc:
-            current_app.logger.warning(
-                'MessageLog details JSON decode failed for log_id=%s: %s',
-                log_id,
-                exc,
-            )
-            details = []
+    details = _parse_message_log_details(log.details)
+    if log.details and not details:
+        current_app.logger.warning(
+            'MessageLog details payload unusable for log_id=%s.',
+            log_id,
+        )
     phones = set()
     for detail in details:
         raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
