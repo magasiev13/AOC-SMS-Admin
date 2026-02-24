@@ -465,6 +465,13 @@ Phone formats accepted: `+1234567890`, `(323) 630-0201`, `720-383-2388`, `323630
 ./run/test.sh tests/test_utils.py
 ```
 
+## Baseline Quality Gate
+
+```bash
+# Non-test static verification (Python 3.11)
+./run/verify.sh
+```
+
 ## Assumptions
 
 1. **Low Volume**: SMS sent individually with 100ms delay; suitable for <1000 recipients per blast

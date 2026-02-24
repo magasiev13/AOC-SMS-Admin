@@ -3,9 +3,12 @@ import io
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestImportRoutesStability(unittest.TestCase):
+    CSV_IMPORT_ERROR_FLASH = b"Could not process CSV file. Please verify the format and try again."
+
     def setUp(self) -> None:
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
         os.environ["FLASK_DEBUG"] = "1"
@@ -142,6 +145,70 @@ class TestImportRoutesStability(unittest.TestCase):
 
         entries = self.UnsubscribedContact.query.order_by(self.UnsubscribedContact.phone.asc()).all()
         self.assertEqual([entry.phone for entry in entries], ["+17205550221", "+17205550222"])
+
+    def test_community_import_sanitizes_unexpected_error_and_rolls_back(self) -> None:
+        self._login()
+        with (
+            patch("app.routes.parse_recipients_csv", side_effect=RuntimeError("sensitive parse details")),
+            patch.object(self.db.session, "rollback", wraps=self.db.session.rollback) as rollback_mock,
+            patch.object(self.app.logger, "exception") as logger_exception_mock,
+        ):
+            response = self.client.post(
+                "/community/import",
+                data={"file": (io.BytesIO(b"name,phone\nA,720-555-0301"), "community.csv")},
+                content_type="multipart/form-data",
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.CSV_IMPORT_ERROR_FLASH, response.data)
+        self.assertNotIn(b"sensitive parse details", response.data)
+        rollback_mock.assert_called_once()
+        logger_exception_mock.assert_called_once()
+
+    def test_event_import_sanitizes_unexpected_error_and_rolls_back(self) -> None:
+        self._login()
+        event = self.Event(title="Error Event")
+        self.db.session.add(event)
+        self.db.session.commit()
+
+        with (
+            patch("app.routes.parse_recipients_csv", side_effect=RuntimeError("sensitive parse details")),
+            patch.object(self.db.session, "rollback", wraps=self.db.session.rollback) as rollback_mock,
+            patch.object(self.app.logger, "exception") as logger_exception_mock,
+        ):
+            response = self.client.post(
+                f"/events/{event.id}/import",
+                data={"file": (io.BytesIO(b"name,phone\nA,720-555-0302"), "event.csv")},
+                content_type="multipart/form-data",
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.CSV_IMPORT_ERROR_FLASH, response.data)
+        self.assertNotIn(b"sensitive parse details", response.data)
+        rollback_mock.assert_called_once()
+        logger_exception_mock.assert_called_once()
+
+    def test_unsubscribed_import_sanitizes_unexpected_error_and_rolls_back(self) -> None:
+        self._login()
+        with (
+            patch("app.routes.parse_recipients_csv", side_effect=RuntimeError("sensitive parse details")),
+            patch.object(self.db.session, "rollback", wraps=self.db.session.rollback) as rollback_mock,
+            patch.object(self.app.logger, "exception") as logger_exception_mock,
+        ):
+            response = self.client.post(
+                "/unsubscribed/import",
+                data={"file": (io.BytesIO(b"name,phone\nA,720-555-0303"), "unsubscribed.csv")},
+                content_type="multipart/form-data",
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.CSV_IMPORT_ERROR_FLASH, response.data)
+        self.assertNotIn(b"sensitive parse details", response.data)
+        rollback_mock.assert_called_once()
+        logger_exception_mock.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -95,6 +95,69 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
         self.assertIsNotNone(user)
         self.assertTrue(user.must_change_password)
 
+    def test_user_add_rejects_case_variant_duplicate_username(self) -> None:
+        existing = self.AppUser(
+            username="CaseUser",
+            phone="+15551110010",
+            role="social_manager",
+            must_change_password=False,
+        )
+        existing.set_password("Stronger-pass1!")
+        self.db.session.add(existing)
+        self.db.session.commit()
+
+        self._login()
+        response = self.client.post(
+            "/users/add",
+            data={
+                "username": "caseuser",
+                "role": "social_manager",
+                "phone": "+15551110011",
+                "password": "Stronger-pass1!",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"A user with this username already exists.", response.data)
+
+        usernames = [user.username.lower() for user in self.AppUser.query.all()]
+        self.assertEqual(usernames.count("caseuser"), 1)
+
+    def test_user_edit_rejects_case_variant_duplicate_username(self) -> None:
+        first = self.AppUser(
+            username="Alpha",
+            phone="+15551110020",
+            role="social_manager",
+            must_change_password=False,
+        )
+        first.set_password("Stronger-pass1!")
+        second = self.AppUser(
+            username="Bravo",
+            phone="+15551110021",
+            role="social_manager",
+            must_change_password=False,
+        )
+        second.set_password("Stronger-pass1!")
+        self.db.session.add_all([first, second])
+        self.db.session.commit()
+
+        self._login()
+        response = self.client.post(
+            f"/users/{second.id}/edit",
+            data={
+                "username": "alpha",
+                "role": "social_manager",
+                "phone": second.phone,
+                "password": "",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"A user with this username already exists.", response.data)
+
+        self.db.session.refresh(second)
+        self.assertEqual(second.username, "Bravo")
+
 
 if __name__ == "__main__":
     unittest.main()

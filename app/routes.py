@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from flask import (
     Blueprint,
     Response,
+    abort,
     current_app,
     flash,
     jsonify,
@@ -83,6 +84,7 @@ from app.utils import (
 )
 
 bp = Blueprint('main', __name__)
+CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
 
 
 def _is_safe_url(target):
@@ -118,6 +120,17 @@ def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
             return True
     except OSError:
         return None
+
+
+def _find_username_conflict(username: str, *, exclude_user_id: int | None = None) -> AppUser | None:
+    normalized_username = (username or "").strip().lower()
+    if not normalized_username:
+        return None
+
+    query = AppUser.query.filter(func.lower(AppUser.username) == normalized_username)
+    if exclude_user_id is not None:
+        query = query.filter(AppUser.id != exclude_user_id)
+    return query.first()
 
 
 def _cleanup_bootstrap_admin_password_if_needed() -> None:
@@ -857,6 +870,9 @@ def dashboard():
         )
     
     if request.method == 'POST':
+        if current_user.role not in {'admin', 'social_manager'}:
+            abort(403)
+
         message_body = request.form.get('message_body', '').strip()
         target = request.form.get('target', 'community')
         event_id = request.form.get('event_id', type=int)
@@ -1055,7 +1071,7 @@ def users_add():
                 flash(error, 'error')
             return render_template('users/form.html', user=None)
 
-        existing = AppUser.query.filter_by(username=username).first()
+        existing = _find_username_conflict(username)
         if existing:
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=None)
@@ -1111,7 +1127,7 @@ def users_edit(user_id):
             flash('Phone number must be a valid E.164 number.', 'error')
             return render_template('users/form.html', user=user)
 
-        existing = AppUser.query.filter(AppUser.username == username, AppUser.id != user_id).first()
+        existing = _find_username_conflict(username, exclude_user_id=user_id)
         if existing:
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=user)
@@ -1536,9 +1552,14 @@ def community_import():
             flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.community_list'))
             
-        except Exception as e:
+        except Exception:
+            current_app.logger.exception(
+                'Community CSV import failed (filename=%r, user_id=%s).',
+                file.filename,
+                current_user.id if current_user.is_authenticated else None,
+            )
             db.session.rollback()
-            flash(f'Error processing CSV: {str(e)}', 'error')
+            flash(CSV_IMPORT_ERROR_FLASH, 'error')
     
     return render_template('community/import.html')
 
@@ -1695,6 +1716,7 @@ def events_bulk_delete():
 
 @bp.route('/events/<int:event_id>/register', methods=['POST'])
 @login_required
+@require_roles('admin', 'social_manager')
 def event_register(event_id):
     event = db.get_or_404(Event, event_id)
     name = request.form.get('name', '').strip() or None
@@ -1728,6 +1750,7 @@ def event_register(event_id):
 
 @bp.route('/events/<int:event_id>/unregister/<int:registration_id>', methods=['POST'])
 @login_required
+@require_roles('admin', 'social_manager')
 def event_unregister(event_id, registration_id):
     registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
     if not registration:
@@ -1741,6 +1764,7 @@ def event_unregister(event_id, registration_id):
 
 @bp.route('/events/<int:event_id>/registrations/<int:registration_id>/unsubscribe', methods=['POST'])
 @login_required
+@require_roles('admin', 'social_manager')
 def event_registration_unsubscribe(event_id, registration_id):
     registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
     if not registration:
@@ -1765,6 +1789,7 @@ def event_registration_unsubscribe(event_id, registration_id):
 
 @bp.route('/events/<int:event_id>/import', methods=['POST'])
 @login_required
+@require_roles('admin', 'social_manager')
 def event_import_registrations(event_id):
     event = db.get_or_404(Event, event_id)
     
@@ -1814,9 +1839,15 @@ def event_import_registrations(event_id):
         
         flash(msg, 'success' if added > 0 else 'warning')
         
-    except Exception as e:
+    except Exception:
+        current_app.logger.exception(
+            'Event CSV import failed (event_id=%s, filename=%r, user_id=%s).',
+            event_id,
+            file.filename,
+            current_user.id if current_user.is_authenticated else None,
+        )
         db.session.rollback()
-        flash(f'Error processing CSV: {str(e)}', 'error')
+        flash(CSV_IMPORT_ERROR_FLASH, 'error')
     
     return redirect(url_for('main.event_detail', event_id=event_id))
 
@@ -2466,9 +2497,14 @@ def unsubscribed_import():
             flash(f'Imported {added} unsubscribed contact(s). {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.unsubscribed_list'))
 
-        except Exception as e:
+        except Exception:
+            current_app.logger.exception(
+                'Unsubscribed CSV import failed (filename=%r, user_id=%s).',
+                file.filename,
+                current_user.id if current_user.is_authenticated else None,
+            )
             db.session.rollback()
-            flash(f'Error processing CSV: {str(e)}', 'error')
+            flash(CSV_IMPORT_ERROR_FLASH, 'error')
 
     return render_template('unsubscribed/import.html')
 

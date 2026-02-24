@@ -16,10 +16,11 @@ class TestAuthHardening(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser
+        from app.models import AppUser, MessageLog
 
         self.db = db
         self.AppUser = AppUser
+        self.MessageLog = MessageLog
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
@@ -38,10 +39,12 @@ class TestAuthHardening(unittest.TestCase):
         admin.set_password("admin-pass")
         viewer = self.AppUser(username="viewer", phone="+15550001002", role="viewer", must_change_password=False)
         viewer.set_password("viewer-pass")
+        social = self.AppUser(username="social", phone="+15550001004", role="social_manager", must_change_password=False)
+        social.set_password("social-pass")
         no_phone = self.AppUser(username="no-phone", phone=None, role="admin", must_change_password=False)
         no_phone.set_password("no-phone-pass")
 
-        self.db.session.add_all([admin, viewer, no_phone])
+        self.db.session.add_all([admin, viewer, social, no_phone])
         self.db.session.commit()
 
     def tearDown(self) -> None:
@@ -128,6 +131,29 @@ class TestAuthHardening(unittest.TestCase):
         self._login("viewer", "viewer-pass")
         forbidden = self.client.get("/security/events")
         self.assertEqual(forbidden.status_code, 403)
+
+    def test_dashboard_post_forbidden_for_viewer(self) -> None:
+        self._login("viewer", "viewer-pass")
+
+        before_logs = self.MessageLog.query.count()
+        response = self.client.post(
+            "/dashboard",
+            data={"message_body": "Hello everyone", "target": "community"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.MessageLog.query.count(), before_logs)
+
+    def test_dashboard_post_allowed_for_social_manager(self) -> None:
+        self._login("social", "social-pass")
+
+        response = self.client.post(
+            "/dashboard",
+            data={"message_body": "Hello everyone", "target": "community"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b"403 Forbidden", response.data)
 
 
 if __name__ == "__main__":

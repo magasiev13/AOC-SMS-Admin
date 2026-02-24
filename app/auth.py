@@ -3,6 +3,7 @@ from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
+from sqlalchemy import func
 
 from app import db
 from app.models import AppUser
@@ -134,6 +135,13 @@ def login():
             return render_template("auth/login.html")
 
         user = AppUser.query.filter_by(username=username_input).first()
+        if not user and normalized_username:
+            user = (
+                AppUser.query
+                .filter(func.lower(AppUser.username) == normalized_username)
+                .order_by(AppUser.id.asc())
+                .first()
+            )
 
         if user and user.check_password(password):
             # Clear existing client session before issuing a new authenticated session.
