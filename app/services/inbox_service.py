@@ -177,7 +177,7 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
     if not reply_body:
         return {'success': False, 'error': 'empty_message'}
 
-    if UnsubscribedContact.query.filter_by(phone=thread.phone).first():
+    if _unsubscribed_entry_for_phone(thread.phone):
         return {
             'success': False,
             'status': 'blocked_opt_out',
@@ -295,6 +295,27 @@ def _event_registrations_for_phone(phone: str) -> list[EventRegistration]:
         .filter(_phone_digits_sql(EventRegistration.phone).in_(variants))
         .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
         .all()
+    )
+
+
+def _unsubscribed_entry_for_phone(phone: str) -> UnsubscribedContact | None:
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return None
+
+    entry = UnsubscribedContact.query.filter_by(phone=normalized_phone).first()
+    if entry is not None:
+        return entry
+
+    variants = _phone_lookup_variants(normalized_phone)
+    if not variants:
+        return None
+
+    return (
+        UnsubscribedContact.query
+        .filter(_phone_digits_sql(UnsubscribedContact.phone).in_(variants))
+        .order_by(UnsubscribedContact.id.desc())
+        .first()
     )
 
 
@@ -452,9 +473,16 @@ def _upsert_unsubscribed(
     source: str = 'inbound',
     name: str | None = None,
 ) -> None:
+    normalized_phone = normalize_phone(phone)
+    if not validate_phone(normalized_phone):
+        return
+
     resolved_name = _normalize_unsubscribed_name(name)
-    entry = UnsubscribedContact.query.filter_by(phone=phone).first()
+    entry = UnsubscribedContact.query.filter_by(phone=normalized_phone).first()
+    if entry is None:
+        entry = _unsubscribed_entry_for_phone(normalized_phone)
     if entry:
+        entry.phone = normalized_phone
         entry.reason = reason or entry.reason
         entry.source = source or entry.source
         if not entry.name and resolved_name:
@@ -463,7 +491,7 @@ def _upsert_unsubscribed(
     db.session.add(
         UnsubscribedContact(
             name=resolved_name,
-            phone=phone,
+            phone=normalized_phone,
             reason=reason or None,
             source=source or 'inbound',
         )
@@ -471,7 +499,7 @@ def _upsert_unsubscribed(
 
 
 def _remove_unsubscribed(phone: str) -> bool:
-    entry = UnsubscribedContact.query.filter_by(phone=phone).first()
+    entry = _unsubscribed_entry_for_phone(phone)
     if not entry:
         return False
     db.session.delete(entry)

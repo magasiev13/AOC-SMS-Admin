@@ -838,6 +838,46 @@ class TestInboxService(unittest.TestCase):
         unsubscribed = self.UnsubscribedContact.query.filter_by(phone="+15554443333").first()
         self.assertIsNone(unsubscribed)
 
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_start_removes_legacy_formatted_unsubscribe_entry(self, mock_get_twilio) -> None:
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone="(555) 444-3334",
+                reason="Inbound STOP keyword received",
+                source="manual",
+            )
+        )
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM333B",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        start_result = self.process_inbound_sms(
+            {"From": "+15554443334", "Body": "START", "MessageSid": "SM-IN-START-LEGACY-1"}
+        )
+        self.assertEqual(start_result["status"], "opt_in")
+
+        remaining = self.UnsubscribedContact.query.filter(
+            self.UnsubscribedContact.phone.in_(["(555) 444-3334", "+15554443334"])
+        ).count()
+        self.assertEqual(remaining, 0)
+
+        thread = self.InboxThread.query.filter_by(phone="+15554443334").first()
+        self.assertIsNotNone(thread)
+        latest_outbound = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound")
+            .order_by(self.InboxMessage.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(latest_outbound)
+        self.assertIn("resubscribed", latest_outbound.body.lower())
+
     def test_stop_unsubscribe_prefers_community_name_over_thread_name(self) -> None:
         self.db.session.add(self.CommunityMember(name="Community Name", phone="+15553334444"))
         self.db.session.commit()
@@ -957,6 +997,27 @@ class TestInboxService(unittest.TestCase):
         self.db.session.add(
             self.UnsubscribedContact(
                 phone=thread.phone,
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        result = self.send_thread_reply(thread.id, "Hello from admin", actor="admin")
+        self.assertFalse(result["success"])
+        self.assertEqual(result["status"], "blocked_opt_out")
+        mock_get_twilio.assert_not_called()
+
+        outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
+        self.assertEqual(outbound_count, 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_send_thread_reply_blocks_when_unsubscribed_phone_is_legacy_format(self, mock_get_twilio) -> None:
+        thread = self.InboxThread(phone="+15554445556", contact_name="Thread Name")
+        self.db.session.add(thread)
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone="(555) 444-5556",
                 reason="Inbound STOP keyword received",
                 source="inbound",
             )
