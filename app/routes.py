@@ -1511,16 +1511,23 @@ def community_import():
             
             added = 0
             skipped = 0
+            seen_phones: set[str] = set()
             
             for rec in parsed:
-                existing = CommunityMember.query.filter_by(phone=rec['phone']).first()
+                phone = rec['phone']
+                if phone in seen_phones:
+                    skipped += 1
+                    continue
+                seen_phones.add(phone)
+
+                existing = CommunityMember.query.filter_by(phone=phone).first()
                 if existing:
                     skipped += 1
                     continue
                 
                 member = CommunityMember(
                     name=rec['name'],
-                    phone=rec['phone']
+                    phone=phone
                 )
                 db.session.add(member)
                 added += 1
@@ -1530,6 +1537,7 @@ def community_import():
             return redirect(url_for('main.community_list'))
             
         except Exception as e:
+            db.session.rollback()
             flash(f'Error processing CSV: {str(e)}', 'error')
     
     return render_template('community/import.html')
@@ -1779,15 +1787,22 @@ def event_import_registrations(event_id):
         
         added = 0
         already_registered = 0
+        seen_phones: set[str] = set()
         
         for rec in parsed:
+            phone = rec['phone']
+            if phone in seen_phones:
+                already_registered += 1
+                continue
+            seen_phones.add(phone)
+
             # Check if already registered for this event
-            existing = EventRegistration.query.filter_by(event_id=event_id, phone=rec['phone']).first()
+            existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
             if existing:
                 already_registered += 1
                 continue
             
-            registration = EventRegistration(event_id=event_id, name=rec['name'], phone=rec['phone'])
+            registration = EventRegistration(event_id=event_id, name=rec['name'], phone=phone)
             db.session.add(registration)
             added += 1
         
@@ -1800,6 +1815,7 @@ def event_import_registrations(event_id):
         flash(msg, 'success' if added > 0 else 'warning')
         
     except Exception as e:
+        db.session.rollback()
         flash(f'Error processing CSV: {str(e)}', 'error')
     
     return redirect(url_for('main.event_detail', event_id=event_id))
@@ -2424,16 +2440,23 @@ def unsubscribed_import():
 
             added = 0
             skipped = 0
+            seen_phones: set[str] = set()
 
             for rec in parsed:
-                existing = UnsubscribedContact.query.filter_by(phone=rec['phone']).first()
+                phone = rec['phone']
+                if phone in seen_phones:
+                    skipped += 1
+                    continue
+                seen_phones.add(phone)
+
+                existing = UnsubscribedContact.query.filter_by(phone=phone).first()
                 if existing:
                     skipped += 1
                     continue
 
                 entry = UnsubscribedContact(
                     name=rec['name'],
-                    phone=rec['phone'],
+                    phone=phone,
                     source='import'
                 )
                 db.session.add(entry)
@@ -2444,6 +2467,7 @@ def unsubscribed_import():
             return redirect(url_for('main.unsubscribed_list'))
 
         except Exception as e:
+            db.session.rollback()
             flash(f'Error processing CSV: {str(e)}', 'error')
 
     return render_template('unsubscribed/import.html')

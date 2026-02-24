@@ -109,6 +109,72 @@ class TestRecipientFilteringNormalization(unittest.TestCase):
         self.assertEqual(unsubscribed_phones, {"+17205550102"})
         self.assertEqual(suppressed_phones, {"+17205550103"})
 
+    def test_filters_normalize_recipient_phones_without_caller_preprocessing(self) -> None:
+        from app import db
+        from app.models import SuppressedContact, UnsubscribedContact
+
+        db.session.add(
+            UnsubscribedContact(
+                name="Alex",
+                phone="+17205550112",
+                reason="Reply STOP",
+                source="manual",
+            )
+        )
+        db.session.add(
+            SuppressedContact(
+                phone="+17205550113",
+                reason="Invalid number",
+                category="hard_fail",
+                source="message_failure",
+                source_type="message_log",
+                source_message_log_id=402,
+            )
+        )
+        db.session.commit()
+
+        recipients = [
+            {"name": "Alex", "phone": "(720) 555-0112"},
+            {"name": "Blair", "phone": "720.555.0113"},
+            {"name": "Cory", "phone": "+1 720 555 0114"},
+        ]
+
+        remaining, skipped_unsubscribed, unsubscribed_phones = filter_unsubscribed_recipients(
+            recipients
+        )
+        remaining, skipped_suppressed, suppressed_phones = filter_suppressed_recipients(remaining)
+
+        self.assertEqual([r["phone"] for r in remaining], ["+17205550114"])
+        self.assertEqual([r["phone"] for r in skipped_unsubscribed], ["+17205550112"])
+        self.assertEqual([r["phone"] for r in skipped_suppressed], ["+17205550113"])
+        self.assertEqual(unsubscribed_phones, {"+17205550112"})
+        self.assertEqual(suppressed_phones, {"+17205550113"})
+
+    def test_unsubscribed_lookup_matches_legacy_formatted_stored_number(self) -> None:
+        from app import db
+        from app.models import UnsubscribedContact
+
+        db.session.add(
+            UnsubscribedContact(
+                name="Legacy",
+                phone="(720) 555-0122",
+                reason="Reply STOP",
+                source="manual",
+            )
+        )
+        db.session.commit()
+
+        recipients = [
+            {"name": "Legacy", "phone": "+17205550122"},
+            {"name": "Safe", "phone": "+17205550123"},
+        ]
+
+        remaining, skipped, unsubscribed_phones = filter_unsubscribed_recipients(recipients)
+
+        self.assertEqual([r["phone"] for r in remaining], ["+17205550123"])
+        self.assertEqual([r["phone"] for r in skipped], ["+17205550122"])
+        self.assertEqual(unsubscribed_phones, {"+17205550122"})
+
 
 if __name__ == "__main__":
     unittest.main()
