@@ -375,6 +375,9 @@ class ScheduledMessage(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
     status = db.Column(db.String(20), default='pending')  # 'pending', 'processing', 'sent', 'failed', 'expired', 'cancelled'
     test_mode = db.Column(db.Boolean, default=False)  # If true, send only to admin test phone
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    last_attempt_at = db.Column(db.DateTime, nullable=True)
+    next_retry_at = db.Column(db.DateTime, nullable=True)
     processing_started_at = db.Column(db.DateTime, nullable=True)
     sent_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)

@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 from flask import current_app
@@ -16,6 +17,14 @@ class TwilioTransientError(Exception):
         super().__init__(message)
         self.results = results
         self.failed_index = failed_index
+
+
+@dataclass(frozen=True)
+class InboundSignatureValidationResult:
+    """Result payload for Twilio inbound signature validation."""
+
+    is_valid: bool
+    reason: str
 
 
 class TwilioService:
@@ -131,15 +140,40 @@ def get_twilio_service() -> TwilioService:
     return TwilioService()
 
 
-def validate_inbound_signature(url: str, params: dict, signature: Optional[str]) -> bool:
-    """Validate Twilio webhook signature for inbound requests."""
+def validate_inbound_signature_detailed(
+    url: str,
+    params: dict,
+    signature: Optional[str],
+) -> InboundSignatureValidationResult:
+    """Validate Twilio webhook signature and return categorized outcome."""
     auth_token = current_app.config.get('TWILIO_AUTH_TOKEN')
-    if not auth_token or not signature:
-        return False
+    if not auth_token:
+        return InboundSignatureValidationResult(
+            is_valid=False,
+            reason='missing_auth_token',
+        )
+    if not signature:
+        return InboundSignatureValidationResult(
+            is_valid=False,
+            reason='missing_signature',
+        )
 
     try:
         validator = RequestValidator(auth_token)
-        return validator.validate(url, params, signature)
+        if validator.validate(url, params, signature):
+            return InboundSignatureValidationResult(is_valid=True, reason='valid')
+        return InboundSignatureValidationResult(
+            is_valid=False,
+            reason='invalid_signature',
+        )
     except Exception:
         current_app.logger.exception('Failed to validate Twilio inbound signature.')
-        return False
+        return InboundSignatureValidationResult(
+            is_valid=False,
+            reason='validator_exception',
+        )
+
+
+def validate_inbound_signature(url: str, params: dict, signature: Optional[str]) -> bool:
+    """Backwards-compatible Twilio webhook signature validation helper."""
+    return validate_inbound_signature_detailed(url, params, signature).is_valid
