@@ -70,6 +70,10 @@ class TestSanitizeCsvCell(unittest.TestCase):
         self.assertEqual(sanitize_csv_cell("\nhello"), "'\nhello")
         self.assertEqual(sanitize_csv_cell("\rhello"), "'\rhello")
 
+    def test_leading_whitespace_before_formula_is_escaped(self) -> None:
+        self.assertEqual(sanitize_csv_cell("  =SUM(A1:A2)"), "'  =SUM(A1:A2)")
+        self.assertEqual(sanitize_csv_cell(" \t-10"), "' \t-10")
+
     def test_regular_values_are_not_changed(self) -> None:
         self.assertEqual(sanitize_csv_cell("hello"), "hello")
         self.assertEqual(sanitize_csv_cell("12345"), "12345")

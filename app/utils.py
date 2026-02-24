@@ -124,7 +124,11 @@ def sanitize_csv_cell(value: object) -> str:
     if not text:
         return text
 
-    if text[0] in _CSV_FORMULA_PREFIXES or text[0] in ("\t", "\r", "\n"):
+    stripped = text.lstrip(" \t\r\n")
+    if stripped and stripped[0] in _CSV_FORMULA_PREFIXES:
+        return f"'{text}"
+
+    if text[0] in ("\t", "\r", "\n"):
         return f"'{text}"
     return text
 
