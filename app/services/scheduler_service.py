@@ -2,10 +2,12 @@
 import json
 import logging
 import atexit
+from datetime import timedelta
 from sqlalchemy import func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from app.services.twilio_service import get_twilio_service
+from twilio.base.exceptions import TwilioRestException
+from app.services.twilio_service import TwilioTransientError, get_twilio_service
 
 scheduler = None
 _scheduler_initialized = False
@@ -14,18 +16,100 @@ _scheduler_initialized = False
 logger = logging.getLogger(__name__)
 
 
+def _is_transient_send_error(error: Exception) -> bool:
+    """Classify retryable provider failures."""
+    if isinstance(error, (TwilioTransientError, TimeoutError, ConnectionError)):
+        return True
+    if isinstance(error, TwilioRestException):
+        status = getattr(error, 'status', None)
+        return status in {429} or (isinstance(status, int) and status >= 500)
+    return False
+
+
+def _compute_retry_backoff_seconds(
+    retry_number: int,
+    base_backoff_seconds: int,
+    max_backoff_seconds: int,
+) -> int:
+    """Compute exponential backoff for retry scheduling."""
+    retry_number = max(1, int(retry_number))
+    base_backoff_seconds = max(1, int(base_backoff_seconds))
+    max_backoff_seconds = max(base_backoff_seconds, int(max_backoff_seconds))
+    delay = base_backoff_seconds * (2 ** (retry_number - 1))
+    return min(delay, max_backoff_seconds)
+
+
+def _handle_transient_failure(
+    *,
+    scheduled,
+    error: Exception,
+    now,
+    max_retries: int,
+    base_backoff_seconds: int,
+    max_backoff_seconds: int,
+    db,
+) -> bool:
+    """
+    Handle transient failures for scheduled sends.
+
+    Returns True when the message was re-queued for retry, False when marked failed.
+    """
+    attempt_count = int(scheduled.attempt_count or 0)
+    retries_used = max(0, attempt_count - 1)
+    retries_remaining = max_retries - retries_used
+    if retries_remaining > 0:
+        retry_number = retries_used + 1
+        backoff_seconds = _compute_retry_backoff_seconds(
+            retry_number=retry_number,
+            base_backoff_seconds=base_backoff_seconds,
+            max_backoff_seconds=max_backoff_seconds,
+        )
+        scheduled.status = 'pending'
+        scheduled.processing_started_at = None
+        scheduled.next_retry_at = now + timedelta(seconds=backoff_seconds)
+        scheduled.error_message = (
+            f'Transient send failure on attempt {attempt_count}: {error}'
+        )
+        db.session.commit()
+        logger.warning(
+            "[Scheduler] Message id=%d transient failure on attempt %d; retrying in %ds (remaining retries=%d): %s",
+            scheduled.id,
+            attempt_count,
+            backoff_seconds,
+            retries_remaining - 1,
+            error,
+        )
+        return True
+
+    scheduled.status = 'failed'
+    scheduled.error_message = (
+        f'Transient send failure exhausted retries after {attempt_count} attempts: {error}'
+    )
+    scheduled.sent_at = now
+    scheduled.processing_started_at = None
+    scheduled.next_retry_at = None
+    db.session.commit()
+    logger.error(
+        "[Scheduler] Message id=%d transient failure exhausted retries after %d attempts: %s",
+        scheduled.id,
+        attempt_count,
+        error,
+    )
+    return False
+
+
 def send_scheduled_messages(app):
     """Check for and send any pending scheduled messages.
     
     This function is designed to be called repeatedly (e.g., by systemd timer).
     It handles:
-    1. Marking stuck 'processing' messages as failed (10-minute timeout)
+    1. Marking stuck 'processing' messages as failed (configurable timeout)
     2. Processing all pending messages with scheduled_at <= now
+    3. Re-queueing transient provider failures with bounded backoff
     
     All times are in UTC. The scheduled_at column stores UTC timestamps.
     """
     with app.app_context():
-        from datetime import timedelta
         from flask import current_app
         from app import db
         from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration, utc_now
@@ -35,10 +119,23 @@ def send_scheduled_messages(app):
         )
         from app.services.suppression_service import process_failure_details
         now = utc_now().replace(tzinfo=None)
+        processing_timeout_minutes = max(
+            1,
+            int(current_app.config.get('SCHEDULED_PROCESSING_TIMEOUT_MINUTES', 10)),
+        )
+        max_retries = max(0, int(current_app.config.get('SCHEDULED_SEND_MAX_RETRIES', 3)))
+        retry_backoff_seconds = max(
+            1,
+            int(current_app.config.get('SCHEDULED_SEND_RETRY_BACKOFF_SECONDS', 60)),
+        )
+        retry_max_backoff_seconds = max(
+            retry_backoff_seconds,
+            int(current_app.config.get('SCHEDULED_SEND_RETRY_MAX_BACKOFF_SECONDS', 900)),
+        )
         logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
         
-        # Step 1: Handle stuck 'processing' messages (timed out after 10 minutes)
-        processing_timeout = now - timedelta(minutes=10)
+        # Step 1: Handle stuck 'processing' messages (timed out after configured threshold)
+        processing_timeout = now - timedelta(minutes=processing_timeout_minutes)
         stuck_processing = ScheduledMessage.query.filter(
             ScheduledMessage.status == 'processing',
             func.coalesce(
@@ -60,6 +157,7 @@ def send_scheduled_messages(app):
             scheduled.status = 'failed'
             scheduled.error_message = 'Message processing timed out'
             scheduled.sent_at = now
+            scheduled.next_retry_at = None
         if stuck_processing:
             db.session.commit()
             logger.info("[Scheduler] Marked %d stuck message(s) as failed", stuck_count)
@@ -71,7 +169,11 @@ def send_scheduled_messages(app):
         # Step 2: Find and process pending messages due for sending
         pending = ScheduledMessage.query.filter(
             ScheduledMessage.status == 'pending',
-            ScheduledMessage.scheduled_at <= now
+            ScheduledMessage.scheduled_at <= now,
+            func.coalesce(
+                ScheduledMessage.next_retry_at,
+                ScheduledMessage.scheduled_at,
+            ) <= now,
         ).all()
         
         pending_count = len(pending)
@@ -84,6 +186,7 @@ def send_scheduled_messages(app):
         processed_count = 0
         sent_count = 0
         failed_count = 0
+        retried_count = 0
         
         for scheduled in pending:
             processed_count += 1
@@ -102,6 +205,7 @@ def send_scheduled_messages(app):
                     f'of {max_lag_minutes} minutes'
                 )
                 scheduled.sent_at = now
+                scheduled.next_retry_at = None
                 db.session.commit()
                 failed_count += 1
                 logger.warning(
@@ -126,6 +230,9 @@ def send_scheduled_messages(app):
                     {
                         'status': 'processing',
                         'processing_started_at': now,
+                        'last_attempt_at': now,
+                        'attempt_count': func.coalesce(ScheduledMessage.attempt_count, 0) + 1,
+                        'next_retry_at': None,
                     },
                     synchronize_session=False,
                 )
@@ -134,9 +241,14 @@ def send_scheduled_messages(app):
                     logger.info("[Scheduler] Message id=%d already claimed by another process, skipping", scheduled.id)
                     continue
                 db.session.commit()
+                db.session.refresh(scheduled)
                 scheduled.status = 'processing'
                 scheduled.processing_started_at = now
-                logger.info("[Scheduler] Message id=%d status: pending -> processing", scheduled.id)
+                logger.info(
+                    "[Scheduler] Message id=%d status: pending -> processing (attempt=%d)",
+                    scheduled.id,
+                    scheduled.attempt_count,
+                )
             except Exception as e:
                 db.session.rollback()
                 logger.warning("[Scheduler] Message id=%d lock failed: %s", scheduled.id, e)
@@ -149,6 +261,7 @@ def send_scheduled_messages(app):
                         scheduled.status = 'failed'
                         scheduled.error_message = 'ADMIN_TEST_PHONE not configured'
                         scheduled.sent_at = now
+                        scheduled.next_retry_at = None
                         db.session.commit()
                         failed_count += 1
                         logger.error("[Scheduler] Message id=%d FAILED: ADMIN_TEST_PHONE not configured", scheduled.id)
@@ -174,6 +287,7 @@ def send_scheduled_messages(app):
                     scheduled.status = 'failed'
                     scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
                     scheduled.sent_at = now
+                    scheduled.next_retry_at = None
                     db.session.commit()
                     failed_count += 1
                     logger.warning("[Scheduler] Message id=%d FAILED: no recipients found", scheduled.id)
@@ -181,7 +295,11 @@ def send_scheduled_messages(app):
                 
                 # Send messages
                 twilio = get_twilio_service()
-                result = twilio.send_bulk(recipient_data, scheduled.message_body)
+                result = twilio.send_bulk(
+                    recipient_data,
+                    scheduled.message_body,
+                    raise_on_transient=True,
+                )
                 
                 # Create log entry
                 log = MessageLog(
@@ -200,6 +318,8 @@ def send_scheduled_messages(app):
                 scheduled.status = 'sent'
                 scheduled.sent_at = now
                 scheduled.message_log_id = log.id
+                scheduled.error_message = None
+                scheduled.next_retry_at = None
                 db.session.commit()
 
                 sent_count += 1
@@ -217,10 +337,49 @@ def send_scheduled_messages(app):
                         e,
                     )
                 
+            except TwilioTransientError as e:
+                partial_result = getattr(e, 'results', None) or {}
+                if partial_result:
+                    logger.warning(
+                        "[Scheduler] Message id=%d transient failure after partial progress: success_count=%s failure_count=%s",
+                        scheduled.id,
+                        partial_result.get('success_count', 0),
+                        partial_result.get('failure_count', 0),
+                    )
+                was_requeued = _handle_transient_failure(
+                    scheduled=scheduled,
+                    error=e,
+                    now=now,
+                    max_retries=max_retries,
+                    base_backoff_seconds=retry_backoff_seconds,
+                    max_backoff_seconds=retry_max_backoff_seconds,
+                    db=db,
+                )
+                if was_requeued:
+                    retried_count += 1
+                else:
+                    failed_count += 1
             except Exception as e:
+                if _is_transient_send_error(e):
+                    was_requeued = _handle_transient_failure(
+                        scheduled=scheduled,
+                        error=e,
+                        now=now,
+                        max_retries=max_retries,
+                        base_backoff_seconds=retry_backoff_seconds,
+                        max_backoff_seconds=retry_max_backoff_seconds,
+                        db=db,
+                    )
+                    if was_requeued:
+                        retried_count += 1
+                    else:
+                        failed_count += 1
+                    continue
+
                 scheduled.status = 'failed'
                 scheduled.error_message = str(e)
                 scheduled.sent_at = now
+                scheduled.next_retry_at = None
                 db.session.commit()
                 failed_count += 1
                 logger.error(
@@ -230,8 +389,8 @@ def send_scheduled_messages(app):
         
         # Summary log
         logger.info(
-            "[Scheduler] Completed: processed=%d, sent=%d, failed=%d",
-            processed_count, sent_count, failed_count
+            "[Scheduler] Completed: processed=%d, sent=%d, failed=%d, retried=%d",
+            processed_count, sent_count, failed_count, retried_count
         )
 
 

@@ -69,7 +69,7 @@ from app.services.recipient_service import (
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
-from app.services.twilio_service import validate_inbound_signature
+from app.services.twilio_service import validate_inbound_signature_detailed
 from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
 from app.utils import (
@@ -2599,8 +2599,16 @@ def twilio_inbound_webhook():
     payload = request.form.to_dict(flat=True)
     if current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
         signature = request.headers.get('X-Twilio-Signature')
-        if not validate_inbound_signature(request.url, payload, signature):
-            current_app.logger.warning('Rejected inbound webhook due to invalid Twilio signature.')
+        validation = validate_inbound_signature_detailed(request.url, payload, signature)
+        if not validation.is_valid:
+            current_app.logger.warning(
+                'Rejected inbound webhook due to Twilio signature validation failure. '
+                'reason=%s remote_addr=%s message_sid=%s from=%s',
+                validation.reason,
+                request.remote_addr,
+                payload.get('MessageSid'),
+                payload.get('From'),
+            )
             return 'Forbidden', 403
 
     try:

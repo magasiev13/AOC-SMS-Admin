@@ -15,6 +15,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from app import create_app, db
 from app.models import ScheduledMessage, CommunityMember
 from app.services.scheduler_service import send_scheduled_messages
+from app.services.twilio_service import TwilioTransientError
 
 
 def utc_now_naive() -> datetime:
@@ -164,6 +165,155 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "failed", "Stuck processing message should be marked failed")
         self.assertIn("timed out", updated.error_message)
+
+    def test_stuck_processing_timeout_is_configurable(self):
+        """Processing timeout should honor SCHEDULED_PROCESSING_TIMEOUT_MINUTES config."""
+        self.app.config["SCHEDULED_PROCESSING_TIMEOUT_MINUTES"] = 20
+
+        stuck_time = utc_now_naive() - timedelta(minutes=15)
+        scheduled = ScheduledMessage(
+            message_body="Still processing message",
+            target="community",
+            scheduled_at=stuck_time,
+            status="processing",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service"):
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "processing")
+
+    def test_transient_failure_requeues_with_backoff(self):
+        """Transient provider failures should return message to pending with retry metadata."""
+        self.app.config["SCHEDULED_SEND_MAX_RETRIES"] = 2
+        self.app.config["SCHEDULED_SEND_RETRY_BACKOFF_SECONDS"] = 60
+        self.app.config["SCHEDULED_SEND_RETRY_MAX_BACKOFF_SECONDS"] = 300
+
+        member = CommunityMember(name="Retry User", phone="+15550001199")
+        db.session.add(member)
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Retry test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.side_effect = TwilioTransientError("twilio 503")
+            mock_twilio.return_value = mock_service
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "pending")
+        self.assertEqual(updated.attempt_count, 1)
+        self.assertIsNotNone(updated.last_attempt_at)
+        self.assertIsNotNone(updated.next_retry_at)
+        self.assertGreater(updated.next_retry_at, updated.last_attempt_at)
+        self.assertIn("Transient send failure", updated.error_message)
+
+    def test_pending_retry_in_future_not_processed(self):
+        """Pending messages with future next_retry_at should be skipped until retry window."""
+        member = CommunityMember(name="Future Retry User", phone="+15550001200")
+        db.session.add(member)
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        future_retry = utc_now_naive() + timedelta(minutes=5)
+        scheduled = ScheduledMessage(
+            message_body="Future retry test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+            next_retry_at=future_retry,
+            attempt_count=1,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            send_scheduled_messages(self.app)
+            mock_twilio.assert_not_called()
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "pending")
+        self.assertEqual(updated.attempt_count, 1)
+        self.assertEqual(updated.next_retry_at, future_retry)
+
+    def test_transient_failure_exhausts_retry_budget(self):
+        """Transient failures should become failed when retry budget is exhausted."""
+        self.app.config["SCHEDULED_SEND_MAX_RETRIES"] = 0
+
+        member = CommunityMember(name="No Retry User", phone="+15550001201")
+        db.session.add(member)
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="No retry test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.side_effect = TwilioTransientError("twilio timeout")
+            mock_twilio.return_value = mock_service
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "failed")
+        self.assertEqual(updated.attempt_count, 1)
+        self.assertIsNone(updated.next_retry_at)
+        self.assertIn("exhausted retries", updated.error_message)
+
+    def test_permanent_failure_marks_failed_without_retry(self):
+        """Permanent provider failures should fail immediately without requeue."""
+        self.app.config["SCHEDULED_SEND_MAX_RETRIES"] = 3
+
+        member = CommunityMember(name="Permanent Failure User", phone="+15550001202")
+        db.session.add(member)
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Permanent failure test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.side_effect = ValueError("invalid payload")
+            mock_twilio.return_value = mock_service
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "failed")
+        self.assertEqual(updated.attempt_count, 1)
+        self.assertIsNone(updated.next_retry_at)
+        self.assertIn("invalid payload", updated.error_message)
 
     def test_status_transitions_pending_to_processing_to_sent(self):
         """Verify the full status transition: pending -> processing -> sent."""

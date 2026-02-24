@@ -13,7 +13,13 @@ def _should_mark_failed() -> bool:
     job = get_current_job()
     if job is None:
         return True
-    return job.retries_left == 0
+    retries_left = getattr(job, 'retries_left', None)
+    if retries_left is None:
+        return True
+    try:
+        return int(retries_left) <= 0
+    except (TypeError, ValueError):
+        return True
 
 
 def _load_details(log: MessageLog) -> list:

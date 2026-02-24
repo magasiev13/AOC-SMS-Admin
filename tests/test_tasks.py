@@ -25,10 +25,11 @@ class TestSendBulkJob(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import MessageLog
-        from app.tasks import send_bulk_job
+        from app.tasks import _should_mark_failed, send_bulk_job
 
         self.db = db
         self.MessageLog = MessageLog
+        self._should_mark_failed = _should_mark_failed
         self.send_bulk_job = send_bulk_job
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config["TESTING"] = True
@@ -111,6 +112,30 @@ class TestSendBulkJob(unittest.TestCase):
         self.assertEqual(len(details), 1)
         self.assertEqual(details[0].get("phone"), "+15550000003")
         self.assertTrue(details[0].get("success"))
+
+    @patch("app.tasks.get_current_job", return_value=None)
+    def test_should_mark_failed_when_no_job_context(self, _mock_get_job) -> None:
+        self.assertTrue(self._should_mark_failed())
+
+    @patch("app.tasks.get_current_job")
+    def test_should_mark_failed_when_retries_left_is_zero(self, mock_get_job) -> None:
+        mock_get_job.return_value = type("Job", (), {"retries_left": 0})()
+        self.assertTrue(self._should_mark_failed())
+
+    @patch("app.tasks.get_current_job")
+    def test_should_not_mark_failed_when_retries_remaining(self, mock_get_job) -> None:
+        mock_get_job.return_value = type("Job", (), {"retries_left": 2})()
+        self.assertFalse(self._should_mark_failed())
+
+    @patch("app.tasks.get_current_job")
+    def test_should_mark_failed_when_retry_metadata_missing(self, mock_get_job) -> None:
+        mock_get_job.return_value = type("Job", (), {"retries_left": None})()
+        self.assertTrue(self._should_mark_failed())
+
+    @patch("app.tasks.get_current_job")
+    def test_should_mark_failed_when_retry_metadata_unavailable(self, mock_get_job) -> None:
+        mock_get_job.return_value = object()
+        self.assertTrue(self._should_mark_failed())
 
 
 if __name__ == "__main__":
