@@ -1,7 +1,5 @@
 from typing import Literal
 
-import re
-
 from flask import current_app
 
 from app import db
@@ -28,8 +26,9 @@ def classify_failure(error_text: str) -> OptOutCategory:
         'unsubscribe',
         'recipient has opted out',
     ]
-    opt_out_tokens = {'stop', 'cancel', 'quit', 'end', 'blocked'}
-    opt_out_codes = {'21610', '30004'}
+    # Keep opt-out detection strict to avoid suppressing valid contacts on
+    # generic carrier blocks/transient failures.
+    opt_out_codes = {'21610'}
     hard_fail_patterns = [
         'invalid',
         'not a valid',
@@ -44,6 +43,7 @@ def classify_failure(error_text: str) -> OptOutCategory:
         'phone number is not',
         'carrier violation',
         '30003',
+        '30004',
         '30005',
         '30007',
     ]
@@ -67,14 +67,9 @@ def classify_failure(error_text: str) -> OptOutCategory:
         '504',
     ]
 
-    def _contains_token(token: str) -> bool:
-        return re.search(rf"\b{re.escape(token)}\b", message) is not None
-
     if any(pattern in message for pattern in opt_out_phrases):
         return 'opt_out'
     if any(code in message for code in opt_out_codes):
-        return 'opt_out'
-    if any(_contains_token(token) for token in opt_out_tokens):
         return 'opt_out'
     if any(pattern in message for pattern in hard_fail_patterns):
         return 'hard_fail'

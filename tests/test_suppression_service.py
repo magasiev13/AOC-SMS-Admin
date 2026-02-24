@@ -56,6 +56,8 @@ class TestSuppressionService(unittest.TestCase):
         self.assertEqual(classify_failure("Reply STOP to opt out"), "opt_out")
         self.assertEqual(classify_failure("Carrier violation: 30005"), "hard_fail")
         self.assertEqual(classify_failure("Service unavailable: 503"), "soft_fail")
+        self.assertEqual(classify_failure("Message blocked by carrier (30007)"), "hard_fail")
+        self.assertEqual(classify_failure("Temporarily blocked due rate limit 429"), "soft_fail")
 
     def test_unsubscribed_contact_upsert_is_idempotent(self) -> None:
         details = [
