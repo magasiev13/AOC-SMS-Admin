@@ -1,4 +1,5 @@
 import json
+import time
 
 from flask import current_app
 from sqlalchemy import func
@@ -464,6 +465,16 @@ def _send_automated_reply(
         delivery_error=result.get('error'),
     )
     return result
+
+
+def _survey_start_question_delay_seconds() -> float:
+    default_delay = 0.0 if current_app.testing else 1.0
+    configured_delay = current_app.config.get('SURVEY_START_QUESTION_DELAY_SECONDS', default_delay)
+    try:
+        delay_seconds = float(configured_delay)
+    except (TypeError, ValueError):
+        return default_delay
+    return max(0.0, delay_seconds)
 
 
 def _upsert_unsubscribed(
@@ -949,10 +960,19 @@ def process_inbound_sms(payload: dict) -> dict:
     # cannot advance the survey twice if Twilio retries the same webhook.
     db.session.commit()
 
+    survey_reply_count = 0
     for pending in pending_replies:
         source = str(pending['source'])
         source_id = pending.get('source_id')
         body = str(pending.get('body') or '')
+
+        if status == 'survey_started' and source == 'survey':
+            if survey_reply_count > 0:
+                delay_seconds = _survey_start_question_delay_seconds()
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
+            survey_reply_count += 1
+
         sent_replies.append(
             {
                 'source': source,
