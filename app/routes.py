@@ -1894,7 +1894,6 @@ def logs_list():
     try:
         logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
     except OperationalError as exc:
-        from flask import current_app
         current_app.logger.warning(
             'MessageLog list query failed due to schema mismatch: %s',
             exc,
@@ -1927,7 +1926,6 @@ def log_detail(log_id):
     try:
         log = db.get_or_404(MessageLog, log_id)
     except OperationalError as exc:
-        from flask import current_app
         current_app.logger.warning(
             'MessageLog detail query failed due to schema mismatch: %s',
             exc,
