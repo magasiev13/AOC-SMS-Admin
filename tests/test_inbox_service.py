@@ -1128,6 +1128,63 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(messages[1].direction, "outbound")
         self.assertIn("already subscribed", messages[1].body)
 
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_yes_prefers_survey_trigger_when_contact_is_already_subscribed(self, mock_get_twilio) -> None:
+        survey = self.SurveyFlow(
+            name="Yes RSVP Flow",
+            trigger_keyword="YES",
+            intro_message="Thanks for RSVPing.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your full name?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM888A",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.process_inbound_sms(
+            {"From": "+15550008888", "Body": "YES", "MessageSid": "SM-IN-YES-SURVEY-1"}
+        )
+
+        self.assertEqual(result["status"], "survey_started")
+        session = self.SurveySession.query.filter_by(phone="+15550008888", status="active").first()
+        self.assertIsNotNone(session)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_yes_still_opt_in_when_contact_is_unsubscribed(self, mock_get_twilio) -> None:
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone="+15550007777",
+                reason="Inbound STOP keyword received",
+                source="inbound",
+            )
+        )
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM888B",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.process_inbound_sms(
+            {"From": "+15550007777", "Body": "YES", "MessageSid": "SM-IN-YES-OPTIN-1"}
+        )
+
+        self.assertEqual(result["status"], "opt_in")
+        self.assertIsNone(self.UnsubscribedContact.query.filter_by(phone="+15550007777").first())
+
     def test_model_indexes_match_migration_indexes(self) -> None:
         from sqlalchemy import inspect
 
