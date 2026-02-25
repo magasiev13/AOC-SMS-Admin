@@ -878,7 +878,9 @@ def process_inbound_sms(payload: dict) -> dict:
                         }
                     )
                 status = 'survey_response'
-        elif normalized in START_KEYWORDS:
+        elif normalized in START_KEYWORDS and (
+            normalized != 'YES' or _unsubscribed_entry_for_phone(phone) is not None
+        ):
             was_unsubscribed = _remove_unsubscribed(phone)
             start_reply = (
                 'You are resubscribed and can receive SMS alerts again.'
