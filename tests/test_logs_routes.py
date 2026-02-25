@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 
 class TestLogsRoutes(unittest.TestCase):
@@ -17,10 +18,11 @@ class TestLogsRoutes(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser, MessageLog
+        from app.models import AppUser, CommunityMember, MessageLog
 
         self.db = db
         self.AppUser = AppUser
+        self.CommunityMember = CommunityMember
         self.MessageLog = MessageLog
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
@@ -99,6 +101,26 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertIn("+15551234567", html)
         self.assertIn("Carrier rejection", html)
 
+
+    def test_log_detail_handles_numeric_phone_values(self) -> None:
+        self._login()
+        log_id = self._create_log(
+            json.dumps(
+                [
+                    {
+                        "phone": 15557654321,
+                        "success": False,
+                        "error": "Carrier rejection",
+                    }
+                ]
+            )
+        )
+
+        response = self.client.get(f"/logs/{log_id}", follow_redirects=False)
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Carrier rejection", html)
+
     def test_log_detail_ignores_non_dict_detail_entries(self) -> None:
         self._login()
         log_id = self._create_log(
@@ -120,6 +142,55 @@ class TestLogsRoutes(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("+15557654321", html)
         self.assertIn("Temporary failure", html)
+
+    def test_log_detail_renders_when_details_json_array_is_empty(self) -> None:
+        self._login()
+        log_id = self._create_log("[]")
+
+        response = self.client.get(f"/logs/{log_id}", follow_redirects=False)
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("Message Log Details", html)
+
+    def test_dashboard_send_redirects_to_log_detail_for_general_blast(self) -> None:
+        self._login()
+        self.db.session.add(self.CommunityMember(name="Member", phone="+15551234567"))
+        self.db.session.commit()
+
+        mock_queue = MagicMock()
+        with patch("app.queue.get_queue", return_value=mock_queue):
+            response = self.client.post(
+                "/dashboard",
+                data={
+                    "message_body": "Hello everyone",
+                    "target": "community",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        mock_queue.enqueue.assert_called_once()
+
+    def test_dashboard_send_redirects_to_log_detail_for_test_mode(self) -> None:
+        self._login()
+        self.app.config["ADMIN_TEST_PHONE"] = "+15550009999"
+
+        mock_queue = MagicMock()
+        with patch("app.queue.get_queue", return_value=mock_queue):
+            response = self.client.post(
+                "/dashboard",
+                data={
+                    "message_body": "Test mode message",
+                    "target": "community",
+                    "test_mode": "on",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        mock_queue.enqueue.assert_called_once()
 
 
 if __name__ == "__main__":

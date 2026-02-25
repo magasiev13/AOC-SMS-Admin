@@ -28,15 +28,17 @@ def normalize_keyword(value: str) -> str:
     return ' '.join((value or '').upper().strip().split())
 
 
-def normalize_phone(phone: str) -> str:
+def normalize_phone(phone: object) -> str:
     """
     Normalize phone number to E.164-ish format.
     Removes non-digit characters and ensures it starts with +.
     """
-    if not phone:
+    if phone is None:
         return ''
 
-    raw = phone.strip()
+    raw = str(phone).strip()
+    if not raw:
+        return ''
     digits = re.sub(r'\D', '', raw)
     if not digits:
         return ''

@@ -34,6 +34,9 @@ class TestNormalizePhone(unittest.TestCase):
     def test_multiple_plus_prefixes_are_normalized(self) -> None:
         self.assertEqual(normalize_phone("++++"), "")
 
+    def test_numeric_input_is_supported(self) -> None:
+        self.assertEqual(normalize_phone(17203832388), "+17203832388")
+
 
 class TestValidatePhone(unittest.TestCase):
     def test_valid_e164(self) -> None:
