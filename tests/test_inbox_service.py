@@ -191,6 +191,47 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(refreshed_survey.start_count, 1)
         self.assertEqual(refreshed_survey.completion_count, 1)
 
+    @patch("app.services.inbox_service.time.sleep")
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_survey_start_sends_intro_before_first_question_with_delay(
+        self,
+        mock_get_twilio,
+        mock_sleep,
+    ) -> None:
+        self.app.config["SURVEY_START_QUESTION_DELAY_SECONDS"] = 1.25
+        survey = self.SurveyFlow(
+            name="RSVP Ordered Flow",
+            trigger_keyword="RSVP ORDER",
+            intro_message="Thanks for RSVPing.",
+            completion_message="Done.",
+            is_active=True,
+        )
+        survey.set_questions(["What is your full name?"])
+        self.db.session.add(survey)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM-ORDER",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        start_result = self.process_inbound_sms(
+            {"From": "+15550001110", "Body": "RSVP ORDER", "MessageSid": "SM-IN-ORDER-1"}
+        )
+
+        self.assertEqual(start_result["status"], "survey_started")
+        self.assertEqual(mock_service.send_message.call_count, 2)
+        self.assertEqual(mock_service.send_message.call_args_list[0].args[1], "Thanks for RSVPing.")
+        self.assertEqual(
+            mock_service.send_message.call_args_list[1].args[1],
+            "What is your full name?",
+        )
+        mock_sleep.assert_called_once_with(1.25)
+
     @patch("app.services.inbox_service.get_twilio_service")
     def test_duplicate_message_sid_during_active_survey_is_idempotent(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
