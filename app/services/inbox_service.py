@@ -953,6 +953,22 @@ def process_inbound_sms(payload: dict) -> dict:
                     status = 'keyword_reply'
                     break
 
+                if status == 'stored' and normalized == 'YES':
+                    was_unsubscribed = _remove_unsubscribed(phone)
+                    start_reply = (
+                        'You are resubscribed and can receive SMS alerts again.'
+                        if was_unsubscribed
+                        else 'You are already subscribed and can receive SMS alerts.'
+                    )
+                    pending_replies.append(
+                        {
+                            'source': 'system',
+                            'source_id': None,
+                            'body': start_reply,
+                        }
+                    )
+                    status = 'opt_in'
+
     if matched_keyword:
         inbound_message.matched_keyword = matched_keyword
 

@@ -1170,6 +1170,34 @@ class TestInboxService(unittest.TestCase):
         self.assertIn("already subscribed", messages[1].body)
 
     @patch("app.services.inbox_service.get_twilio_service")
+    def test_yes_when_no_survey_or_rule_still_sends_opt_in_ack(self, mock_get_twilio) -> None:
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM888-YES",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        start_result = self.process_inbound_sms(
+            {"From": "+15550001234", "Body": "YES", "MessageSid": "SM-IN-YES-ACK-1"}
+        )
+        self.assertEqual(start_result["status"], "opt_in")
+
+        thread = self.InboxThread.query.filter_by(phone="+15550001234").first()
+        self.assertIsNotNone(thread)
+        messages = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id)
+            .order_by(self.InboxMessage.created_at.asc())
+            .all()
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0].direction, "inbound")
+        self.assertEqual(messages[1].direction, "outbound")
+        self.assertIn("already subscribed", messages[1].body)
+
+    @patch("app.services.inbox_service.get_twilio_service")
     def test_yes_prefers_survey_trigger_when_contact_is_already_subscribed(self, mock_get_twilio) -> None:
         survey = self.SurveyFlow(
             name="Yes RSVP Flow",

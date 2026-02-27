@@ -13,7 +13,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 from app import create_app, db
-from app.models import ScheduledMessage, CommunityMember
+from app.models import CommunityMember, MessageLog, ScheduledMessage
 from app.services.scheduler_service import send_scheduled_messages
 from app.services.twilio_service import TwilioTransientError
 
@@ -252,6 +252,89 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         self.assertEqual(updated.status, "pending")
         self.assertEqual(updated.attempt_count, 1)
         self.assertEqual(updated.next_retry_at, future_retry)
+
+    def test_partial_transient_retry_skips_recipients_already_sent(self):
+        """Retries after partial transient failures should not resend successful recipients."""
+        self.app.config["SCHEDULED_SEND_MAX_RETRIES"] = 2
+
+        db.session.add_all(
+            [
+                CommunityMember(name="Already Sent", phone="+15550002201"),
+                CommunityMember(name="Remaining", phone="+15550002202"),
+            ]
+        )
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Retry dedupe test",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        partial_failure = TwilioTransientError(
+            "twilio 503",
+            results={
+                "total": 2,
+                "success_count": 1,
+                "failure_count": 0,
+                "details": [
+                    {
+                        "phone": "+15550002201",
+                        "name": "Already Sent",
+                        "success": True,
+                        "error": None,
+                    }
+                ],
+            },
+            failed_index=1,
+        )
+        remaining_success = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [
+                {
+                    "phone": "+15550002202",
+                    "name": "Remaining",
+                    "success": True,
+                    "error": None,
+                }
+            ],
+        }
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.side_effect = [partial_failure, remaining_success]
+            mock_twilio.return_value = mock_service
+
+            send_scheduled_messages(self.app)
+
+            db.session.expire_all()
+            pending_retry = db.session.get(ScheduledMessage, msg_id)
+            self.assertEqual(pending_retry.status, "pending")
+            self.assertIsNotNone(pending_retry.message_log_id)
+            pending_retry.next_retry_at = utc_now_naive() - timedelta(seconds=1)
+            db.session.commit()
+
+            send_scheduled_messages(self.app)
+
+            self.assertEqual(mock_service.send_bulk.call_count, 2)
+            first_recipients = {item["phone"] for item in mock_service.send_bulk.call_args_list[0].args[0]}
+            second_recipients = {item["phone"] for item in mock_service.send_bulk.call_args_list[1].args[0]}
+            self.assertEqual(first_recipients, {"+15550002201", "+15550002202"})
+            self.assertEqual(second_recipients, {"+15550002202"})
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "sent")
+        log = db.session.get(MessageLog, updated.message_log_id)
+        self.assertIsNotNone(log)
+        self.assertEqual(log.total_recipients, 2)
+        self.assertEqual(log.success_count, 2)
 
     def test_transient_failure_exhausts_retry_budget(self):
         """Transient failures should become failed when retry budget is exhausted."""
