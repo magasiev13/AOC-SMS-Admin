@@ -39,6 +39,137 @@ def _compute_retry_backoff_seconds(
     return min(delay, max_backoff_seconds)
 
 
+def _to_non_negative_int(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _coerce_detail_rows(details: object) -> list[dict]:
+    if not isinstance(details, list):
+        return []
+    return [detail for detail in details if isinstance(detail, dict)]
+
+
+def _load_log_detail_rows(details_json: object) -> list[dict]:
+    if not details_json:
+        return []
+    if isinstance(details_json, list):
+        return _coerce_detail_rows(details_json)
+    if not isinstance(details_json, str):
+        return []
+
+    try:
+        payload = json.loads(details_json)
+    except (TypeError, ValueError):
+        return []
+    return _coerce_detail_rows(payload)
+
+
+def _count_detail_outcomes(detail_rows: list[dict]) -> tuple[int, int]:
+    success_count = sum(1 for detail in detail_rows if detail.get('success') is True)
+    failure_count = sum(1 for detail in detail_rows if detail.get('success') is False)
+    return success_count, failure_count
+
+
+def _upsert_message_log_for_scheduled_send(
+    *,
+    scheduled,
+    result: dict,
+    MessageLog,
+    db,
+):
+    detail_rows = _coerce_detail_rows(result.get('details'))
+    result_total = _to_non_negative_int(result.get('total'))
+    result_success = _to_non_negative_int(result.get('success_count'))
+    result_failure = _to_non_negative_int(result.get('failure_count'))
+
+    detail_success, detail_failure = _count_detail_outcomes(detail_rows)
+    if detail_rows:
+        result_success = max(result_success, detail_success)
+        result_failure = max(result_failure, detail_failure)
+    result_total = max(result_total, result_success + result_failure, len(detail_rows))
+
+    log = None
+    if scheduled.message_log_id:
+        log = db.session.get(MessageLog, scheduled.message_log_id)
+
+    if log is None:
+        log = MessageLog(
+            message_body=scheduled.message_body,
+            target=scheduled.target,
+            event_id=scheduled.event_id,
+            total_recipients=result_total,
+            success_count=result_success,
+            failure_count=result_failure,
+            details=json.dumps(detail_rows),
+        )
+        db.session.add(log)
+        db.session.flush()
+        scheduled.message_log_id = log.id
+        return log
+
+    existing_rows = _load_log_detail_rows(log.details)
+    merged_rows = existing_rows + detail_rows
+    merged_success, merged_failure = _count_detail_outcomes(merged_rows)
+
+    if merged_rows:
+        log.success_count = merged_success
+        log.failure_count = merged_failure
+    else:
+        log.success_count = max(_to_non_negative_int(log.success_count), result_success)
+        log.failure_count = max(_to_non_negative_int(log.failure_count), result_failure)
+
+    log.total_recipients = max(
+        _to_non_negative_int(log.total_recipients),
+        result_total,
+        log.success_count + log.failure_count,
+        len(merged_rows),
+    )
+    log.details = json.dumps(merged_rows)
+    db.session.flush()
+    return log
+
+
+def _filter_previously_sent_recipients(
+    *,
+    scheduled,
+    recipient_data: list[dict],
+    MessageLog,
+    db,
+    normalize_phone,
+) -> tuple[list[dict], int]:
+    if not scheduled.message_log_id:
+        return recipient_data, 0
+
+    log = db.session.get(MessageLog, scheduled.message_log_id)
+    if log is None:
+        return recipient_data, 0
+
+    delivered_phones = set()
+    for detail in _load_log_detail_rows(log.details):
+        if detail.get('success') is not True:
+            continue
+        phone = normalize_phone(detail.get('phone'))
+        if phone:
+            delivered_phones.add(phone)
+
+    if not delivered_phones:
+        return recipient_data, 0
+
+    filtered_recipients = []
+    skipped_count = 0
+    for recipient in recipient_data:
+        phone = normalize_phone(recipient.get('phone'))
+        if phone and phone in delivered_phones:
+            skipped_count += 1
+            continue
+        filtered_recipients.append(recipient)
+
+    return filtered_recipients, skipped_count
+
+
 def _handle_transient_failure(
     *,
     scheduled,
@@ -118,6 +249,7 @@ def send_scheduled_messages(app):
             filter_unsubscribed_recipients,
         )
         from app.services.suppression_service import process_failure_details
+        from app.utils import normalize_phone
         now = utc_now().replace(tzinfo=None)
         processing_timeout_minutes = max(
             1,
@@ -283,7 +415,34 @@ def send_scheduled_messages(app):
                     if suppressed_skipped:
                         logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_skipped))
 
+                recipient_data, already_sent_skipped = _filter_previously_sent_recipients(
+                    scheduled=scheduled,
+                    recipient_data=recipient_data,
+                    MessageLog=MessageLog,
+                    db=db,
+                    normalize_phone=normalize_phone,
+                )
+                if already_sent_skipped:
+                    logger.info(
+                        "[Scheduler] Message id=%d: skipped %d recipient(s) already delivered in prior partial attempts",
+                        scheduled.id,
+                        already_sent_skipped,
+                    )
+
                 if not recipient_data:
+                    if already_sent_skipped:
+                        scheduled.status = 'sent'
+                        scheduled.sent_at = now
+                        scheduled.error_message = None
+                        scheduled.next_retry_at = None
+                        db.session.commit()
+                        sent_count += 1
+                        logger.info(
+                            "[Scheduler] Message id=%d SENT: all recipients already delivered in prior attempts",
+                            scheduled.id,
+                        )
+                        continue
+
                     scheduled.status = 'failed'
                     scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
                     scheduled.sent_at = now
@@ -301,18 +460,13 @@ def send_scheduled_messages(app):
                     raise_on_transient=True,
                 )
                 
-                # Create log entry
-                log = MessageLog(
-                    message_body=scheduled.message_body,
-                    target=scheduled.target,
-                    event_id=scheduled.event_id,
-                    total_recipients=result['total'],
-                    success_count=result['success_count'],
-                    failure_count=result['failure_count'],
-                    details=json.dumps(result['details'])
+                # Create or append to existing log entry.
+                log = _upsert_message_log_for_scheduled_send(
+                    scheduled=scheduled,
+                    result=result,
+                    MessageLog=MessageLog,
+                    db=db,
                 )
-                db.session.add(log)
-                db.session.flush()
                 
                 # Update scheduled message
                 scheduled.status = 'sent'
@@ -325,7 +479,7 @@ def send_scheduled_messages(app):
                 sent_count += 1
                 logger.info(
                     "[Scheduler] Message id=%d SENT: %d/%d successful (status: processing -> sent)",
-                    scheduled.id, result['success_count'], result['total']
+                    scheduled.id, log.success_count, log.total_recipients
                 )
 
                 try:
@@ -338,13 +492,21 @@ def send_scheduled_messages(app):
                     )
                 
             except TwilioTransientError as e:
-                partial_result = getattr(e, 'results', None) or {}
+                partial_result = getattr(e, 'results', None)
+                if not isinstance(partial_result, dict):
+                    partial_result = {}
                 if partial_result:
                     logger.warning(
                         "[Scheduler] Message id=%d transient failure after partial progress: success_count=%s failure_count=%s",
                         scheduled.id,
                         partial_result.get('success_count', 0),
                         partial_result.get('failure_count', 0),
+                    )
+                    _upsert_message_log_for_scheduled_send(
+                        scheduled=scheduled,
+                        result=partial_result,
+                        MessageLog=MessageLog,
+                        db=db,
                     )
                 was_requeued = _handle_transient_failure(
                     scheduled=scheduled,
