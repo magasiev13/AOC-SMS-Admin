@@ -37,6 +37,13 @@ class TestNormalizePhone(unittest.TestCase):
     def test_numeric_input_is_supported(self) -> None:
         self.assertEqual(normalize_phone(17203832388), "+17203832388")
 
+    def test_non_ascii_digits_are_rejected(self) -> None:
+        full_width_digits = "\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18\uff19\uff10"
+        arabic_indic_digits = "\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u0660"
+
+        self.assertEqual(normalize_phone(full_width_digits), "")
+        self.assertEqual(normalize_phone(arabic_indic_digits), "")
+
 
 class TestValidatePhone(unittest.TestCase):
     def test_valid_e164(self) -> None:

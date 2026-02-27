@@ -39,7 +39,7 @@ def normalize_phone(phone: object) -> str:
     raw = str(phone).strip()
     if not raw:
         return ''
-    digits = re.sub(r'\D', '', raw)
+    digits = re.sub(r'[^0-9]', '', raw)
     if not digits:
         return ''
 
@@ -69,7 +69,7 @@ def validate_phone(phone: str) -> bool:
     
     normalized = normalize_phone(phone)
     # E.164: + followed by 7-15 digits
-    return bool(re.match(r'^\+\d{7,15}$', normalized))
+    return bool(re.match(r'^\+[0-9]{7,15}$', normalized))
 
 
 def get_first_name(name: Optional[str]) -> str:
@@ -137,7 +137,7 @@ def sanitize_csv_cell(value: object) -> str:
 
 def _looks_like_phone(value: str) -> bool:
     """Check if a string looks like a phone number (has 7+ digits)."""
-    digits = re.sub(r'\D', '', value)
+    digits = re.sub(r'[^0-9]', '', value)
     return len(digits) >= 7
 
 
@@ -236,7 +236,7 @@ def parse_phones_csv(file_content: str) -> list:
     for row in reader:
         for cell in row:
             cell = cell.strip()
-            if cell and re.search(r'\d{7,}', re.sub(r'\D', '', cell)):
+            if cell and re.search(r'[0-9]{7,}', re.sub(r'[^0-9]', '', cell)):
                 normalized = normalize_phone(cell)
                 if validate_phone(normalized):
                     phones.append(normalized)
