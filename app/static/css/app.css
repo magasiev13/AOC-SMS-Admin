@@ -913,6 +913,10 @@ h6,
   justify-content: center;
 }
 
+.inbox-mobile-thread-count {
+  text-align: center;
+}
+
 .inbox-mobile-actions {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
