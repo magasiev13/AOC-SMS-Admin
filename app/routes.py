@@ -2632,6 +2632,8 @@ def twilio_inbound_webhook():
 def inbox_list():
     search = request.args.get('search', '').strip()
     selected_thread_id = request.args.get('thread', type=int)
+    mobile_view = request.args.get('view', '').strip().lower()
+    show_thread_list_only = mobile_view == 'threads'
     query = InboxThread.query
 
     if search:
@@ -2655,7 +2657,7 @@ def inbox_list():
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
         if selected_thread is None:
             selected_thread = db.session.get(InboxThread, selected_thread_id)
-    elif threads:
+    elif threads and not show_thread_list_only:
         selected_thread = threads[0]
 
     messages = []
@@ -2690,6 +2692,7 @@ def inbox_list():
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
         inbox_status_latest_message_id=latest_message_id,
+        show_thread_list_only=show_thread_list_only,
         search=search,
     )
 
