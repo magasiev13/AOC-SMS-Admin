@@ -293,6 +293,10 @@ h6,
 
 .app-topbar .navbar-brand {
   font-size: var(--font-size-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
 }
 
 .app-mobile-nav {
