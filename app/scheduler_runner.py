@@ -1,7 +1,7 @@
 import signal
 import time
 
-from app import create_app
+from app import create_runtime_app
 from app.services.scheduler_service import shutdown_scheduler
 
 
@@ -18,7 +18,7 @@ signal.signal(signal.SIGINT, _handle_shutdown)
 
 
 def main():
-    create_app(start_scheduler=True)
+    app = create_runtime_app(start_scheduler=True)
 
     while not _shutdown_requested:
         time.sleep(1)

@@ -13,7 +13,7 @@ Flask SMS admin app for sending community/event SMS blasts via Twilio. Python 3.
 ```
 ./
 ├── app/                  # Core application (see app/AGENTS.md)
-│   ├── __init__.py       # App factory: create_app(), extensions, migrations, scheduler
+│   ├── __init__.py       # Pure app factory + explicit runtime bootstrap helpers
 │   ├── config.py         # Env-based config class
 │   ├── models.py         # All 15 SQLAlchemy models
 │   ├── routes.py         # Main blueprint, 40+ endpoints
@@ -83,7 +83,8 @@ Flask SMS admin app for sending community/event SMS blasts via Twilio. Python 3.
 
 - **Custom migration system**: Numbered Python files in `app/migrations/` with `apply(connection, logger)`. Tracked in `schema_migrations` table. Managed by `dbdoctor`.
 - **Dual recipient pools**: `community_members` (community blasts) and `event_registrations` (event blasts) are separate. Never cross-target.
-- **Scheduler dual-mode**: APScheduler (dev, `SCHEDULER_ENABLED=1`) vs systemd timer (prod). Runner flag: `SCHEDULER_RUNNER=1`.
+- **Pure app factory**: `create_app()` is safe by default; runtime entrypoints call `create_runtime_app()` when they need DB bootstrap and optional scheduler startup.
+- **Scheduler dual-mode**: APScheduler (dev, explicit runtime startup when `SCHEDULER_ENABLED=1`) vs systemd timer (prod).
 - **RQ jobs create own app context**: `create_app(run_startup_tasks=False, start_scheduler=False)` inside each job.
 - **CSV formula injection prevention**: `sanitize_csv_cell()` prefixes dangerous characters with `'`.
 - **Keyword normalization**: Keywords uppercased and whitespace-collapsed via `normalize_keyword()`. Uniqueness enforced across `KeywordAutomationRule` and `SurveyFlow` tables.
@@ -122,6 +123,6 @@ journalctl -u sms-scheduler.service -f # Watch scheduler logs
 - `ExecStartPre=dbdoctor --apply` in systemd units auto-runs migrations on restart.
 - Login rate limiting: 5 attempts / 5 min window, 10 min lockout. Tracked in `login_attempts` table.
 - `SECRET_KEY` must be changed in production (runtime error if default + non-debug).
-- Admin user auto-created on first run if `ADMIN_PASSWORD` set.
+- Admin user auto-created on first runtime startup if `ADMIN_PASSWORD` set.
 - Scheduled messages expire if older than `SCHEDULED_MESSAGE_MAX_LAG` minutes (default 1440 = 24h).
 - Suppression backfill available as RQ job: `backfill_suppressions_job()`.

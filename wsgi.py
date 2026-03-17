@@ -1,6 +1,8 @@
 import os
+
 from dotenv import load_dotenv
-from app import create_app
+
+from app import create_runtime_app
 
 load_dotenv()
 
@@ -8,7 +10,7 @@ load_dotenv()
 # Set SCHEDULER_ENABLED=1 in .env to activate
 start_scheduler = os.environ.get('SCHEDULER_ENABLED', '0') == '1'
 
-app = create_app(start_scheduler=start_scheduler)
+app = create_runtime_app(start_scheduler=start_scheduler)
 
 if __name__ == '__main__':
     app.run()
