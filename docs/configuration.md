@@ -70,7 +70,6 @@ If `DATABASE_URL` is unset, the app defaults to `instance/sms.db` under the proj
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SCHEDULER_ENABLED` | `0` (prod), `1` (dev) | Enable APScheduler background thread |
-| `SCHEDULER_RUNNER` | - | Set to `1` in scheduler service |
 | `SCHEDULED_MESSAGE_MAX_LAG` | `1440` | Minutes before scheduled message expires |
 
 ### Timezone

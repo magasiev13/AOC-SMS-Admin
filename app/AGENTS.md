@@ -1,6 +1,6 @@
 # app/ — Core Application
 
-Flask application package. Entry point: `create_app()` in `__init__.py`.
+Flask application package. Runtime entrypoints use `create_runtime_app()`; `create_app()` is the pure app factory in `__init__.py`.
 
 Supported runtime for this project is Python 3.11.
 
@@ -8,7 +8,7 @@ Supported runtime for this project is Python 3.11.
 
 ```
 app/
-├── __init__.py          # App factory, extension init, migration runner, admin seed
+├── __init__.py          # Pure app factory, runtime bootstrap helpers, extension init
 ├── config.py            # All config from env vars (Config class)
 ├── models.py            # 15 SQLAlchemy models (see below)
 ├── routes.py            # Blueprint 'main', 40+ endpoints, all UI routes
@@ -65,7 +65,7 @@ app/
 
 ## CONVENTIONS (app-specific)
 
-- **App factory pattern**: `create_app()` handles extensions, blueprints, migrations, admin seed, scheduler.
+- **App factory pattern**: `create_app()` builds the Flask app only; `create_runtime_app()` performs migrations/admin bootstrap and optional scheduler startup.
 - **Two blueprints only**: `main` (routes.py) and `auth` (auth.py). Register new routes in one of these.
 - **Model validators**: Use `@validates('field')` for auto-normalization (e.g., phone, keyword).
 - **`localtime` filter**: Template filter in `__init__.py` converts UTC to client timezone via cookie.
