@@ -8,6 +8,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from twilio.base.exceptions import TwilioRestException
 from app.services.twilio_service import TwilioTransientError, get_twilio_service
+from app.tenant import organization_context
 
 scheduler = None
 _scheduler_initialized = False
@@ -97,6 +98,7 @@ def _upsert_message_log_for_scheduled_send(
 
     if log is None:
         log = MessageLog(
+            organization_id=scheduled.organization_id,
             message_body=scheduled.message_body,
             target=scheduled.target,
             event_id=scheduled.event_id,
@@ -386,110 +388,108 @@ def send_scheduled_messages(app):
                 logger.warning("[Scheduler] Message id=%d lock failed: %s", scheduled.id, e)
                 continue
             try:
-                # Test mode: send only to admin phone
-                if scheduled.test_mode:
-                    admin_phone = current_app.config.get('ADMIN_TEST_PHONE')
-                    if not admin_phone:
+                with organization_context(scheduled.organization_id):
+                    # Test mode: send only to admin phone
+                    if scheduled.test_mode:
+                        admin_phone = current_app.config.get('ADMIN_TEST_PHONE')
+                        if not admin_phone:
+                            scheduled.status = 'failed'
+                            scheduled.error_message = 'ADMIN_TEST_PHONE not configured'
+                            scheduled.sent_at = now
+                            scheduled.next_retry_at = None
+                            db.session.commit()
+                            failed_count += 1
+                            logger.error("[Scheduler] Message id=%d FAILED: ADMIN_TEST_PHONE not configured", scheduled.id)
+                            continue
+                        recipient_data = [{'phone': admin_phone, 'name': 'Admin Test'}]
+                    elif scheduled.target == 'community':
+                        members = CommunityMember.query.all()
+                        recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]
+                    else:
+                        registrations = EventRegistration.query.filter_by(event_id=scheduled.event_id).all()
+                        recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
+
+                    if not scheduled.test_mode:
+                        recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
+                        if skipped:
+                            logger.info("[Scheduler] Message id=%d: skipped %d unsubscribed recipient(s)", scheduled.id, len(skipped))
+
+                        recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
+                        if suppressed_skipped:
+                            logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_skipped))
+
+                    recipient_data, already_sent_skipped = _filter_previously_sent_recipients(
+                        scheduled=scheduled,
+                        recipient_data=recipient_data,
+                        MessageLog=MessageLog,
+                        db=db,
+                        normalize_phone=normalize_phone,
+                    )
+                    if already_sent_skipped:
+                        logger.info(
+                            "[Scheduler] Message id=%d: skipped %d recipient(s) already delivered in prior partial attempts",
+                            scheduled.id,
+                            already_sent_skipped,
+                        )
+
+                    if not recipient_data:
+                        if already_sent_skipped:
+                            scheduled.status = 'sent'
+                            scheduled.sent_at = now
+                            scheduled.error_message = None
+                            scheduled.next_retry_at = None
+                            db.session.commit()
+                            sent_count += 1
+                            logger.info(
+                                "[Scheduler] Message id=%d SENT: all recipients already delivered in prior attempts",
+                                scheduled.id,
+                            )
+                            continue
+
                         scheduled.status = 'failed'
-                        scheduled.error_message = 'ADMIN_TEST_PHONE not configured'
+                        scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
                         scheduled.sent_at = now
                         scheduled.next_retry_at = None
                         db.session.commit()
                         failed_count += 1
-                        logger.error("[Scheduler] Message id=%d FAILED: ADMIN_TEST_PHONE not configured", scheduled.id)
+                        logger.warning("[Scheduler] Message id=%d FAILED: no recipients found", scheduled.id)
                         continue
-                    recipient_data = [{'phone': admin_phone, 'name': 'Admin Test'}]
-                elif scheduled.target == 'community':
-                    members = CommunityMember.query.all()
-                    recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]
-                else:
-                    registrations = EventRegistration.query.filter_by(event_id=scheduled.event_id).all()
-                    recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
-                
-                if not scheduled.test_mode:
-                    recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
-                    if skipped:
-                        logger.info("[Scheduler] Message id=%d: skipped %d unsubscribed recipient(s)", scheduled.id, len(skipped))
 
-                    recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
-                    if suppressed_skipped:
-                        logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_skipped))
-
-                recipient_data, already_sent_skipped = _filter_previously_sent_recipients(
-                    scheduled=scheduled,
-                    recipient_data=recipient_data,
-                    MessageLog=MessageLog,
-                    db=db,
-                    normalize_phone=normalize_phone,
-                )
-                if already_sent_skipped:
-                    logger.info(
-                        "[Scheduler] Message id=%d: skipped %d recipient(s) already delivered in prior partial attempts",
-                        scheduled.id,
-                        already_sent_skipped,
+                    twilio = get_twilio_service(scheduled.organization_id)
+                    result = twilio.send_bulk(
+                        recipient_data,
+                        scheduled.message_body,
+                        raise_on_transient=True,
                     )
 
-                if not recipient_data:
-                    if already_sent_skipped:
-                        scheduled.status = 'sent'
-                        scheduled.sent_at = now
-                        scheduled.error_message = None
-                        scheduled.next_retry_at = None
-                        db.session.commit()
-                        sent_count += 1
-                        logger.info(
-                            "[Scheduler] Message id=%d SENT: all recipients already delivered in prior attempts",
-                            scheduled.id,
-                        )
-                        continue
+                    log = _upsert_message_log_for_scheduled_send(
+                        scheduled=scheduled,
+                        result=result,
+                        MessageLog=MessageLog,
+                        db=db,
+                    )
 
-                    scheduled.status = 'failed'
-                    scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
+                    scheduled.status = 'sent'
                     scheduled.sent_at = now
+                    scheduled.message_log_id = log.id
+                    scheduled.error_message = None
                     scheduled.next_retry_at = None
                     db.session.commit()
-                    failed_count += 1
-                    logger.warning("[Scheduler] Message id=%d FAILED: no recipients found", scheduled.id)
-                    continue
-                
-                # Send messages
-                twilio = get_twilio_service()
-                result = twilio.send_bulk(
-                    recipient_data,
-                    scheduled.message_body,
-                    raise_on_transient=True,
-                )
-                
-                # Create or append to existing log entry.
-                log = _upsert_message_log_for_scheduled_send(
-                    scheduled=scheduled,
-                    result=result,
-                    MessageLog=MessageLog,
-                    db=db,
-                )
-                
-                # Update scheduled message
-                scheduled.status = 'sent'
-                scheduled.sent_at = now
-                scheduled.message_log_id = log.id
-                scheduled.error_message = None
-                scheduled.next_retry_at = None
-                db.session.commit()
 
-                sent_count += 1
-                logger.info(
-                    "[Scheduler] Message id=%d SENT: %d/%d successful (status: processing -> sent)",
-                    scheduled.id, log.success_count, log.total_recipients
-                )
-
-                try:
-                    process_failure_details(result.get('details', []), log.id)
-                except Exception as e:
-                    logger.exception(
-                        "[Scheduler] Message id=%d sent, but suppression post-processing failed: %s",
-                        scheduled.id,
-                        e,
+                    sent_count += 1
+                    logger.info(
+                        "[Scheduler] Message id=%d SENT: %d/%d successful (status: processing -> sent)",
+                        scheduled.id, log.success_count, log.total_recipients
                     )
+
+                    try:
+                        process_failure_details(result.get('details', []), log.id)
+                    except Exception as e:
+                        logger.exception(
+                            "[Scheduler] Message id=%d sent, but suppression post-processing failed: %s",
+                            scheduled.id,
+                            e,
+                        )
                 
             except TwilioTransientError as e:
                 partial_result = getattr(e, 'results', None)

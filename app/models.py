@@ -1,4 +1,5 @@
 import json
+import re
 import secrets
 from datetime import datetime as dt, timezone
 
@@ -18,20 +19,38 @@ def new_session_nonce() -> str:
     return secrets.token_hex(16)
 
 
+def new_invitation_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def slugify_organization_name(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    return normalized[:64]
+
+
 class AppUser(UserMixin, db.Model):
     """Application users with role-based access."""
     __tablename__ = 'users'
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), nullable=False, unique=True)
+    email = db.Column(db.String(255), nullable=True, index=True)
+    full_name = db.Column(db.String(120), nullable=True)
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20), nullable=True, index=True)
     role = db.Column(db.String(30), nullable=False, default='admin')
+    is_platform_admin = db.Column(db.Boolean, default=False, nullable=False)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     session_nonce = db.Column(db.String(64), nullable=False, default=new_session_nonce)
     created_at = db.Column(db.DateTime, default=utc_now)
+    memberships = db.relationship(
+        'OrganizationMembership',
+        back_populates='user',
+        cascade='all, delete-orphan',
+    )
     __table_args__ = (
         db.Index('ux_users_username_lower', db.func.lower(username), unique=True),
+        db.Index('ux_users_email_lower', db.func.lower(email), unique=True),
     )
 
     def set_password(self, password: str) -> None:
@@ -54,6 +73,11 @@ class AppUser(UserMixin, db.Model):
             raise ValueError("Username is required.")
         return normalized
 
+    @validates("email")
+    def _normalize_email(self, key, value):
+        normalized = (value or "").strip().lower()
+        return normalized or None
+
     @validates("phone")
     def _normalize_user_phone(self, key, value):
         if value is None:
@@ -62,25 +86,237 @@ class AppUser(UserMixin, db.Model):
         return normalized or None
 
     @property
+    def primary_membership(self):
+        return self.memberships[0] if self.memberships else None
+
+    @property
+    def organization_membership(self):
+        return self.primary_membership
+
+    @property
+    def organization(self):
+        membership = self.primary_membership
+        return membership.organization if membership is not None else None
+
+    @property
+    def organization_id(self):
+        membership = self.primary_membership
+        return membership.organization_id if membership is not None else None
+
+    @property
+    def organization_role(self):
+        membership = self.primary_membership
+        return membership.role if membership is not None else None
+
+    @property
+    def effective_role(self) -> str:
+        if self.is_platform_admin:
+            return 'admin'
+        if self.organization_role == 'owner':
+            return 'admin'
+        if self.organization_role == 'staff':
+            return 'social_manager'
+        return self.role
+
+    @property
     def is_admin(self) -> bool:
-        return self.role == 'admin'
+        return self.effective_role == 'admin'
 
     @property
     def is_social_manager(self) -> bool:
-        return self.role == 'social_manager'
+        return self.effective_role == 'social_manager'
 
     def __repr__(self):
-        return f'<AppUser {self.username} role={self.role}>'
+        return f'<AppUser {self.username} role={self.effective_role}>'
+
+
+class Organization(db.Model):
+    """Business account boundary for multi-tenant SaaS mode."""
+    __tablename__ = 'organizations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    slug = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default='active')
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    memberships = db.relationship(
+        'OrganizationMembership',
+        back_populates='organization',
+        cascade='all, delete-orphan',
+    )
+    invitations = db.relationship(
+        'OrganizationInvitation',
+        back_populates='organization',
+        cascade='all, delete-orphan',
+    )
+    subscription = db.relationship(
+        'OrganizationSubscription',
+        back_populates='organization',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
+    messaging_profile = db.relationship(
+        'OrganizationMessagingProfile',
+        back_populates='organization',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
+
+    @validates("name")
+    def _normalize_name(self, key, value):
+        normalized = (value or "").strip()
+        if not normalized:
+            raise ValueError("Organization name is required.")
+        return normalized[:120]
+
+    @validates("slug")
+    def _normalize_slug(self, key, value):
+        normalized = slugify_organization_name(value)
+        if not normalized:
+            raise ValueError("Organization slug is required.")
+        return normalized
+
+    def __repr__(self):
+        return f'<Organization {self.slug}>'
+
+
+class OrganizationMembership(db.Model):
+    """Pilot-v1 single-org memberships with owner/staff roles."""
+    __tablename__ = 'organization_memberships'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default='staff')
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='memberships')
+    user = db.relationship('AppUser', back_populates='memberships')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'user_id', name='ux_org_memberships_org_user'),
+    )
+
+    @validates("role")
+    def _normalize_role(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {'owner', 'staff'}:
+            raise ValueError("Organization membership role must be owner or staff.")
+        return normalized
+
+    def __repr__(self):
+        return f'<OrganizationMembership org={self.organization_id} user={self.user_id} role={self.role}>'
+
+
+class OrganizationInvitation(db.Model):
+    """Invite-only pilot onboarding for owner/staff users."""
+    __tablename__ = 'organization_invitations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    role = db.Column(db.String(20), nullable=False, default='staff')
+    token = db.Column(db.String(128), nullable=False, unique=True, default=new_invitation_token)
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    invited_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='invitations')
+    invited_by_user = db.relationship('AppUser')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'email', 'status', name='ux_org_invitations_org_email_status'),
+    )
+
+    @validates("email")
+    def _normalize_invitation_email(self, key, value):
+        normalized = (value or "").strip().lower()
+        if not normalized:
+            raise ValueError("Invitation email is required.")
+        return normalized
+
+    @validates("role")
+    def _normalize_invitation_role(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {'owner', 'staff'}:
+            raise ValueError("Invitation role must be owner or staff.")
+        return normalized
+
+    def __repr__(self):
+        return f'<OrganizationInvitation org={self.organization_id} email={self.email} status={self.status}>'
+
+
+class OrganizationSubscription(db.Model):
+    """Stripe subscription state for one organization."""
+    __tablename__ = 'organization_subscriptions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
+    stripe_customer_id = db.Column(db.String(80), nullable=True, unique=True)
+    stripe_subscription_id = db.Column(db.String(80), nullable=True, unique=True)
+    stripe_price_id = db.Column(db.String(80), nullable=True)
+    status = db.Column(db.String(30), nullable=False, default='incomplete')
+    current_period_end = db.Column(db.DateTime, nullable=True)
+    cancel_at_period_end = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='subscription')
+
+    def __repr__(self):
+        return f'<OrganizationSubscription org={self.organization_id} status={self.status}>'
+
+
+class OrganizationMessagingProfile(db.Model):
+    """Per-organization sender identity on the shared platform."""
+    __tablename__ = 'organization_messaging_profiles'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
+    twilio_subaccount_sid = db.Column(db.String(64), nullable=True, unique=True)
+    messaging_service_sid = db.Column(db.String(64), nullable=True, unique=True)
+    from_number = db.Column(db.String(20), nullable=True, unique=True)
+    inbound_identity = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='messaging_profile')
+
+    @validates("from_number")
+    def _normalize_from_number(self, key, value):
+        if value is None:
+            return None
+        normalized = normalize_phone(value)
+        return normalized or None
+
+    @validates("inbound_identity")
+    def _normalize_inbound_identity(self, key, value):
+        normalized = (value or "").strip()
+        return normalized or None
+
+    def __repr__(self):
+        return f'<OrganizationMessagingProfile org={self.organization_id} status={self.status}>'
 
 
 class CommunityMember(db.Model):
     """Recipients for community-wide SMS blasts."""
     __tablename__ = 'community_members'
-    
+
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=True)
-    phone = db.Column(db.String(20), nullable=False, unique=True)
+    phone = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'phone', name='ux_community_members_org_phone'),
+    )
 
     @validates("phone")
     def _normalize_member_phone(self, key, value):
@@ -88,7 +324,7 @@ class CommunityMember(db.Model):
         if not validate_phone(normalized):
             raise ValueError("Community member phone must be a valid E.164 number.")
         return normalized
-    
+
     def __repr__(self):
         return f'<CommunityMember {self.phone}>'
 
@@ -98,11 +334,17 @@ class UnsubscribedContact(db.Model):
     __tablename__ = 'unsubscribed_contacts'
 
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=True)
-    phone = db.Column(db.String(20), nullable=False, unique=True)
+    phone = db.Column(db.String(20), nullable=False)
     reason = db.Column(db.Text, nullable=True)
     source = db.Column(db.String(50), nullable=False, default='manual')
     created_at = db.Column(db.DateTime, default=utc_now)
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'phone', name='ux_unsubscribed_contacts_org_phone'),
+    )
 
     @validates("phone")
     def _normalize_unsubscribed_phone(self, key, value):
@@ -120,7 +362,8 @@ class SuppressedContact(db.Model):
     __tablename__ = 'suppressed_contacts'
 
     id = db.Column(db.Integer, primary_key=True)
-    phone = db.Column(db.String(20), nullable=False, unique=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
     reason = db.Column(db.Text, nullable=True)
     category = db.Column(db.String(20), nullable=False)
     source = db.Column(db.String(50), nullable=True)
@@ -130,6 +373,11 @@ class SuppressedContact(db.Model):
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
 
     message_log = db.relationship('MessageLog')
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'phone', name='ux_suppressed_contacts_org_phone'),
+    )
 
     @validates('phone')
     def _normalize_phone(self, key, value):
@@ -142,14 +390,16 @@ class SuppressedContact(db.Model):
 class Event(db.Model):
     """Event definitions."""
     __tablename__ = 'events'
-    
+
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     title = db.Column(db.String(200), nullable=False)
     date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
-    
+
+    organization = db.relationship('Organization')
     registrations = db.relationship('EventRegistration', back_populates='event', cascade='all, delete-orphan')
-    
+
     def __repr__(self):
         return f'<Event {self.title}>'
 
@@ -157,16 +407,20 @@ class Event(db.Model):
 class EventRegistration(db.Model):
     """Recipients registered for a specific event (separate from community members)."""
     __tablename__ = 'event_registrations'
-    
+
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
-    
+
     event = db.relationship('Event', back_populates='registrations')
-    
-    __table_args__ = (db.UniqueConstraint('event_id', 'phone', name='unique_event_phone'),)
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'event_id', 'phone', name='unique_org_event_phone'),
+    )
 
     @validates("phone")
     def _normalize_registration_phone(self, key, value):
@@ -174,7 +428,7 @@ class EventRegistration(db.Model):
         if not validate_phone(normalized):
             raise ValueError("Event registration phone must be a valid E.164 number.")
         return normalized
-    
+
     def __repr__(self):
         return f'<EventRegistration event={self.event_id} phone={self.phone}>'
 
@@ -182,8 +436,9 @@ class EventRegistration(db.Model):
 class MessageLog(db.Model):
     """Log of sent SMS blasts."""
     __tablename__ = 'message_logs'
-    
+
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     message_body = db.Column(db.Text, nullable=False)
     target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
@@ -193,9 +448,10 @@ class MessageLog(db.Model):
     success_count = db.Column(db.Integer, default=0)
     failure_count = db.Column(db.Integer, default=0)
     details = db.Column(db.Text, nullable=True)  # JSON string of per-recipient results
-    
+
     event = db.relationship('Event')
-    
+    organization = db.relationship('Organization')
+
     def __repr__(self):
         return f'<MessageLog {self.id} target={self.target}>'
 
@@ -205,7 +461,8 @@ class InboxThread(db.Model):
     __tablename__ = 'inbox_threads'
 
     id = db.Column(db.Integer, primary_key=True)
-    phone = db.Column(db.String(20), nullable=False, unique=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
     contact_name = db.Column(db.String(100), nullable=True)
     unread_count = db.Column(db.Integer, default=0, nullable=False)
     last_message_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
@@ -214,11 +471,16 @@ class InboxThread(db.Model):
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
+    organization = db.relationship('Organization')
     messages = db.relationship(
         'InboxMessage',
         back_populates='thread',
         cascade='all, delete-orphan',
         order_by='InboxMessage.created_at',
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'phone', name='ux_inbox_threads_org_phone'),
     )
 
     def __repr__(self):
@@ -230,6 +492,7 @@ class InboxMessage(db.Model):
     __tablename__ = 'inbox_messages'
 
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id'), nullable=False, index=True)
     phone = db.Column(db.String(20), nullable=False, index=True)
     direction = db.Column(db.String(10), nullable=False)  # inbound/outbound
@@ -244,6 +507,7 @@ class InboxMessage(db.Model):
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
 
     thread = db.relationship('InboxThread', back_populates='messages')
+    organization = db.relationship('Organization')
 
     def __repr__(self):
         return f'<InboxMessage {self.id} {self.direction} {self.phone}>'
@@ -254,13 +518,20 @@ class KeywordAutomationRule(db.Model):
     __tablename__ = 'keyword_automation_rules'
 
     id = db.Column(db.Integer, primary_key=True)
-    keyword = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    keyword = db.Column(db.String(40), nullable=False, index=True)
     response_body = db.Column(db.Text, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     match_count = db.Column(db.Integer, default=0, nullable=False)
     last_matched_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'keyword', name='ux_keyword_rules_org_keyword'),
+    )
 
     @validates('keyword')
     def _normalize_keyword(self, key, value):
@@ -275,8 +546,9 @@ class SurveyFlow(db.Model):
     __tablename__ = 'survey_flows'
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(120), nullable=False, unique=True)
-    trigger_keyword = db.Column(db.String(40), nullable=False, unique=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    trigger_keyword = db.Column(db.String(40), nullable=False, index=True)
     intro_message = db.Column(db.Text, nullable=True)
     questions_json = db.Column(db.Text, nullable=False, default='[]')
     completion_message = db.Column(db.Text, nullable=True)
@@ -288,8 +560,14 @@ class SurveyFlow(db.Model):
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     linked_event = db.relationship('Event')
+    organization = db.relationship('Organization')
     sessions = db.relationship('SurveySession', back_populates='survey')
     responses = db.relationship('SurveyResponse', back_populates='survey')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'name', name='ux_survey_flows_org_name'),
+        db.UniqueConstraint('organization_id', 'trigger_keyword', name='ux_survey_flows_org_trigger_keyword'),
+    )
 
     @validates('trigger_keyword')
     def _normalize_trigger_keyword(self, key, value):
@@ -317,6 +595,7 @@ class SurveySession(db.Model):
     __tablename__ = 'survey_sessions'
 
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     survey_id = db.Column(db.Integer, db.ForeignKey('survey_flows.id'), nullable=False, index=True)
     thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id'), nullable=False, index=True)
     phone = db.Column(db.String(20), nullable=False, index=True)
@@ -328,9 +607,11 @@ class SurveySession(db.Model):
 
     __table_args__ = (
         db.Index('ix_survey_sessions_phone_status', 'phone', 'status'),
+        db.Index('ix_survey_sessions_org_phone_status', 'organization_id', 'phone', 'status'),
     )
 
     survey = db.relationship('SurveyFlow', back_populates='sessions')
+    organization = db.relationship('Organization')
     thread = db.relationship('InboxThread')
     responses = db.relationship(
         'SurveyResponse',
@@ -348,6 +629,7 @@ class SurveyResponse(db.Model):
     __tablename__ = 'survey_responses'
 
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     session_id = db.Column(db.Integer, db.ForeignKey('survey_sessions.id'), nullable=False, index=True)
     survey_id = db.Column(db.Integer, db.ForeignKey('survey_flows.id'), nullable=False, index=True)
     phone = db.Column(db.String(20), nullable=False, index=True)
@@ -358,6 +640,7 @@ class SurveyResponse(db.Model):
 
     session = db.relationship('SurveySession', back_populates='responses')
     survey = db.relationship('SurveyFlow', back_populates='responses')
+    organization = db.relationship('Organization')
 
     def __repr__(self):
         return f'<SurveyResponse session={self.session_id} q={self.question_index}>'
@@ -366,8 +649,9 @@ class SurveyResponse(db.Model):
 class ScheduledMessage(db.Model):
     """Scheduled SMS blasts for future sending."""
     __tablename__ = 'scheduled_messages'
-    
+
     id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     scheduled_at = db.Column(db.DateTime, nullable=False)
     message_body = db.Column(db.Text, nullable=False)
@@ -382,10 +666,11 @@ class ScheduledMessage(db.Model):
     sent_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
     message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id'), nullable=True)
-    
+
     event = db.relationship('Event')
     message_log = db.relationship('MessageLog')
-    
+    organization = db.relationship('Organization')
+
     def __repr__(self):
         return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'
 
@@ -412,6 +697,7 @@ class AuthEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     event_type = db.Column(db.String(50), nullable=False, index=True)
     outcome = db.Column(db.String(20), nullable=False, default='success')
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     username = db.Column(db.String(80), nullable=True, index=True)
     client_ip = db.Column(db.String(45), nullable=True)
@@ -419,6 +705,7 @@ class AuthEvent(db.Model):
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
 
     user = db.relationship('AppUser')
+    organization = db.relationship('Organization')
 
     @property
     def metadata_payload(self) -> dict:

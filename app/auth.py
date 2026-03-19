@@ -1,12 +1,13 @@
 from functools import wraps
 from urllib.parse import urljoin, urlparse
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from sqlalchemy import func
 
 from app import db
 from app.models import AppUser
+from app.tenant import clear_current_organization_id, set_current_organization_id
 from app.services.auth_security_service import (
     check_login_limited,
     clear_failed_logins,
@@ -44,7 +45,8 @@ def require_roles(*roles):
         def wrapped(*args, **kwargs):
             if not current_user.is_authenticated:
                 return login_manager.unauthorized()
-            if roles and current_user.role not in roles:
+            effective_role = getattr(current_user, "effective_role", getattr(current_user, "role", None))
+            if roles and not getattr(current_user, "is_platform_admin", False) and effective_role not in roles:
                 abort(403)
             return view(*args, **kwargs)
 
@@ -55,8 +57,18 @@ def require_roles(*roles):
 
 @bp.before_app_request
 def enforce_account_security():
+    clear_current_organization_id()
     if not current_user.is_authenticated:
         return None
+
+    if current_app.config.get("SAAS_MODE") and not getattr(current_user, "is_platform_admin", False):
+        organization_id = getattr(current_user, "organization_id", None)
+        if not organization_id:
+            logout_user()
+            session.clear()
+            flash("Your account is not assigned to an organization.", "error")
+            return redirect(url_for("auth.login"))
+        set_current_organization_id(organization_id)
 
     # Keep idle timeout enforcement active by using permanent sessions.
     session.permanent = True
@@ -85,6 +97,12 @@ def enforce_account_security():
             return redirect(url_for("main.security_contact"))
 
     return None
+
+
+@bp.after_app_request
+def clear_tenant_context(response):
+    clear_current_organization_id()
+    return response
 
 
 @login_manager.user_loader
@@ -134,7 +152,9 @@ def login():
             flash(f"Too many failed attempts. Try again in {minutes} minute(s).", "error")
             return render_template("auth/login.html")
 
-        user = AppUser.query.filter_by(username=username_input).first()
+        user = AppUser.query.filter(func.lower(AppUser.email) == normalized_username).first()
+        if not user:
+            user = AppUser.query.filter_by(username=username_input).first()
         if not user and normalized_username:
             user = (
                 AppUser.query

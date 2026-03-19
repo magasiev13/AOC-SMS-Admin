@@ -7,6 +7,9 @@ from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 from twilio.request_validator import RequestValidator
 
+from app import db
+from app.models import OrganizationMessagingProfile
+from app.utils import normalize_phone
 from app.utils import render_message_template
 
 
@@ -28,12 +31,20 @@ class InboundSignatureValidationResult:
 
 
 class TwilioService:
-    def __init__(self):
+    def __init__(self, organization_id: int | None = None):
         self.account_sid = current_app.config.get('TWILIO_ACCOUNT_SID')
         self.auth_token = current_app.config.get('TWILIO_AUTH_TOKEN')
         self.from_number = current_app.config.get('TWILIO_FROM_NUMBER')
+        self.messaging_service_sid = None
+        self.organization_id = organization_id
+
+        if organization_id:
+            profile = OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).first()
+            if profile is not None:
+                self.from_number = profile.from_number or self.from_number
+                self.messaging_service_sid = profile.messaging_service_sid
         
-        if not all([self.account_sid, self.auth_token, self.from_number]):
+        if not all([self.account_sid, self.auth_token]) or not (self.from_number or self.messaging_service_sid):
             raise ValueError("Twilio credentials not configured. Check environment variables.")
         
         self.client = Client(self.account_sid, self.auth_token)
@@ -44,12 +55,16 @@ class TwilioService:
 
     def send_message(self, to_number: str, body: str, raise_on_transient: bool = False) -> dict:
         """Send a single SMS message. Returns dict with status and error if any."""
+        create_params = {
+            'body': body,
+            'to': to_number,
+        }
+        if self.messaging_service_sid:
+            create_params['messaging_service_sid'] = self.messaging_service_sid
+        else:
+            create_params['from_'] = self.from_number
         try:
-            message = self.client.messages.create(
-                body=body,
-                from_=self.from_number,
-                to=to_number
-            )
+            message = self.client.messages.create(**create_params)
             return {
                 'success': True,
                 'sid': message.sid,
@@ -135,9 +150,35 @@ class TwilioService:
         return results
 
 
-def get_twilio_service() -> TwilioService:
+def get_twilio_service(organization_id: int | None = None) -> TwilioService:
     """Factory function to get TwilioService instance."""
-    return TwilioService()
+    return TwilioService(organization_id=organization_id)
+
+
+def resolve_messaging_profile(payload: dict) -> OrganizationMessagingProfile | None:
+    to_number = normalize_phone((payload.get('To') or '').strip())
+    messaging_service_sid = (payload.get('MessagingServiceSid') or '').strip()
+    inbound_identity = (payload.get('To') or '').strip()
+
+    if messaging_service_sid:
+        profile = OrganizationMessagingProfile.query.filter_by(messaging_service_sid=messaging_service_sid).first()
+        if profile is not None:
+            return profile
+
+    if to_number:
+        profile = OrganizationMessagingProfile.query.filter(
+            db.or_(
+                OrganizationMessagingProfile.from_number == to_number,
+                OrganizationMessagingProfile.inbound_identity == to_number,
+            )
+        ).first()
+        if profile is not None:
+            return profile
+
+    if inbound_identity:
+        return OrganizationMessagingProfile.query.filter_by(inbound_identity=inbound_identity).first()
+
+    return None
 
 
 def validate_inbound_signature_detailed(

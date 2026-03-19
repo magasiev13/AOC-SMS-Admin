@@ -1,5 +1,6 @@
 import json
 import time
+from contextlib import nullcontext
 
 from flask import current_app
 from sqlalchemy import func
@@ -19,7 +20,8 @@ from app.models import (
     utc_now,
 )
 from app.services.suppression_service import classify_failure
-from app.services.twilio_service import get_twilio_service
+from app.services.twilio_service import get_twilio_service, resolve_messaging_profile
+from app.tenant import organization_context, saas_mode_enabled
 from app.utils import normalize_keyword, normalize_phone, validate_phone
 
 
@@ -58,7 +60,7 @@ def parse_survey_questions(raw_questions: str) -> list[str]:
 
 
 def mark_thread_read(thread_id: int) -> None:
-    thread = db.session.get(InboxThread, thread_id)
+    thread = InboxThread.query.filter_by(id=thread_id).first()
     if not thread:
         return
     thread.unread_count = 0
@@ -66,7 +68,7 @@ def mark_thread_read(thread_id: int) -> None:
 
 
 def update_thread_contact_name(thread_id: int, contact_name: str | None) -> InboxThread | None:
-    thread = db.session.get(InboxThread, thread_id)
+    thread = InboxThread.query.filter_by(id=thread_id).first()
     if thread is None:
         return None
 
@@ -100,7 +102,7 @@ def _refresh_thread_rollup(thread: InboxThread) -> None:
 
 
 def delete_messages_in_thread(thread_id: int, message_ids: list[int]) -> int:
-    thread = db.session.get(InboxThread, thread_id)
+    thread = InboxThread.query.filter_by(id=thread_id).first()
     if thread is None:
         return 0
 
@@ -126,7 +128,7 @@ def delete_messages_in_thread(thread_id: int, message_ids: list[int]) -> int:
 
 
 def delete_thread_with_dependencies(thread_id: int) -> dict[str, int] | None:
-    thread = db.session.get(InboxThread, thread_id)
+    thread = InboxThread.query.filter_by(id=thread_id).first()
     if thread is None:
         return None
 
@@ -151,7 +153,7 @@ def delete_thread_with_dependencies(thread_id: int) -> dict[str, int] | None:
 
 
 def delete_survey_flow_with_dependencies(survey_id: int) -> dict[str, int] | None:
-    survey = db.session.get(SurveyFlow, survey_id)
+    survey = SurveyFlow.query.filter_by(id=survey_id).first()
     if survey is None:
         return None
 
@@ -187,7 +189,7 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
         }
 
     try:
-        twilio = get_twilio_service()
+        twilio = get_twilio_service(thread.organization_id)
         result = twilio.send_message(thread.phone, reply_body)
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
@@ -448,7 +450,7 @@ def _send_automated_reply(
         return result
 
     try:
-        twilio = get_twilio_service()
+        twilio = get_twilio_service(thread.organization_id)
         result = twilio.send_message(phone, body)
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
@@ -774,238 +776,247 @@ def process_inbound_sms(payload: dict) -> dict:
     inbound_body = (payload.get('Body') or '').strip()
     message_sid = _extract_inbound_message_sid(payload)
     profile_name = (payload.get('ProfileName') or '').strip()
+    messaging_profile = resolve_messaging_profile(payload) if saas_mode_enabled() else None
 
     if not raw_from:
         return {'status': 'ignored', 'reason': 'missing_from'}
+    if saas_mode_enabled() and messaging_profile is None:
+        return {'status': 'ignored', 'reason': 'missing_destination_profile'}
+    if saas_mode_enabled() and messaging_profile.status != 'active':
+        return {'status': 'ignored', 'reason': 'inactive_destination_profile'}
 
     phone = normalize_phone(raw_from)
     if not validate_phone(phone):
         return {'status': 'ignored', 'reason': 'invalid_phone', 'phone': phone}
 
-    if message_sid:
-        existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
-        if existing:
-            return {'status': 'duplicate', 'thread_id': existing.thread_id}
-
-    thread = _get_or_create_thread(phone, profile_name)
-    try:
-        inbound_message = _append_inbox_message(
-            thread,
-            phone,
-            'inbound',
-            inbound_body,
-            message_sid=message_sid,
-            raw_payload=payload,
-            duplicate_sid_mode='reject',
-        )
-        db.session.flush()
-    except DuplicateMessageSidError as exc:
-        db.session.rollback()
-        return {'status': 'duplicate', 'thread_id': exc.existing_message.thread_id}
-    except IntegrityError:
-        db.session.rollback()
+    organization_scope = (
+        organization_context(messaging_profile.organization_id)
+        if saas_mode_enabled() and messaging_profile is not None
+        else nullcontext()
+    )
+    with organization_scope:
         if message_sid:
             existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
             if existing:
                 return {'status': 'duplicate', 'thread_id': existing.thread_id}
-        raise
 
-    status = 'stored'
-    pending_replies: list[dict[str, object]] = []
-    sent_replies: list[dict] = []
-    normalized = normalize_keyword(inbound_body)
-    matched_keyword: str | None = None
-    raw_duplicate_window = current_app.config.get('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', 3)
-    try:
-        duplicate_window_seconds = max(0, int(raw_duplicate_window))
-    except (TypeError, ValueError):
-        duplicate_window_seconds = 3
-
-    session = _active_session(phone)
-    if normalized in STOP_KEYWORDS:
-        _upsert_unsubscribed(
-            phone,
-            'Inbound STOP keyword received',
-            source='inbound',
-            name=_resolve_unsubscribed_name(phone, thread=thread),
-        )
-        _cancel_active_sessions(phone)
-        status = 'opt_out'
-    elif session and normalized in SURVEY_CANCEL_KEYWORDS:
-        now = utc_now()
-        session.status = 'cancelled'
-        session.completed_at = now
-        session.last_activity_at = now
-        pending_replies.append(
-            {
-                'source': 'survey',
-                'source_id': session.survey_id,
-                'body': 'Survey cancelled. Text the survey keyword again anytime to restart.',
-            }
-        )
-        status = 'survey_cancelled'
-    elif session and not inbound_body:
-        status = 'survey_ignored_empty'
-    else:
-        if session:
-            # Active survey responses should take precedence over generic START/YES opt-in keywords.
-            matched_keyword = session.survey.trigger_keyword
-            has_pending_confirmation = _has_pending_survey_confirmation(session)
-            confirmed_answer = (
-                _extract_confirmed_survey_answer(inbound_body)
-                if has_pending_confirmation
-                else None
-            )
-            answer_to_record = confirmed_answer or inbound_body
-
-            if confirmed_answer is None and _is_ambiguous_rapid_repeat_survey_answer(
-                session,
-                inbound_message,
+        thread = _get_or_create_thread(phone, profile_name)
+        try:
+            inbound_message = _append_inbox_message(
+                thread,
+                phone,
+                'inbound',
                 inbound_body,
-                duplicate_window_seconds,
-            ):
-                current_app.logger.info(
-                    'Ambiguous rapid duplicate survey answer requires confirmation. session_id=%s phone=%s question_index=%s sid=%s',
-                    session.id,
-                    phone,
-                    session.current_question_index,
-                    message_sid,
+                message_sid=message_sid,
+                raw_payload=payload,
+                duplicate_sid_mode='reject',
+            )
+            db.session.flush()
+        except DuplicateMessageSidError as exc:
+            db.session.rollback()
+            return {'status': 'duplicate', 'thread_id': exc.existing_message.thread_id}
+        except IntegrityError:
+            db.session.rollback()
+            if message_sid:
+                existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
+                if existing:
+                    return {'status': 'duplicate', 'thread_id': existing.thread_id}
+            raise
+
+        status = 'stored'
+        pending_replies: list[dict[str, object]] = []
+        sent_replies: list[dict] = []
+        normalized = normalize_keyword(inbound_body)
+        matched_keyword: str | None = None
+        raw_duplicate_window = current_app.config.get('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', 3)
+        try:
+            duplicate_window_seconds = max(0, int(raw_duplicate_window))
+        except (TypeError, ValueError):
+            duplicate_window_seconds = 3
+
+        session = _active_session(phone)
+        if normalized in STOP_KEYWORDS:
+            _upsert_unsubscribed(
+                phone,
+                'Inbound STOP keyword received',
+                source='inbound',
+                name=_resolve_unsubscribed_name(phone, thread=thread),
+            )
+            _cancel_active_sessions(phone)
+            status = 'opt_out'
+        elif session and normalized in SURVEY_CANCEL_KEYWORDS:
+            now = utc_now()
+            session.status = 'cancelled'
+            session.completed_at = now
+            session.last_activity_at = now
+            pending_replies.append(
+                {
+                    'source': 'survey',
+                    'source_id': session.survey_id,
+                    'body': 'Survey cancelled. Text the survey keyword again anytime to restart.',
+                }
+            )
+            status = 'survey_cancelled'
+        elif session and not inbound_body:
+            status = 'survey_ignored_empty'
+        else:
+            if session:
+                matched_keyword = session.survey.trigger_keyword
+                has_pending_confirmation = _has_pending_survey_confirmation(session)
+                confirmed_answer = (
+                    _extract_confirmed_survey_answer(inbound_body)
+                    if has_pending_confirmation
+                    else None
                 )
-                pending_replies.append(
-                    {
-                        'source': 'survey',
-                        'source_id': session.survey_id,
-                        'body': _survey_confirmation_prompt(session, inbound_body),
-                    }
-                )
-                status = 'survey_confirmation_required'
-            else:
-                for reply in _advance_survey(session, answer_to_record):
+                answer_to_record = confirmed_answer or inbound_body
+
+                if confirmed_answer is None and _is_ambiguous_rapid_repeat_survey_answer(
+                    session,
+                    inbound_message,
+                    inbound_body,
+                    duplicate_window_seconds,
+                ):
+                    current_app.logger.info(
+                        'Ambiguous rapid duplicate survey answer requires confirmation. session_id=%s phone=%s question_index=%s sid=%s',
+                        session.id,
+                        phone,
+                        session.current_question_index,
+                        message_sid,
+                    )
                     pending_replies.append(
                         {
                             'source': 'survey',
                             'source_id': session.survey_id,
-                            'body': reply,
+                            'body': _survey_confirmation_prompt(session, inbound_body),
                         }
                     )
-                status = 'survey_response'
-        elif normalized in START_KEYWORDS and (
-            normalized != 'YES' or _unsubscribed_entry_for_phone(phone) is not None
-        ):
-            was_unsubscribed = _remove_unsubscribed(phone)
-            start_reply = (
-                'You are resubscribed and can receive SMS alerts again.'
-                if was_unsubscribed
-                else 'You are already subscribed and can receive SMS alerts.'
-            )
-            pending_replies.append(
+                    status = 'survey_confirmation_required'
+                else:
+                    for reply in _advance_survey(session, answer_to_record):
+                        pending_replies.append(
+                            {
+                                'source': 'survey',
+                                'source_id': session.survey_id,
+                                'body': reply,
+                            }
+                        )
+                    status = 'survey_response'
+            elif normalized in START_KEYWORDS and (
+                normalized != 'YES' or _unsubscribed_entry_for_phone(phone) is not None
+            ):
+                was_unsubscribed = _remove_unsubscribed(phone)
+                start_reply = (
+                    'You are resubscribed and can receive SMS alerts again.'
+                    if was_unsubscribed
+                    else 'You are already subscribed and can receive SMS alerts.'
+                )
+                pending_replies.append(
+                    {
+                        'source': 'system',
+                        'source_id': None,
+                        'body': start_reply,
+                    }
+                )
+                status = 'opt_in'
+            else:
+                candidates = keyword_candidates(inbound_body)
+
+                survey = None
+                for candidate in candidates:
+                    survey = SurveyFlow.query.filter_by(trigger_keyword=candidate, is_active=True).first()
+                    if survey:
+                        matched_keyword = candidate
+                        break
+
+                if survey:
+                    _session, replies = _start_survey(survey, thread, phone)
+                    for reply in replies:
+                        pending_replies.append(
+                            {
+                                'source': 'survey',
+                                'source_id': survey.id,
+                                'body': reply,
+                            }
+                        )
+                    status = 'survey_started'
+                else:
+                    rules = {}
+                    if candidates:
+                        matches = KeywordAutomationRule.query.filter(
+                            KeywordAutomationRule.is_active.is_(True),
+                            KeywordAutomationRule.keyword.in_(candidates),
+                        ).all()
+                        rules = {rule.keyword: rule for rule in matches}
+
+                    for candidate in candidates:
+                        rule = rules.get(candidate)
+                        if not rule:
+                            continue
+                        matched_keyword = candidate
+                        rule.match_count = (rule.match_count or 0) + 1
+                        rule.last_matched_at = utc_now()
+                        pending_replies.append(
+                            {
+                                'source': 'keyword',
+                                'source_id': rule.id,
+                                'body': rule.response_body,
+                            }
+                        )
+                        status = 'keyword_reply'
+                        break
+
+                    if status == 'stored' and normalized == 'YES':
+                        was_unsubscribed = _remove_unsubscribed(phone)
+                        start_reply = (
+                            'You are resubscribed and can receive SMS alerts again.'
+                            if was_unsubscribed
+                            else 'You are already subscribed and can receive SMS alerts.'
+                        )
+                        pending_replies.append(
+                            {
+                                'source': 'system',
+                                'source_id': None,
+                                'body': start_reply,
+                            }
+                        )
+                        status = 'opt_in'
+
+        if matched_keyword:
+            inbound_message.matched_keyword = matched_keyword
+
+        db.session.commit()
+
+        survey_reply_count = 0
+        for pending in pending_replies:
+            source = str(pending['source'])
+            source_id = pending.get('source_id')
+            body = str(pending.get('body') or '')
+
+            if status == 'survey_started' and source == 'survey':
+                if survey_reply_count > 0:
+                    delay_seconds = _survey_start_question_delay_seconds()
+                    if delay_seconds > 0:
+                        time.sleep(delay_seconds)
+                survey_reply_count += 1
+
+            sent_replies.append(
                 {
-                    'source': 'system',
-                    'source_id': None,
-                    'body': start_reply,
+                    'source': source,
+                    'result': _send_automated_reply(
+                        phone,
+                        thread,
+                        body,
+                        source=source,
+                        source_id=source_id if isinstance(source_id, int) else None,
+                    ),
                 }
             )
-            status = 'opt_in'
-        else:
-            candidates = keyword_candidates(inbound_body)
 
-            survey = None
-            for candidate in candidates:
-                survey = SurveyFlow.query.filter_by(trigger_keyword=candidate, is_active=True).first()
-                if survey:
-                    matched_keyword = candidate
-                    break
-
-            if survey:
-                _session, replies = _start_survey(survey, thread, phone)
-                for reply in replies:
-                    pending_replies.append(
-                        {
-                            'source': 'survey',
-                            'source_id': survey.id,
-                            'body': reply,
-                        }
-                    )
-                status = 'survey_started'
-            else:
-                rules = {}
-                if candidates:
-                    matches = KeywordAutomationRule.query.filter(
-                        KeywordAutomationRule.is_active.is_(True),
-                        KeywordAutomationRule.keyword.in_(candidates),
-                    ).all()
-                    rules = {rule.keyword: rule for rule in matches}
-
-                for candidate in candidates:
-                    rule = rules.get(candidate)
-                    if not rule:
-                        continue
-                    matched_keyword = candidate
-                    rule.match_count = (rule.match_count or 0) + 1
-                    rule.last_matched_at = utc_now()
-                    pending_replies.append(
-                        {
-                            'source': 'keyword',
-                            'source_id': rule.id,
-                            'body': rule.response_body,
-                        }
-                    )
-                    status = 'keyword_reply'
-                    break
-
-                if status == 'stored' and normalized == 'YES':
-                    was_unsubscribed = _remove_unsubscribed(phone)
-                    start_reply = (
-                        'You are resubscribed and can receive SMS alerts again.'
-                        if was_unsubscribed
-                        else 'You are already subscribed and can receive SMS alerts.'
-                    )
-                    pending_replies.append(
-                        {
-                            'source': 'system',
-                            'source_id': None,
-                            'body': start_reply,
-                        }
-                    )
-                    status = 'opt_in'
-
-    if matched_keyword:
-        inbound_message.matched_keyword = matched_keyword
-
-    # Commit survey/session state before sending outbound messages so retries
-    # cannot advance the survey twice if Twilio retries the same webhook.
-    db.session.commit()
-
-    survey_reply_count = 0
-    for pending in pending_replies:
-        source = str(pending['source'])
-        source_id = pending.get('source_id')
-        body = str(pending.get('body') or '')
-
-        if status == 'survey_started' and source == 'survey':
-            if survey_reply_count > 0:
-                delay_seconds = _survey_start_question_delay_seconds()
-                if delay_seconds > 0:
-                    time.sleep(delay_seconds)
-            survey_reply_count += 1
-
-        sent_replies.append(
-            {
-                'source': source,
-                'result': _send_automated_reply(
-                    phone,
-                    thread,
-                    body,
-                    source=source,
-                    source_id=source_id if isinstance(source_id, int) else None,
-                ),
-            }
-        )
-
-    db.session.commit()
-    return {
-        'status': status,
-        'thread_id': thread.id,
-        'phone': phone,
-        'replies': sent_replies,
-    }
+        db.session.commit()
+        return {
+            'status': status,
+            'thread_id': thread.id,
+            'phone': phone,
+            'replies': sent_replies,
+            'organization_id': messaging_profile.organization_id if messaging_profile is not None else None,
+        }

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Accept Invitation - SMS Admin{% endblock %}
+
+{% block page_title %}Accept Invitation{% endblock %}
+
+{% block breadcrumbs %}
+<span>Invitation</span>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card app-card">
+            <div class="card-header">
+                <h5 class="mb-0">Join {{ invitation.organization.name }}</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.</p>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="full_name">Full Name</label>
+                        <input class="form-control" id="full_name" name="full_name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="username">Username</label>
+                        <input class="form-control" id="username" name="username" required autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="phone">Phone</label>
+                        <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="password">Password</label>
+                        <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label" for="confirm_password">Confirm Password</label>
+                        <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Accept Invitation</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

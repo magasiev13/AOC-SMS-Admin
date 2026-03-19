@@ -1,0 +1,20 @@
+[Unit]
+Description=SMS SaaS Pilot Gunicorn Service
+After=network.target
+
+[Service]
+User=smsadmin
+Group=smsadmin
+WorkingDirectory=/opt/sms-saas
+Environment="PATH=/opt/sms-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="SCHEDULER_ENABLED=0"
+Environment="SAAS_MODE=1"
+EnvironmentFile=/opt/sms-saas/.env
+ExecStartPre=/opt/sms-saas/deploy/check_python_runtime.sh
+ExecStart=/opt/sms-saas/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8100 --access-logfile /var/log/sms-saas/access.log --error-logfile /var/log/sms-saas/error.log wsgi:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

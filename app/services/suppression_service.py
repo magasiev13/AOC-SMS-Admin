@@ -3,7 +3,7 @@ from typing import Literal
 from flask import current_app
 
 from app import db
-from app.models import CommunityMember, EventRegistration, SuppressedContact, UnsubscribedContact, utc_now
+from app.models import CommunityMember, EventRegistration, MessageLog, SuppressedContact, UnsubscribedContact, utc_now
 from app.utils import normalize_phone, validate_phone
 
 
@@ -80,6 +80,8 @@ def classify_failure(error_text: str) -> OptOutCategory:
 
 
 def process_failure_details(details: list, source_message_log_id: int) -> dict:
+    source_log = MessageLog.query.filter_by(id=source_message_log_id).first()
+    organization_id = source_log.organization_id if source_log is not None else None
     counts = {
         'total': len(details),
         'failed': 0,
@@ -126,7 +128,10 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
             counts[category] += 1
 
             if category == 'opt_out':
-                existing = UnsubscribedContact.query.filter_by(phone=normalized_phone).first()
+                existing = UnsubscribedContact.query.filter_by(
+                    phone=normalized_phone,
+                    organization_id=organization_id,
+                ).first()
                 if existing:
                     existing.source = 'message_failure'
                     if error_text:
@@ -136,6 +141,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 else:
                     db.session.add(
                         UnsubscribedContact(
+                            organization_id=organization_id,
                             name=detail.get('name'),
                             phone=normalized_phone,
                             reason=error_text or None,
@@ -145,7 +151,10 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 counts['unsubscribed_upserts'] += 1
                 suppressed_phones.add(normalized_phone)
             elif category == 'hard_fail':
-                existing = SuppressedContact.query.filter_by(phone=normalized_phone).first()
+                existing = SuppressedContact.query.filter_by(
+                    phone=normalized_phone,
+                    organization_id=organization_id,
+                ).first()
                 if existing:
                     existing.reason = error_text
                     existing.category = category
@@ -156,6 +165,7 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 else:
                     db.session.add(
                         SuppressedContact(
+                            organization_id=organization_id,
                             phone=normalized_phone,
                             reason=error_text,
                             category=category,
@@ -169,9 +179,11 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
 
         if suppressed_phones:
             counts['community_member_deletes'] = CommunityMember.query.filter(
+                CommunityMember.organization_id == organization_id,
                 CommunityMember.phone.in_(suppressed_phones)
             ).delete(synchronize_session=False)
             counts['event_registration_deletes'] = EventRegistration.query.filter(
+                EventRegistration.organization_id == organization_id,
                 EventRegistration.phone.in_(suppressed_phones)
             ).delete(synchronize_session=False)
 

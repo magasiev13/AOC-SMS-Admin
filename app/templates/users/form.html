@@ -23,10 +23,24 @@
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
+                        <label for="full_name" class="form-label">Full Name</label>
+                        <input type="text" class="form-control" id="full_name" name="full_name"
+                               value="{{ user.full_name if user else '' }}"
+                               placeholder="Jane Doe">
+                    </div>
+
+                    <div class="mb-3">
                         <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
                         <input type="text" class="form-control" id="username" name="username" required autocomplete="username"
                                value="{{ user.username if user else '' }}"
                                placeholder="username">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email{% if config.SAAS_MODE %} <span class="text-danger">*</span>{% endif %}</label>
+                        <input type="email" class="form-control" id="email" name="email" {% if config.SAAS_MODE %}required{% endif %}
+                               value="{{ user.email if user else '' }}"
+                               placeholder="owner@example.com">
                     </div>
 
                     <div class="mb-3">
@@ -41,8 +55,12 @@
                         <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
                         <select class="form-select" id="role" name="role" required>
                             <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
-                            <option value="admin" {% if user and user.role == 'admin' %}selected{% endif %}>Admin</option>
-                            <option value="social_manager" {% if user and user.role == 'social_manager' %}selected{% endif %}>Social Media Manager</option>
+                            <option value="admin" {% if user and user.role == 'admin' %}selected{% endif %}>
+                                {% if config.SAAS_MODE %}Owner{% else %}Admin{% endif %}
+                            </option>
+                            <option value="social_manager" {% if user and user.role == 'social_manager' %}selected{% endif %}>
+                                {% if config.SAAS_MODE %}Staff{% else %}Social Media Manager{% endif %}
+                            </option>
                         </select>
                     </div>
 

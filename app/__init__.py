@@ -139,6 +139,9 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
     # Initialize extensions
     db.init_app(app)
     csrf.init_app(app)
+    from app.tenant import init_tenant_scoping
+
+    init_tenant_scoping()
 
     # Initialize Flask-Login
     from app.auth import login_manager, bp as auth_bp
@@ -160,28 +163,35 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                 run_pending_migrations,
             )
 
-            check_migrations_compatibility(db.engine, app.logger)
             db.create_all()
-
-            run_pending_migrations(db.engine, app.logger)
-            migration_report = inspect_migrations(db.engine)
-            migration_total = len(migration_report["migrations"])
-            applied = set(migration_report["applied"])
-            pending = [
-                version
-                for version in migration_report["migrations"]
-                if version not in applied
-            ]
-            app.logger.info("Database file in use: %s", migration_report["db_path"])
-            if migration_total:
+            if db.engine.url.drivername.startswith("sqlite"):
+                check_migrations_compatibility(db.engine, app.logger)
+                run_pending_migrations(db.engine, app.logger)
+                migration_report = inspect_migrations(db.engine)
+                migration_total = len(migration_report["migrations"])
+                applied = set(migration_report["applied"])
+                pending = [
+                    version
+                    for version in migration_report["migrations"]
+                    if version not in applied
+                ]
+                app.logger.info("Database file in use: %s", migration_report["db_path"])
+                if migration_total:
+                    app.logger.info(
+                        "Schema migrations: %s/%s applied; pending: %s",
+                        len(applied),
+                        migration_total,
+                        ", ".join(pending) if pending else "none",
+                    )
+                else:
+                    app.logger.info("Schema migrations: none")
+            elif app.config.get("SAAS_MODE"):
                 app.logger.info(
-                    "Schema migrations: %s/%s applied; pending: %s",
-                    len(applied),
-                    migration_total,
-                    ", ".join(pending) if pending else "none",
+                    "Non-SQLite database detected in SaaS mode (%s); using SQLAlchemy create_all bootstrap and skipping SQLite migration runner.",
+                    db.engine.url.drivername,
                 )
             else:
-                app.logger.info("Schema migrations: none")
+                check_migrations_compatibility(db.engine, app.logger)
 
             from app.models import AppUser
 
@@ -194,6 +204,7 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                         )
                 else:
                     admin_username = app.config.get("ADMIN_USERNAME", "admin")
+                    admin_email = app.config.get("ADMIN_EMAIL") or f"{admin_username}@example.com"
                     password_hash = admin_password
                     if not admin_password.startswith(("pbkdf2:", "scrypt:")):
                         password_hash = generate_password_hash(
@@ -202,7 +213,9 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
 
                     admin_user = AppUser(
                         username=admin_username,
+                        email=admin_email,
                         role="admin",
+                        is_platform_admin=bool(app.config.get("SAAS_MODE")),
                         password_hash=password_hash,
                     )
                     db.session.add(admin_user)

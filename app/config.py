@@ -32,6 +32,8 @@ class Config:
     # Set this to 1 only when traffic comes through your own reverse proxy.
     # If enabled on public traffic, client IP and scheme can be spoofed.
     TRUST_PROXY = _env_bool('TRUST_PROXY', '0')
+    SAAS_MODE = _env_bool('SAAS_MODE', '0')
+    SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
 
     # Session Security
     # Keep session cookies inaccessible to browser JavaScript.
@@ -139,10 +141,18 @@ class Config:
     TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
     INBOUND_AUTO_REPLY_ENABLED = os.environ.get('INBOUND_AUTO_REPLY_ENABLED', '1') == '1'
     SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
+    BILLING_TRIAL_DAYS = _env_int('BILLING_TRIAL_DAYS', '14')
+
+    # Stripe / billing
+    STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
+    STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
+    STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+    STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID')
     
     # Admin test phone for testing messages before full blast
     ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')
     
     # Admin login credentials
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
+    ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL')
     ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')

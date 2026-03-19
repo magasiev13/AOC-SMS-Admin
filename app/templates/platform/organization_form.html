@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Add Organization - SMS Admin{% endblock %}
+
+{% block page_title %}Add Organization{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.platform_organizations_list') }}">Organizations</a> /
+<span>Add</span>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card app-card">
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="name">Organization Name</label>
+                        <input class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="slug">Slug</label>
+                        <input class="form-control" id="slug" name="slug" required placeholder="acme-co">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="owner_email">Owner Email</label>
+                        <input class="form-control" id="owner_email" name="owner_email" type="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="owner_role">Owner Role</label>
+                        <select class="form-select" id="owner_role" name="owner_role">
+                            <option value="owner">Owner</option>
+                            <option value="staff">Staff</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="sender_number">Dedicated Sender Number</label>
+                        <input class="form-control" id="sender_number" name="sender_number" placeholder="+15551234567">
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
+                        <input class="form-control" id="messaging_service_sid" name="messaging_service_sid" placeholder="MGxxxxxxxx">
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">Create Organization</button>
+                        <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

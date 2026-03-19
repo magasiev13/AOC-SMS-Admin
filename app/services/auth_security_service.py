@@ -318,6 +318,7 @@ def record_auth_event(
         event = AuthEvent(
             event_type=event_type,
             outcome=outcome,
+            organization_id=(getattr(user, "organization_id", None) if user else None),
             user_id=(user.id if user else None),
             username=(username or (user.username if user else None)),
             client_ip=client_ip,

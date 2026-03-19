@@ -23,7 +23,7 @@ from flask import (
     stream_with_context,
     url_for,
 )
-from flask_login import current_user, login_required, logout_user
+from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy import DateTime, Integer, String, Text, func, select, text
 from sqlalchemy.exc import OperationalError
 
@@ -40,6 +40,11 @@ from app.models import (
     InboxThread,
     KeywordAutomationRule,
     MessageLog,
+    Organization,
+    OrganizationInvitation,
+    OrganizationMembership,
+    OrganizationMessagingProfile,
+    OrganizationSubscription,
     ScheduledMessage,
     SuppressedContact,
     SurveyFlow,
@@ -53,6 +58,13 @@ from app.services.auth_security_service import (
     password_policy_errors,
     record_auth_event,
     store_password_history,
+)
+from app.services.billing_service import (
+    create_billing_portal_session,
+    create_checkout_session,
+    organization_can_send,
+    subscription_status_allows_sending,
+    sync_subscription_from_event,
 )
 from app.services.inbox_service import (
     delete_survey_flow_with_dependencies,
@@ -72,6 +84,7 @@ from app.services.recipient_service import (
 from app.services.twilio_service import validate_inbound_signature_detailed
 from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
+from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
     escape_like,
@@ -131,6 +144,88 @@ def _find_username_conflict(username: str, *, exclude_user_id: int | None = None
     if exclude_user_id is not None:
         query = query.filter(AppUser.id != exclude_user_id)
     return query.first()
+
+
+def _membership_role_from_user_role(role: str) -> str:
+    return 'owner' if role == 'admin' else 'staff'
+
+
+def _current_organization_id() -> int | None:
+    return getattr(current_user, 'organization_id', None)
+
+
+def _current_organization() -> Organization | None:
+    organization_id = _current_organization_id()
+    if not organization_id:
+        return None
+    return db.session.get(Organization, organization_id)
+
+
+def _current_subscription() -> OrganizationSubscription | None:
+    organization = _current_organization()
+    return organization.subscription if organization is not None else None
+
+
+def _tenant_get_or_404(model, entity_id: int):
+    record = model.query.filter_by(id=entity_id).first()
+    if record is None:
+        abort(404)
+    return record
+
+
+def _organization_scoped_user_query():
+    query = AppUser.query
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        return query
+    organization_id = _current_organization_id()
+    if not organization_id:
+        return query.filter(db.text("1 = 0"))
+    return (
+        query.join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
+        .filter(OrganizationMembership.organization_id == organization_id)
+    )
+
+
+def _organization_scoped_user_get_or_404(user_id: int) -> AppUser:
+    user = _organization_scoped_user_query().filter(AppUser.id == user_id).first()
+    if user is None:
+        abort(404)
+    return user
+
+
+def _can_manage_platform() -> bool:
+    return bool(getattr(current_user, 'is_platform_admin', False))
+
+
+def _tenant_bulk_filter(query, model):
+    if saas_mode_enabled() and not current_user.is_platform_admin and hasattr(model, 'organization_id'):
+        return query.filter(model.organization_id == _current_organization_id())
+    return query
+
+
+def _saas_base_url() -> str:
+    configured = (current_app.config.get('SAAS_BASE_URL') or '').strip().rstrip('/')
+    if configured:
+        return configured
+    return request.host_url.rstrip('/')
+
+
+def _absolute_url(endpoint: str, **values) -> str:
+    return f"{_saas_base_url()}{url_for(endpoint, **values)}"
+
+
+def _send_access_denied_response():
+    flash('Billing must be trialing or active before messages can be sent.', 'error')
+    return redirect(url_for('main.billing_checkout'))
+
+
+def _require_active_subscription():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        return None
+    organization = _current_organization()
+    if organization_can_send(organization):
+        return None
+    return _send_access_denied_response()
 
 
 def _cleanup_bootstrap_admin_password_if_needed() -> None:
@@ -791,6 +886,8 @@ def dashboard():
         return None
 
     def build_dashboard_context():
+        organization = _current_organization()
+        subscription = _current_subscription()
         community_count = CommunityMember.query.count()
         event_registration_count = EventRegistration.query.count()
         total_recipients = community_count + event_registration_count
@@ -858,6 +955,9 @@ def dashboard():
             'unread_threads_count': unread_threads_count,
             'active_survey_sessions': active_survey_sessions,
             'top_keywords': top_keywords,
+            'current_organization': organization,
+            'current_subscription': subscription,
+            'can_send_messages': organization_can_send(organization) if saas_mode_enabled() else True,
         }
 
     def render_dashboard():
@@ -870,8 +970,11 @@ def dashboard():
         )
     
     if request.method == 'POST':
-        if current_user.role not in {'admin', 'social_manager'}:
+        if getattr(current_user, 'effective_role', current_user.role) not in {'admin', 'social_manager'}:
             abort(403)
+        subscription_gate = _require_active_subscription()
+        if subscription_gate is not None:
+            return subscription_gate
 
         message_body = request.form.get('message_body', '').strip()
         target = request.form.get('target', 'community')
@@ -1009,6 +1112,7 @@ def dashboard():
             queue.enqueue(
                 'app.tasks.send_bulk_job',
                 log.id,
+                log.organization_id,
                 recipient_data,
                 final_message,
                 retry=Retry(max=3, interval=[30, 120, 300])
@@ -1029,16 +1133,30 @@ def dashboard():
 @login_required
 @require_roles('admin')
 def users_list():
-    users = AppUser.query.order_by(AppUser.username).all()
-    return render_template('users/list.html', users=users)
+    users = _organization_scoped_user_query().order_by(AppUser.username).all()
+    pending_invitations = []
+    if saas_mode_enabled() and not current_user.is_platform_admin:
+        pending_invitations = (
+            OrganizationInvitation.query
+            .filter_by(status='pending')
+            .order_by(OrganizationInvitation.created_at.desc())
+            .all()
+        )
+    return render_template('users/list.html', users=users, pending_invitations=pending_invitations)
 
 
 @bp.route('/users/add', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
 def users_add():
+    if saas_mode_enabled() and not current_user.is_platform_admin:
+        flash('Use team invites to add staff in SaaS mode.', 'info')
+        return redirect(url_for('main.team_invite'))
+
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        full_name = request.form.get('full_name', '').strip() or None
         role = request.form.get('role', '').strip()
         phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
@@ -1046,6 +1164,9 @@ def users_add():
 
         if not username:
             flash('Username is required.', 'error')
+            return render_template('users/form.html', user=None)
+        if saas_mode_enabled() and not email:
+            flash('Email is required in SaaS mode.', 'error')
             return render_template('users/form.html', user=None)
 
         if role not in {'admin', 'social_manager'}:
@@ -1075,6 +1196,9 @@ def users_add():
         if existing:
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=None)
+        if email and AppUser.query.filter(func.lower(AppUser.email) == email).first():
+            flash('A user with this email already exists.', 'error')
+            return render_template('users/form.html', user=None)
 
         existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone).first()
         if existing_phone:
@@ -1083,6 +1207,8 @@ def users_add():
 
         user = AppUser(
             username=username,
+            email=email or None,
+            full_name=full_name,
             phone=normalized_phone,
             role=role,
             must_change_password=must_change_password,
@@ -1101,10 +1227,12 @@ def users_add():
 @login_required
 @require_roles('admin')
 def users_edit(user_id):
-    user = db.get_or_404(AppUser, user_id)
+    user = _organization_scoped_user_get_or_404(user_id)
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        full_name = request.form.get('full_name', '').strip() or None
         role = request.form.get('role', '').strip()
         phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
@@ -1112,6 +1240,9 @@ def users_edit(user_id):
 
         if not username:
             flash('Username is required.', 'error')
+            return render_template('users/form.html', user=user)
+        if saas_mode_enabled() and not email:
+            flash('Email is required in SaaS mode.', 'error')
             return render_template('users/form.html', user=user)
 
         if role not in {'admin', 'social_manager'}:
@@ -1131,6 +1262,14 @@ def users_edit(user_id):
         if existing:
             flash('A user with this username already exists.', 'error')
             return render_template('users/form.html', user=user)
+        if email:
+            email_conflict = AppUser.query.filter(
+                func.lower(AppUser.email) == email,
+                AppUser.id != user_id,
+            ).first()
+            if email_conflict:
+                flash('A user with this email already exists.', 'error')
+                return render_template('users/form.html', user=user)
 
         existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone, AppUser.id != user_id).first()
         if existing_phone:
@@ -1138,7 +1277,7 @@ def users_edit(user_id):
             return render_template('users/form.html', user=user)
 
         if user.role == 'admin' and role != 'admin':
-            admin_count = AppUser.query.filter_by(role='admin').count()
+            admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
             if admin_count <= 1:
                 flash('At least one admin user is required.', 'error')
                 return render_template('users/form.html', user=user)
@@ -1148,6 +1287,8 @@ def users_edit(user_id):
             return render_template('users/form.html', user=user)
 
         user.username = username
+        user.email = email or None
+        user.full_name = full_name
         user.phone = normalized_phone
         user.role = role
         user.must_change_password = must_change_password
@@ -1206,14 +1347,14 @@ def users_edit(user_id):
 @login_required
 @require_roles('admin')
 def users_delete(user_id):
-    user = db.get_or_404(AppUser, user_id)
+    user = _organization_scoped_user_get_or_404(user_id)
 
     if user.id == current_user.id:
         flash('You cannot delete your own account.', 'error')
         return redirect(url_for('main.users_list'))
 
     if user.role == 'admin':
-        admin_count = AppUser.query.filter_by(role='admin').count()
+        admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
         if admin_count <= 1:
             flash('At least one admin user is required.', 'error')
             return redirect(url_for('main.users_list'))
@@ -1221,6 +1362,76 @@ def users_delete(user_id):
     db.session.delete(user)
     db.session.commit()
     flash('User deleted successfully.', 'success')
+    return redirect(url_for('main.users_list'))
+
+
+@bp.route('/team/invite', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def team_invite():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    subscription_gate = _require_active_subscription()
+    if subscription_gate is not None:
+        return subscription_gate
+
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        role = request.form.get('role', '').strip()
+        if not email:
+            flash('Email is required.', 'error')
+            return render_template('users/invite_form.html')
+        if role not in {'admin', 'social_manager'}:
+            flash('Role is required.', 'error')
+            return render_template('users/invite_form.html')
+
+        existing_membership = (
+            OrganizationMembership.query
+            .join(AppUser, AppUser.id == OrganizationMembership.user_id)
+            .filter(OrganizationMembership.organization_id == _current_organization_id())
+            .filter(func.lower(AppUser.email) == email)
+            .first()
+        )
+        if existing_membership:
+            flash('That email is already on your team.', 'warning')
+            return redirect(url_for('main.users_list'))
+
+        existing_invite = OrganizationInvitation.query.filter_by(email=email, status='pending').first()
+        if existing_invite:
+            flash('A pending invitation already exists for that email.', 'warning')
+            return redirect(url_for('main.users_list'))
+
+        invitation = OrganizationInvitation(
+            organization_id=_current_organization_id(),
+            email=email,
+            role=_membership_role_from_user_role(role),
+            invited_by_user_id=current_user.id,
+            expires_at=utc_now() + timedelta(days=7),
+        )
+        db.session.add(invitation)
+        db.session.commit()
+        flash('Team invitation created.', 'success')
+        return redirect(url_for('main.users_list'))
+
+    return render_template('users/invite_form.html')
+
+
+@bp.route('/team/invitations/<int:invitation_id>/revoke', methods=['POST'])
+@login_required
+@require_roles('admin')
+def team_invitation_revoke(invitation_id):
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    invitation = _tenant_get_or_404(OrganizationInvitation, invitation_id)
+    if invitation.status != 'pending':
+        flash('Only pending invitations can be revoked.', 'warning')
+        return redirect(url_for('main.users_list'))
+
+    invitation.status = 'revoked'
+    db.session.commit()
+    flash('Invitation revoked.', 'success')
     return redirect(url_for('main.users_list'))
 
 
@@ -1340,6 +1551,278 @@ def security_contact():
     return render_template('auth/security_contact.html')
 
 
+@bp.route('/platform/organizations')
+@login_required
+def platform_organizations_list():
+    if not _can_manage_platform():
+        abort(403)
+
+    organizations = (
+        Organization.query
+        .order_by(Organization.created_at.desc(), Organization.id.desc())
+        .all()
+    )
+    return render_template('platform/organizations_list.html', organizations=organizations)
+
+
+@bp.route('/platform/organizations/add', methods=['GET', 'POST'])
+@login_required
+def platform_organizations_add():
+    if not _can_manage_platform():
+        abort(403)
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        slug = request.form.get('slug', '').strip()
+        owner_email = request.form.get('owner_email', '').strip().lower()
+        owner_role = (request.form.get('owner_role') or 'owner').strip().lower()
+        sender_number = request.form.get('sender_number', '').strip() or None
+        messaging_service_sid = request.form.get('messaging_service_sid', '').strip() or None
+
+        if not name:
+            flash('Organization name is required.', 'error')
+            return render_template('platform/organization_form.html')
+        if not slug:
+            flash('Organization slug is required.', 'error')
+            return render_template('platform/organization_form.html')
+        if not owner_email:
+            flash('Owner email is required.', 'error')
+            return render_template('platform/organization_form.html')
+        if owner_role not in {'owner', 'staff'}:
+            flash('Owner role must be owner or staff.', 'error')
+            return render_template('platform/organization_form.html')
+        if Organization.query.filter_by(slug=slug).first():
+            flash('That organization slug already exists.', 'error')
+            return render_template('platform/organization_form.html')
+
+        organization = Organization(name=name, slug=slug, status='active')
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id=current_app.config.get('STRIPE_PRICE_ID'),
+            status='incomplete',
+        )
+        invitation = OrganizationInvitation(
+            organization=organization,
+            email=owner_email,
+            role=owner_role,
+            invited_by_user_id=current_user.id,
+            expires_at=utc_now() + timedelta(days=7),
+        )
+        messaging_profile = OrganizationMessagingProfile(
+            organization=organization,
+            from_number=sender_number,
+            inbound_identity=sender_number or messaging_service_sid,
+            messaging_service_sid=messaging_service_sid,
+            status='active' if (sender_number or messaging_service_sid) else 'pending',
+        )
+        db.session.add_all([organization, subscription, invitation, messaging_profile])
+        db.session.commit()
+
+        flash('Organization created and owner invite generated.', 'success')
+        return redirect(url_for('main.platform_organizations_list'))
+
+    return render_template('platform/organization_form.html')
+
+
+@bp.route('/platform/organizations/<int:organization_id>/toggle-status', methods=['POST'])
+@login_required
+def platform_organizations_toggle_status(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    organization.status = 'suspended' if organization.status != 'suspended' else 'active'
+    db.session.commit()
+    flash(f'Organization status updated to {organization.status}.', 'success')
+    return redirect(url_for('main.platform_organizations_list'))
+
+
+@bp.route('/invites/<token>', methods=['GET', 'POST'])
+def invitation_accept(token):
+    invitation = OrganizationInvitation.query.filter_by(token=token).first_or_404()
+    if invitation.status != 'pending':
+        flash('This invitation is no longer active.', 'error')
+        return redirect(url_for('auth.login'))
+    if invitation.expires_at and invitation.expires_at < utc_now():
+        invitation.status = 'expired'
+        db.session.commit()
+        flash('This invitation has expired.', 'error')
+        return redirect(url_for('auth.login'))
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        full_name = request.form.get('full_name', '').strip() or None
+        phone_input = request.form.get('phone', '').strip()
+        password = request.form.get('password', '')
+        confirm_password = request.form.get('confirm_password', '')
+
+        if not username:
+            flash('Username is required.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        if not phone_input:
+            flash('Phone number is required.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        if password != confirm_password:
+            flash('Password confirmation does not match.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        policy_errors = password_policy_errors(password, username=username)
+        if policy_errors:
+            for error in policy_errors:
+                flash(error, 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+
+        normalized_phone = normalize_phone(phone_input)
+        if not validate_phone(normalized_phone):
+            flash('Phone number must be a valid E.164 number.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        if _find_username_conflict(username):
+            flash('That username is already taken.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+
+        existing_user = AppUser.query.filter(func.lower(AppUser.email) == invitation.email.lower()).first()
+        if existing_user and existing_user.memberships:
+            flash('That email is already attached to an organization.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+
+        user = existing_user or AppUser(
+            username=username,
+            email=invitation.email,
+            full_name=full_name,
+            phone=normalized_phone,
+            role='admin' if invitation.role == 'owner' else 'social_manager',
+            must_change_password=False,
+        )
+        user.username = username
+        user.email = invitation.email
+        user.full_name = full_name
+        user.phone = normalized_phone
+        user.role = 'admin' if invitation.role == 'owner' else 'social_manager'
+        user.set_password(password)
+        if existing_user is None:
+            db.session.add(user)
+            db.session.flush()
+
+        membership = OrganizationMembership(
+            organization_id=invitation.organization_id,
+            user_id=user.id,
+            role=invitation.role,
+        )
+        db.session.add(membership)
+        invitation.status = 'accepted'
+        invitation.accepted_at = utc_now()
+        db.session.commit()
+
+        session.clear()
+        login_user(user)
+        if invitation.role == 'owner':
+            return redirect(url_for('main.billing_checkout'))
+        flash('Invitation accepted.', 'success')
+        return redirect(url_for('main.dashboard'))
+
+    return render_template('auth/accept_invitation.html', invitation=invitation)
+
+
+@bp.route('/billing')
+@login_required
+def billing_overview():
+    if _can_manage_platform():
+        abort(403)
+    return render_template(
+        'billing/overview.html',
+        organization=_current_organization(),
+        subscription=_current_subscription(),
+    )
+
+
+@bp.route('/billing/checkout', methods=['GET', 'POST'])
+@login_required
+def billing_checkout():
+    if _can_manage_platform():
+        abort(403)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    if organization_can_send(organization):
+        return redirect(url_for('main.dashboard'))
+
+    if request.method == 'POST' or request.method == 'GET':
+        success_url = _absolute_url('main.billing_overview')
+        cancel_url = _absolute_url('main.billing_overview')
+        try:
+            checkout_session = create_checkout_session(
+                organization,
+                current_user.email or '',
+                success_url,
+                cancel_url,
+            )
+        except Exception as exc:
+            current_app.logger.exception('Failed to create Stripe checkout session.')
+            flash(str(exc), 'error')
+            return redirect(url_for('main.billing_overview'))
+        return redirect(checkout_session.url, code=303)
+
+    return redirect(url_for('main.billing_overview'))
+
+
+@bp.route('/billing/portal', methods=['POST'])
+@login_required
+def billing_portal():
+    if _can_manage_platform():
+        abort(403)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    try:
+        portal_session = create_billing_portal_session(
+            organization,
+            _absolute_url('main.billing_overview'),
+        )
+    except Exception as exc:
+        current_app.logger.exception('Failed to create Stripe billing portal session.')
+        flash(str(exc), 'error')
+        return redirect(url_for('main.billing_overview'))
+    return redirect(portal_session.url, code=303)
+
+
+@bp.route('/webhooks/stripe', methods=['POST'])
+@csrf.exempt
+def stripe_webhook():
+    payload = request.get_data(as_text=True)
+    signature = request.headers.get('Stripe-Signature', '')
+    webhook_secret = current_app.config.get('STRIPE_WEBHOOK_SECRET')
+    if not webhook_secret:
+        current_app.logger.error('Stripe webhook received without STRIPE_WEBHOOK_SECRET configured.')
+        return 'Not configured', 500
+
+    try:
+        import stripe  # type: ignore
+    except ImportError:
+        current_app.logger.exception('Stripe package is unavailable for webhook processing.')
+        return 'Dependency missing', 500
+
+    try:
+        stripe.api_key = current_app.config.get('STRIPE_SECRET_KEY')
+        event = stripe.Webhook.construct_event(payload=payload, sig_header=signature, secret=webhook_secret)
+    except Exception:
+        current_app.logger.exception('Stripe webhook signature verification failed.')
+        return 'Forbidden', 403
+
+    event_type = event.get('type')
+    data_object = event.get('data', {}).get('object', {})
+    if event_type in {
+        'checkout.session.completed',
+        'customer.subscription.created',
+        'customer.subscription.updated',
+        'customer.subscription.deleted',
+    }:
+        sync_subscription_from_event(event_type, data_object)
+
+    return '', 200
+
+
 # Community Members Management
 @bp.route('/community')
 @login_required
@@ -1411,7 +1894,7 @@ def community_add():
 @login_required
 @require_roles('admin')
 def community_edit(member_id):
-    member = db.get_or_404(CommunityMember, member_id)
+    member = _tenant_get_or_404(CommunityMember, member_id)
     
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
@@ -1452,7 +1935,7 @@ def community_edit(member_id):
 @login_required
 @require_roles('admin')
 def community_delete(member_id):
-    member = db.get_or_404(CommunityMember, member_id)
+    member = _tenant_get_or_404(CommunityMember, member_id)
     db.session.delete(member)
     db.session.commit()
     flash('Community member deleted.', 'success')
@@ -1497,7 +1980,10 @@ def community_bulk_delete():
         flash('No members selected.', 'warning')
         return redirect(url_for('main.community_list'))
 
-    deleted = CommunityMember.query.filter(CommunityMember.id.in_(member_ids)).delete(synchronize_session=False)
+    deleted = _tenant_bulk_filter(
+        CommunityMember.query.filter(CommunityMember.id.in_(member_ids)),
+        CommunityMember,
+    ).delete(synchronize_session=False)
     db.session.commit()
     flash(f'Deleted {deleted} member(s).', 'success')
     return redirect(url_for('main.community_list'))
@@ -1568,7 +2054,7 @@ def community_import():
 @login_required
 @require_roles('admin')
 def community_unsubscribe(member_id):
-    member = db.get_or_404(CommunityMember, member_id)
+    member = _tenant_get_or_404(CommunityMember, member_id)
     existing = UnsubscribedContact.query.filter_by(phone=member.phone).first()
     if existing:
         flash('That number is already unsubscribed.', 'warning')
@@ -1639,7 +2125,7 @@ def event_add():
 @bp.route('/events/<int:event_id>')
 @login_required
 def event_detail(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
     unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
     return render_template('events/detail.html', event=event, registrations=registrations, unsubscribed_phones=unsubscribed_phones)
@@ -1648,7 +2134,7 @@ def event_detail(event_id):
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
 @login_required
 def event_edit(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
@@ -1681,7 +2167,7 @@ def event_edit(event_id):
 @login_required
 @require_roles('admin')
 def event_delete(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     db.session.delete(event)
     db.session.commit()
     flash('Event deleted.', 'success')
@@ -1718,7 +2204,7 @@ def events_bulk_delete():
 @login_required
 @require_roles('admin', 'social_manager')
 def event_register(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     name = request.form.get('name', '').strip() or None
     phone = request.form.get('phone', '').strip()
     
@@ -1791,7 +2277,7 @@ def event_registration_unsubscribe(event_id, registration_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def event_import_registrations(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     
     if 'file' not in request.files:
         flash('No file uploaded.', 'error')
@@ -1855,7 +2341,7 @@ def event_import_registrations(event_id):
 @bp.route('/events/<int:event_id>/export')
 @login_required
 def event_export_registrations(event_id):
-    event = db.get_or_404(Event, event_id)
+    event = _tenant_get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1924,7 +2410,7 @@ def logs_list():
 @login_required
 def log_detail(log_id):
     try:
-        log = db.get_or_404(MessageLog, log_id)
+        log = _tenant_get_or_404(MessageLog, log_id)
     except OperationalError as exc:
         current_app.logger.warning(
             'MessageLog detail query failed due to schema mismatch: %s',
@@ -2108,7 +2594,7 @@ def scheduled_list():
 @login_required
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
-    scheduled = db.get_or_404(ScheduledMessage, scheduled_id)
+    scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
     
     if scheduled.status not in {'pending', 'processing'}:
         flash('Only pending or processing messages can be cancelled.', 'error')
@@ -2124,7 +2610,7 @@ def scheduled_cancel(scheduled_id):
 @login_required
 @require_roles('admin')
 def scheduled_delete(scheduled_id):
-    scheduled = db.get_or_404(ScheduledMessage, scheduled_id)
+    scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
     db.session.delete(scheduled)
     db.session.commit()
     flash('Scheduled message deleted.', 'success')
@@ -2146,7 +2632,10 @@ def scheduled_bulk_delete():
         flash('Invalid selection.', 'error')
         return redirect(url_for('main.scheduled_list'))
     
-    deleted = ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)).delete(synchronize_session=False)
+    deleted = _tenant_bulk_filter(
+        ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)),
+        ScheduledMessage,
+    ).delete(synchronize_session=False)
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
     return redirect(url_for('main.scheduled_list'))
@@ -2171,9 +2660,12 @@ def scheduled_bulk_cancel():
         flash('No messages selected.', 'error')
         return redirect(url_for('main.scheduled_list'))
 
-    updated = ScheduledMessage.query.filter(
+    updated = _tenant_bulk_filter(
+        ScheduledMessage.query.filter(
         ScheduledMessage.id.in_(ids),
         ScheduledMessage.status.in_(['pending', 'processing']),
+    ),
+        ScheduledMessage,
     ).update(
         {ScheduledMessage.status: 'cancelled'},
         synchronize_session=False,
@@ -2214,7 +2706,7 @@ def logs_clear():
         return redirect(url_for('main.logs_list'))
     
     # Clear all logs
-    deleted_count = MessageLog.query.delete()
+    deleted_count = _tenant_bulk_filter(MessageLog.query, MessageLog).delete()
     db.session.commit()
     
     flash(f'Successfully cleared {deleted_count} log(s).', 'success')
@@ -2244,7 +2736,16 @@ def unsubscribed_list():
     suppressed_query = SuppressedContact.query
     search_filter_unsubscribed = ''
     search_filter_suppressed = ''
+    tenant_filter_unsubscribed = ''
+    tenant_filter_suppressed = ''
     sql_params = {}
+    if saas_mode_enabled() and not current_user.is_platform_admin:
+        org_id = _current_organization_id()
+        sql_params['org_id'] = org_id
+        unsubscribed_query = unsubscribed_query.filter(UnsubscribedContact.organization_id == org_id)
+        suppressed_query = suppressed_query.filter(SuppressedContact.organization_id == org_id)
+        tenant_filter_unsubscribed = "AND u.organization_id = :org_id"
+        tenant_filter_suppressed = "AND s.organization_id = :org_id"
 
     if search:
         escaped = escape_like(search)
@@ -2337,9 +2838,10 @@ def unsubscribed_list():
                 u.created_at AS created_at,
                 'unsubscribed' AS entry_type
             FROM unsubscribed_contacts u
-            LEFT JOIN community_members cm ON cm.phone = u.phone
-            LEFT JOIN inbox_threads it ON it.phone = u.phone
+            LEFT JOIN community_members cm ON cm.phone = u.phone AND cm.organization_id = u.organization_id
+            LEFT JOIN inbox_threads it ON it.phone = u.phone AND it.organization_id = u.organization_id
             WHERE 1 = 1
+            {tenant_filter_unsubscribed}
             {search_filter_unsubscribed}
             UNION ALL
             SELECT
@@ -2353,6 +2855,7 @@ def unsubscribed_list():
                 'suppressed' AS entry_type
             FROM suppressed_contacts s
             WHERE 1 = 1
+            {tenant_filter_suppressed}
             {search_filter_suppressed}
         ) combined
         ORDER BY {order_by}
@@ -2534,7 +3037,7 @@ def unsubscribed_export():
 @login_required
 @require_roles('admin')
 def unsubscribed_delete(entry_id):
-    entry = db.session.get(UnsubscribedContact, entry_id)
+    entry = UnsubscribedContact.query.filter_by(id=entry_id).first()
     if entry is None:
         flash('Entry already deleted or not found.', 'warning')
         return redirect(url_for('main.unsubscribed_list'))
@@ -2576,13 +3079,15 @@ def unsubscribed_bulk_delete():
     deleted_supp = 0
 
     if unsub_ids:
-        deleted_unsub = UnsubscribedContact.query.filter(
-            UnsubscribedContact.id.in_(unsub_ids)
+        deleted_unsub = _tenant_bulk_filter(
+            UnsubscribedContact.query.filter(UnsubscribedContact.id.in_(unsub_ids)),
+            UnsubscribedContact,
         ).delete(synchronize_session=False)
 
     if supp_ids:
-        deleted_supp = SuppressedContact.query.filter(
-            SuppressedContact.id.in_(supp_ids)
+        deleted_supp = _tenant_bulk_filter(
+            SuppressedContact.query.filter(SuppressedContact.id.in_(supp_ids)),
+            SuppressedContact,
         ).delete(synchronize_session=False)
 
     db.session.commit()
@@ -2654,7 +3159,7 @@ def inbox_list():
     if selected_thread_id:
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
         if selected_thread is None:
-            selected_thread = db.session.get(InboxThread, selected_thread_id)
+            selected_thread = InboxThread.query.filter_by(id=selected_thread_id).first()
     elif threads:
         selected_thread = threads[0]
 
@@ -2733,7 +3238,7 @@ def inbox_reply(thread_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_thread_update(thread_id):
-    thread = db.get_or_404(InboxThread, thread_id)
+    thread = _tenant_get_or_404(InboxThread, thread_id)
     contact_name = request.form.get('contact_name')
     updated = update_thread_contact_name(thread.id, contact_name)
     if updated is None:
@@ -2748,7 +3253,7 @@ def inbox_thread_update(thread_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_thread_delete(thread_id):
-    thread = db.get_or_404(InboxThread, thread_id)
+    thread = _tenant_get_or_404(InboxThread, thread_id)
     result = delete_thread_with_dependencies(thread.id)
     if result is None:
         flash('Thread not found.', 'error')
@@ -2775,7 +3280,7 @@ def inbox_messages_bulk_delete():
         flash('Thread is required.', 'error')
         return _redirect_to_inbox()
 
-    db.get_or_404(InboxThread, thread_id)
+    _tenant_get_or_404(InboxThread, thread_id)
     message_ids = _parse_int_ids(request.form.getlist('message_ids'))
     if not message_ids:
         flash('No messages selected.', 'warning')
@@ -2853,7 +3358,7 @@ def keyword_rule_add():
 @login_required
 @require_roles('admin', 'social_manager')
 def keyword_rule_edit(rule_id):
-    rule = db.get_or_404(KeywordAutomationRule, rule_id)
+    rule = _tenant_get_or_404(KeywordAutomationRule, rule_id)
 
     if request.method == 'POST':
         keyword = request.form.get('keyword', '')
@@ -2889,7 +3394,7 @@ def keyword_rule_edit(rule_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def keyword_rule_delete(rule_id):
-    rule = db.get_or_404(KeywordAutomationRule, rule_id)
+    rule = _tenant_get_or_404(KeywordAutomationRule, rule_id)
     db.session.delete(rule)
     db.session.commit()
     flash('Keyword automation deleted.', 'success')
@@ -2923,7 +3428,7 @@ def survey_flows_list():
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_submissions(survey_id):
-    survey = db.get_or_404(SurveyFlow, survey_id)
+    survey = _tenant_get_or_404(SurveyFlow, survey_id)
     search = request.args.get('search', '').strip()
     page = request.args.get('page', type=int) or 1
     preview_question_indexes = _parse_survey_preview_indexes(
@@ -2957,7 +3462,7 @@ def survey_flow_submissions(survey_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_submissions_export(survey_id):
-    survey = db.get_or_404(SurveyFlow, survey_id)
+    survey = _tenant_get_or_404(SurveyFlow, survey_id)
     rows = _iter_survey_submission_export_rows(survey)
     response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
     response.headers['Content-Disposition'] = f'attachment; filename="survey_{survey.id}_submissions.csv"'
@@ -3014,7 +3519,7 @@ def survey_flow_add():
             if not existing_event_id:
                 flash('Select an existing event to link this survey.', 'error')
                 return _render_survey_form(survey=None, form_data=form_data)
-            linked_event = db.session.get(Event, existing_event_id)
+            linked_event = Event.query.filter_by(id=existing_event_id).first()
             if linked_event is None:
                 flash('Selected event was not found.', 'error')
                 return _render_survey_form(survey=None, form_data=form_data)
@@ -3076,7 +3581,7 @@ def survey_flow_add():
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_edit(survey_id):
-    survey = db.get_or_404(SurveyFlow, survey_id)
+    survey = _tenant_get_or_404(SurveyFlow, survey_id)
     form_data = None
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
@@ -3112,7 +3617,7 @@ def survey_flow_edit(survey_id):
             if not existing_event_id:
                 flash('Select an existing event to link this survey.', 'error')
                 return _render_survey_form(survey=survey, form_data=form_data)
-            linked_event = db.session.get(Event, existing_event_id)
+            linked_event = Event.query.filter_by(id=existing_event_id).first()
             if linked_event is None:
                 flash('Selected event was not found.', 'error')
                 return _render_survey_form(survey=survey, form_data=form_data)
@@ -3177,7 +3682,7 @@ def survey_flow_edit(survey_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_delete(survey_id):
-    survey = db.get_or_404(SurveyFlow, survey_id)
+    survey = _tenant_get_or_404(SurveyFlow, survey_id)
     if survey.linked_event_id:
         flash(
             'This survey is linked to an event. Edit it and choose "Do not link to an event" before deleting.',
@@ -3204,7 +3709,7 @@ def survey_flow_delete(survey_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def survey_flow_deactivate(survey_id):
-    survey = db.get_or_404(SurveyFlow, survey_id)
+    survey = _tenant_get_or_404(SurveyFlow, survey_id)
     survey.is_active = False
 
     now = utc_now()
