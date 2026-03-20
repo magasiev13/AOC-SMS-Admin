@@ -25,10 +25,10 @@ from flask import (
 )
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy import DateTime, Integer, String, Text, func, select, text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app import csrf, db
-from app.auth import require_roles
+from app.auth import home_endpoint_for_user, require_roles
 
 from app.models import (
     AuthEvent,
@@ -63,8 +63,10 @@ from app.services.billing_service import (
     create_billing_portal_session,
     create_checkout_session,
     organization_can_send,
+    process_stripe_webhook_event,
+    refresh_subscription_from_stripe,
     subscription_status_allows_sending,
-    sync_subscription_from_event,
+    sync_checkout_session_by_id,
 )
 from app.services.inbox_service import (
     delete_survey_flow_with_dependencies,
@@ -112,6 +114,70 @@ def _is_explicit_production() -> bool:
     return os.environ.get("FLASK_ENV", "").strip().lower() == "production"
 
 
+def _normalize_org_messaging_values(
+    sender_number: str | None,
+    messaging_service_sid: str | None,
+) -> tuple[str | None, str | None]:
+    normalized_sender = normalize_phone(sender_number) if sender_number else None
+    normalized_service_sid = messaging_service_sid.strip().upper() if messaging_service_sid else None
+    return normalized_sender or None, normalized_service_sid or None
+
+
+def _messaging_profile_status(
+    sender_number: str | None,
+    messaging_service_sid: str | None,
+) -> str:
+    return 'active' if (sender_number or messaging_service_sid) else 'pending'
+
+
+def _validate_org_messaging_profile_input(
+    sender_number: str | None,
+    messaging_service_sid: str | None,
+    *,
+    organization_id: int | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    normalized_sender, normalized_service_sid = _normalize_org_messaging_values(
+        sender_number,
+        messaging_service_sid,
+    )
+    existing_profile = (
+        OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).first()
+        if organization_id is not None
+        else None
+    )
+
+    if sender_number and not validate_phone(normalized_sender):
+        return 'Dedicated sender number must be a valid E.164 phone number.', None, None
+
+    if normalized_service_sid and not normalized_service_sid.startswith('MG'):
+        return 'Twilio Messaging Service SID must start with MG.', None, None
+
+    if normalized_sender:
+        duplicate_sender = OrganizationMessagingProfile.query.filter_by(from_number=normalized_sender).first()
+        if duplicate_sender and (existing_profile is None or duplicate_sender.organization_id != existing_profile.organization_id):
+            return 'That sender number is already assigned to another organization.', None, None
+
+    if normalized_service_sid:
+        duplicate_service = OrganizationMessagingProfile.query.filter_by(
+            messaging_service_sid=normalized_service_sid
+        ).first()
+        if duplicate_service and (existing_profile is None or duplicate_service.organization_id != existing_profile.organization_id):
+            return 'That Twilio Messaging Service SID is already assigned to another organization.', None, None
+
+    inbound_identity = normalized_sender or normalized_service_sid
+    if inbound_identity:
+        duplicate_inbound_identity = OrganizationMessagingProfile.query.filter_by(
+            inbound_identity=inbound_identity
+        ).first()
+        if duplicate_inbound_identity and (
+            existing_profile is None
+            or duplicate_inbound_identity.organization_id != existing_profile.organization_id
+        ):
+            return 'That inbound messaging identity is already assigned to another organization.', None, None
+
+    return None, normalized_sender, normalized_service_sid
+
+
 def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
     key_prefix = f"{key}="
     try:
@@ -146,8 +212,43 @@ def _find_username_conflict(username: str, *, exclude_user_id: int | None = None
     return query.first()
 
 
+def _find_phone_conflict(
+    phone: str,
+    *,
+    exclude_user_id: int | None = None,
+    organization_id: int | None = None,
+) -> AppUser | None:
+    normalized_phone = (phone or "").strip()
+    if not normalized_phone:
+        return None
+
+    query = AppUser.query.filter(AppUser.phone == normalized_phone)
+    if exclude_user_id is not None:
+        query = query.filter(AppUser.id != exclude_user_id)
+    if saas_mode_enabled() and organization_id is not None:
+        query = query.join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
+        query = query.filter(OrganizationMembership.organization_id == organization_id)
+    return query.first()
+
+
 def _membership_role_from_user_role(role: str) -> str:
-    return 'owner' if role == 'admin' else 'staff'
+    normalized_role = (role or '').strip().lower()
+    return 'owner' if normalized_role in {'admin', 'owner'} else 'staff'
+
+
+def _as_utc_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _format_datetime_display(value):
+    normalized = _as_utc_datetime(value)
+    if normalized is None:
+        return None
+    return normalized.strftime('%b %d, %Y %I:%M %p UTC')
 
 
 def _current_organization_id() -> int | None:
@@ -214,6 +315,267 @@ def _absolute_url(endpoint: str, **values) -> str:
     return f"{_saas_base_url()}{url_for(endpoint, **values)}"
 
 
+def _invitation_absolute_url(invitation: OrganizationInvitation | None) -> str | None:
+    if invitation is None or not invitation.token:
+        return None
+    return _absolute_url('main.invitation_accept', token=invitation.token)
+
+
+def _primary_organization_invitation(organization: Organization) -> OrganizationInvitation | None:
+    owner_invitation = (
+        OrganizationInvitation.query
+        .filter_by(organization_id=organization.id, role='owner')
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .first()
+    )
+    if owner_invitation is not None:
+        return owner_invitation
+    return (
+        OrganizationInvitation.query
+        .filter_by(organization_id=organization.id)
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .first()
+    )
+
+
+def _organization_owner_membership(organization: Organization) -> OrganizationMembership | None:
+    return (
+        OrganizationMembership.query
+        .filter_by(organization_id=organization.id, role='owner')
+        .order_by(OrganizationMembership.id.asc())
+        .first()
+    )
+
+
+def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
+    status = (subscription.status if subscription else 'incomplete') or 'incomplete'
+    normalized_status = status.strip().lower()
+    view = {
+        'status': status,
+        'badge': 'secondary',
+        'title': 'Billing setup needed',
+        'summary': 'Finish checkout to unlock sending and team invites.',
+        'next_step': 'Start your subscription to finish setting up the business account.',
+        'period_label': None,
+        'period_value': None,
+        'can_send': False,
+    }
+
+    if normalized_status == 'trialing':
+        view.update(
+            badge='success',
+            title='Trial active',
+            summary='Billing is active and sending is unlocked during the trial.',
+            next_step='Keep onboarding your business and add a payment method before the trial ends.',
+            can_send=True,
+        )
+    elif normalized_status == 'active':
+        view.update(
+            badge='success',
+            title='Subscription active',
+            summary='Billing is active and your business can keep sending messages.',
+            next_step='Use the billing portal anytime to update payment details.',
+            can_send=True,
+        )
+    elif normalized_status in {'past_due', 'unpaid'}:
+        view.update(
+            badge='warning',
+            title='Payment issue',
+            summary='Your business can still sign in, but sending is paused until billing is fixed.',
+            next_step='Open the billing portal and resolve the payment issue.',
+        )
+    elif normalized_status == 'canceled':
+        view.update(
+            badge='secondary',
+            title='Subscription canceled',
+            summary='Sending is disabled because the subscription was canceled.',
+            next_step='Start a new subscription if you want to resume service.',
+        )
+    elif normalized_status == 'incomplete':
+        view.update(
+            badge='warning',
+            title='Billing setup needed',
+            summary='Your business is not active yet.',
+            next_step='Complete checkout to unlock sending and staff invites.',
+        )
+
+    if subscription is not None and subscription.current_period_end:
+        view['period_label'] = 'Trial ends' if normalized_status == 'trialing' else 'Current period ends'
+        view['period_value'] = _format_datetime_display(subscription.current_period_end)
+
+    return view
+
+
+def _organization_onboarding_view(organization: Organization) -> dict:
+    invitation = _primary_organization_invitation(organization)
+    owner_membership = _organization_owner_membership(organization)
+    owner_invited = invitation is not None or owner_membership is not None
+    staff_membership_count = (
+        OrganizationMembership.query
+        .filter_by(organization_id=organization.id, role='staff')
+        .count()
+    )
+    pending_staff_invitation_count = (
+        OrganizationInvitation.query
+        .filter_by(organization_id=organization.id, role='staff', status='pending')
+        .count()
+    )
+    subscription_view = _subscription_view(organization.subscription)
+    messaging_profile = organization.messaging_profile
+    messaging_ready = bool(
+        messaging_profile is not None
+        and messaging_profile.status == 'active'
+        and (messaging_profile.from_number or messaging_profile.messaging_service_sid)
+    )
+    team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
+
+    steps = [
+        {
+            'label': 'Organization created',
+            'detail': 'Your business account exists and can start onboarding.',
+            'complete': True,
+            'optional': False,
+        },
+        {
+            'label': 'Owner invited',
+            'detail': (
+                invitation.email
+                if invitation is not None
+                else (
+                    owner_membership.user.email
+                    if owner_membership and owner_membership.user
+                    else 'Create the organization to generate the first invite.'
+                )
+            ),
+            'complete': owner_invited,
+            'optional': False,
+        },
+        {
+            'label': 'Owner joined',
+            'detail': owner_membership.user.email if owner_membership and owner_membership.user else 'Waiting for the owner to accept the invite.',
+            'complete': owner_membership is not None,
+            'optional': False,
+        },
+        {
+            'label': 'Billing active',
+            'detail': subscription_view['title'],
+            'complete': subscription_view['can_send'],
+            'optional': False,
+        },
+        {
+            'label': 'Messaging configured',
+            'detail': (
+                messaging_profile.from_number
+                if messaging_profile and messaging_profile.from_number
+                else (
+                    messaging_profile.messaging_service_sid
+                    if messaging_profile and messaging_profile.messaging_service_sid
+                    else 'Leave this pending until this business becomes the current live SMS test organization.'
+                )
+            ),
+            'complete': messaging_ready,
+            'optional': False,
+        },
+        {
+            'label': 'Invite the first staff member',
+            'detail': 'Optional for owner-only testing. Add a staff invite before team testing.',
+            'complete': team_ready,
+            'optional': True,
+        },
+    ]
+    required_steps = [step for step in steps if not step['optional']]
+    completed_required = sum(1 for step in required_steps if step['complete'])
+
+    if completed_required == len(required_steps) and team_ready:
+        headline = 'Ready for owner + staff testing'
+    elif completed_required == len(required_steps):
+        headline = 'Ready for owner testing'
+    else:
+        headline = f'{completed_required}/{len(required_steps)} core steps complete'
+
+    return {
+        'headline': headline,
+        'completed_required': completed_required,
+        'required_total': len(required_steps),
+        'steps': steps,
+        'owner_invitation': invitation,
+        'owner_invitation_url': _invitation_absolute_url(invitation) if invitation and invitation.status == 'pending' else None,
+        'owner_joined': owner_membership is not None,
+        'team_ready': team_ready,
+    }
+
+
+def _platform_organization_rows() -> list[dict]:
+    organizations = (
+        Organization.query
+        .order_by(Organization.created_at.desc(), Organization.id.desc())
+        .all()
+    )
+    return [
+        {
+            'organization': organization,
+            'onboarding': _organization_onboarding_view(organization),
+            'billing': _subscription_view(organization.subscription),
+        }
+        for organization in organizations
+    ]
+
+
+def _platform_home_context() -> dict:
+    organization_rows = _platform_organization_rows()
+    total_organizations = len(organization_rows)
+    active_organizations = sum(
+        1 for row in organization_rows
+        if row['organization'].status == 'active'
+    )
+    suspended_organizations = total_organizations - active_organizations
+    billing_ready = sum(
+        1 for row in organization_rows
+        if row['billing']['can_send']
+    )
+    onboarding_incomplete = sum(
+        1 for row in organization_rows
+        if row['onboarding']['completed_required'] < row['onboarding']['required_total']
+    )
+    missing_live_messaging = sum(
+        1 for row in organization_rows
+        if not (
+            row['organization'].messaging_profile
+            and row['organization'].messaging_profile.status == 'active'
+            and (
+                row['organization'].messaging_profile.from_number
+                or row['organization'].messaging_profile.messaging_service_sid
+            )
+        )
+    )
+    attention_rows = [
+        row for row in organization_rows
+        if row['onboarding']['completed_required'] < row['onboarding']['required_total']
+        or not row['billing']['can_send']
+    ][:5]
+    return {
+        'summary': {
+            'total_organizations': total_organizations,
+            'active_organizations': active_organizations,
+            'suspended_organizations': suspended_organizations,
+            'billing_ready': billing_ready,
+            'onboarding_incomplete': onboarding_incomplete,
+            'missing_live_messaging': missing_live_messaging,
+        },
+        'attention_rows': attention_rows,
+        'recent_rows': organization_rows[:5],
+    }
+
+
+def _billing_context(organization: Organization | None) -> dict:
+    subscription = organization.subscription if organization is not None else None
+    onboarding = _organization_onboarding_view(organization) if organization is not None else None
+    return {
+        'subscription_view': _subscription_view(subscription),
+        'onboarding_view': onboarding,
+    }
+
+
 def _send_access_denied_response():
     flash('Billing must be trialing or active before messages can be sent.', 'error')
     return redirect(url_for('main.billing_checkout'))
@@ -226,6 +588,13 @@ def _require_active_subscription():
     if organization_can_send(organization):
         return None
     return _send_access_denied_response()
+
+
+def _require_billing_access():
+    if _can_manage_platform():
+        abort(403)
+    if saas_mode_enabled() and getattr(current_user, 'organization_role', None) != 'owner':
+        abort(403)
 
 
 def _cleanup_bootstrap_admin_password_if_needed() -> None:
@@ -817,7 +1186,19 @@ def favicon():
 @bp.route('/')
 @login_required
 def index():
-    return redirect(url_for('main.dashboard'))
+    return redirect(url_for(home_endpoint_for_user(current_user)))
+
+
+@bp.route('/platform')
+@login_required
+def platform_home():
+    if not _can_manage_platform():
+        return redirect(url_for('main.dashboard'))
+
+    return render_template(
+        'platform/home.html',
+        platform_home=_platform_home_context(),
+    )
 
 
 # Dashboard - Send Messages
@@ -1136,12 +1517,20 @@ def users_list():
     users = _organization_scoped_user_query().order_by(AppUser.username).all()
     pending_invitations = []
     if saas_mode_enabled() and not current_user.is_platform_admin:
-        pending_invitations = (
+        invitations = (
             OrganizationInvitation.query
             .filter_by(status='pending')
             .order_by(OrganizationInvitation.created_at.desc())
             .all()
         )
+        pending_invitations = [
+            {
+                'invitation': invitation,
+                'accept_url': _invitation_absolute_url(invitation),
+                'expires_display': _format_datetime_display(invitation.expires_at),
+            }
+            for invitation in invitations
+        ]
     return render_template('users/list.html', users=users, pending_invitations=pending_invitations)
 
 
@@ -1200,9 +1589,15 @@ def users_add():
             flash('A user with this email already exists.', 'error')
             return render_template('users/form.html', user=None)
 
-        existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone).first()
+        existing_phone = _find_phone_conflict(
+            normalized_phone,
+            organization_id=_current_organization_id() if saas_mode_enabled() else None,
+        )
         if existing_phone:
-            flash('A user with this phone number already exists.', 'error')
+            if saas_mode_enabled() and not current_user.is_platform_admin:
+                flash('A user with this phone number already exists in this organization.', 'error')
+            else:
+                flash('A user with this phone number already exists.', 'error')
             return render_template('users/form.html', user=None)
 
         user = AppUser(
@@ -1271,9 +1666,16 @@ def users_edit(user_id):
                 flash('A user with this email already exists.', 'error')
                 return render_template('users/form.html', user=user)
 
-        existing_phone = AppUser.query.filter(AppUser.phone == normalized_phone, AppUser.id != user_id).first()
+        existing_phone = _find_phone_conflict(
+            normalized_phone,
+            exclude_user_id=user_id,
+            organization_id=_current_organization_id() if saas_mode_enabled() else None,
+        )
         if existing_phone:
-            flash('A user with this phone number already exists.', 'error')
+            if saas_mode_enabled() and not current_user.is_platform_admin:
+                flash('A user with this phone number already exists in this organization.', 'error')
+            else:
+                flash('A user with this phone number already exists.', 'error')
             return render_template('users/form.html', user=user)
 
         if user.role == 'admin' and role != 'admin':
@@ -1378,11 +1780,11 @@ def team_invite():
 
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
-        role = request.form.get('role', '').strip()
+        role = request.form.get('role', '').strip().lower()
         if not email:
             flash('Email is required.', 'error')
             return render_template('users/invite_form.html')
-        if role not in {'admin', 'social_manager'}:
+        if role not in {'admin', 'social_manager', 'owner', 'staff'}:
             flash('Role is required.', 'error')
             return render_template('users/invite_form.html')
 
@@ -1529,9 +1931,16 @@ def security_contact():
             flash('Phone number must be a valid E.164 number.', 'error')
             return render_template('auth/security_contact.html')
 
-        existing = AppUser.query.filter(AppUser.phone == normalized_phone, AppUser.id != current_user.id).first()
+        existing = _find_phone_conflict(
+            normalized_phone,
+            exclude_user_id=current_user.id,
+            organization_id=_current_organization_id() if saas_mode_enabled() and not current_user.is_platform_admin else None,
+        )
         if existing:
-            flash('That phone number is already assigned to another user.', 'error')
+            if saas_mode_enabled() and not current_user.is_platform_admin:
+                flash('That phone number is already assigned to another user in this organization.', 'error')
+            else:
+                flash('That phone number is already assigned to another user.', 'error')
             return render_template('auth/security_contact.html')
 
         current_user.phone = normalized_phone
@@ -1546,7 +1955,7 @@ def security_contact():
         flash('Security contact saved.', 'success')
         if current_user.must_change_password:
             return redirect(url_for('main.change_password'))
-        return redirect(url_for('main.dashboard'))
+        return redirect(url_for(home_endpoint_for_user(current_user)))
 
     return render_template('auth/security_contact.html')
 
@@ -1556,13 +1965,8 @@ def security_contact():
 def platform_organizations_list():
     if not _can_manage_platform():
         abort(403)
-
-    organizations = (
-        Organization.query
-        .order_by(Organization.created_at.desc(), Organization.id.desc())
-        .all()
-    )
-    return render_template('platform/organizations_list.html', organizations=organizations)
+    organization_rows = _platform_organization_rows()
+    return render_template('platform/organizations_list.html', organization_rows=organization_rows)
 
 
 @bp.route('/platform/organizations/add', methods=['GET', 'POST'])
@@ -1594,6 +1998,13 @@ def platform_organizations_add():
         if Organization.query.filter_by(slug=slug).first():
             flash('That organization slug already exists.', 'error')
             return render_template('platform/organization_form.html')
+        messaging_error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
+            sender_number,
+            messaging_service_sid,
+        )
+        if messaging_error:
+            flash(messaging_error, 'error')
+            return render_template('platform/organization_form.html')
 
         organization = Organization(name=name, slug=slug, status='active')
         subscription = OrganizationSubscription(
@@ -1610,18 +2021,100 @@ def platform_organizations_add():
         )
         messaging_profile = OrganizationMessagingProfile(
             organization=organization,
-            from_number=sender_number,
-            inbound_identity=sender_number or messaging_service_sid,
-            messaging_service_sid=messaging_service_sid,
-            status='active' if (sender_number or messaging_service_sid) else 'pending',
+            from_number=normalized_sender,
+            inbound_identity=normalized_sender or normalized_service_sid,
+            messaging_service_sid=normalized_service_sid,
+            status=_messaging_profile_status(normalized_sender, normalized_service_sid),
         )
         db.session.add_all([organization, subscription, invitation, messaging_profile])
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                'That sender identity is already assigned to another organization. '
+                'Use a dedicated number or Messaging Service SID for each business.',
+                'error',
+            )
+            return render_template('platform/organization_form.html')
 
         flash('Organization created and owner invite generated.', 'success')
         return redirect(url_for('main.platform_organizations_list'))
 
     return render_template('platform/organization_form.html')
+
+
+@bp.route('/platform/organizations/<int:organization_id>/messaging', methods=['GET', 'POST'])
+@login_required
+def platform_organizations_messaging_edit(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    messaging_profile = organization.messaging_profile
+
+    if request.method == 'POST':
+        sender_number = request.form.get('sender_number', '').strip() or None
+        messaging_service_sid = request.form.get('messaging_service_sid', '').strip() or None
+        if messaging_profile is None:
+            messaging_profile = OrganizationMessagingProfile(
+                organization=organization,
+                status='pending',
+            )
+            db.session.add(messaging_profile)
+        messaging_error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
+            sender_number,
+            messaging_service_sid,
+            organization_id=organization.id,
+        )
+        if messaging_error:
+            flash(messaging_error, 'error')
+            return render_template(
+                'platform/organization_messaging_form.html',
+                organization=organization,
+                messaging_profile=messaging_profile,
+            )
+
+        messaging_profile.from_number = normalized_sender
+        messaging_profile.messaging_service_sid = normalized_service_sid
+        messaging_profile.inbound_identity = normalized_sender or normalized_service_sid
+        messaging_profile.status = _messaging_profile_status(
+            normalized_sender,
+            normalized_service_sid,
+        )
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            flash(
+                'That sender identity is already assigned to another organization. '
+                'Use a dedicated number or Messaging Service SID for one live test organization at a time.',
+                'error',
+            )
+            messaging_profile = organization.messaging_profile
+            return render_template(
+                'platform/organization_messaging_form.html',
+                organization=organization,
+                messaging_profile=messaging_profile,
+            )
+
+        if messaging_profile.status == 'active':
+            flash(
+                'Live messaging is configured for this organization. Leave other organizations pending until you switch the sender.',
+                'success',
+            )
+        else:
+            flash(
+                'Live messaging is cleared for this organization. You can now assign the sender to a different business.',
+                'success',
+            )
+        return redirect(url_for('main.platform_organizations_list'))
+
+    return render_template(
+        'platform/organization_messaging_form.html',
+        organization=organization,
+        messaging_profile=messaging_profile,
+    )
 
 
 @bp.route('/platform/organizations/<int:organization_id>/toggle-status', methods=['POST'])
@@ -1643,7 +2136,8 @@ def invitation_accept(token):
     if invitation.status != 'pending':
         flash('This invitation is no longer active.', 'error')
         return redirect(url_for('auth.login'))
-    if invitation.expires_at and invitation.expires_at < utc_now():
+    expires_at = _as_utc_datetime(invitation.expires_at)
+    if expires_at and expires_at < utc_now():
         invitation.status = 'expired'
         db.session.commit()
         flash('This invitation has expired.', 'error')
@@ -1682,6 +2176,14 @@ def invitation_accept(token):
         existing_user = AppUser.query.filter(func.lower(AppUser.email) == invitation.email.lower()).first()
         if existing_user and existing_user.memberships:
             flash('That email is already attached to an organization.', 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        phone_conflict = _find_phone_conflict(
+            normalized_phone,
+            exclude_user_id=existing_user.id if existing_user is not None else None,
+            organization_id=invitation.organization_id if saas_mode_enabled() else None,
+        )
+        if phone_conflict:
+            flash('That phone number is already assigned to another user in this organization.', 'error')
             return render_template('auth/accept_invitation.html', invitation=invitation)
 
         user = existing_user or AppUser(
@@ -1725,20 +2227,31 @@ def invitation_accept(token):
 @bp.route('/billing')
 @login_required
 def billing_overview():
-    if _can_manage_platform():
-        abort(403)
+    _require_billing_access()
+    organization = _current_organization()
+    if organization is not None:
+        session_id = request.args.get('session_id', '').strip()
+        try:
+            if session_id:
+                sync_checkout_session_by_id(session_id, organization)
+            elif not organization_can_send(organization):
+                refresh_subscription_from_stripe(organization, current_user.email or '')
+        except Exception:
+            current_app.logger.exception('Failed to reconcile Stripe subscription state for organization %s.', organization.id)
+    billing_context = _billing_context(organization)
     return render_template(
         'billing/overview.html',
-        organization=_current_organization(),
+        organization=organization,
         subscription=_current_subscription(),
+        subscription_view=billing_context['subscription_view'],
+        onboarding_view=billing_context['onboarding_view'],
     )
 
 
 @bp.route('/billing/checkout', methods=['GET', 'POST'])
 @login_required
 def billing_checkout():
-    if _can_manage_platform():
-        abort(403)
+    _require_billing_access()
 
     organization = _current_organization()
     if organization is None:
@@ -1747,7 +2260,7 @@ def billing_checkout():
         return redirect(url_for('main.dashboard'))
 
     if request.method == 'POST' or request.method == 'GET':
-        success_url = _absolute_url('main.billing_overview')
+        success_url = f"{_absolute_url('main.billing_overview')}?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = _absolute_url('main.billing_overview')
         try:
             checkout_session = create_checkout_session(
@@ -1768,8 +2281,7 @@ def billing_checkout():
 @bp.route('/billing/portal', methods=['POST'])
 @login_required
 def billing_portal():
-    if _can_manage_platform():
-        abort(403)
+    _require_billing_access()
 
     organization = _current_organization()
     if organization is None:
@@ -1810,15 +2322,11 @@ def stripe_webhook():
         current_app.logger.exception('Stripe webhook signature verification failed.')
         return 'Forbidden', 403
 
-    event_type = event.get('type')
-    data_object = event.get('data', {}).get('object', {})
-    if event_type in {
-        'checkout.session.completed',
-        'customer.subscription.created',
-        'customer.subscription.updated',
-        'customer.subscription.deleted',
-    }:
-        sync_subscription_from_event(event_type, data_object)
+    try:
+        process_stripe_webhook_event(event)
+    except Exception:
+        current_app.logger.exception('Stripe webhook processing failed for event %s.', event.get('id'))
+        return 'Webhook processing failed', 500
 
     return '', 200
 
@@ -2730,8 +3238,32 @@ def unsubscribed_list():
 
     unsubscribed_query = (
         UnsubscribedContact.query
-        .outerjoin(CommunityMember, CommunityMember.phone == UnsubscribedContact.phone)
-        .outerjoin(InboxThread, InboxThread.phone == UnsubscribedContact.phone)
+        .outerjoin(
+            CommunityMember,
+            db.and_(
+                CommunityMember.phone == UnsubscribedContact.phone,
+                db.or_(
+                    CommunityMember.organization_id == UnsubscribedContact.organization_id,
+                    db.and_(
+                        CommunityMember.organization_id.is_(None),
+                        UnsubscribedContact.organization_id.is_(None),
+                    ),
+                ),
+            ),
+        )
+        .outerjoin(
+            InboxThread,
+            db.and_(
+                InboxThread.phone == UnsubscribedContact.phone,
+                db.or_(
+                    InboxThread.organization_id == UnsubscribedContact.organization_id,
+                    db.and_(
+                        InboxThread.organization_id.is_(None),
+                        UnsubscribedContact.organization_id.is_(None),
+                    ),
+                ),
+            ),
+        )
     )
     suppressed_query = SuppressedContact.query
     search_filter_unsubscribed = ''
@@ -2838,8 +3370,18 @@ def unsubscribed_list():
                 u.created_at AS created_at,
                 'unsubscribed' AS entry_type
             FROM unsubscribed_contacts u
-            LEFT JOIN community_members cm ON cm.phone = u.phone AND cm.organization_id = u.organization_id
-            LEFT JOIN inbox_threads it ON it.phone = u.phone AND it.organization_id = u.organization_id
+            LEFT JOIN community_members cm
+                ON cm.phone = u.phone
+               AND (
+                   cm.organization_id = u.organization_id
+                   OR (cm.organization_id IS NULL AND u.organization_id IS NULL)
+               )
+            LEFT JOIN inbox_threads it
+                ON it.phone = u.phone
+               AND (
+                   it.organization_id = u.organization_id
+                   OR (it.organization_id IS NULL AND u.organization_id IS NULL)
+               )
             WHERE 1 = 1
             {tenant_filter_unsubscribed}
             {search_filter_unsubscribed}

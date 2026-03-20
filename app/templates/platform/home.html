@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Platform - SMS Admin{% endblock %}
+
+{% block page_title %}Platform{% endblock %}
+
+{% block breadcrumbs %}
+<span>Platform Control</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.platform_organizations_add') }}" class="btn btn-primary">
+    <i class="bi bi-building-add me-1"></i>Add Organization
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="platform-home-shell">
+    <section class="platform-home-hero card app-card">
+        <div class="card-body">
+            <div class="platform-home-kicker">Platform Admin</div>
+            <h2 class="platform-home-title">Operate the platform here. Run your business from a separate organization account.</h2>
+            <p class="platform-home-copy mb-0">
+                This control plane is for onboarding, organization management, and platform oversight. Normal messaging, inbox, billing, and team operations belong inside a dedicated owner account within each organization.
+            </p>
+        </div>
+    </section>
+
+    <section class="row g-3 mt-1">
+        <div class="col-sm-6 col-xl-3">
+            <div class="platform-stat-card card app-card h-100">
+                <div class="card-body">
+                    <div class="platform-stat-label">Organizations</div>
+                    <div class="platform-stat-value">{{ platform_home.summary.total_organizations }}</div>
+                    <div class="platform-stat-meta">{{ platform_home.summary.active_organizations }} active · {{ platform_home.summary.suspended_organizations }} suspended</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="platform-stat-card card app-card h-100">
+                <div class="card-body">
+                    <div class="platform-stat-label">Billing Ready</div>
+                    <div class="platform-stat-value">{{ platform_home.summary.billing_ready }}</div>
+                    <div class="platform-stat-meta">Organizations with sending unlocked</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="platform-stat-card card app-card h-100">
+                <div class="card-body">
+                    <div class="platform-stat-label">Onboarding Queue</div>
+                    <div class="platform-stat-value">{{ platform_home.summary.onboarding_incomplete }}</div>
+                    <div class="platform-stat-meta">Organizations missing required setup</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="platform-stat-card card app-card h-100">
+                <div class="card-body">
+                    <div class="platform-stat-label">Live Messaging Gaps</div>
+                    <div class="platform-stat-value">{{ platform_home.summary.missing_live_messaging }}</div>
+                    <div class="platform-stat-meta">Organizations still pending sender setup</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="row g-4 mt-1">
+        <div class="col-lg-7">
+            <div class="card app-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Needs Attention</span>
+                    <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-sm btn-outline-secondary">View all organizations</a>
+                </div>
+                <div class="card-body">
+                    {% if platform_home.attention_rows %}
+                    <div class="platform-attention-list">
+                        {% for row in platform_home.attention_rows %}
+                        {% set organization = row.organization %}
+                        <article class="platform-attention-item">
+                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                                <div>
+                                    <div class="fw-semibold">{{ organization.name }}</div>
+                                    <div class="small text-muted">{{ row.onboarding.headline }}</div>
+                                </div>
+                                <div class="d-flex gap-2 flex-wrap">
+                                    <span class="badge bg-{{ row.billing.badge }}">{{ row.billing.title }}</span>
+                                    <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
+                                </div>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                Messaging:
+                                <strong>{{ organization.messaging_profile.from_number or organization.messaging_profile.messaging_service_sid if organization.messaging_profile else 'Pending sender setup' }}</strong>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">Configure Sender</a>
+                                <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-sm btn-outline-secondary">Review Organization</a>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-muted">No organizations need immediate attention.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card app-card mb-4">
+                <div class="card-header">Quick Actions</div>
+                <div class="card-body d-grid gap-2">
+                    <a href="{{ url_for('main.platform_organizations_add') }}" class="btn btn-primary">Create New Organization</a>
+                    <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Open Organization Directory</a>
+                    <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review Users</a>
+                    <a href="{{ url_for('main.security_events') }}" class="btn btn-outline-secondary">Review Security Events</a>
+                </div>
+            </div>
+            <div class="card app-card">
+                <div class="card-header">Recent Organizations</div>
+                <div class="card-body">
+                    {% if platform_home.recent_rows %}
+                    <div class="platform-recent-list">
+                        {% for row in platform_home.recent_rows %}
+                        {% set organization = row.organization %}
+                        <div class="platform-recent-item">
+                            <div class="fw-semibold">{{ organization.name }}</div>
+                            <div class="small text-muted">{{ row.billing.title }} · {{ row.onboarding.headline }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-muted">No organizations created yet.</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}

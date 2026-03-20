@@ -69,6 +69,22 @@ def _validate_production_security_config(app: Flask) -> None:
         raise RuntimeError(f"Production security configuration is invalid:\n - {details}")
 
 
+def _validate_saas_billing_config(app: Flask) -> None:
+    if not app.config.get("SAAS_MODE"):
+        return
+
+    required_values = {
+        "STRIPE_SECRET_KEY": app.config.get("STRIPE_SECRET_KEY"),
+        "STRIPE_WEBHOOK_SECRET": app.config.get("STRIPE_WEBHOOK_SECRET"),
+        "STRIPE_PRICE_ID": app.config.get("STRIPE_PRICE_ID"),
+        "SAAS_BASE_URL": app.config.get("SAAS_BASE_URL"),
+    }
+    missing = [name for name, value in required_values.items() if not str(value or "").strip()]
+    if missing:
+        details = "\n - ".join(f"{name} must be configured for SaaS billing." for name in missing)
+        raise RuntimeError(f"SaaS billing configuration is invalid:\n - {details}")
+
+
 def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] = None):
     app = Flask(__name__)
 
@@ -109,6 +125,7 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
     if not app.config.get("DEBUG"):
         if app.config.get("SECRET_KEY") == "dev-secret-key-change-in-production":
             raise RuntimeError("SECRET_KEY must be set in production")
+        _validate_saas_billing_config(app)
         if is_explicit_production:
             _validate_production_security_config(app)
 
@@ -163,8 +180,8 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                 run_pending_migrations,
             )
 
-            db.create_all()
             if db.engine.url.drivername.startswith("sqlite"):
+                db.create_all()
                 check_migrations_compatibility(db.engine, app.logger)
                 run_pending_migrations(db.engine, app.logger)
                 migration_report = inspect_migrations(db.engine)
@@ -186,11 +203,17 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
                 else:
                     app.logger.info("Schema migrations: none")
             elif app.config.get("SAAS_MODE"):
+                from app.saas_migrations.runner import ensure_saas_schema_ready
+
+                saas_report = ensure_saas_schema_ready(db.engine)
                 app.logger.info(
-                    "Non-SQLite database detected in SaaS mode (%s); using SQLAlchemy create_all bootstrap and skipping SQLite migration runner.",
-                    db.engine.url.drivername,
+                    "SaaS schema ready for %s; applied=%s pending=%s.",
+                    saas_report["db_label"],
+                    len(saas_report["applied"]),
+                    len(saas_report["pending"]),
                 )
             else:
+                db.create_all()
                 check_migrations_compatibility(db.engine, app.logger)
 
             from app.models import AppUser

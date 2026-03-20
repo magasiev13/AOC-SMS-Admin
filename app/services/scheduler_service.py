@@ -325,8 +325,9 @@ def send_scheduled_messages(app):
         for scheduled in pending:
             processed_count += 1
             logger.info(
-                "[Scheduler] Processing message id=%d (scheduled_at=%s, target=%s)",
+                "[Scheduler] Processing message id=%d organization_id=%s (scheduled_at=%s, target=%s)",
                 scheduled.id,
+                scheduled.organization_id,
                 scheduled.scheduled_at.isoformat() if scheduled.scheduled_at else 'unknown',
                 scheduled.target
             )
@@ -478,8 +479,12 @@ def send_scheduled_messages(app):
 
                     sent_count += 1
                     logger.info(
-                        "[Scheduler] Message id=%d SENT: %d/%d successful (status: processing -> sent)",
-                        scheduled.id, log.success_count, log.total_recipients
+                        "[Scheduler] Message id=%d organization_id=%s SENT: log_id=%d %d/%d successful (status: processing -> sent)",
+                        scheduled.id,
+                        scheduled.organization_id,
+                        log.id,
+                        log.success_count,
+                        log.total_recipients,
                     )
 
                     try:
@@ -545,8 +550,10 @@ def send_scheduled_messages(app):
                 db.session.commit()
                 failed_count += 1
                 logger.error(
-                    "[Scheduler] Message id=%d FAILED: %s (status: processing -> failed)",
-                    scheduled.id, e
+                    "[Scheduler] Message id=%d organization_id=%s FAILED: %s (status: processing -> failed)",
+                    scheduled.id,
+                    scheduled.organization_id,
+                    e,
                 )
         
         # Summary log

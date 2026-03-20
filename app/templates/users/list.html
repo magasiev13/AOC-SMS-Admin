@@ -5,19 +5,24 @@
 {% block page_title %}Users{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Users</span>
+{% if current_user.is_platform_admin %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> / <span>Users</span>
+{% else %}
+<a href="{{ url_for('main.dashboard') }}">Workspace</a> / <span>Users</span>
+{% endif %}
 {% endblock %}
 
 {% block page_actions %}
-{% if config.SAAS_MODE and not current_user.is_platform_admin %}
-<a href="{{ url_for('main.team_invite') }}" class="btn btn-primary">
+<a
+    href="{{ url_for('main.team_invite') if config.SAAS_MODE and not current_user.is_platform_admin else url_for('main.users_add') }}"
+    class="btn btn-primary page-action-primary"
+>
+    {% if config.SAAS_MODE and not current_user.is_platform_admin %}
     <i class="bi bi-envelope-plus me-1"></i>Invite Team Member
-</a>
-{% else %}
-<a href="{{ url_for('main.users_add') }}" class="btn btn-primary">
+    {% else %}
     <i class="bi bi-plus-lg me-1"></i>Add User
+    {% endif %}
 </a>
-{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -128,7 +133,13 @@
                         <h6 class="mb-1">{{ user.username }}</h6>
                         <div class="d-flex flex-wrap gap-2 mt-2">
                             <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
+                                {% if user.organization_role == 'owner' %}
+                                Owner
+                                {% elif user.organization_role == 'staff' %}
+                                Staff
+                                {% else %}
                                 {{ 'Admin' if user.is_admin else 'Social Media Manager' }}
+                                {% endif %}
                             </span>
                             {% if current_user.id == user.id %}
                             <span class="badge bg-secondary">You</span>
@@ -157,8 +168,18 @@
         <div class="empty-state py-4">
             <i class="bi bi-people empty-state__icon"></i>
             <div class="empty-state__title">No users found</div>
-            <div class="empty-state__text">Create a user to grant dashboard access.</div>
+            <div class="empty-state__text">
+                {% if config.SAAS_MODE and not current_user.is_platform_admin %}
+                Invite your first teammate to test the owner + staff workflow.
+                {% else %}
+                Create a user to grant dashboard access.
+                {% endif %}
+            </div>
+            {% if config.SAAS_MODE and not current_user.is_platform_admin %}
+            <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-primary empty-state__action">Invite Team Member</a>
+            {% else %}
             <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add User</a>
+            {% endif %}
         </div>
         {% endif %}
     </div>
@@ -181,24 +202,42 @@
                     <th>Email</th>
                     <th>Role</th>
                     <th>Created</th>
-                    <th width="120">Actions</th>
+                    <th>Expires</th>
+                    <th width="260">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for invitation in pending_invitations %}
+                {% set invite = invitation.invitation %}
                 <tr>
-                    <td>{{ invitation.email }}</td>
+                    <td>{{ invite.email }}</td>
                     <td>
-                        <span class="badge bg-{{ 'primary' if invitation.role == 'owner' else 'info' }}">
-                            {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}
+                        <span class="badge bg-{{ 'primary' if invite.role == 'owner' else 'info' }}">
+                            {{ 'Owner' if invite.role == 'owner' else 'Staff' }}
                         </span>
                     </td>
-                    <td>{{ invitation.created_at.strftime('%Y-%m-%d') if invitation.created_at else '-' }}</td>
+                    <td>{{ invite.created_at.strftime('%Y-%m-%d') if invite.created_at else '-' }}</td>
                     <td>
-                        <form method="POST" action="{{ url_for('main.team_invitation_revoke', invitation_id=invitation.id) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
-                        </form>
+                        <div class="small text-muted">{{ invitation.expires_display or 'No expiry set' }}</div>
+                    </td>
+                    <td>
+                        <div class="d-flex flex-wrap gap-2">
+                            {% if invitation.accept_url %}
+                            <a href="{{ invitation.accept_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                data-copy-text="{{ invitation.accept_url }}"
+                                data-copy-feedback="Copied"
+                            >
+                                Copy link
+                            </button>
+                            {% endif %}
+                            <form method="POST" action="{{ url_for('main.team_invitation_revoke', invitation_id=invite.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Revoke</button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

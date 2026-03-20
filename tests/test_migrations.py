@@ -96,6 +96,216 @@ class TestMigrations(unittest.TestCase):
         self.assertEqual(rows[1], "  join   now ")
         self.assertEqual(rows[2], "   ")
 
+    def test_drop_users_phone_unique_index_migration_removes_legacy_constraint(self) -> None:
+        from app.migrations.runner import _load_migration, _migration_files
+
+        add_auth_hardening = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "010_add_auth_hardening_tables_and_columns"
+        )
+        drop_phone_unique = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "013_drop_users_phone_unique_index"
+        )
+
+        add_auth_hardening_module = _load_migration(add_auth_hardening)
+        drop_phone_unique_module = _load_migration(drop_phone_unique)
+
+        with self.db.engine.begin() as connection:
+            add_auth_hardening_module.apply(connection, self.app.logger)
+
+        indexes_before = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'users'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertIn("uq_users_phone_nonempty", indexes_before)
+
+        with self.db.engine.begin() as connection:
+            drop_phone_unique_module.apply(connection, self.app.logger)
+
+        indexes_after = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'users'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertNotIn("uq_users_phone_nonempty", indexes_after)
+        self.assertIn("ix_users_phone", indexes_after)
+
+    def test_add_stripe_webhook_events_migration_creates_ledger_table(self) -> None:
+        from app.migrations.runner import _load_migration, _migration_files
+
+        self.db.session.execute(text("DROP TABLE IF EXISTS stripe_webhook_events"))
+        self.db.session.commit()
+
+        add_webhook_events = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "014_add_stripe_webhook_events"
+        )
+        add_webhook_events_module = _load_migration(add_webhook_events)
+
+        with self.db.engine.begin() as connection:
+            add_webhook_events_module.apply(connection, self.app.logger)
+
+        table_names = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertIn("stripe_webhook_events", table_names)
+
+        index_names = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'stripe_webhook_events'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertNotIn("ix_stripe_webhook_events_object_id", index_names)
+        self.assertNotIn("ix_stripe_webhook_events_customer_id", index_names)
+        self.assertNotIn("ix_stripe_webhook_events_subscription_id", index_names)
+
+    def test_drop_duplicate_stripe_webhook_indexes_migration_removes_legacy_indexes(self) -> None:
+        from app.migrations.runner import _load_migration, _migration_files
+
+        add_webhook_events = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "014_add_stripe_webhook_events"
+        )
+        drop_duplicate_indexes = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "015_drop_duplicate_stripe_webhook_indexes"
+        )
+
+        add_webhook_events_module = _load_migration(add_webhook_events)
+        drop_duplicate_indexes_module = _load_migration(drop_duplicate_indexes)
+
+        with self.db.engine.begin() as connection:
+            add_webhook_events_module.apply(connection, self.app.logger)
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_stripe_webhook_events_object_id
+                    ON stripe_webhook_events (stripe_object_id)
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_stripe_webhook_events_customer_id
+                    ON stripe_webhook_events (stripe_customer_id)
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_stripe_webhook_events_subscription_id
+                    ON stripe_webhook_events (stripe_subscription_id)
+                    """
+                )
+            )
+
+        indexes_before = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'stripe_webhook_events'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertIn("ix_stripe_webhook_events_object_id", indexes_before)
+        self.assertIn("ix_stripe_webhook_events_customer_id", indexes_before)
+        self.assertIn("ix_stripe_webhook_events_subscription_id", indexes_before)
+
+        with self.db.engine.begin() as connection:
+            drop_duplicate_indexes_module.apply(connection, self.app.logger)
+
+        indexes_after = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'stripe_webhook_events'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertNotIn("ix_stripe_webhook_events_object_id", indexes_after)
+        self.assertNotIn("ix_stripe_webhook_events_customer_id", indexes_after)
+        self.assertNotIn("ix_stripe_webhook_events_subscription_id", indexes_after)
+
+    def test_ensure_stripe_webhook_indexes_migration_restores_canonical_indexes(self) -> None:
+        from app.migrations.runner import _load_migration, _migration_files
+
+        add_webhook_events = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "014_add_stripe_webhook_events"
+        )
+        ensure_canonical_indexes = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "016_ensure_stripe_webhook_indexes"
+        )
+
+        add_webhook_events_module = _load_migration(add_webhook_events)
+        ensure_canonical_indexes_module = _load_migration(ensure_canonical_indexes)
+
+        with self.db.engine.begin() as connection:
+            add_webhook_events_module.apply(connection, self.app.logger)
+            ensure_canonical_indexes_module.apply(connection, self.app.logger)
+
+        indexes = set(
+            self.db.session.execute(
+                text(
+                    """
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'stripe_webhook_events'
+                    """
+                )
+            ).scalars()
+        )
+        self.assertIn("ix_stripe_webhook_events_event_type", indexes)
+        self.assertIn("ix_stripe_webhook_events_organization_id", indexes)
+        self.assertIn("ix_stripe_webhook_events_status", indexes)
+        self.assertIn("ix_stripe_webhook_events_stripe_object_id", indexes)
+        self.assertIn("ix_stripe_webhook_events_stripe_customer_id", indexes)
+        self.assertIn("ix_stripe_webhook_events_stripe_subscription_id", indexes)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -271,6 +271,32 @@ class OrganizationSubscription(db.Model):
         return f'<OrganizationSubscription org={self.organization_id} status={self.status}>'
 
 
+class StripeWebhookEvent(db.Model):
+    """Minimal Stripe webhook ledger for idempotency and audit."""
+    __tablename__ = 'stripe_webhook_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    stripe_event_id = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    event_type = db.Column(db.String(80), nullable=False, index=True)
+    stripe_object_id = db.Column(db.String(80), nullable=True, index=True)
+    stripe_customer_id = db.Column(db.String(80), nullable=True, index=True)
+    stripe_subscription_id = db.Column(db.String(80), nullable=True, index=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    signature_verified = db.Column(db.Boolean, nullable=False, default=False)
+    event_created_at = db.Column(db.DateTime, nullable=True)
+    received_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+    processed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='processing', index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=1)
+    last_error = db.Column(db.Text, nullable=True)
+
+    organization = db.relationship('Organization')
+
+    def __repr__(self):
+        return f'<StripeWebhookEvent {self.stripe_event_id} status={self.status}>'
+
+
 class OrganizationMessagingProfile(db.Model):
     """Per-organization sender identity on the shared platform."""
     __tablename__ = 'organization_messaging_profiles'

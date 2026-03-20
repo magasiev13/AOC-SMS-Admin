@@ -37,6 +37,11 @@ instance/
 *.swp
 *.swo
 .codex/
+.playwright/
+node_modules/
+playwright-report/
+output/playwright/report/
+output/playwright/test-results/
 
 # Logs
 *.log

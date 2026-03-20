@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Configure Messaging - SMS Admin{% endblock %}
+
+{% block page_title %}Configure Messaging{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> /
+<a href="{{ url_for('main.platform_organizations_list') }}">Organizations</a> /
+<span>{{ organization.name }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+                    <div>
+                        <h2 class="h5 mb-1">{{ organization.name }}</h2>
+                        <div class="text-muted small"><code>{{ organization.slug }}</code></div>
+                    </div>
+                    <span class="badge bg-{{ 'success' if messaging_profile and messaging_profile.status == 'active' else 'warning text-dark' }}">
+                        {{ messaging_profile.status if messaging_profile else 'pending' }}
+                    </span>
+                </div>
+
+                <div class="alert alert-light border mb-4" role="note">
+                    <div class="fw-semibold mb-1">One-number local testing</div>
+                    <div class="small text-muted">
+                        Keep exactly one live test organization active at a time. If you only have one Twilio number, clear the sender here before assigning it to another business.
+                    </div>
+                </div>
+
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="sender_number">Dedicated Sender Number</label>
+                        <input
+                            class="form-control"
+                            id="sender_number"
+                            name="sender_number"
+                            placeholder="+15551234567"
+                            value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') }}"
+                        >
+                        <div class="form-text">
+                            Optional. Use the one Twilio number that is currently assigned to this business for live send and reply testing.
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
+                        <input
+                            class="form-control"
+                            id="messaging_service_sid"
+                            name="messaging_service_sid"
+                            placeholder="MGxxxxxxxx"
+                            value="{{ request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') }}"
+                        >
+                        <div class="form-text">
+                            Optional. Use the <code>MG...</code> service tied to the live test organization. Leave both fields blank to keep this organization pending.
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button type="submit" class="btn btn-primary">Save Messaging Profile</button>
+                        <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

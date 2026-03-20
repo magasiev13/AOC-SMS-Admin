@@ -2,7 +2,9 @@
 
 ## dbdoctor
 
-Database health check and migration tool.
+Legacy SQLite database health check and migration tool.
+
+For the separate SaaS deployment line, use `python -m app.saas_db` or `saas-dbdoctor` instead.
 
 ### Location
 
@@ -107,6 +109,42 @@ ExecStart=...
 ```
 
 ---
+
+## Flask CLI
+
+## SaaS DB CLI
+
+Separate SaaS schema and legacy-import workflow.
+
+### Location
+
+```bash
+# Development / repo root
+python -m app.saas_db
+
+# Production (after deploy/install_saas.sh)
+saas-dbdoctor
+```
+
+### Commands
+
+```bash
+# Print status
+python -m app.saas_db --print
+
+# Apply pending SaaS migrations
+python -m app.saas_db --apply
+
+# Validate readiness
+python -m app.saas_db --doctor
+
+# Import a legacy SQLite snapshot
+python -m app.saas_db --import-legacy /path/to/legacy.db \
+  --organization-name "Legacy Production" \
+  --organization-slug legacy-production
+```
+
+The SaaS migration path is explicit by design. The app no longer bootstraps a non-SQLite SaaS schema implicitly on startup.
 
 ## Flask CLI
 

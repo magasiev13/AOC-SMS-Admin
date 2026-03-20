@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH=/usr/bin:/bin:/opt/sms-admin/venv/bin
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${APP_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+PATH="/usr/bin:/bin:${APP_ROOT}/venv/bin"
 
-/opt/sms-admin/deploy/check_python_runtime.sh
+"${APP_ROOT}/deploy/check_python_runtime.sh"
 
-if [ -f /opt/sms-admin/.env ]; then
+if [ -f "${APP_ROOT}/.env" ]; then
   set -a
-  . /opt/sms-admin/.env
+  . "${APP_ROOT}/.env"
   set +a
 fi
 
 : "${REDIS_URL:=redis://localhost:6379/0}"
 : "${RQ_QUEUE_NAME:=sms}"
 
-exec /opt/sms-admin/venv/bin/rq worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"
+exec "${APP_ROOT}/venv/bin/rq" worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"

@@ -16,6 +16,7 @@ This directory contains technical documentation for the SMS Admin application.
 ### Operations
 - [Deployment Guide](deployment.md) - Production deployment instructions
 - [CLI Tools](cli.md) - Command-line utilities (dbdoctor)
+- [SaaS Operations](saas-operations.md) - Separate SaaS deployment, schema, import, and backup runbook
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 
 ## Quick Links

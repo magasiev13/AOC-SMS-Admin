@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Invite Team Member - SMS Admin{% endblock %}
+{% block title %}Invite a Team Member - SMS Admin{% endblock %}
 
-{% block page_title %}Invite Team Member{% endblock %}
+{% block page_title %}Invite a Team Member{% endblock %}
 
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
@@ -13,28 +13,33 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-body">
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="email">Email</label>
-                        <input class="form-control" id="email" name="email" type="email" required placeholder="staff@example.com">
-                    </div>
-                    <div class="mb-4">
-                        <label class="form-label" for="role">Role</label>
-                        <select class="form-select" id="role" name="role" required>
-                            <option value="social_manager">Staff</option>
-                            <option value="admin">Owner</option>
-                        </select>
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">Create Invitation</button>
-                        <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
-                    </div>
-                </form>
+            <div class="card app-card">
+                <div class="card-body">
+                    <p class="text-muted mb-4">
+                        Invite a business owner or staff member. Owners can manage billing and team setup.
+                        Staff members can help with day-to-day messaging once billing is active.
+                    </p>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label class="form-label" for="email">Email</label>
+                            <input class="form-control" id="email" name="email" type="email" required placeholder="teammate@example.com">
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label" for="role">Role</label>
+                            <select class="form-select" id="role" name="role" required>
+                                <option value="staff">Staff</option>
+                                <option value="owner">Owner</option>
+                            </select>
+                            <div class="form-text">Choose Staff for everyday use or Owner for billing and account management.</div>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-primary">Send Invite</button>
+                            <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </div>
     </div>
 </div>
 {% endblock %}

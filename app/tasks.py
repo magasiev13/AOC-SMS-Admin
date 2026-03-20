@@ -54,14 +54,30 @@ def _append_error_detail(details: list, error_message: str) -> list:
 
 def send_bulk_job(
     log_id: int,
-    organization_id: int | None,
-    recipient_data: list,
-    final_message: str,
+    organization_id: int | list | None = None,
+    recipient_data: list | str | None = None,
+    final_message: str | None = None,
     delay: float = 0.1,
 ) -> None:
+    # Keep backward compatibility with older direct callers that passed
+    # (log_id, recipient_data, final_message, delay=...).
+    if isinstance(organization_id, list) and isinstance(recipient_data, str) and final_message is None:
+        final_message = recipient_data
+        recipient_data = organization_id
+        organization_id = None
+
+    if recipient_data is None or final_message is None:
+        raise TypeError("send_bulk_job() requires recipient_data and final_message")
+
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         with organization_context(organization_id):
+            current_app.logger.info(
+                "Starting bulk send job log_id=%s organization_id=%s recipients=%s",
+                log_id,
+                organization_id,
+                len(recipient_data),
+            )
             log = MessageLog.query.filter_by(id=log_id).first()
             if not log:
                 raise ValueError(f"MessageLog {log_id} not found")
@@ -86,6 +102,12 @@ def send_bulk_job(
                 log.failure_count = existing_failure
                 log.status = 'sent' if existing_failure == 0 else 'failed'
                 db.session.commit()
+                current_app.logger.info(
+                    "Bulk send job log_id=%s organization_id=%s already complete status=%s",
+                    log.id,
+                    organization_id,
+                    log.status,
+                )
                 return
 
             try:
@@ -98,6 +120,14 @@ def send_bulk_job(
                 log.details = json.dumps(combined_details)
                 log.status = 'sent' if log.failure_count == 0 else 'failed'
                 db.session.commit()
+                current_app.logger.info(
+                    "Bulk send job finished log_id=%s organization_id=%s status=%s success_count=%s failure_count=%s",
+                    log.id,
+                    organization_id,
+                    log.status,
+                    log.success_count,
+                    log.failure_count,
+                )
                 try:
                     process_failure_details(combined_details, log.id)
                 except Exception as exc:
@@ -131,6 +161,13 @@ def send_bulk_job(
                         log.id,
                         process_exc,
                     )
+                current_app.logger.warning(
+                    "Bulk send job transient failure log_id=%s organization_id=%s success_count=%s failure_count=%s",
+                    log.id,
+                    organization_id,
+                    log.success_count,
+                    log.failure_count,
+                )
                 raise
             except Exception as exc:
                 combined_details = _load_details(log) or existing_details
@@ -149,6 +186,12 @@ def send_bulk_job(
                         log.id,
                         process_exc,
                     )
+                current_app.logger.error(
+                    "Bulk send job failed log_id=%s organization_id=%s error=%s",
+                    log.id,
+                    organization_id,
+                    exc,
+                )
 
 
 def backfill_suppressions_job() -> dict:

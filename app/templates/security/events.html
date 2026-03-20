@@ -4,7 +4,11 @@
 {% block page_title %}Security Events{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Security Events</span>
+{% if current_user.is_platform_admin %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> / <span>Security Events</span>
+{% else %}
+<a href="{{ url_for('main.dashboard') }}">Workspace</a> / <span>Security Events</span>
+{% endif %}
 {% endblock %}
 
 {% block content %}

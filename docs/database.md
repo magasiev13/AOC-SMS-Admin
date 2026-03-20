@@ -75,7 +75,7 @@ Application users with role-based access control.
 | `id` | Integer | PRIMARY KEY | Auto-increment ID |
 | `username` | String(80) | NOT NULL, UNIQUE | Login username |
 | `password_hash` | String(255) | NOT NULL | Hashed password (pbkdf2/scrypt) |
-| `phone` | String(20) | nullable, UNIQUE (non-empty) | Security alert phone number |
+| `phone` | String(20) | nullable, indexed | Security alert phone number |
 | `role` | String(30) | NOT NULL, default='admin' | User role: 'admin' or 'social_manager' |
 | `must_change_password` | Boolean | NOT NULL, default=False | Force password change on login |
 | `session_nonce` | String(64) | NOT NULL | Session revocation token |
@@ -84,6 +84,27 @@ Application users with role-based access control.
 **Methods:**
 - `set_password(password)` - Hash and store password
 - `check_password(password)` - Verify password against hash
+
+### StripeWebhookEvent
+
+Minimal Stripe webhook ledger used for idempotency and operational audit.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `stripe_event_id` | String(80) | UNIQUE, NOT NULL | Stripe event identifier used for dedupe |
+| `event_type` | String(80) | NOT NULL | Stripe event type |
+| `stripe_object_id` | String(80) | nullable | Primary Stripe object id from the event payload |
+| `stripe_customer_id` | String(80) | nullable | Stripe customer id if present |
+| `stripe_subscription_id` | String(80) | nullable | Stripe subscription id if present |
+| `organization_id` | Integer | FK(organizations.id), nullable | Linked organization when resolvable |
+| `signature_verified` | Boolean | NOT NULL | Whether the Stripe signature check passed |
+| `event_created_at` | DateTime | nullable | Stripe event creation time |
+| `received_at` | DateTime | NOT NULL | First receipt time in the app |
+| `last_seen_at` | DateTime | NOT NULL | Most recent duplicate/retry receipt time |
+| `processed_at` | DateTime | nullable | Successful or ignored completion time |
+| `status` | String(20) | NOT NULL | `processing`, `processed`, `ignored`, or `failed` |
+| `attempt_count` | Integer | NOT NULL | Number of deliveries seen for this event id |
+| `last_error` | Text | nullable | Last processing failure message |
 - `get_id()` - Returns nonce-bound session identifier (`id:session_nonce`)
 - `rotate_session_nonce()` - Invalidates all active sessions
 - `is_admin` - Property returning True if role is 'admin'

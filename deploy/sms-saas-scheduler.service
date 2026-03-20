@@ -9,8 +9,10 @@ Group=smsadmin
 WorkingDirectory=/opt/sms-saas
 Environment="PATH=/opt/sms-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="SAAS_MODE=1"
+Environment="APP_ROOT=/opt/sms-saas"
 EnvironmentFile=-/opt/sms-saas/.env
 ExecStartPre=/opt/sms-saas/deploy/check_python_runtime.sh
+ExecStartPre=/usr/local/bin/saas-dbdoctor --apply
 ExecStart=/bin/bash /opt/sms-saas/deploy/run_scheduler_once.sh
 StandardOutput=journal
 StandardError=journal

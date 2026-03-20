@@ -1,0 +1,56 @@
+const { test, expect } = require('@playwright/test');
+
+async function login(page, username, password) {
+  await page.goto('/login');
+  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Password').fill(password);
+  await page.getByRole('button', { name: 'Sign In' }).click();
+}
+
+test('platform admin can review onboarding progress and owner invite access', async ({ page }) => {
+  await login(page, 'platform@browser.test', 'Platform-pass1!');
+  await expect(page.locator('.app-page-title')).toHaveText('Platform');
+  await expect(page.getByRole('link', { name: 'Platform' })).toBeVisible();
+  await expect(page.locator('.app-nav .app-nav-link').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  const organizationsNavLink = page.locator('.app-nav a[href="/platform/organizations"]').first();
+  await expect(organizationsNavLink).toBeVisible();
+  await organizationsNavLink.click();
+
+  const onboardingRow = page.locator('tr').filter({ hasText: 'Onboarding Bakery' });
+  await expect(onboardingRow).toBeVisible();
+  await expect(onboardingRow.getByText(/core steps complete/).first()).toBeVisible();
+  await expect(onboardingRow.getByText(/Recommended for non-live organizations/)).toBeVisible();
+  await expect(onboardingRow.getByRole('link', { name: 'Configure sender' })).toBeVisible();
+  const ownerInviteLink = onboardingRow.getByRole('link', { name: 'Open invite' });
+  await expect(ownerInviteLink).toBeVisible();
+  await expect(ownerInviteLink).toHaveAttribute('href', /browser-owner-invite-token/);
+
+  await page.getByRole('link', { name: 'Add Organization' }).click();
+  await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();
+  await expect(page.getByText(/Leave both fields blank/)).toBeVisible();
+  await expect(page.getByText(/One-number rules/)).toBeVisible();
+});
+
+test('owner sees human-readable billing state and pending invite links', async ({ page }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Organizations' })).toHaveCount(0);
+  await page.goto('/billing');
+
+  await expect(page.locator('.badge').filter({ hasText: 'Trial active' }).first()).toBeVisible();
+  await expect(page.getByText(/Ready for owner/)).toBeVisible();
+  await expect(page.getByText('Sending access:')).toBeVisible();
+
+  await page.goto('/users');
+  await expect(page.getByText('Pending Invitations')).toBeVisible();
+  const staffInviteLink = page.getByRole('link', { name: 'Open invite' }).first();
+  await expect(staffInviteLink).toHaveAttribute('href', /browser-staff-invite-token/);
+});
+
+test('staff is blocked from billing', async ({ page }) => {
+  await login(page, 'staff@browser.test', 'Staff-pass1!');
+  const response = await page.goto('/billing');
+
+  expect(response).not.toBeNull();
+  expect(response.status()).toBe(403);
+});

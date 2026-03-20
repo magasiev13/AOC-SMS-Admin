@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SMS_SAAS_PYTHON="${SMS_SAAS_PYTHON:-/opt/sms-saas/venv/bin/python}"
+
+if [[ ! -x "${SMS_SAAS_PYTHON}" ]]; then
+  echo "ERROR: Python interpreter not found at ${SMS_SAAS_PYTHON}." >&2
+  echo "Set SMS_SAAS_PYTHON to the SaaS venv python path, e.g. /opt/sms-saas/venv/bin/python." >&2
+  exit 1
+fi
+
+exec "${SMS_SAAS_PYTHON}" -m app.saas_db "$@"

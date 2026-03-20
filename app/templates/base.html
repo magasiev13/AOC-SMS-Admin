@@ -15,16 +15,24 @@
     {% set inbox_active = request.endpoint and request.endpoint.startswith('main.inbox') %}
     {% set automation_active = request.endpoint and (request.endpoint.startswith('main.keyword_rule') or request.endpoint.startswith('main.keyword_rules') or request.endpoint.startswith('main.survey_flow') or request.endpoint.startswith('main.survey_flows')) %}
     {% set security_active = request.endpoint and request.endpoint.startswith('main.security_events') %}
+    {% set platform_user = current_user.is_authenticated and current_user.is_platform_admin %}
+    {% set platform_home_active = request.endpoint == 'main.platform_home' %}
+    {% set platform_orgs_active = request.endpoint and request.endpoint.startswith('main.platform_organizations') %}
+    {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.dashboard') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
-            <a class="app-sidebar-brand" href="{{ url_for('main.dashboard') }}">
+            <a class="app-sidebar-brand" href="{{ home_url }}">
                 <span class="brand-icon">
                     <span class="brand-icon__pulse"></span>
-                    <i class="bi bi-send-fill"></i>
+                    <i class="bi bi-send-fill" aria-hidden="true"></i>
                 </span>
                 <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
             </a>
+            {% if platform_user %}
+            <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform Control</div>
+            {% endif %}
             <div class="app-sidebar-search">
+                {% if not platform_user %}
                 {% block app_search %}
                 <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                     <i class="bi bi-search"></i>
@@ -33,8 +41,27 @@
                            value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                 </form>
                 {% endblock %}
+                {% else %}
+                <div class="small text-white-50 px-2">
+                    Manage organizations, onboarding, and platform access from a dedicated control plane.
+                </div>
+                {% endif %}
             </div>
             <nav class="nav flex-column app-nav">
+                {% if platform_user %}
+                <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
+                    <i class="bi bi-grid-1x2 me-2"></i>Platform
+                </a>
+                <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
+                    <i class="bi bi-buildings me-2"></i>Organizations
+                </a>
+                <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
+                    <i class="bi bi-person-gear me-2"></i>Users
+                </a>
+                <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
+                    <i class="bi bi-shield-lock me-2"></i>Security
+                </a>
+                {% else %}
                 <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
                     <i class="bi bi-send me-2"></i>Send
                 </a>
@@ -67,6 +94,7 @@
                     <i class="bi bi-shield-lock me-2"></i>Security
                 </a>
                 {% endif %}
+                {% endif %}
             </nav>
             {% if current_user.is_authenticated %}
             <div class="mt-auto">
@@ -86,10 +114,10 @@
         <div class="app-main">
             <nav class="app-topbar navbar navbar-light d-lg-none">
                 <div class="container-fluid">
-                    <a class="navbar-brand" href="{{ url_for('main.dashboard') }}">
+                    <a class="navbar-brand" href="{{ home_url }}">
                         <span class="brand-icon brand-icon--sm">
                             <span class="brand-icon__pulse"></span>
-                            <i class="bi bi-send-fill"></i>
+                            <i class="bi bi-send-fill" aria-hidden="true"></i>
                         </span>
                         <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
                     </a>
@@ -99,6 +127,7 @@
                 </div>
                 <div class="collapse app-mobile-nav" id="appMobileNav">
                     <div class="app-mobile-nav-panel p-3 border-top">
+                        {% if not platform_user %}
                         {% block app_search_mobile %}
                         <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                             <i class="bi bi-search"></i>
@@ -107,7 +136,24 @@
                                    value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                         </form>
                         {% endblock %}
+                        {% else %}
+                        <div class="small text-muted">Platform control plane</div>
+                        {% endif %}
                         <div class="nav flex-column mt-3">
+                            {% if platform_user %}
+                            <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
+                                <i class="bi bi-grid-1x2 me-2"></i>Platform
+                            </a>
+                            <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
+                                <i class="bi bi-buildings me-2"></i>Organizations
+                            </a>
+                            <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
+                                <i class="bi bi-person-gear me-2"></i>Users
+                            </a>
+                            <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
+                                <i class="bi bi-shield-lock me-2"></i>Security
+                            </a>
+                            {% else %}
                             <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
                                 <i class="bi bi-send me-2"></i>Send
                             </a>
@@ -139,6 +185,7 @@
                             <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
                                 <i class="bi bi-shield-lock me-2"></i>Security
                             </a>
+                            {% endif %}
                             {% endif %}
                             {% if current_user.is_authenticated %}
                             <a class="app-nav-link mt-2" href="{{ url_for('main.change_password') }}">
@@ -253,6 +300,40 @@
         const iconEls = document.querySelectorAll('i.bi');
         iconEls.forEach((iconEl) => {
             iconEl.setAttribute('aria-hidden', 'true');
+        });
+
+        const copyButtons = document.querySelectorAll('[data-copy-text]');
+        copyButtons.forEach((button) => {
+            button.addEventListener('click', async () => {
+                const text = button.dataset.copyText || '';
+                if (!text) {
+                    return;
+                }
+
+                const originalHtml = button.innerHTML;
+                const feedback = button.dataset.copyFeedback || 'Copied';
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        const input = document.createElement('textarea');
+                        input.value = text;
+                        input.setAttribute('readonly', '');
+                        input.style.position = 'absolute';
+                        input.style.left = '-9999px';
+                        document.body.appendChild(input);
+                        input.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(input);
+                    }
+                    button.innerHTML = feedback;
+                    window.setTimeout(() => {
+                        button.innerHTML = originalHtml;
+                    }, 1500);
+                } catch (error) {
+                    window.prompt('Copy this link:', text);
+                }
+            });
         });
 
         function updateTableScrollHints() {

@@ -10,6 +10,8 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
   - `sms-saas-worker.service`
   - `sms-saas-scheduler.service`
   - `sms-saas-scheduler.timer`
+  - `sms-saas-billing-reconcile.service`
+  - `sms-saas-billing-reconcile.timer`
 - Use separate logs under `/var/log/sms-saas`
 - Use a separate host or subdomain such as `beta.<host>` or `app.<host>`
 
@@ -26,9 +28,164 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
 
+## One-Number Twilio Strategy
+
+- Keep `TWILIO_ACCOUNT_SID=AC...` and `TWILIO_AUTH_TOKEN=...` in `.env`.
+- Create one Twilio Messaging Service and use its `MG...` SID only for the organization that is currently your live SMS test organization.
+- Attach your one Twilio phone number to that Messaging Service sender pool.
+- In the app, use `/platform/organizations/<id>/messaging` to move the live sender between businesses without touching the database.
+- Leave every non-live organization without sender values so its messaging profile stays `pending`.
+- Do not paste `AC...` into the Messaging Service field. `AC...` is the account SID; `MG...` is the Messaging Service SID.
+- Do not assign the same phone number or `MG...` SID to multiple organizations at the same time.
+
+## Stripe Webhooks
+
+- Canonical webhook path: `/webhooks/stripe`
+- Required event subscriptions:
+  - `checkout.session.completed`
+  - `customer.subscription.created`
+  - `customer.subscription.updated`
+  - `customer.subscription.deleted`
+  - `invoice.payment_succeeded`
+  - `invoice.payment_failed`
+
+### Local Development
+
+- Use the Stripe CLI, not a Dashboard event destination.
+- Forward to:
+  - `stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe`
+- Use the CLI-provided `whsec_...` value as local `STRIPE_WEBHOOK_SECRET`.
+
+## Local Acceptance Runbook
+
+### Start the local stack
+
+1. Populate `.env` with SaaS values:
+   - `SAAS_MODE=1`
+   - local `DATABASE_URL`
+   - local `REDIS_URL`
+   - `RQ_QUEUE_NAME=sms-saas`
+   - `SAAS_BASE_URL=http://127.0.0.1:5000`
+   - Stripe test keys and local `STRIPE_WEBHOOK_SECRET`
+2. Apply the explicit SaaS schema:
+   - `./venv/bin/python -m app.saas_db --apply`
+3. Start Redis.
+4. Start web + worker:
+   - `./run/up.sh`
+5. Start the scheduler in a second terminal:
+   - `SCHEDULER_ENABLED=1 SCHEDULER_RUNNER=1 ./venv/bin/python -m app.scheduler_runner`
+6. Start Stripe webhook forwarding in a third terminal:
+   - `stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe`
+
+### Run the owner + staff flow
+
+1. Sign in as the platform admin.
+2. Open `/platform/organizations` and create a business.
+3. For most organizations during cheap local testing, leave the Twilio sender fields blank so the org stays `pending` for messaging.
+4. Use `Configure sender` from the Organizations page only on the one business you are currently live-testing with Twilio.
+5. Enter:
+   - the one Twilio sender number
+   - the real `MG...` Messaging Service SID
+6. If you want to live-test a different business later, clear the sender fields from the current live org first, then assign them to the next org.
+7. From the Organizations page, use the visible owner invite link:
+   - `Open invite` to launch it
+   - `Copy link` if you want to open it in a private window
+8. Accept the owner invite.
+9. Complete Stripe test checkout.
+10. Confirm `/billing` shows a human-readable active or trialing state.
+11. Open `/users` and create a staff invitation from the owner account.
+12. Use the visible staff invite link from the pending invitation table.
+13. Accept the staff invite in a separate browser session.
+14. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
+
+### Verify message behavior locally
+
+1. As the owner of the live test organization, confirm sending is enabled only when billing is `trialing` or `active`.
+2. Verify inbound routing using the live organization sender identity.
+3. Confirm that non-live organizations remain `pending` for messaging and do not share the live sender.
+4. Create a scheduled send and confirm the scheduler processes it.
+5. Run one manual billing reconciliation check:
+   - `APP_ROOT="$(pwd)" ./deploy/run_billing_reconcile_once.sh`
+
+### Local acceptance criteria
+
+- No DB inspection or shell token lookup is needed for normal onboarding.
+- The Organizations page shows onboarding progress, billing state, messaging state, and owner invite access.
+- The Organizations page allows the platform admin to move the one live sender identity between organizations.
+- The Users page shows pending invitation links for local owner/staff testing.
+- The Billing page explains the current state, the next step, and whether sending is enabled.
+- Staff users cannot access billing or platform admin surfaces.
+
+## Browser Smoke Tests
+
+### Install once
+
+- `npm install`
+- `npm run playwright:install`
+
+### Run the browser suite
+
+- `./run/test_browser.sh`
+
+This launches a deterministic local Flask server on `http://127.0.0.1:5010` using a seeded SQLite database under `.playwright/`.
+
+### Seeded browser accounts
+
+- Platform admin:
+  - `platform@browser.test`
+  - `Platform-pass1!`
+- Owner:
+  - `owner@browser.test`
+  - `Owner-pass1!`
+- Staff:
+  - `staff@browser.test`
+  - `Staff-pass1!`
+
+### What the browser suite covers
+
+- Platform admin can review onboarding progress and owner invite access.
+- Owner sees human-readable billing state and pending invitation links.
+- Staff receives `403` on billing.
+
+### Browser test artifacts
+
+- HTML report:
+  - `output/playwright/report/`
+- Failure traces, video, screenshots:
+  - `output/playwright/test-results/`
+
+## Production-Like Demo Seed
+
+- Use `./run/seed_demo_saas.sh --reset` to load a realistic multi-organization local dataset.
+- For account credentials, seeded organizations, and the suggested manual acceptance flow, see:
+  - [docs/saas-demo-data.md](/Users/magasiev/Desktop/Projects/AOC-SMS-saas/docs/saas-demo-data.md)
+
+### Staging
+
+- Configure a Stripe Dashboard webhook endpoint for:
+  - `https://beta.<host>/webhooks/stripe`
+- Use a staging-specific webhook secret.
+
+### Production
+
+- Configure a separate Stripe Dashboard webhook endpoint for:
+  - `https://app.<host>/webhooks/stripe`
+- Use a production-specific webhook secret.
+- Do not reuse local CLI webhook secrets in staging or production.
+
+## Separate SaaS Commands
+
+- Install / update schema:
+  - `python -m app.saas_db --apply`
+- Validate schema readiness:
+  - `python -m app.saas_db --doctor`
+- Import a legacy production snapshot into one organization during cutover:
+  - `python -m app.saas_db --import-legacy /path/to/legacy.db --organization-name "Legacy Production" --organization-slug legacy-production`
+
 ## Safety Rules
 
 - Keep legacy production on the baseline tag until the pilot is stable.
 - Do not share webhook URLs between legacy and SaaS.
 - Do not reuse the legacy SQLite database for SaaS.
 - Do not point the SaaS worker at the legacy queue name.
+- Do not use `/stripe/webhook`; Stripe must point at `/webhooks/stripe`.

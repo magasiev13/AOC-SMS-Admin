@@ -25,6 +25,7 @@ For detailed documentation, see the [`docs/`](docs/) folder:
 - [Services](docs/services.md) - Twilio, Scheduler, Suppression services
 - [Configuration](docs/configuration.md) - Environment variables guide
 - [Deployment](docs/deployment.md) - Production deployment instructions
+- [SaaS Operations](docs/saas-operations.md) - Separate SaaS deployment, import, and backup runbook
 - [CLI Tools](docs/cli.md) - dbdoctor and other utilities
 - [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 

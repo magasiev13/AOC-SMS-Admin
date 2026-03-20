@@ -6,11 +6,13 @@ After=network.target redis.service
 User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-saas
+Environment="APP_ROOT=/opt/sms-saas"
 Environment="SAAS_MODE=1"
 Environment="SCHEDULER_ENABLED=0"
 Environment="RQ_QUEUE_NAME=sms-saas"
 EnvironmentFile=/opt/sms-saas/.env
 ExecStartPre=/opt/sms-saas/deploy/check_python_runtime.sh
+ExecStartPre=/usr/local/bin/saas-dbdoctor --apply
 ExecStart=/bin/bash /opt/sms-saas/deploy/run_worker.sh
 Restart=on-failure
 RestartSec=5

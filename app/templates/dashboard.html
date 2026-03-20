@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard - SMS Admin{% endblock %}
+{% block title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }} - SMS Admin{% endblock %}
 
-{% block page_title %}Dashboard{% endblock %}
+{% block page_title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }}{% endblock %}
 
 {% block breadcrumbs %}
 <span>Overview</span>

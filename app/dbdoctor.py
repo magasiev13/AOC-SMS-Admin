@@ -71,6 +71,7 @@ def _check_message_logs(connection) -> tuple[list[str], list[str]]:
     issues: list[str] = []
     expected_columns = {
         "id",
+        "organization_id",
         "created_at",
         "message_body",
         "target",
@@ -191,6 +192,11 @@ def main() -> None:
     _configure_logging()
     engine = _build_engine()
     logger = logging.getLogger(__name__)
+    if Config.SAAS_MODE and not engine.url.drivername.startswith("sqlite"):
+        raise RuntimeError(
+            "dbdoctor manages the legacy SQLite path only. "
+            "Use `python -m app.saas_db --print|--apply|--doctor` for SaaS databases."
+        )
 
     if args.apply:
         from app import models  # noqa: F401

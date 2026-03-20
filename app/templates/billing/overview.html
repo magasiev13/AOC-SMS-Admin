@@ -9,22 +9,83 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
+<div class="row g-4 justify-content-center">
     <div class="col-lg-7">
-        <div class="card app-card">
+        <div class="card app-card h-100">
             <div class="card-body">
                 <div class="mb-4">
                     <div class="text-muted small text-uppercase mb-1">Organization</div>
                     <h4 class="mb-1">{{ organization.name if organization else 'Unknown organization' }}</h4>
-                    <div class="text-muted">Subscription status: <strong>{{ subscription.status if subscription else 'incomplete' }}</strong></div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
+                        <span class="badge bg-{{ subscription_view.badge }}">{{ subscription_view.title }}</span>
+                        <span class="text-muted">Internal status: <strong>{{ subscription.status if subscription else 'incomplete' }}</strong></span>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <p class="mb-2">{{ subscription_view.summary }}</p>
+                    <div class="text-muted">{{ subscription_view.next_step }}</div>
+                    {% if subscription_view.period_value %}
+                    <div class="text-muted mt-2">{{ subscription_view.period_label }}: <strong>{{ subscription_view.period_value }}</strong></div>
+                    {% endif %}
+                    <div class="text-muted mt-2">
+                        Sending access:
+                        <strong>{{ 'Enabled' if subscription_view.can_send else 'Paused until billing is fixed' }}</strong>
+                    </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2">
                     <form method="POST" action="{{ url_for('main.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-secondary">Open Billing Portal</button>
+                        <button type="submit" class="btn btn-outline-secondary" {% if not subscription or not subscription.stripe_customer_id %}disabled{% endif %}>
+                            Open Billing Portal
+                        </button>
                     </form>
-                    <a href="{{ url_for('main.billing_checkout') }}" class="btn btn-primary">Start or Update Subscription</a>
+                    <a href="{{ url_for('main.billing_checkout') }}" class="btn btn-primary">
+                        {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
+                    </a>
                 </div>
+                {% if not subscription or not subscription.stripe_customer_id %}
+                <div class="form-text mt-2">The billing portal becomes available after Stripe creates the customer record.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card app-card h-100">
+            <div class="card-body">
+                <div class="text-muted small text-uppercase mb-1">Onboarding</div>
+                <h5 class="mb-1">{{ onboarding_view.headline if onboarding_view else 'No onboarding state yet' }}</h5>
+                {% if onboarding_view %}
+                <p class="text-muted mb-3">{{ onboarding_view.completed_required }}/{{ onboarding_view.required_total }} required setup steps are complete.</p>
+                <div class="list-group list-group-flush">
+                    {% for step in onboarding_view.steps %}
+                    <div class="list-group-item px-0">
+                        <div class="d-flex justify-content-between align-items-start gap-3">
+                            <div>
+                                <div class="fw-semibold">
+                                    {% if step.complete %}
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    {% elif step.optional %}
+                                    <i class="bi bi-dash-circle text-muted me-2"></i>
+                                    {% else %}
+                                    <i class="bi bi-circle text-muted me-2"></i>
+                                    {% endif %}
+                                    {{ step.label }}
+                                </div>
+                                <div class="small text-muted mt-1">{{ step.detail }}</div>
+                            </div>
+                            {% if step.optional %}
+                            <span class="badge bg-light text-dark">Optional</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% if not onboarding_view.team_ready %}
+                <div class="mt-3">
+                    <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-secondary">Invite a Team Member</a>
+                </div>
+                {% endif %}
+                {% endif %}
             </div>
         </div>
     </div>

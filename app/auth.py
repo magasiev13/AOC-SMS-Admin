@@ -26,6 +26,22 @@ login_manager.session_protection = "strong"
 
 bp = Blueprint("auth", __name__)
 
+TENANT_ENDPOINT_PREFIXES = (
+    "main.dashboard",
+    "main.billing_",
+    "main.community_",
+    "main.events_",
+    "main.logs_",
+    "main.scheduled_",
+    "main.unsubscribed_",
+    "main.inbox_",
+    "main.keyword_rule",
+    "main.keyword_rules",
+    "main.survey_flow",
+    "main.survey_flows",
+    "main.team_",
+)
+
 
 def _get_client_ip() -> str:
     return request.remote_addr or "unknown"
@@ -37,6 +53,18 @@ def _is_safe_url(target: str | None) -> bool:
     host_url = urlparse(request.host_url)
     redirect_url = urlparse(urljoin(request.host_url, target))
     return redirect_url.scheme in ("http", "https") and host_url.netloc == redirect_url.netloc
+
+
+def home_endpoint_for_user(user) -> str:
+    if current_app.config.get("SAAS_MODE") and getattr(user, "is_platform_admin", False):
+        return "main.platform_home"
+    return "main.dashboard"
+
+
+def _is_platform_admin_tenant_endpoint(endpoint: str | None) -> bool:
+    if not endpoint:
+        return False
+    return any(endpoint.startswith(prefix) for prefix in TENANT_ENDPOINT_PREFIXES)
 
 
 def require_roles(*roles):
@@ -95,6 +123,16 @@ def enforce_account_security():
         }
         if endpoint not in allowed_endpoints:
             return redirect(url_for("main.security_contact"))
+
+    if current_app.config.get("SAAS_MODE") and getattr(current_user, "is_platform_admin", False):
+        if _is_platform_admin_tenant_endpoint(endpoint):
+            if request.method == "GET":
+                flash(
+                    "Platform admins use the platform home. Sign in with an organization owner or staff account for workspace activity.",
+                    "info",
+                )
+                return redirect(url_for("main.platform_home"))
+            abort(403)
 
     return None
 
@@ -183,7 +221,7 @@ def login():
             next_page = request.args.get("next")
             if next_page and _is_safe_url(next_page):
                 return redirect(next_page)
-            return redirect(url_for("main.dashboard"))
+            return redirect(url_for(home_endpoint_for_user(user)))
 
         lock_result = record_failed_login(client_ip, normalized_username)
         record_auth_event(

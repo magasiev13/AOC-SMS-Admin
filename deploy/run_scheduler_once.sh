@@ -5,7 +5,8 @@
 
 set -euo pipefail
 
-APP_ROOT="${APP_ROOT:-/opt/sms-admin}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${APP_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 VENV_PYTHON="${APP_ROOT}/venv/bin/python"
 ENV_FILE="${APP_ROOT}/.env"
 

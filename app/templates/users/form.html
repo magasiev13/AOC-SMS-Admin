@@ -5,7 +5,11 @@
 {% block page_title %}{{ 'Edit' if user else 'Create' }} User{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+{% if current_user.is_platform_admin %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> /
+{% else %}
+<a href="{{ url_for('main.dashboard') }}">Workspace</a> /
+{% endif %}
 <a href="{{ url_for('main.users_list') }}">Users</a> /
 <span>{{ 'Edit' if user else 'Create' }}</span>
 {% endblock %}

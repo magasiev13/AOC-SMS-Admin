@@ -16,12 +16,19 @@
                 <h5 class="mb-0">Join {{ invitation.organization.name }}</h5>
             </div>
             <div class="card-body">
-                <p class="text-muted">This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.</p>
+                <p class="text-muted mb-4">
+                    This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.
+                    {% if invitation.role == 'owner' %}
+                    After you join, you will review billing before sending messages.
+                    {% else %}
+                    After you join, you will go straight to the dashboard.
+                    {% endif %}
+                </p>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
                         <label class="form-label" for="full_name">Full Name</label>
-                        <input class="form-control" id="full_name" name="full_name">
+                        <input class="form-control" id="full_name" name="full_name" autocomplete="name">
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="username">Username</label>
@@ -34,6 +41,7 @@
                     <div class="mb-3">
                         <label class="form-label" for="password">Password</label>
                         <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
+                        <div class="form-text">Use a strong password you can remember for future logins.</div>
                     </div>
                     <div class="mb-4">
                         <label class="form-label" for="confirm_password">Confirm Password</label>

@@ -5,7 +5,7 @@
 {% block page_title %}Organizations{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Organizations</span>
+<a href="{{ url_for('main.platform_home') }}">Platform</a> / <span>Organizations</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -20,34 +20,125 @@
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
-                    <th>Name</th>
-                    <th>Slug</th>
+                    <th>Business</th>
+                    <th>Onboarding</th>
                     <th>Status</th>
                     <th>Billing</th>
                     <th>Messaging</th>
-                    <th width="140">Actions</th>
+                    <th>Owner Invite</th>
+                    <th width="180">Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {% for organization in organizations %}
+                {% for row in organization_rows %}
+                {% set organization = row.organization %}
+                {% set onboarding = row.onboarding %}
+                {% set billing = row.billing %}
+                {% set owner_invitation = onboarding.owner_invitation %}
                 <tr>
-                    <td>{{ organization.name }}</td>
-                    <td><code>{{ organization.slug }}</code></td>
-                    <td><span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning' }}">{{ organization.status }}</span></td>
-                    <td>{{ organization.subscription.status if organization.subscription else 'incomplete' }}</td>
-                    <td>{{ organization.messaging_profile.status if organization.messaging_profile else 'pending' }}</td>
                     <td>
-                        <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                {{ 'Suspend' if organization.status == 'active' else 'Reactivate' }}
+                        <div class="fw-semibold">{{ organization.name }}</div>
+                        <div class="small text-muted"><code>{{ organization.slug }}</code></div>
+                        {% if owner_invitation %}
+                        <div class="small text-muted mt-2">Primary contact: {{ owner_invitation.email }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="fw-semibold">{{ onboarding.headline }}</div>
+                        <div class="small text-muted">{{ onboarding.completed_required }}/{{ onboarding.required_total }} core steps complete</div>
+                        <details class="mt-2">
+                            <summary class="small">View checklist</summary>
+                            <ul class="list-unstyled small mt-2 mb-0">
+                                {% for step in onboarding.steps %}
+                                <li class="mb-2">
+                                    <span class="me-1">{% if step.complete %}✓{% elif step.optional %}○{% else %}•{% endif %}</span>
+                                    <strong>{{ step.label }}</strong>
+                                    {% if step.optional %}
+                                    <span class="badge bg-light text-dark ms-1">Optional</span>
+                                    {% endif %}
+                                    <div class="text-muted">{{ step.detail }}</div>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                    </td>
+                    <td><span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning' }}">{{ organization.status }}</span></td>
+                    <td>
+                        <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
+                        <div class="small text-muted mt-1">{{ billing.summary }}</div>
+                        {% if billing.period_value %}
+                        <div class="small text-muted">{{ billing.period_label }}: {{ billing.period_value }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if organization.messaging_profile %}
+                        <span class="badge bg-{{ 'success' if organization.messaging_profile.status == 'active' else 'warning text-dark' }}">
+                            {{ organization.messaging_profile.status }}
+                        </span>
+                        <div class="small text-muted mt-1">
+                            {{ organization.messaging_profile.from_number or organization.messaging_profile.messaging_service_sid or 'Sender still needed' }}
+                        </div>
+                        <div class="small text-muted">
+                            {% if organization.messaging_profile.status == 'active' %}
+                            Current live test sender
+                            {% else %}
+                            Recommended for non-live organizations
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">pending</span>
+                        <div class="small text-muted mt-1">No sender profile yet.</div>
+                        <div class="small text-muted">Recommended for non-live organizations.</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if owner_invitation %}
+                        <div class="small mb-2">
+                            <span class="badge bg-{{ 'success' if owner_invitation.status == 'accepted' else ('warning text-dark' if owner_invitation.status == 'pending' else 'secondary') }}">
+                                {{ owner_invitation.status }}
+                            </span>
+                        </div>
+                        {% if onboarding.owner_invitation_url %}
+                        <div class="d-flex flex-wrap gap-2">
+                            <a href="{{ onboarding.owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                data-copy-text="{{ onboarding.owner_invitation_url }}"
+                                data-copy-feedback="Copied"
+                            >
+                                Copy link
                             </button>
-                        </form>
+                        </div>
+                        {% else %}
+                        <div class="small text-muted">The owner has already joined.</div>
+                        {% endif %}
+                        {% else %}
+                        <div class="small text-muted">
+                            {{ 'The owner has already joined.' if onboarding.owner_joined else 'No invite available yet.' }}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a
+                                href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}"
+                                class="btn btn-sm btn-outline-primary"
+                            >
+                                {{ 'Edit sender' if organization.messaging_profile and organization.messaging_profile.status == 'active' else 'Configure sender' }}
+                            </a>
+                            <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                    {{ 'Suspend' if organization.status == 'active' else 'Reactivate' }}
+                                </button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="6" class="text-center text-muted py-4">No organizations created yet.</td>
+                    <td colspan="7" class="text-center text-muted py-4">No organizations created yet.</td>
                 </tr>
                 {% endfor %}
             </tbody>

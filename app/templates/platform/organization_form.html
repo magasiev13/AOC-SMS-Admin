@@ -2,55 +2,265 @@
 
 {% block title %}Add Organization - SMS Admin{% endblock %}
 
-{% block page_title %}Add Organization{% endblock %}
+{% block page_title %}Create Business Account{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.platform_home') }}">Platform</a> /
 <a href="{{ url_for('main.platform_organizations_list') }}">Organizations</a> /
-<span>Add</span>
+<span>Create</span>
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-7">
-        <div class="card app-card">
+{% set form_name = request.form.get('name', '') %}
+{% set form_slug = request.form.get('slug', '') %}
+{% set form_owner_email = request.form.get('owner_email', '') %}
+{% set form_owner_role = request.form.get('owner_role', 'owner') %}
+{% set form_sender_number = request.form.get('sender_number', '') %}
+{% set form_messaging_service_sid = request.form.get('messaging_service_sid', '') %}
+
+<div class="org-create-shell">
+    <div class="org-create-main">
+        <div class="card app-card org-create-hero-card mb-4">
             <div class="card-body">
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="name">Organization Name</label>
-                        <input class="form-control" id="name" name="name" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="slug">Slug</label>
-                        <input class="form-control" id="slug" name="slug" required placeholder="acme-co">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="owner_email">Owner Email</label>
-                        <input class="form-control" id="owner_email" name="owner_email" type="email" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="owner_role">Owner Role</label>
-                        <select class="form-select" id="owner_role" name="owner_role">
-                            <option value="owner">Owner</option>
-                            <option value="staff">Staff</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="sender_number">Dedicated Sender Number</label>
-                        <input class="form-control" id="sender_number" name="sender_number" placeholder="+15551234567">
-                    </div>
-                    <div class="mb-4">
-                        <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
-                        <input class="form-control" id="messaging_service_sid" name="messaging_service_sid" placeholder="MGxxxxxxxx">
-                    </div>
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">Create Organization</button>
-                        <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Cancel</a>
-                    </div>
-                </form>
+                <div class="org-create-kicker">Platform admin setup</div>
+                <h2 class="org-create-hero-title">Create the next business without locking in live messaging yet.</h2>
+                <p class="org-create-hero-copy mb-0">
+                    Start with business identity and owner access. If you only have one Twilio number, leave live sender fields blank for now and keep this organization in pending messaging mode until it becomes your active SMS test org.
+                </p>
             </div>
         </div>
+
+        <form method="POST" class="org-create-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="card app-card org-create-section-card mb-4">
+                <div class="card-body">
+                    <div class="org-create-section-header">
+                        <div>
+                            <div class="org-create-section-kicker">Business setup</div>
+                            <h3 class="org-create-section-title">Name the account and set its URL slug</h3>
+                        </div>
+                        <span class="org-create-step-badge">Step 1</span>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-7">
+                            <label class="form-label" for="name">Business Name</label>
+                            <input
+                                class="form-control"
+                                id="name"
+                                name="name"
+                                required
+                                autocomplete="organization"
+                                placeholder="Acme Bakery"
+                                value="{{ form_name }}"
+                            >
+                            <div class="form-text">Use the public-facing business name the owner will recognize immediately.</div>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label" for="slug">Workspace Slug</label>
+                            <input
+                                class="form-control"
+                                id="slug"
+                                name="slug"
+                                required
+                                autocapitalize="off"
+                                spellcheck="false"
+                                placeholder="acme-bakery"
+                                value="{{ form_slug }}"
+                            >
+                            <div class="form-text">Lowercase URL-friendly handle used to identify this workspace internally.</div>
+                        </div>
+                    </div>
+
+                    <div class="org-create-slug-preview mt-3">
+                        <span class="org-create-slug-preview__label">Preview</span>
+                        <code data-org-slug-preview>{{ form_slug or 'your-business' }}</code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card app-card org-create-section-card mb-4">
+                <div class="card-body">
+                    <div class="org-create-section-header">
+                        <div>
+                            <div class="org-create-section-kicker">Owner access</div>
+                            <h3 class="org-create-section-title">Decide who receives the first invite</h3>
+                        </div>
+                        <span class="org-create-step-badge">Step 2</span>
+                    </div>
+
+                    <div class="row g-3 align-items-start">
+                        <div class="col-md-8">
+                            <label class="form-label" for="owner_email">Owner Email</label>
+                            <input
+                                class="form-control"
+                                id="owner_email"
+                                name="owner_email"
+                                type="email"
+                                required
+                                autocomplete="email"
+                                placeholder="owner@example.com"
+                                value="{{ form_owner_email }}"
+                            >
+                            <div class="form-text">After creation, the owner invite link appears on the Organizations page so you can open or copy it locally.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="owner_role">Initial Role</label>
+                            <select class="form-select" id="owner_role" name="owner_role">
+                                <option value="owner" {% if form_owner_role == 'owner' %}selected{% endif %}>Owner</option>
+                                <option value="staff" {% if form_owner_role == 'staff' %}selected{% endif %}>Staff</option>
+                            </select>
+                            <div class="form-text">Use Owner for billing/account control. Staff is only for limited internal testing.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card app-card org-create-section-card">
+                <div class="card-body">
+                    <div class="org-create-section-header">
+                        <div>
+                            <div class="org-create-section-kicker">Live messaging</div>
+                            <h3 class="org-create-section-title">Only configure this if this business is your active SMS test org</h3>
+                        </div>
+                        <span class="org-create-step-badge">Optional</span>
+                    </div>
+
+                    <div class="org-create-callout" role="note">
+                        <div class="org-create-callout__title">Recommended default</div>
+                        <div class="org-create-callout__body">
+                            Leave both fields blank for most organizations. With one Twilio number, only one business should have a live sender at a time.
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-6">
+                            <label class="form-label" for="sender_number">Dedicated Sender Number</label>
+                            <input
+                                class="form-control"
+                                id="sender_number"
+                                name="sender_number"
+                                placeholder="+15551234567"
+                                inputmode="tel"
+                                value="{{ form_sender_number }}"
+                            >
+                            <div class="form-text">Optional. This must stay unique across organizations.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
+                            <input
+                                class="form-control"
+                                id="messaging_service_sid"
+                                name="messaging_service_sid"
+                                placeholder="MGxxxxxxxx"
+                                autocapitalize="off"
+                                spellcheck="false"
+                                value="{{ form_messaging_service_sid }}"
+                            >
+                            <div class="form-text">Optional. Use a real <code>MG...</code> SID. Do not paste your <code>AC...</code> account SID here.</div>
+                        </div>
+                    </div>
+
+                    <div class="org-create-form-actions mt-4">
+                        <button type="submit" class="btn btn-primary">Create Business Account</button>
+                        <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </div>
+            </div>
+        </form>
     </div>
+
+    <aside class="org-create-side">
+        <div class="org-create-sticky">
+            <div class="card app-card org-create-summary-card mb-4">
+                <div class="card-body">
+                    <div class="org-create-section-kicker">What happens next</div>
+                    <h3 class="org-create-side-title">Admin workflow after you click create</h3>
+                    <ol class="org-create-checklist mb-0">
+                        <li>The new workspace appears on the Organizations page.</li>
+                        <li>The owner invite link is generated immediately.</li>
+                        <li>The owner accepts the invite and completes billing.</li>
+                        <li>You can activate live messaging later from the sender configuration screen.</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="card app-card org-create-summary-card mb-4">
+                <div class="card-body">
+                    <div class="org-create-section-kicker">One-number rules</div>
+                    <h3 class="org-create-side-title">Use your single Twilio number correctly</h3>
+                    <ul class="org-create-rule-list mb-0">
+                        <li><strong>`AC...`</strong> stays in `.env` as `TWILIO_ACCOUNT_SID`.</li>
+                        <li><strong>`MG...`</strong> goes in the org form only when this business is the live test org.</li>
+                        <li>Keep every other org in pending messaging mode.</li>
+                        <li>Switch the sender later from the Organizations page instead of editing the database.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="card app-card org-create-summary-card">
+                <div class="card-body">
+                    <div class="org-create-section-kicker">Recommended default</div>
+                    <h3 class="org-create-side-title">For cheap local testing</h3>
+                    <p class="text-muted mb-3">
+                        Create the workspace now, invite the owner, finish billing, and leave Twilio blank until this becomes the one business you want to test with real SMS.
+                    </p>
+                    <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-primary w-100">Back to Organization List</a>
+                </div>
+            </div>
+        </div>
+    </aside>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    (() => {
+        const nameInput = document.getElementById('name');
+        const slugInput = document.getElementById('slug');
+        const previewEl = document.querySelector('[data-org-slug-preview]');
+        if (!nameInput || !slugInput || !previewEl) {
+            return;
+        }
+
+        let slugTouched = slugInput.value.trim().length > 0;
+
+        const slugify = (value) => (
+            (value || '')
+                .toLowerCase()
+                .trim()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 64)
+        );
+
+        const updatePreview = () => {
+            const value = slugInput.value.trim() || 'your-business';
+            previewEl.textContent = value;
+        };
+
+        nameInput.addEventListener('input', () => {
+            if (!slugTouched) {
+                slugInput.value = slugify(nameInput.value);
+            }
+            updatePreview();
+        });
+
+        slugInput.addEventListener('input', () => {
+            slugTouched = slugInput.value.trim().length > 0;
+            slugInput.value = slugify(slugInput.value);
+            updatePreview();
+        });
+
+        slugInput.addEventListener('blur', () => {
+            slugInput.value = slugify(slugInput.value);
+            slugTouched = slugInput.value.trim().length > 0;
+            updatePreview();
+        });
+
+        updatePreview();
+    })();
+</script>
 {% endblock %}
