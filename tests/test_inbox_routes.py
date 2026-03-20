@@ -297,6 +297,42 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIn("Jordan Blake", html)
         self.assertIn(thread.phone, html)
 
+    def test_inbox_defaults_to_latest_thread_when_mobile_list_mode_not_requested(self) -> None:
+        self._login()
+
+        oldest = self._create_thread(phone="+17209990010")
+        newest = self._create_thread(phone="+17209990011")
+        self._create_message(thread=oldest, body="Old", direction="inbound")
+        self._create_message(thread=newest, body="New", direction="inbound")
+        self.db.session.commit()
+
+        response = self.client.get("/inbox")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+
+        self.assertIn(f'value="{newest.id}"', html)
+        self.assertIn('inbox-back-button', html)
+        self.assertIn('view=threads', html)
+        self.assertIn('#inboxThreadsPanel', html)
+
+    def test_inbox_mobile_list_mode_shows_threads_without_auto_selecting(self) -> None:
+        self._login()
+
+        first = self._create_thread(phone="+17209990020")
+        second = self._create_thread(phone="+17209990021")
+        self._create_message(thread=first, body="First", direction="inbound")
+        self._create_message(thread=second, body="Second", direction="inbound")
+        self.db.session.commit()
+
+        response = self.client.get("/inbox?view=threads")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+
+        self.assertIn("Select a thread to view messages", html)
+        self.assertNotIn("Back to threads", html)
+        self.assertIn(f'thread={first.id}', html)
+        self.assertIn(f'thread={second.id}', html)
+
     def test_inbox_message_shows_active_keyword_label(self) -> None:
         self._login()
         thread = self._create_thread(phone="+17205550090")

@@ -31,7 +31,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         import app.config
 
         importlib.reload(app.config)
-        self.app = create_app(run_startup_tasks=False)
+        self.app = create_app()
         self.app.config["TESTING"] = True
         self.app_context = self.app.app_context()
         self.app_context.push()

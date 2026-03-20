@@ -40,7 +40,7 @@ try:
     from app import create_app
     from app.services.scheduler_service import send_scheduled_messages
 
-    app = create_app(run_startup_tasks=False)
+    app = create_app()
     send_scheduled_messages(app)
     sys.exit(0)
 except Exception as e:

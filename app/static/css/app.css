@@ -293,6 +293,10 @@ h6,
 
 .app-topbar .navbar-brand {
   font-size: var(--font-size-4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
 }
 
 .app-mobile-nav {
@@ -1129,6 +1133,10 @@ h6,
 .inbox-back-button {
   width: 100%;
   justify-content: center;
+}
+
+.inbox-mobile-thread-count {
+  text-align: center;
 }
 
 .inbox-mobile-actions {

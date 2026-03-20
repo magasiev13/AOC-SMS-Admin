@@ -1,13 +1,13 @@
 import os
-from flask import Flask, request, abort
-from flask_sqlalchemy import SQLAlchemy
-from pathlib import Path
-from typing import Optional
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import unquote
 from zoneinfo import ZoneInfo
-from werkzeug.middleware.proxy_fix import ProxyFix
+
+from flask import Flask, abort, request
+from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash
 
 db = SQLAlchemy()
@@ -85,7 +85,109 @@ def _validate_saas_billing_config(app: Flask) -> None:
         raise RuntimeError(f"SaaS billing configuration is invalid:\n - {details}")
 
 
-def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] = None):
+def _run_startup_tasks(app: Flask) -> None:
+    with app.app_context():
+        from app.migrations.runner import (
+            check_migrations_compatibility,
+            inspect_migrations,
+            run_pending_migrations,
+        )
+
+        if db.engine.url.drivername.startswith("sqlite"):
+            db.create_all()
+            check_migrations_compatibility(db.engine, app.logger)
+            run_pending_migrations(db.engine, app.logger)
+            migration_report = inspect_migrations(db.engine)
+            migration_total = len(migration_report["migrations"])
+            applied = set(migration_report["applied"])
+            pending = [
+                version
+                for version in migration_report["migrations"]
+                if version not in applied
+            ]
+            app.logger.info("Database file in use: %s", migration_report["db_path"])
+            if migration_total:
+                app.logger.info(
+                    "Schema migrations: %s/%s applied; pending: %s",
+                    len(applied),
+                    migration_total,
+                    ", ".join(pending) if pending else "none",
+                )
+            else:
+                app.logger.info("Schema migrations: none")
+        elif app.config.get("SAAS_MODE"):
+            from app.saas_migrations.runner import ensure_saas_schema_ready
+
+            saas_report = ensure_saas_schema_ready(db.engine)
+            app.logger.info(
+                "SaaS schema ready for %s; applied=%s pending=%s.",
+                saas_report["db_label"],
+                len(saas_report["applied"]),
+                len(saas_report["pending"]),
+            )
+        else:
+            db.create_all()
+            check_migrations_compatibility(db.engine, app.logger)
+
+        from app.models import AppUser
+
+        if AppUser.query.count() == 0:
+            admin_password = app.config.get("ADMIN_PASSWORD")
+            if not admin_password:
+                if not app.config.get("DEBUG"):
+                    raise RuntimeError(
+                        "ADMIN_PASSWORD must be set in production to create the first admin user"
+                    )
+            else:
+                admin_username = app.config.get("ADMIN_USERNAME", "admin")
+                admin_email = app.config.get("ADMIN_EMAIL") or f"{admin_username}@example.com"
+                password_hash = admin_password
+                if not admin_password.startswith(("pbkdf2:", "scrypt:")):
+                    password_hash = generate_password_hash(
+                        admin_password, method="pbkdf2:sha256"
+                    )
+
+                admin_user = AppUser(
+                    username=admin_username,
+                    email=admin_email,
+                    role="admin",
+                    is_platform_admin=bool(app.config.get("SAAS_MODE")),
+                    password_hash=password_hash,
+                )
+                db.session.add(admin_user)
+                db.session.commit()
+
+
+def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:
+    scheduler_setting = app.config.get("SCHEDULER_ENABLED")
+
+    if start_scheduler and scheduler_setting:
+        app.logger.info(
+            "Scheduler enabled (SCHEDULER_ENABLED=%s) via explicit runtime entrypoint; starting background scheduler.",
+            scheduler_setting,
+        )
+        from app.services.scheduler_service import init_scheduler
+
+        init_scheduler(app)
+    elif start_scheduler and not scheduler_setting:
+        app.logger.info(
+            "Scheduler start was requested by the runtime entrypoint, but SCHEDULER_ENABLED=%s; not starting.",
+            scheduler_setting,
+        )
+    else:
+        if scheduler_setting:
+            app.logger.warning(
+                "Scheduler enabled (SCHEDULER_ENABLED=%s) but not started (explicit runtime entrypoint not requested).",
+                scheduler_setting,
+            )
+        else:
+            app.logger.info(
+                "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only.",
+                scheduler_setting,
+            )
+
+
+def _build_app() -> Flask:
     app = Flask(__name__)
 
     @app.context_processor
@@ -116,7 +218,6 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
 
         return utc_dt.astimezone(tz).strftime(fmt)
 
-    # Load configuration
     from app.config import Config
 
     app.config.from_object(Config)
@@ -130,7 +231,11 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
             _validate_production_security_config(app)
 
     if is_explicit_production and app.config.get("TRUSTED_HOSTS"):
-        trusted_hosts = {host.strip().lower() for host in app.config.get("TRUSTED_HOSTS", []) if host.strip()}
+        trusted_hosts = {
+            host.strip().lower()
+            for host in app.config.get("TRUSTED_HOSTS", [])
+            if host.strip()
+        }
 
         @app.before_request
         def enforce_trusted_hosts():
@@ -149,136 +254,40 @@ def create_app(run_startup_tasks: bool = True, start_scheduler: Optional[bool] =
             x_prefix=1,
         )
 
-    # Ensure instance folder exists
     instance_path = Path(app.instance_path)
     instance_path.mkdir(exist_ok=True)
 
-    # Initialize extensions
     db.init_app(app)
     csrf.init_app(app)
+
     from app.tenant import init_tenant_scoping
 
     init_tenant_scoping()
 
-    # Initialize Flask-Login
-    from app.auth import login_manager, bp as auth_bp
+    from app.auth import bp as auth_bp, login_manager
 
     login_manager.init_app(app)
     app.register_blueprint(auth_bp)
 
-    # Register routes
     from app import routes
 
     app.register_blueprint(routes.bp)
 
+    return app
+
+
+def create_app(run_startup_tasks: bool = False, start_scheduler: bool = False) -> Flask:
+    app = _build_app()
     if run_startup_tasks:
-        # Create database tables and run migrations
-        with app.app_context():
-            from app.migrations.runner import (
-                check_migrations_compatibility,
-                inspect_migrations,
-                run_pending_migrations,
-            )
+        _run_startup_tasks(app)
 
-            if db.engine.url.drivername.startswith("sqlite"):
-                db.create_all()
-                check_migrations_compatibility(db.engine, app.logger)
-                run_pending_migrations(db.engine, app.logger)
-                migration_report = inspect_migrations(db.engine)
-                migration_total = len(migration_report["migrations"])
-                applied = set(migration_report["applied"])
-                pending = [
-                    version
-                    for version in migration_report["migrations"]
-                    if version not in applied
-                ]
-                app.logger.info("Database file in use: %s", migration_report["db_path"])
-                if migration_total:
-                    app.logger.info(
-                        "Schema migrations: %s/%s applied; pending: %s",
-                        len(applied),
-                        migration_total,
-                        ", ".join(pending) if pending else "none",
-                    )
-                else:
-                    app.logger.info("Schema migrations: none")
-            elif app.config.get("SAAS_MODE"):
-                from app.saas_migrations.runner import ensure_saas_schema_ready
+    _configure_scheduler(app, start_scheduler=start_scheduler)
+    return app
 
-                saas_report = ensure_saas_schema_ready(db.engine)
-                app.logger.info(
-                    "SaaS schema ready for %s; applied=%s pending=%s.",
-                    saas_report["db_label"],
-                    len(saas_report["applied"]),
-                    len(saas_report["pending"]),
-                )
-            else:
-                db.create_all()
-                check_migrations_compatibility(db.engine, app.logger)
 
-            from app.models import AppUser
-
-            if AppUser.query.count() == 0:
-                admin_password = app.config.get("ADMIN_PASSWORD")
-                if not admin_password:
-                    if not app.config.get("DEBUG"):
-                        raise RuntimeError(
-                            "ADMIN_PASSWORD must be set in production to create the first admin user"
-                        )
-                else:
-                    admin_username = app.config.get("ADMIN_USERNAME", "admin")
-                    admin_email = app.config.get("ADMIN_EMAIL") or f"{admin_username}@example.com"
-                    password_hash = admin_password
-                    if not admin_password.startswith(("pbkdf2:", "scrypt:")):
-                        password_hash = generate_password_hash(
-                            admin_password, method="pbkdf2:sha256"
-                        )
-
-                    admin_user = AppUser(
-                        username=admin_username,
-                        email=admin_email,
-                        role="admin",
-                        is_platform_admin=bool(app.config.get("SAAS_MODE")),
-                        password_hash=password_hash,
-                    )
-                    db.session.add(admin_user)
-                    db.session.commit()
-
-    # Start background scheduler
-    scheduler_setting = app.config.get("SCHEDULER_ENABLED")
-    if start_scheduler is None:
-        start_scheduler = os.environ.get("SCHEDULER_RUNNER") == "1"
-        scheduler_reason = "SCHEDULER_RUNNER flag"
-    else:
-        scheduler_reason = "explicit override"
-
-    if start_scheduler and scheduler_setting:
-        app.logger.info(
-            "Scheduler enabled (SCHEDULER_ENABLED=%s) via %s; starting background scheduler.",
-            scheduler_setting,
-            scheduler_reason,
-        )
-        from app.services.scheduler_service import init_scheduler
-
-        init_scheduler(app)
-    elif start_scheduler and not scheduler_setting:
-        app.logger.info(
-            "Scheduler runner requested via %s, but SCHEDULER_ENABLED=%s; not starting.",
-            scheduler_reason,
-            scheduler_setting,
-        )
-    else:
-        if scheduler_setting:
-            app.logger.warning(
-                "Scheduler enabled (SCHEDULER_ENABLED=%s) but not started (%s).",
-                scheduler_setting,
-                scheduler_reason,
-            )
-        else:
-            app.logger.info(
-                "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only (%s).",
-                scheduler_setting,
-                scheduler_reason,
-            )
-
+def create_runtime_app(*, start_scheduler: bool = False) -> Flask:
+    """Create the runtime app and perform explicit bootstrap side effects."""
+    app = _build_app()
+    _run_startup_tasks(app)
+    _configure_scheduler(app, start_scheduler=start_scheduler)
     return app
