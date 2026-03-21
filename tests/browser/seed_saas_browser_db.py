@@ -44,11 +44,13 @@ def main() -> None:
         utc_now,
     )
     from app.migrations.runner import run_pending_migrations
+    from app.saas_migrations.runner import run_pending_saas_migrations
 
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         db.create_all()
         run_pending_migrations(db.engine, app.logger)
+        run_pending_saas_migrations(db.engine, app.logger)
 
         platform_admin = AppUser(
             username="platform-admin",

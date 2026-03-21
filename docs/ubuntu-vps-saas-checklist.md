@@ -118,6 +118,7 @@ STRIPE_WEBHOOK_SECRET=whsec_replace_me
 STRIPE_PRICE_ID=price_replace_me
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
+TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
 APP_TIMEZONE=America/Denver
 AUTH_PASSWORD_POLICY_ENFORCE=1
 AUTH_PASSWORD_MIN_LENGTH=12
@@ -143,6 +144,7 @@ Adjust at least these placeholders before continuing:
 - `ADMIN_PASSWORD`
 - Stripe values
 - Twilio values
+- `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
 
 ## 6. Create The Virtualenv And Install Python Dependencies
 
@@ -166,6 +168,7 @@ sudo -u smsadmin bash -lc '
   source .env &&
   set +a &&
   ./venv/bin/python -m app.saas_db --apply &&
+  ./venv/bin/python -m app.saas_db --ensure-platform-admin &&
   ./venv/bin/python -m app.saas_db --doctor
 '
 ```
@@ -302,6 +305,7 @@ That script does:
 - `git pull --ff-only`
 - `pip install -r requirements.txt`
 - `saas-dbdoctor --apply`
+- `saas-dbdoctor --ensure-platform-admin`
 - `saas-dbdoctor --doctor`
 - app config validation
 - service restart
