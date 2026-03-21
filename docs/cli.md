@@ -138,6 +138,9 @@ python -m app.saas_db --apply
 # Validate readiness
 python -m app.saas_db --doctor
 
+# Ensure the first platform admin exists
+python -m app.saas_db --ensure-platform-admin
+
 # Import a legacy SQLite snapshot
 python -m app.saas_db --import-legacy /path/to/legacy.db \
   --organization-name "Legacy Production" \

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
-{% block title %}Configure Messaging - SMS Admin{% endblock %}
+{% block title %}Manage Messaging - SMS Admin{% endblock %}
 
-{% block page_title %}Configure Messaging{% endblock %}
+{% block page_title %}Manage Messaging{% endblock %}
 
 {% block breadcrumbs %}
 <a href="{{ url_for('main.platform_home') }}">Platform</a> /
@@ -11,7 +11,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
+<div class="row g-4">
     <div class="col-lg-7">
         <div class="card app-card">
             <div class="card-body">
@@ -20,22 +20,75 @@
                         <h2 class="h5 mb-1">{{ organization.name }}</h2>
                         <div class="text-muted small"><code>{{ organization.slug }}</code></div>
                     </div>
-                    <span class="badge bg-{{ 'success' if messaging_profile and messaging_profile.status == 'active' else 'warning text-dark' }}">
-                        {{ messaging_profile.status if messaging_profile else 'pending' }}
+                    <span class="badge bg-{{ 'success' if messaging_profile and messaging_profile.provider_status == 'active' else ('danger' if messaging_profile and messaging_profile.provider_status == 'error' else ('secondary' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'warning text-dark')) }}">
+                        {{ messaging_profile.provider_status if messaging_profile else 'pending' }}
                     </span>
                 </div>
 
                 <div class="alert alert-light border mb-4" role="note">
-                    <div class="fw-semibold mb-1">One-number local testing</div>
+                    <div class="fw-semibold mb-1">Platform-managed Twilio</div>
                     <div class="small text-muted">
-                        Keep exactly one live test organization active at a time. If you only have one Twilio number, clear the sender here before assigning it to another business.
+                        This workspace gets its own Twilio subaccount and messaging service. Provision first, then assign an approved sender number.
                     </div>
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Provider mode</div>
+                        <div class="fw-semibold">{{ messaging_profile.provider_mode if messaging_profile else 'platform_managed' }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Sender review</div>
+                        <div class="fw-semibold">{{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Twilio subaccount</div>
+                        <div><code>{{ messaging_profile.twilio_subaccount_sid or 'Not provisioned yet' }}</code></div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Messaging Service</div>
+                        <div><code>{{ messaging_profile.messaging_service_sid or 'Not provisioned yet' }}</code></div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Sender number</div>
+                        <div>{{ messaging_profile.from_number or 'Not assigned yet' }}</div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="small text-muted text-uppercase">Phone number SID</div>
+                        <div><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-wrap gap-2 mb-4">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="provision">
+                        <button type="submit" class="btn btn-primary" {% if messaging_profile and messaging_profile.twilio_subaccount_sid and messaging_profile.messaging_service_sid %}disabled{% endif %}>
+                            Provision Provider
+                        </button>
+                    </form>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="{{ 'resume' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'suspend' }}">
+                        <button type="submit" class="btn btn-outline-secondary" {% if not messaging_profile or not messaging_profile.twilio_subaccount_sid %}disabled{% endif %}>
+                            {{ 'Resume Provider' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'Suspend Provider' }}
+                        </button>
+                    </form>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="release_sender">
+                        <button type="submit" class="btn btn-outline-danger" {% if not messaging_profile or not messaging_profile.from_number %}disabled{% endif %}>
+                            Release Sender
+                        </button>
+                    </form>
                 </div>
 
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="save">
+
                     <div class="mb-3">
-                        <label class="form-label" for="sender_number">Dedicated Sender Number</label>
+                        <label class="form-label" for="sender_number">Approved Sender Number</label>
                         <input
                             class="form-control"
                             id="sender_number"
@@ -44,28 +97,91 @@
                             value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') }}"
                         >
                         <div class="form-text">
-                            Optional. Use the one Twilio number that is currently assigned to this business for live send and reply testing.
-                        </div>
-                    </div>
-                    <div class="mb-4">
-                        <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
-                        <input
-                            class="form-control"
-                            id="messaging_service_sid"
-                            name="messaging_service_sid"
-                            placeholder="MGxxxxxxxx"
-                            value="{{ request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') }}"
-                        >
-                        <div class="form-text">
-                            Optional. Use the <code>MG...</code> service tied to the live test organization. Leave both fields blank to keep this organization pending.
+                            Enter the live sender number after you assign it inside the organization subaccount.
                         </div>
                     </div>
 
-                    <div class="d-flex gap-2 flex-wrap">
-                        <button type="submit" class="btn btn-primary">Save Messaging Profile</button>
+                    <div class="mb-3">
+                        <label class="form-label" for="phone_number_sid">Phone Number SID</label>
+                        <input
+                            class="form-control"
+                            id="phone_number_sid"
+                            name="phone_number_sid"
+                            placeholder="PNxxxxxxxx"
+                            value="{{ request.form.get('phone_number_sid', messaging_profile.phone_number_sid if messaging_profile else '') }}"
+                        >
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="business_type">Business Type</label>
+                            <input
+                                class="form-control"
+                                id="business_type"
+                                name="business_type"
+                                placeholder="Real estate, nonprofit, church"
+                                value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') }}"
+                            >
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="use_case">Use Case</label>
+                            <input
+                                class="form-control"
+                                id="use_case"
+                                name="use_case"
+                                placeholder="Announcements, reminders, campaigns"
+                                value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') }}"
+                            >
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mt-1">
+                        <div class="col-md-6">
+                            <label class="form-label" for="sender_review_status">Sender Review Status</label>
+                            <select class="form-select" id="sender_review_status" name="sender_review_status">
+                                {% set selected_sender_review_status = request.form.get('sender_review_status', messaging_profile.sender_review_status if messaging_profile else 'pending') %}
+                                <option value="pending" {% if selected_sender_review_status == 'pending' %}selected{% endif %}>pending</option>
+                                <option value="approved" {% if selected_sender_review_status == 'approved' %}selected{% endif %}>approved</option>
+                                <option value="rejected" {% if selected_sender_review_status == 'rejected' %}selected{% endif %}>rejected</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="consent_acknowledged"
+                                    name="consent_acknowledged"
+                                    {% if request.form.get('consent_acknowledged') == 'on' or (request.method != 'POST' and messaging_profile and messaging_profile.consent_acknowledged_at) %}checked{% endif %}
+                                >
+                                <label class="form-check-label" for="consent_acknowledged">
+                                    Consent and compliance review completed
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap mt-4">
+                        <button type="submit" class="btn btn-primary">Save Provider Settings</button>
                         <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5">
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="small text-muted text-uppercase mb-2">Readiness</div>
+                <ul class="list-unstyled small mb-0">
+                    <li class="mb-2"><strong>Subaccount:</strong> {{ 'ready' if messaging_profile and messaging_profile.twilio_subaccount_sid else 'missing' }}</li>
+                    <li class="mb-2"><strong>Messaging service:</strong> {{ 'ready' if messaging_profile and messaging_profile.messaging_service_sid else 'missing' }}</li>
+                    <li class="mb-2"><strong>Sender assigned:</strong> {{ 'ready' if messaging_profile and messaging_profile.from_number else 'missing' }}</li>
+                    <li class="mb-2"><strong>Compliance acknowledged:</strong> {{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else 'missing' }}</li>
+                    <li class="mb-2"><strong>Sender approved:</strong> {{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else 'missing' }}</li>
+                    <li><strong>Live sending:</strong> {{ 'enabled' if messaging_profile and messaging_profile.can_send else 'disabled' }}</li>
+                </ul>
             </div>
         </div>
     </div>

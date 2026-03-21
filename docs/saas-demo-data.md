@@ -10,7 +10,7 @@ From `/Users/magasiev/Desktop/Projects/AOC-SMS-saas`:
 ./run/seed_demo_saas.sh --reset
 ```
 
-If you want your one real Twilio sender assigned to the internal test business at seed time:
+If you want a real Twilio sender preassigned to the internal test business at seed time:
 
 ```bash
 ./run/seed_demo_saas.sh --reset \
@@ -87,9 +87,9 @@ Notes:
   - billing restriction
 - Organization isolation:
   - same app, different orgs, separate contacts and history
-- One-number live messaging strategy:
-  - one org can carry the real sender
-  - all other orgs stay pending and non-live
+- Platform-managed messaging strategy:
+  - the internal demo org can carry a real sender for live testing
+  - every other org stays pending and non-live until you provision it intentionally
 
 ## Suggested Manual Acceptance Pass
 

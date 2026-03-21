@@ -84,6 +84,16 @@ from app.services.recipient_service import (
     get_unsubscribed_phone_set,
 )
 from app.services.twilio_service import validate_inbound_signature_detailed
+from app.services.twilio_service import (
+    ensure_messaging_profile,
+    ProviderProvisioningError,
+    provision_org,
+    release_sender,
+    resolve_messaging_profile,
+    resume_org,
+    sync_sender_assignment,
+    suspend_org,
+)
 from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
 from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
@@ -422,11 +432,7 @@ def _organization_onboarding_view(organization: Organization) -> dict:
     )
     subscription_view = _subscription_view(organization.subscription)
     messaging_profile = organization.messaging_profile
-    messaging_ready = bool(
-        messaging_profile is not None
-        and messaging_profile.status == 'active'
-        and (messaging_profile.from_number or messaging_profile.messaging_service_sid)
-    )
+    messaging_ready = bool(messaging_profile is not None and messaging_profile.can_send)
     team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
 
     steps = [
@@ -470,7 +476,7 @@ def _organization_onboarding_view(organization: Organization) -> dict:
                 else (
                     messaging_profile.messaging_service_sid
                     if messaging_profile and messaging_profile.messaging_service_sid
-                    else 'Leave this pending until this business becomes the current live SMS test organization.'
+                    else 'Provision the Twilio provider and assign a reviewed sender before enabling live SMS.'
                 )
             ),
             'complete': messaging_ready,
@@ -541,11 +547,7 @@ def _platform_home_context() -> dict:
         1 for row in organization_rows
         if not (
             row['organization'].messaging_profile
-            and row['organization'].messaging_profile.status == 'active'
-            and (
-                row['organization'].messaging_profile.from_number
-                or row['organization'].messaging_profile.messaging_service_sid
-            )
+            and row['organization'].messaging_profile.can_send
         )
     )
     attention_rows = [
@@ -576,18 +578,30 @@ def _billing_context(organization: Organization | None) -> dict:
     }
 
 
-def _send_access_denied_response():
-    flash('Billing must be trialing or active before messages can be sent.', 'error')
-    return redirect(url_for('main.billing_checkout'))
+def _organization_has_active_messaging(organization: Organization | None) -> bool:
+    profile = organization.messaging_profile if organization is not None else None
+    return bool(profile is not None and profile.can_send)
+
+
+def _organization_can_transmit_messages(organization: Organization | None) -> bool:
+    return organization_can_send(organization) and _organization_has_active_messaging(organization)
+
+
+def _send_access_denied_response(organization: Organization | None):
+    if not organization_can_send(organization):
+        flash('Billing must be trialing or active before messages can be sent.', 'error')
+        return redirect(url_for('main.billing_checkout'))
+    flash('Messaging is not provisioned for this organization yet. Contact your platform admin.', 'error')
+    return redirect(url_for('main.billing_overview'))
 
 
 def _require_active_subscription():
     if not saas_mode_enabled() or current_user.is_platform_admin:
         return None
     organization = _current_organization()
-    if organization_can_send(organization):
+    if _organization_can_transmit_messages(organization):
         return None
-    return _send_access_denied_response()
+    return _send_access_denied_response(organization)
 
 
 def _require_billing_access():
@@ -1338,7 +1352,7 @@ def dashboard():
             'top_keywords': top_keywords,
             'current_organization': organization,
             'current_subscription': subscription,
-            'can_send_messages': organization_can_send(organization) if saas_mode_enabled() else True,
+            'can_send_messages': _organization_can_transmit_messages(organization) if saas_mode_enabled() else True,
         }
 
     def render_dashboard():
@@ -1980,8 +1994,6 @@ def platform_organizations_add():
         slug = request.form.get('slug', '').strip()
         owner_email = request.form.get('owner_email', '').strip().lower()
         owner_role = (request.form.get('owner_role') or 'owner').strip().lower()
-        sender_number = request.form.get('sender_number', '').strip() or None
-        messaging_service_sid = request.form.get('messaging_service_sid', '').strip() or None
 
         if not name:
             flash('Organization name is required.', 'error')
@@ -1997,13 +2009,6 @@ def platform_organizations_add():
             return render_template('platform/organization_form.html')
         if Organization.query.filter_by(slug=slug).first():
             flash('That organization slug already exists.', 'error')
-            return render_template('platform/organization_form.html')
-        messaging_error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
-            sender_number,
-            messaging_service_sid,
-        )
-        if messaging_error:
-            flash(messaging_error, 'error')
             return render_template('platform/organization_form.html')
 
         organization = Organization(name=name, slug=slug, status='active')
@@ -2021,10 +2026,10 @@ def platform_organizations_add():
         )
         messaging_profile = OrganizationMessagingProfile(
             organization=organization,
-            from_number=normalized_sender,
-            inbound_identity=normalized_sender or normalized_service_sid,
-            messaging_service_sid=normalized_service_sid,
-            status=_messaging_profile_status(normalized_sender, normalized_service_sid),
+            provider_mode='platform_managed',
+            status='pending',
+            provider_status='pending',
+            sender_review_status='pending',
         )
         db.session.add_all([organization, subscription, invitation, messaging_profile])
         try:
@@ -2051,20 +2056,51 @@ def platform_organizations_messaging_edit(organization_id):
         abort(403)
 
     organization = db.get_or_404(Organization, organization_id)
-    messaging_profile = organization.messaging_profile
+    messaging_profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    if organization.messaging_profile is None:
+        db.session.commit()
 
     if request.method == 'POST':
+        action = (request.form.get('action') or 'save').strip().lower()
+        try:
+            if action == 'provision':
+                provision_org(organization.id, actor_user_id=current_user.id)
+                flash('Twilio provider provisioned for this organization.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'suspend':
+                suspend_org(organization.id, actor_user_id=current_user.id)
+                flash('Twilio provider suspended for this organization.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'resume':
+                resume_org(organization.id, actor_user_id=current_user.id)
+                flash('Twilio provider resumed for this organization.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'release_sender':
+                release_sender(organization.id, actor_user_id=current_user.id)
+                flash('Sender assignment released for this organization.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+        except ProviderProvisioningError as exc:
+            flash(str(exc), 'error')
+            return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+
         sender_number = request.form.get('sender_number', '').strip() or None
-        messaging_service_sid = request.form.get('messaging_service_sid', '').strip() or None
-        if messaging_profile is None:
-            messaging_profile = OrganizationMessagingProfile(
+        phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
+        business_type = request.form.get('business_type', '').strip() or None
+        use_case = request.form.get('use_case', '').strip() or None
+        sender_review_status = (request.form.get('sender_review_status') or 'pending').strip().lower()
+        consent_acknowledged = request.form.get('consent_acknowledged') == 'on'
+
+        if not messaging_profile.messaging_service_sid:
+            flash('Provision the Twilio provider before assigning a sender.', 'error')
+            return render_template(
+                'platform/organization_messaging_form.html',
                 organization=organization,
-                status='pending',
+                messaging_profile=messaging_profile,
             )
-            db.session.add(messaging_profile)
-        messaging_error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
+
+        messaging_error, normalized_sender, _ = _validate_org_messaging_profile_input(
             sender_number,
-            messaging_service_sid,
+            None,
             organization_id=organization.id,
         )
         if messaging_error:
@@ -2075,20 +2111,49 @@ def platform_organizations_messaging_edit(organization_id):
                 messaging_profile=messaging_profile,
             )
 
+        if phone_number_sid and not normalized_sender:
+            flash('A sender number is required when a phone number SID is provided.', 'error')
+            return render_template(
+                'platform/organization_messaging_form.html',
+                organization=organization,
+                messaging_profile=messaging_profile,
+            )
+
+        if normalized_sender and not phone_number_sid:
+            flash('A phone number SID is required when a sender number is provided.', 'error')
+            return render_template(
+                'platform/organization_messaging_form.html',
+                organization=organization,
+                messaging_profile=messaging_profile,
+            )
+
         messaging_profile.from_number = normalized_sender
-        messaging_profile.messaging_service_sid = normalized_service_sid
-        messaging_profile.inbound_identity = normalized_sender or normalized_service_sid
-        messaging_profile.status = _messaging_profile_status(
-            normalized_sender,
-            normalized_service_sid,
-        )
+        messaging_profile.phone_number_sid = phone_number_sid
+        messaging_profile.business_type = business_type
+        messaging_profile.use_case = use_case
+        messaging_profile.sender_review_status = sender_review_status
+        messaging_profile.inbound_identity = normalized_sender or messaging_profile.messaging_service_sid
+        messaging_profile.provider_last_checked_at = utc_now()
+        messaging_profile.consent_acknowledged_at = utc_now() if consent_acknowledged else None
+        if messaging_profile.provider_status != 'suspended':
+            if (
+                normalized_sender
+                and phone_number_sid
+                and messaging_profile.messaging_service_sid
+                and sender_review_status == 'approved'
+                and messaging_profile.consent_acknowledged_at is not None
+            ):
+                messaging_profile.set_provider_status('active')
+            else:
+                messaging_profile.set_provider_status('pending')
+
         try:
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
             flash(
                 'That sender identity is already assigned to another organization. '
-                'Use a dedicated number or Messaging Service SID for one live test organization at a time.',
+                'Use a dedicated sender number for each business.',
                 'error',
             )
             messaging_profile = organization.messaging_profile
@@ -2098,17 +2163,15 @@ def platform_organizations_messaging_edit(organization_id):
                 messaging_profile=messaging_profile,
             )
 
-        if messaging_profile.status == 'active':
-            flash(
-                'Live messaging is configured for this organization. Leave other organizations pending until you switch the sender.',
-                'success',
-            )
-        else:
-            flash(
-                'Live messaging is cleared for this organization. You can now assign the sender to a different business.',
-                'success',
-            )
-        return redirect(url_for('main.platform_organizations_list'))
+        if normalized_sender and phone_number_sid:
+            try:
+                sync_sender_assignment(organization.id, actor_user_id=current_user.id)
+            except ProviderProvisioningError as exc:
+                flash(str(exc), 'error')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+
+        flash('Messaging provider settings updated.', 'success')
+        return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
 
     return render_template(
         'platform/organization_messaging_form.html',
@@ -2126,6 +2189,17 @@ def platform_organizations_toggle_status(organization_id):
     organization = db.get_or_404(Organization, organization_id)
     organization.status = 'suspended' if organization.status != 'suspended' else 'active'
     db.session.commit()
+    if organization.messaging_profile is not None:
+        try:
+            if organization.status == 'suspended':
+                suspend_org(organization.id, actor_user_id=current_user.id)
+            else:
+                resume_org(organization.id, actor_user_id=current_user.id)
+        except ProviderProvisioningError:
+            current_app.logger.exception(
+                'Failed to sync provider status for organization_id=%s after platform toggle.',
+                organization.id,
+            )
     flash(f'Organization status updated to {organization.status}.', 'success')
     return redirect(url_for('main.platform_organizations_list'))
 
@@ -3642,9 +3716,15 @@ def unsubscribed_bulk_delete():
 @csrf.exempt
 def twilio_inbound_webhook():
     payload = request.form.to_dict(flat=True)
+    messaging_profile = resolve_messaging_profile(payload) if saas_mode_enabled() else None
     if current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
         signature = request.headers.get('X-Twilio-Signature')
-        validation = validate_inbound_signature_detailed(request.url, payload, signature)
+        validation = validate_inbound_signature_detailed(
+            request.url,
+            payload,
+            signature,
+            messaging_profile=messaging_profile,
+        )
         if not validation.is_valid:
             current_app.logger.warning(
                 'Rejected inbound webhook due to Twilio signature validation failure. '

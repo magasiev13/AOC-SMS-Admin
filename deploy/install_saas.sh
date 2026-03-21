@@ -90,7 +90,7 @@ echo "==> Installing Python dependencies"
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 
 echo "==> Applying SaaS schema"
-sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && \"${SAAS_DBDOCTOR_DEST}\" --apply && \"${SAAS_DBDOCTOR_DEST}\" --doctor"
+sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${SAAS_DBDOCTOR_DEST}\" --apply && \"${SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${SAAS_DBDOCTOR_DEST}\" --doctor"
 
 sudo mkdir -p "${LOG_DIR}"
 sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"

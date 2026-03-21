@@ -14,3 +14,4 @@ rq==1.15.1
 click==8.1.7
 psycopg[binary]>=3.2,<3.3
 stripe>=11,<12
+cryptography>=44,<45

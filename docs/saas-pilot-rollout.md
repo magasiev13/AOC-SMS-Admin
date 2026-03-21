@@ -27,16 +27,18 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 - `STRIPE_PRICE_ID=...`
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
+- `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...`
+- `ADMIN_USERNAME=admin` for the first platform admin (optional if `admin` is fine)
+- `ADMIN_PASSWORD=...` for first-time platform admin provisioning only
 
-## One-Number Twilio Strategy
+## Platform-Managed Twilio Strategy
 
-- Keep `TWILIO_ACCOUNT_SID=AC...` and `TWILIO_AUTH_TOKEN=...` in `.env`.
-- Create one Twilio Messaging Service and use its `MG...` SID only for the organization that is currently your live SMS test organization.
-- Attach your one Twilio phone number to that Messaging Service sender pool.
-- In the app, use `/platform/organizations/<id>/messaging` to move the live sender between businesses without touching the database.
-- Leave every non-live organization without sender values so its messaging profile stays `pending`.
-- Do not paste `AC...` into the Messaging Service field. `AC...` is the account SID; `MG...` is the Messaging Service SID.
-- Do not assign the same phone number or `MG...` SID to multiple organizations at the same time.
+- Keep `TWILIO_ACCOUNT_SID=AC...`, `TWILIO_AUTH_TOKEN=...`, and `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...` in `.env`.
+- The platform account is the master Twilio account. Each organization should be provisioned with its own Twilio subaccount and Messaging Service.
+- Use `/platform/organizations/<id>/messaging` to provision the provider, then assign an approved sender number and phone number SID.
+- Per-org Twilio secrets are stored encrypted at rest in the database. Do not add organization-specific tokens to `.env`.
+- Messaging stays `pending` until billing is active, compliance is acknowledged, and the sender review is approved.
+- The platform admin should not paste `AC...` or `MG...` values into the organization create form. Provisioning happens from the managed messaging screen.
 
 ## Stripe Webhooks
 
@@ -69,40 +71,43 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
    - Stripe test keys and local `STRIPE_WEBHOOK_SECRET`
 2. Apply the explicit SaaS schema:
    - `./venv/bin/python -m app.saas_db --apply`
-3. Start Redis.
-4. Start web + worker:
+3. Ensure the first platform admin exists:
+   - `./venv/bin/python -m app.saas_db --ensure-platform-admin`
+4. Start Redis.
+5. Start web + worker:
    - `./run/up.sh`
-5. Start the scheduler in a second terminal:
+6. Start the scheduler in a second terminal:
    - `SCHEDULER_ENABLED=1 SCHEDULER_RUNNER=1 ./venv/bin/python -m app.scheduler_runner`
-6. Start Stripe webhook forwarding in a third terminal:
+7. Start Stripe webhook forwarding in a third terminal:
    - `stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe`
 
 ### Run the owner + staff flow
 
 1. Sign in as the platform admin.
 2. Open `/platform/organizations` and create a business.
-3. For most organizations during cheap local testing, leave the Twilio sender fields blank so the org stays `pending` for messaging.
-4. Use `Configure sender` from the Organizations page only on the one business you are currently live-testing with Twilio.
-5. Enter:
-   - the one Twilio sender number
-   - the real `MG...` Messaging Service SID
-6. If you want to live-test a different business later, clear the sender fields from the current live org first, then assign them to the next org.
-7. From the Organizations page, use the visible owner invite link:
+3. From the Organizations page, use the visible owner invite link:
    - `Open invite` to launch it
    - `Copy link` if you want to open it in a private window
-8. Accept the owner invite.
-9. Complete Stripe test checkout.
-10. Confirm `/billing` shows a human-readable active or trialing state.
-11. Open `/users` and create a staff invitation from the owner account.
-12. Use the visible staff invite link from the pending invitation table.
-13. Accept the staff invite in a separate browser session.
-14. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
+4. Accept the owner invite.
+5. Complete Stripe test checkout.
+6. Return to `/platform/organizations/<id>/messaging`.
+7. Click `Provision Provider` and confirm the org gets a Twilio subaccount plus Messaging Service.
+8. Enter:
+   - the approved Twilio sender number
+   - the phone number SID for that number
+   - `approved` sender review status
+   - compliance acknowledgement
+9. Confirm the provider status becomes `active`.
+10. Open `/users` and create a staff invitation from the owner account.
+11. Use the visible staff invite link from the pending invitation table.
+12. Accept the staff invite in a separate browser session.
+13. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
 
 ### Verify message behavior locally
 
-1. As the owner of the live test organization, confirm sending is enabled only when billing is `trialing` or `active`.
-2. Verify inbound routing using the live organization sender identity.
-3. Confirm that non-live organizations remain `pending` for messaging and do not share the live sender.
+1. As the owner of a provisioned organization, confirm sending is enabled only when billing is `trialing` or `active` and the provider status is `active`.
+2. Verify inbound routing using the organization-owned sender identity.
+3. Confirm that unprovisioned organizations remain `pending` for messaging.
 4. Create a scheduled send and confirm the scheduler processes it.
 5. Run one manual billing reconciliation check:
    - `APP_ROOT="$(pwd)" ./deploy/run_billing_reconcile_once.sh`
@@ -111,7 +116,7 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 
 - No DB inspection or shell token lookup is needed for normal onboarding.
 - The Organizations page shows onboarding progress, billing state, messaging state, and owner invite access.
-- The Organizations page allows the platform admin to move the one live sender identity between organizations.
+- The Organizations page allows the platform admin to provision, suspend, resume, and review provider readiness per organization.
 - The Users page shows pending invitation links for local owner/staff testing.
 - The Billing page explains the current state, the next step, and whether sending is enabled.
 - Staff users cannot access billing or platform admin surfaces.
@@ -177,6 +182,8 @@ This launches a deterministic local Flask server on `http://127.0.0.1:5010` usin
 
 - Install / update schema:
   - `python -m app.saas_db --apply`
+- Ensure the first platform admin exists:
+  - `python -m app.saas_db --ensure-platform-admin`
 - Validate schema readiness:
   - `python -m app.saas_db --doctor`
 - Import a legacy production snapshot into one organization during cutover:

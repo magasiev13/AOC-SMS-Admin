@@ -11,7 +11,7 @@ echo "==> Deploying SMS SaaS"
 
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
-sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && \"${SAAS_DBDOCTOR_BIN}\" --apply && \"${SAAS_DBDOCTOR_BIN}\" --doctor"
+sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${SAAS_DBDOCTOR_BIN}\" --apply && \"${SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${SAAS_DBDOCTOR_BIN}\" --doctor"
 
 if ! sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${VENV_BIN}/python\" - <<'PY'
 from app import create_app

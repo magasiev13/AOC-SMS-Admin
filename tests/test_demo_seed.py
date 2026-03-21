@@ -63,6 +63,7 @@ class TestDemoSeed(unittest.TestCase):
             self.assertIsNotNone(internal_org)
             self.assertEqual(internal_org.subscription.status, "trialing")
             self.assertEqual(internal_org.messaging_profile.status, "pending")
+            self.assertEqual(internal_org.messaging_profile.provider_status, "pending")
 
             harbor_org = Organization.query.filter_by(slug="harbor-events-co").first()
             self.assertIsNotNone(harbor_org)

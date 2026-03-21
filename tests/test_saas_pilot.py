@@ -11,9 +11,11 @@ class TestSaasPilotFoundation(unittest.TestCase):
             "FLASK_DEBUG": os.environ.get("FLASK_DEBUG"),
             "DATABASE_URL": os.environ.get("DATABASE_URL"),
             "SAAS_MODE": os.environ.get("SAAS_MODE"),
+            "TWILIO_CREDENTIAL_ENCRYPTION_KEY": os.environ.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
         }
         os.environ["FLASK_DEBUG"] = "1"
         os.environ["SAAS_MODE"] = "1"
+        os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
         os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
@@ -74,9 +76,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
         self.messaging_profile = self.OrganizationMessagingProfile(
             organization=self.organization,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACsub_acme",
+            messaging_service_sid="MGacme0001",
+            phone_number_sid="PNacme0001",
             from_number="+15550009999",
             inbound_identity="+15550009999",
             status="active",
+            provider_status="active",
+            sender_review_status="approved",
         )
         self.owner = self.AppUser(
             username="owner",
@@ -401,31 +409,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Create Business Account", response.data)
-        self.assertIn(b"One-number rules", response.data)
-        self.assertIn(b"Leave both fields blank", response.data)
-
-    def test_platform_organizations_add_rejects_duplicate_sender_number(self) -> None:
-        self._login_platform_admin()
-
-        response = self.client.post(
-            "/platform/organizations/add",
-            data={
-                "name": "Second Org",
-                "slug": "second-org",
-                "owner_email": "owner2@acme.test",
-                "owner_role": "owner",
-                "sender_number": "+15550009999",
-                "messaging_service_sid": "",
-            },
-            follow_redirects=True,
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(
-            b"That sender number is already assigned to another organization.",
-            response.data,
-        )
-        self.assertIsNone(self.Organization.query.filter_by(slug="second-org").first())
+        self.assertIn(b"Platform-managed Twilio by default", response.data)
+        self.assertIn(b"Twilio subaccounts and messaging services are provisioned later", response.data)
 
     def test_platform_organizations_add_allows_pending_messaging_profile(self) -> None:
         self._login_platform_admin()
@@ -437,8 +422,6 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 "slug": "pending-org",
                 "owner_email": "pending-owner@acme.test",
                 "owner_role": "owner",
-                "sender_number": "",
-                "messaging_service_sid": "",
             },
             follow_redirects=False,
         )
@@ -448,33 +431,43 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(organization)
         self.assertIsNotNone(organization.messaging_profile)
         self.assertEqual(organization.messaging_profile.status, "pending")
+        self.assertEqual(organization.messaging_profile.provider_mode, "platform_managed")
+        self.assertEqual(organization.messaging_profile.provider_status, "pending")
+        self.assertEqual(organization.messaging_profile.sender_review_status, "pending")
         self.assertIsNone(organization.messaging_profile.from_number)
         self.assertIsNone(organization.messaging_profile.messaging_service_sid)
 
-    def test_platform_organizations_add_rejects_non_mg_messaging_service_sid(self) -> None:
+    def test_platform_organizations_messaging_edit_requires_provider_provisioning_before_sender_assignment(self) -> None:
         self._login_platform_admin()
 
+        self.messaging_profile.messaging_service_sid = None
+        self.messaging_profile.provider_status = "pending"
+        self.db.session.commit()
+
         response = self.client.post(
-            "/platform/organizations/add",
+            f"/platform/organizations/{self.organization.id}/messaging",
             data={
-                "name": "Third Org",
-                "slug": "third-org",
-                "owner_email": "owner3@acme.test",
-                "owner_role": "owner",
-                "sender_number": "",
-                "messaging_service_sid": "AC1234567890abcdef",
+                "action": "save",
+                "sender_number": "+15550001234",
+                "phone_number_sid": "PNpending123",
+                "sender_review_status": "approved",
+                "consent_acknowledged": "on",
             },
             follow_redirects=True,
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            b"Twilio Messaging Service SID must start with MG.",
+            b"Provision the Twilio provider before assigning a sender.",
             response.data,
         )
-        self.assertIsNone(self.Organization.query.filter_by(slug="third-org").first())
+        self.db.session.refresh(self.messaging_profile)
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        self.assertEqual(self.messaging_profile.from_number, "+15550009999")
 
-    def test_platform_organizations_messaging_edit_can_clear_and_reassign_live_sender(self) -> None:
+    @patch("app.routes.sync_sender_assignment")
+    @patch("app.routes.release_sender")
+    def test_platform_organizations_messaging_edit_can_release_and_activate_sender(self, mock_release_sender, mock_sync_sender_assignment) -> None:
         other_org = self.Organization(name="Other Co", slug="other-co", status="active")
         other_subscription = self.OrganizationSubscription(
             organization=other_org,
@@ -483,18 +476,40 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
         other_messaging_profile = self.OrganizationMessagingProfile(
             organization=other_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACsub_other",
+            messaging_service_sid="MGother0001",
             status="pending",
+            provider_status="pending",
         )
         self.db.session.add_all([other_org, other_subscription, other_messaging_profile])
         self.db.session.commit()
+
+        def _release_side_effect(organization_id, actor_user_id=None):
+            profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).first()
+            profile.from_number = None
+            profile.phone_number_sid = None
+            profile.inbound_identity = profile.messaging_service_sid
+            profile.set_provider_status("pending")
+            self.db.session.commit()
+            return profile
+
+        def _sync_side_effect(organization_id, actor_user_id=None):
+            profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).first()
+            profile.inbound_identity = profile.from_number
+            profile.set_provider_status("active")
+            self.db.session.commit()
+            return profile
+
+        mock_release_sender.side_effect = _release_side_effect
+        mock_sync_sender_assignment.side_effect = _sync_side_effect
 
         self._login_platform_admin()
 
         clear_response = self.client.post(
             f"/platform/organizations/{self.organization.id}/messaging",
             data={
-                "sender_number": "",
-                "messaging_service_sid": "",
+                "action": "release_sender",
             },
             follow_redirects=False,
         )
@@ -502,14 +517,18 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.db.session.refresh(self.messaging_profile)
         self.assertEqual(self.messaging_profile.status, "pending")
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
         self.assertIsNone(self.messaging_profile.from_number)
-        self.assertIsNone(self.messaging_profile.inbound_identity)
+        self.assertEqual(self.messaging_profile.inbound_identity, "MGacme0001")
 
         assign_response = self.client.post(
             f"/platform/organizations/{other_org.id}/messaging",
             data={
+                "action": "save",
                 "sender_number": "+15550009999",
-                "messaging_service_sid": "MG1234567890ABCDE",
+                "phone_number_sid": "PN1234567890ABCDE",
+                "sender_review_status": "approved",
+                "consent_acknowledged": "on",
             },
             follow_redirects=False,
         )
@@ -517,8 +536,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.db.session.refresh(other_messaging_profile)
         self.assertEqual(other_messaging_profile.status, "active")
+        self.assertEqual(other_messaging_profile.provider_status, "active")
         self.assertEqual(other_messaging_profile.from_number, "+15550009999")
-        self.assertEqual(other_messaging_profile.messaging_service_sid, "MG1234567890ABCDE")
+        self.assertEqual(other_messaging_profile.messaging_service_sid, "MGother0001")
+        self.assertEqual(other_messaging_profile.phone_number_sid, "PN1234567890ABCDE")
         self.assertEqual(other_messaging_profile.inbound_identity, "+15550009999")
 
     def test_invitation_accept_creates_membership_and_redirects_owner_to_billing(self) -> None:

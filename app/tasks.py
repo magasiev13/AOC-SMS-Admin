@@ -7,7 +7,11 @@ from app.models import MessageLog
 from app.tenant import organization_context
 from app.services.suppression_service import process_failure_details
 from app.services.suppression_backfill import backfill_suppressions
-from app.services.twilio_service import TwilioTransientError, get_twilio_service
+from app.services.twilio_service import (
+    TwilioTransientError,
+    get_twilio_service,
+    record_usage_candidates,
+)
 
 
 def _should_mark_failed() -> bool:
@@ -120,6 +124,7 @@ def send_bulk_job(
                 log.details = json.dumps(combined_details)
                 log.status = 'sent' if log.failure_count == 0 else 'failed'
                 db.session.commit()
+                record_usage_candidates(organization_id, result['details'], source='blast')
                 current_app.logger.info(
                     "Bulk send job finished log_id=%s organization_id=%s status=%s success_count=%s failure_count=%s",
                     log.id,
@@ -145,6 +150,7 @@ def send_bulk_job(
                     log.failure_count = existing_failure + exc.results.get('failure_count', 0)
                     log.details = json.dumps(combined_details)
                     db.session.commit()
+                    record_usage_candidates(organization_id, exc.results.get('details', []), source='blast')
                 if _should_mark_failed():
                     log.status = 'failed'
                     base_details = combined_details if exc.results else existing_details

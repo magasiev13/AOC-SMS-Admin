@@ -15,17 +15,15 @@
 {% set form_slug = request.form.get('slug', '') %}
 {% set form_owner_email = request.form.get('owner_email', '') %}
 {% set form_owner_role = request.form.get('owner_role', 'owner') %}
-{% set form_sender_number = request.form.get('sender_number', '') %}
-{% set form_messaging_service_sid = request.form.get('messaging_service_sid', '') %}
 
 <div class="org-create-shell">
     <div class="org-create-main">
         <div class="card app-card org-create-hero-card mb-4">
             <div class="card-body">
                 <div class="org-create-kicker">Platform admin setup</div>
-                <h2 class="org-create-hero-title">Create the next business without locking in live messaging yet.</h2>
+                <h2 class="org-create-hero-title">Create the next business and keep telecom provisioning on the managed path.</h2>
                 <p class="org-create-hero-copy mb-0">
-                    Start with business identity and owner access. If you only have one Twilio number, leave live sender fields blank for now and keep this organization in pending messaging mode until it becomes your active SMS test org.
+                    Start with business identity and owner access. Twilio subaccounts and messaging services are provisioned later from the provider management screen after billing and compliance are in place.
                 </p>
             </div>
         </div>
@@ -121,46 +119,24 @@
                 <div class="card-body">
                     <div class="org-create-section-header">
                         <div>
-                            <div class="org-create-section-kicker">Live messaging</div>
-                            <h3 class="org-create-section-title">Only configure this if this business is your active SMS test org</h3>
+                            <div class="org-create-section-kicker">Messaging lifecycle</div>
+                            <h3 class="org-create-section-title">Provision messaging after billing, review, and sender assignment</h3>
                         </div>
-                        <span class="org-create-step-badge">Optional</span>
+                        <span class="org-create-step-badge">Step 3</span>
                     </div>
 
                     <div class="org-create-callout" role="note">
-                        <div class="org-create-callout__title">Recommended default</div>
+                        <div class="org-create-callout__title">Managed by platform</div>
                         <div class="org-create-callout__body">
-                            Leave both fields blank for most organizations. With one Twilio number, only one business should have a live sender at a time.
+                            This organization starts in pending provider status. After the owner joins and billing is active, use the messaging management screen to provision a Twilio subaccount, create a messaging service, and assign an approved sender.
                         </div>
                     </div>
 
-                    <div class="row g-3 mt-1">
-                        <div class="col-md-6">
-                            <label class="form-label" for="sender_number">Dedicated Sender Number</label>
-                            <input
-                                class="form-control"
-                                id="sender_number"
-                                name="sender_number"
-                                placeholder="+15551234567"
-                                inputmode="tel"
-                                value="{{ form_sender_number }}"
-                            >
-                            <div class="form-text">Optional. This must stay unique across organizations.</div>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="messaging_service_sid">Twilio Messaging Service SID</label>
-                            <input
-                                class="form-control"
-                                id="messaging_service_sid"
-                                name="messaging_service_sid"
-                                placeholder="MGxxxxxxxx"
-                                autocapitalize="off"
-                                spellcheck="false"
-                                value="{{ form_messaging_service_sid }}"
-                            >
-                            <div class="form-text">Optional. Use a real <code>MG...</code> SID. Do not paste your <code>AC...</code> account SID here.</div>
-                        </div>
-                    </div>
+                    <ul class="org-create-rule-list mt-3 mb-0">
+                        <li>Each organization will get its own Twilio subaccount.</li>
+                        <li>Messaging stays disabled until compliance is acknowledged and the sender is approved.</li>
+                        <li>Number purchase and release can stay admin-reviewed while provisioning is automated.</li>
+                    </ul>
 
                     <div class="org-create-form-actions mt-4">
                         <button type="submit" class="btn btn-primary">Create Business Account</button>
@@ -181,30 +157,30 @@
                         <li>The new workspace appears on the Organizations page.</li>
                         <li>The owner invite link is generated immediately.</li>
                         <li>The owner accepts the invite and completes billing.</li>
-                        <li>You can activate live messaging later from the sender configuration screen.</li>
+                        <li>You provision the Twilio provider and assign an approved sender from the messaging screen.</li>
                     </ol>
                 </div>
             </div>
 
             <div class="card app-card org-create-summary-card mb-4">
                 <div class="card-body">
-                    <div class="org-create-section-kicker">One-number rules</div>
-                    <h3 class="org-create-side-title">Use your single Twilio number correctly</h3>
+                    <div class="org-create-section-kicker">Provider model</div>
+                    <h3 class="org-create-side-title">Platform-managed Twilio by default</h3>
                     <ul class="org-create-rule-list mb-0">
-                        <li><strong>`AC...`</strong> stays in `.env` as `TWILIO_ACCOUNT_SID`.</li>
-                        <li><strong>`MG...`</strong> goes in the org form only when this business is the live test org.</li>
-                        <li>Keep every other org in pending messaging mode.</li>
-                        <li>Switch the sender later from the Organizations page instead of editing the database.</li>
+                        <li><strong>`AC...`</strong> and the platform auth token stay on the server for master-account access.</li>
+                        <li>Each organization gets its own subaccount and messaging service.</li>
+                        <li>Per-org Twilio secrets are stored encrypted in the database, not in `.env`.</li>
+                        <li>BYO-Twilio is intentionally out of the default onboarding path.</li>
                     </ul>
                 </div>
             </div>
 
             <div class="card app-card org-create-summary-card">
                 <div class="card-body">
-                    <div class="org-create-section-kicker">Recommended default</div>
-                    <h3 class="org-create-side-title">For cheap local testing</h3>
+                    <div class="org-create-section-kicker">Readiness</div>
+                    <h3 class="org-create-side-title">What to finish before live SMS</h3>
                     <p class="text-muted mb-3">
-                        Create the workspace now, invite the owner, finish billing, and leave Twilio blank until this becomes the one business you want to test with real SMS.
+                        Create the workspace now, invite the owner, finish billing, acknowledge compliance, provision the Twilio provider, and then attach the approved sender number.
                     </p>
                     <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-primary w-100">Back to Organization List</a>
                 </div>

@@ -5,7 +5,10 @@ import json
 import logging
 import sys
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, func, inspect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
+from werkzeug.security import generate_password_hash
 
 from app.config import Config
 from app.saas_migrations.runner import ensure_saas_schema_ready, inspect_saas_migrations, run_pending_saas_migrations
@@ -56,12 +59,112 @@ def _doctor(engine) -> int:
     return 0
 
 
+def ensure_platform_admin(engine, logger) -> bool:
+    if not Config.SAAS_MODE:
+        raise RuntimeError("SAAS_MODE must be set to 1 before provisioning a SaaS platform admin.")
+
+    ensure_saas_schema_ready(engine)
+
+    from app.models import AppUser
+
+    session = sessionmaker(bind=engine)()
+    try:
+        existing_platform_admin = (
+            session.query(AppUser)
+            .filter_by(is_platform_admin=True)
+            .order_by(AppUser.id.asc())
+            .first()
+        )
+        if existing_platform_admin is not None:
+            logger.info(
+                "Platform admin user %s already exists; skipping bootstrap provisioning.",
+                existing_platform_admin.username,
+            )
+            return False
+
+        admin_username = (Config.ADMIN_USERNAME or "admin").strip() or "admin"
+        admin_email = (Config.ADMIN_EMAIL or f"{admin_username}@example.com").strip().lower() or None
+        admin_password = Config.ADMIN_PASSWORD
+        if not admin_password:
+            raise RuntimeError(
+                "ADMIN_PASSWORD must be set to provision the first SaaS platform admin."
+            )
+
+        username_conflict = (
+            session.query(AppUser)
+            .filter(func.lower(AppUser.username) == admin_username.lower())
+            .first()
+        )
+        if username_conflict is not None:
+            if username_conflict.is_platform_admin:
+                logger.info(
+                    "Platform admin user %s already exists; skipping bootstrap provisioning.",
+                    username_conflict.username,
+                )
+                return False
+            raise RuntimeError(
+                f"Configured ADMIN_USERNAME {admin_username!r} conflicts with an existing non-platform user."
+            )
+
+        if admin_email:
+            email_conflict = (
+                session.query(AppUser)
+                .filter(func.lower(AppUser.email) == admin_email.lower())
+                .first()
+            )
+            if email_conflict is not None:
+                raise RuntimeError(
+                    f"Configured ADMIN_EMAIL {admin_email!r} conflicts with an existing user."
+                )
+
+        password_hash = admin_password
+        if not admin_password.startswith(("pbkdf2:", "scrypt:")):
+            password_hash = generate_password_hash(admin_password, method="pbkdf2:sha256")
+
+        session.add(
+            AppUser(
+                username=admin_username,
+                email=admin_email,
+                role="admin",
+                is_platform_admin=True,
+                password_hash=password_hash,
+            )
+        )
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            existing_platform_admin = (
+                session.query(AppUser)
+                .filter_by(is_platform_admin=True)
+                .order_by(AppUser.id.asc())
+                .first()
+            )
+            if existing_platform_admin is None:
+                raise
+            logger.info(
+                "Platform admin user %s already exists; another process created it.",
+                existing_platform_admin.username,
+            )
+            return False
+
+        logger.info("Created SaaS platform admin user %s.", admin_username)
+        return True
+    finally:
+        session.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage explicit SaaS schema and import workflows.")
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--print", dest="print_only", action="store_true", help="Print SaaS migration status.")
     action.add_argument("--apply", action="store_true", help="Apply pending SaaS migrations.")
     action.add_argument("--doctor", action="store_true", help="Validate SaaS schema readiness.")
+    action.add_argument(
+        "--ensure-platform-admin",
+        action="store_true",
+        help="Create the first SaaS platform admin from ADMIN_* env values if needed.",
+    )
     action.add_argument(
         "--import-legacy",
         metavar="LEGACY_SQLITE_PATH",
@@ -75,25 +178,33 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     engine = _build_engine()
 
-    if args.apply:
-        run_pending_saas_migrations(engine, logger)
+    try:
+        if args.apply:
+            run_pending_saas_migrations(engine, logger)
 
-    if args.print_only:
-        _print_report(inspect_saas_migrations(engine))
+        if args.print_only:
+            _print_report(inspect_saas_migrations(engine))
 
-    if args.doctor:
-        sys.exit(_doctor(engine))
+        if args.doctor:
+            sys.exit(_doctor(engine))
 
-    if args.import_legacy:
-        run_pending_saas_migrations(engine, logger)
-        ensure_saas_schema_ready(engine)
-        summary = import_legacy_sqlite_snapshot(
-            legacy_db_path=args.import_legacy,
-            organization_name=args.organization_name,
-            organization_slug=args.organization_slug,
-            logger=logger,
-        )
-        print(json.dumps(summary, indent=2, sort_keys=True, default=str))
+        if args.ensure_platform_admin:
+            ensure_platform_admin(engine, logger)
+            return
+
+        if args.import_legacy:
+            run_pending_saas_migrations(engine, logger)
+            ensure_saas_schema_ready(engine)
+            summary = import_legacy_sqlite_snapshot(
+                legacy_db_path=args.import_legacy,
+                organization_name=args.organization_name,
+                organization_slug=args.organization_slug,
+                logger=logger,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True, default=str))
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

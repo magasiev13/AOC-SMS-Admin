@@ -19,16 +19,16 @@ test('platform admin can review onboarding progress and owner invite access', as
   const onboardingRow = page.locator('tr').filter({ hasText: 'Onboarding Bakery' });
   await expect(onboardingRow).toBeVisible();
   await expect(onboardingRow.getByText(/core steps complete/).first()).toBeVisible();
-  await expect(onboardingRow.getByText(/Recommended for non-live organizations/)).toBeVisible();
-  await expect(onboardingRow.getByRole('link', { name: 'Configure sender' })).toBeVisible();
+  await expect(onboardingRow.getByText(/Twilio subaccount not provisioned yet/)).toBeVisible();
+  await expect(onboardingRow.getByRole('link', { name: 'Manage provider' })).toBeVisible();
   const ownerInviteLink = onboardingRow.getByRole('link', { name: 'Open invite' });
   await expect(ownerInviteLink).toBeVisible();
   await expect(ownerInviteLink).toHaveAttribute('href', /browser-owner-invite-token/);
 
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();
-  await expect(page.getByText(/Leave both fields blank/)).toBeVisible();
-  await expect(page.getByText(/One-number rules/)).toBeVisible();
+  await expect(page.getByText(/Platform-managed Twilio by default/)).toBeVisible();
+  await expect(page.getByText(/Twilio subaccounts and messaging services are provisioned later/)).toBeVisible();
 });
 
 test('owner sees human-readable billing state and pending invite links', async ({ page }) => {

@@ -191,15 +191,22 @@ sqlite3 /opt/sms-admin/instance/sms.db "UPDATE users SET password_hash='pbkdf2:s
 
 ### No Admin User
 
-**Cause:** `ADMIN_PASSWORD` not set on first startup.
+**Cause:** the initial admin bootstrap step was skipped.
 
 **Solution:**
 ```bash
-# Add to .env
+# Legacy runtime: add to .env, then restart to create admin
 echo "ADMIN_PASSWORD=your-password" | sudo tee -a /opt/sms-admin/.env
 
 # Restart to create admin
 sudo systemctl restart sms
+```
+
+For the SaaS line, provision the first platform admin explicitly instead of relying on web startup:
+
+```bash
+cd /opt/sms-saas
+sudo -u smsadmin /usr/local/bin/saas-dbdoctor --ensure-platform-admin
 ```
 
 ---

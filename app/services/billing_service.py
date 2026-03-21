@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 from flask import current_app
 
@@ -10,9 +11,11 @@ from app.models import (
     Organization,
     OrganizationMembership,
     OrganizationSubscription,
+    OrganizationUsageBillingPeriod,
     StripeWebhookEvent,
     utc_now,
 )
+from app.services.twilio_service import previous_billing_period_window, reconcile_messaging_usage
 
 
 ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active"}
@@ -500,12 +503,95 @@ def refresh_subscription_from_stripe(
     return subscription
 
 
+def _decimal_to_cents(value: Decimal | int | float | str) -> int:
+    normalized = Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int(normalized * 100)
+
+
+def _post_closed_usage_invoice_items() -> dict[str, int]:
+    summary = {
+        "periods_scanned": 0,
+        "periods_posted": 0,
+        "periods_skipped": 0,
+        "periods_failed": 0,
+    }
+    period_start, period_end = previous_billing_period_window()
+    periods = OrganizationUsageBillingPeriod.query.filter_by(
+        period_start=period_start,
+        period_end=period_end,
+    ).all()
+    if not periods:
+        return summary
+
+    stripe = _stripe_module()
+    for period in periods:
+        summary["periods_scanned"] += 1
+        if period.stripe_invoice_item_id or (period.status or "").strip().lower() in {"posted", "included"}:
+            summary["periods_skipped"] += 1
+            continue
+        if period.overage_units <= 0:
+            period.status = "included"
+            summary["periods_skipped"] += 1
+            continue
+
+        organization = period.organization
+        subscription = organization.subscription if organization is not None else None
+        if subscription is None or not subscription.stripe_customer_id:
+            period.status = "pending_customer"
+            summary["periods_skipped"] += 1
+            continue
+
+        try:
+            invoice_item = stripe.InvoiceItem.create(
+                customer=subscription.stripe_customer_id,
+                currency=period.currency or "usd",
+                amount=_decimal_to_cents(period.sell_amount),
+                description=(
+                    f"SMS overage for {(organization.name if organization is not None else f'org {period.organization_id}')}"
+                    f" ({period_start.date()} to {(period_end - timedelta(seconds=1)).date()})"
+                ),
+                metadata={
+                    "organization_id": str(period.organization_id),
+                    "period_start": period_start.date().isoformat(),
+                    "period_end": period_end.date().isoformat(),
+                    "overage_units": str(period.overage_units),
+                },
+            )
+            period.stripe_invoice_item_id = invoice_item.id
+            period.status = "posted"
+            period.posted_at = utc_now()
+            summary["periods_posted"] += 1
+        except Exception:
+            db.session.rollback()
+            summary["periods_failed"] += 1
+            current_app.logger.exception(
+                "Failed posting SMS overage invoice item for organization_id=%s period_start=%s.",
+                period.organization_id,
+                period.period_start,
+            )
+            period = db.session.get(OrganizationUsageBillingPeriod, period.id)
+            if period is not None:
+                period.status = "error"
+        db.session.commit()
+
+    return summary
+
+
 def reconcile_billing_subscriptions() -> dict[str, int]:
     summary = {
         "scanned": 0,
         "updated": 0,
         "unchanged": 0,
         "failed": 0,
+        "usage_records_seen": 0,
+        "usage_records_finalized": 0,
+        "usage_records_pending": 0,
+        "usage_records_errored": 0,
+        "usage_periods_updated": 0,
+        "usage_periods_scanned": 0,
+        "usage_periods_posted": 0,
+        "usage_periods_skipped": 0,
+        "usage_periods_failed": 0,
     }
 
     subscriptions = OrganizationSubscription.query.all()
@@ -544,5 +630,27 @@ def reconcile_billing_subscriptions() -> dict[str, int]:
         summary["updated"],
         summary["unchanged"],
         summary["failed"],
+    )
+    usage_summary = reconcile_messaging_usage()
+    summary["usage_records_seen"] = usage_summary["records_seen"]
+    summary["usage_records_finalized"] = usage_summary["records_finalized"]
+    summary["usage_records_pending"] = usage_summary["records_pending"]
+    summary["usage_records_errored"] = usage_summary["records_errored"]
+    summary["usage_periods_updated"] = usage_summary["periods_updated"]
+
+    invoice_summary = _post_closed_usage_invoice_items()
+    summary["usage_periods_scanned"] = invoice_summary["periods_scanned"]
+    summary["usage_periods_posted"] = invoice_summary["periods_posted"]
+    summary["usage_periods_skipped"] = invoice_summary["periods_skipped"]
+    summary["usage_periods_failed"] = invoice_summary["periods_failed"]
+
+    current_app.logger.info(
+        "[Usage Reconcile] records_seen=%d finalized=%d pending=%d errored=%d periods_updated=%d periods_posted=%d",
+        summary["usage_records_seen"],
+        summary["usage_records_finalized"],
+        summary["usage_records_pending"],
+        summary["usage_records_errored"],
+        summary["usage_periods_updated"],
+        summary["usage_periods_posted"],
     )
     return summary

@@ -20,7 +20,11 @@ from app.models import (
     utc_now,
 )
 from app.services.suppression_service import classify_failure
-from app.services.twilio_service import get_twilio_service, resolve_messaging_profile
+from app.services.twilio_service import (
+    get_twilio_service,
+    record_usage_candidates,
+    resolve_messaging_profile,
+)
 from app.tenant import organization_context, saas_mode_enabled
 from app.utils import normalize_keyword, normalize_phone, validate_phone
 
@@ -216,6 +220,11 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
         delivery_error=result.get('error'),
     )
     db.session.commit()
+    record_usage_candidates(
+        thread.organization_id,
+        [result],
+        source='reply',
+    )
     return result
 
 
@@ -465,6 +474,11 @@ def _send_automated_reply(
         automation_source_id=source_id,
         delivery_status=result.get('status'),
         delivery_error=result.get('error'),
+    )
+    record_usage_candidates(
+        thread.organization_id,
+        [result],
+        source=source,
     )
     return result
 
@@ -782,7 +796,7 @@ def process_inbound_sms(payload: dict) -> dict:
         return {'status': 'ignored', 'reason': 'missing_from'}
     if saas_mode_enabled() and messaging_profile is None:
         return {'status': 'ignored', 'reason': 'missing_destination_profile'}
-    if saas_mode_enabled() and messaging_profile.status != 'active':
+    if saas_mode_enabled() and not messaging_profile.can_send:
         return {'status': 'ignored', 'reason': 'inactive_destination_profile'}
 
     phone = normalize_phone(raw_from)

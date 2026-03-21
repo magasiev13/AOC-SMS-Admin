@@ -53,6 +53,7 @@ def _seed_env_defaults(*, database_url: str | None, base_url: str | None) -> Non
     os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_demo")
     os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_demo")
     os.environ.setdefault("STRIPE_PRICE_ID", "price_demo")
+    os.environ.setdefault("TWILIO_CREDENTIAL_ENCRYPTION_KEY", "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=")
 
 
 def _message_log_details(*, delivered: list[str], failed: list[dict[str, str]] | None = None) -> str:
@@ -281,18 +282,24 @@ def seed_demo_database(
             inbound_identity=live_from_number,
             messaging_service_sid=live_messaging_service_sid,
             status=internal_messaging_status,
+            provider_status=internal_messaging_status,
+            sender_review_status="approved" if live_from_number else "pending",
+            consent_acknowledged_at=now if live_from_number else None,
         )
         northstar_messaging = OrganizationMessagingProfile(
             organization=northstar_org,
             status="pending",
+            provider_status="pending",
         )
         harbor_messaging = OrganizationMessagingProfile(
             organization=harbor_org,
             status="pending",
+            provider_status="pending",
         )
         sunset_messaging = OrganizationMessagingProfile(
             organization=sunset_org,
             status="pending",
+            provider_status="pending",
         )
 
         db.session.add_all(
@@ -736,8 +743,8 @@ def seed_demo_database(
 
         base_url_value = (app.config.get("SAAS_BASE_URL") or "http://127.0.0.1:5000").rstrip("/")
         live_sender_note = (
-            f"Live sender assigned to AOC SMS Internal: {live_from_number} "
-            f"{f'via {live_messaging_service_sid}' if live_messaging_service_sid else '(no Messaging Service SID provided)'}."
+            f"Approved sender assigned to AOC SMS Internal: {live_from_number} "
+            f"{f'via managed Messaging Service {live_messaging_service_sid}' if live_messaging_service_sid else '(no Messaging Service SID provided)'}."
             if live_from_number
             else "No live Twilio sender assigned. All organizations are safe to test locally in non-live mode."
         )
@@ -836,7 +843,7 @@ def main() -> None:
     parser.add_argument("--reset", action="store_true", help="Delete the target SQLite database before seeding.")
     parser.add_argument("--database-url", help="Override DATABASE_URL for the seed run.")
     parser.add_argument("--base-url", help="Override SAAS_BASE_URL for invite links in the printed summary.")
-    parser.add_argument("--live-from-number", help="Assign one live sender number to AOC SMS Internal.")
+    parser.add_argument("--live-from-number", help="Assign an approved live sender number to AOC SMS Internal.")
     parser.add_argument(
         "--live-messaging-service-sid",
         help="Optional MG... Messaging Service SID paired with --live-from-number.",

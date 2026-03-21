@@ -3,6 +3,7 @@
 Run with: python -m unittest tests.test_scheduler_mode
 """
 
+import importlib
 import os
 import unittest
 from unittest.mock import patch
@@ -12,12 +13,18 @@ from app.services import scheduler_service
 
 
 class TestSchedulerMode(unittest.TestCase):
+    def _reload_config(self) -> None:
+        import app.config
+
+        importlib.reload(app.config)
+
     def setUp(self) -> None:
         self._original_scheduler_enabled = os.environ.get("SCHEDULER_ENABLED")
         self._original_scheduler_runner = os.environ.get("SCHEDULER_RUNNER")
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
         os.environ["SCHEDULER_ENABLED"] = "0"
         os.environ["FLASK_DEBUG"] = "1"
+        self._reload_config()
         scheduler_service._scheduler_initialized = False
         scheduler_service.scheduler = None
 
@@ -41,6 +48,7 @@ class TestSchedulerMode(unittest.TestCase):
     def test_factory_is_safe_by_default_even_with_scheduler_env_flags(self) -> None:
         os.environ["SCHEDULER_ENABLED"] = "1"
         os.environ["SCHEDULER_RUNNER"] = "1"
+        self._reload_config()
 
         with patch("app._run_startup_tasks") as mock_startup:
             create_app()
@@ -51,6 +59,7 @@ class TestSchedulerMode(unittest.TestCase):
 
     def test_runtime_app_runs_bootstrap_and_can_start_scheduler(self) -> None:
         os.environ["SCHEDULER_ENABLED"] = "1"
+        self._reload_config()
 
         with patch("app._run_startup_tasks") as mock_startup:
             with patch("app.services.scheduler_service.init_scheduler") as mock_init_scheduler:

@@ -7,7 +7,11 @@ from sqlalchemy import func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from twilio.base.exceptions import TwilioRestException
-from app.services.twilio_service import TwilioTransientError, get_twilio_service
+from app.services.twilio_service import (
+    TwilioTransientError,
+    get_twilio_service,
+    record_usage_candidates,
+)
 from app.tenant import organization_context
 
 scheduler = None
@@ -476,6 +480,11 @@ def send_scheduled_messages(app):
                     scheduled.error_message = None
                     scheduled.next_retry_at = None
                     db.session.commit()
+                    record_usage_candidates(
+                        scheduled.organization_id,
+                        result.get('details', []),
+                        source='scheduled',
+                    )
 
                     sent_count += 1
                     logger.info(
@@ -512,6 +521,11 @@ def send_scheduled_messages(app):
                         result=partial_result,
                         MessageLog=MessageLog,
                         db=db,
+                    )
+                    record_usage_candidates(
+                        scheduled.organization_id,
+                        partial_result.get('details', []),
+                        source='scheduled',
                     )
                 was_requeued = _handle_transient_failure(
                     scheduled=scheduled,

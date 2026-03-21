@@ -57,9 +57,9 @@
         <div class="col-sm-6 col-xl-3">
             <div class="platform-stat-card card app-card h-100">
                 <div class="card-body">
-                    <div class="platform-stat-label">Live Messaging Gaps</div>
+                    <div class="platform-stat-label">Provider Gaps</div>
                     <div class="platform-stat-value">{{ platform_home.summary.missing_live_messaging }}</div>
-                    <div class="platform-stat-meta">Organizations still pending sender setup</div>
+                    <div class="platform-stat-meta">Organizations still pending provider readiness</div>
                 </div>
             </div>
         </div>
@@ -90,10 +90,10 @@
                             </div>
                             <div class="small text-muted mt-2">
                                 Messaging:
-                                <strong>{{ organization.messaging_profile.from_number or organization.messaging_profile.messaging_service_sid if organization.messaging_profile else 'Pending sender setup' }}</strong>
+                                <strong>{{ organization.messaging_profile.from_number or organization.messaging_profile.messaging_service_sid if organization.messaging_profile else 'Pending provider setup' }}</strong>
                             </div>
                             <div class="d-flex flex-wrap gap-2 mt-3">
-                                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">Configure Sender</a>
+                                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">Manage Provider</a>
                                 <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-sm btn-outline-secondary">Review Organization</a>
                             </div>
                         </article>

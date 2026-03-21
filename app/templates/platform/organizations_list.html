@@ -72,23 +72,20 @@
                     </td>
                     <td>
                         {% if organization.messaging_profile %}
-                        <span class="badge bg-{{ 'success' if organization.messaging_profile.status == 'active' else 'warning text-dark' }}">
-                            {{ organization.messaging_profile.status }}
+                        {% set profile = organization.messaging_profile %}
+                        <span class="badge bg-{{ 'success' if profile.provider_status == 'active' else ('secondary' if profile.provider_status == 'suspended' else ('danger' if profile.provider_status == 'error' else 'warning text-dark')) }}">
+                            {{ profile.provider_status }}
                         </span>
                         <div class="small text-muted mt-1">
-                            {{ organization.messaging_profile.from_number or organization.messaging_profile.messaging_service_sid or 'Sender still needed' }}
+                            {{ profile.from_number or profile.messaging_service_sid or 'Provisioning still needed' }}
                         </div>
                         <div class="small text-muted">
-                            {% if organization.messaging_profile.status == 'active' %}
-                            Current live test sender
-                            {% else %}
-                            Recommended for non-live organizations
-                            {% endif %}
+                            {{ profile.twilio_subaccount_sid or 'Twilio subaccount not provisioned yet' }}
                         </div>
                         {% else %}
                         <span class="badge bg-warning text-dark">pending</span>
-                        <div class="small text-muted mt-1">No sender profile yet.</div>
-                        <div class="small text-muted">Recommended for non-live organizations.</div>
+                        <div class="small text-muted mt-1">No provider profile yet.</div>
+                        <div class="small text-muted">Create the organization, then provision Twilio after billing.</div>
                         {% endif %}
                     </td>
                     <td>
@@ -125,7 +122,7 @@
                                 href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}"
                                 class="btn btn-sm btn-outline-primary"
                             >
-                                {{ 'Edit sender' if organization.messaging_profile and organization.messaging_profile.status == 'active' else 'Configure sender' }}
+                                {{ 'Manage provider' if organization.messaging_profile else 'Set up provider' }}
                             </a>
                             <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

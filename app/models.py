@@ -298,20 +298,55 @@ class StripeWebhookEvent(db.Model):
 
 
 class OrganizationMessagingProfile(db.Model):
-    """Per-organization sender identity on the shared platform."""
+    """Provider-managed messaging resources for one organization."""
     __tablename__ = 'organization_messaging_profiles'
 
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
+    provider_mode = db.Column(db.String(30), nullable=False, default='platform_managed')
     twilio_subaccount_sid = db.Column(db.String(64), nullable=True, unique=True)
+    twilio_auth_token_encrypted = db.Column(db.Text, nullable=True)
+    credential_reference = db.Column(db.String(255), nullable=True)
     messaging_service_sid = db.Column(db.String(64), nullable=True, unique=True)
+    phone_number_sid = db.Column(db.String(64), nullable=True, unique=True)
     from_number = db.Column(db.String(20), nullable=True, unique=True)
     inbound_identity = db.Column(db.String(64), nullable=True, unique=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='pending')
+    provider_status = db.Column(db.String(20), nullable=False, default='pending')
+    business_type = db.Column(db.String(80), nullable=True)
+    use_case = db.Column(db.String(120), nullable=True)
+    consent_acknowledged_at = db.Column(db.DateTime, nullable=True)
+    sender_review_status = db.Column(db.String(20), nullable=False, default='pending')
+    provisioning_started_at = db.Column(db.DateTime, nullable=True)
+    provisioned_at = db.Column(db.DateTime, nullable=True)
+    suspended_at = db.Column(db.DateTime, nullable=True)
+    provider_last_checked_at = db.Column(db.DateTime, nullable=True)
+    last_provision_error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     organization = db.relationship('Organization', back_populates='messaging_profile')
+
+    @validates("provider_mode")
+    def _normalize_provider_mode(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"platform_managed", "customer_managed"}:
+            raise ValueError("Provider mode must be platform_managed or customer_managed.")
+        return normalized
+
+    @validates("status", "provider_status")
+    def _normalize_provider_status(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"pending", "provisioning", "active", "suspended", "error"}:
+            raise ValueError("Provider status must be pending, provisioning, active, suspended, or error.")
+        return normalized
+
+    @validates("sender_review_status")
+    def _normalize_sender_review_status(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"pending", "approved", "rejected"}:
+            raise ValueError("Sender review status must be pending, approved, or rejected.")
+        return normalized
 
     @validates("from_number")
     def _normalize_from_number(self, key, value):
@@ -325,8 +360,101 @@ class OrganizationMessagingProfile(db.Model):
         normalized = (value or "").strip()
         return normalized or None
 
+    @property
+    def active_sender_identity(self) -> str | None:
+        return self.from_number or self.messaging_service_sid
+
+    @property
+    def can_send(self) -> bool:
+        return self.provider_status == 'active' and bool(self.active_sender_identity)
+
+    def set_provider_status(self, value: str) -> None:
+        normalized = self._normalize_provider_status("provider_status", value)
+        self.provider_status = normalized
+        self.status = normalized
+
     def __repr__(self):
-        return f'<OrganizationMessagingProfile org={self.organization_id} status={self.status}>'
+        return f'<OrganizationMessagingProfile org={self.organization_id} status={self.provider_status}>'
+
+
+class OrganizationProviderAuditLog(db.Model):
+    """Audit trail for provider lifecycle actions."""
+    __tablename__ = 'organization_provider_audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    action = db.Column(db.String(40), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='success', index=True)
+    message = db.Column(db.Text, nullable=True)
+    metadata_json = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    organization = db.relationship('Organization')
+    actor_user = db.relationship('AppUser')
+
+    def __repr__(self):
+        return f'<OrganizationProviderAuditLog org={self.organization_id} action={self.action}>'
+
+
+class MessagingUsageRecord(db.Model):
+    """Per-message usage ledger for outbound billing reconciliation."""
+    __tablename__ = 'messaging_usage_records'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    message_sid = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    direction = db.Column(db.String(10), nullable=False, default='outbound', index=True)
+    source = db.Column(db.String(20), nullable=False, default='blast')
+    twilio_subaccount_sid = db.Column(db.String(64), nullable=True, index=True)
+    twilio_message_status = db.Column(db.String(30), nullable=True, index=True)
+    provider_currency = db.Column(db.String(8), nullable=False, default='usd')
+    provider_cost = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    sell_rate = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    sell_amount = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    margin = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    billable_units = db.Column(db.Integer, nullable=False, default=0)
+    billable = db.Column(db.Boolean, nullable=False, default=False)
+    reconciliation_status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    billing_period_start = db.Column(db.DateTime, nullable=True, index=True)
+    billing_period_end = db.Column(db.DateTime, nullable=True, index=True)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    reconciled_at = db.Column(db.DateTime, nullable=True)
+
+    organization = db.relationship('Organization')
+
+    def __repr__(self):
+        return f'<MessagingUsageRecord org={self.organization_id} sid={self.message_sid}>'
+
+
+class OrganizationUsageBillingPeriod(db.Model):
+    """Closed-period usage summary for overage posting."""
+    __tablename__ = 'organization_usage_billing_periods'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    period_start = db.Column(db.DateTime, nullable=False)
+    period_end = db.Column(db.DateTime, nullable=False)
+    included_units = db.Column(db.Integer, nullable=False, default=0)
+    used_units = db.Column(db.Integer, nullable=False, default=0)
+    overage_units = db.Column(db.Integer, nullable=False, default=0)
+    sell_amount = db.Column(db.Numeric(12, 4), nullable=False, default=0)
+    currency = db.Column(db.String(8), nullable=False, default='usd')
+    stripe_invoice_item_id = db.Column(db.String(80), nullable=True, unique=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    posted_at = db.Column(db.DateTime, nullable=True)
+
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'period_start', 'period_end', name='ux_org_usage_period'),
+    )
+
+    def __repr__(self):
+        return f'<OrganizationUsageBillingPeriod org={self.organization_id} start={self.period_start}>'
 
 
 class CommunityMember(db.Model):

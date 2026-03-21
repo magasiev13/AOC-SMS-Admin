@@ -25,7 +25,7 @@ cp .env.example .env
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `SECRET_KEY` | Flask secret key for sessions | Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `ADMIN_PASSWORD` | Initial admin password | Required in production |
+| `ADMIN_PASSWORD` | Initial admin password | Required for legacy production bootstrap; bootstrap-only for first SaaS platform admin provisioning |
 
 ## Optional Variables
 
@@ -46,7 +46,7 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ADMIN_USERNAME` | `admin` | Initial admin username |
+| `ADMIN_USERNAME` | `admin` | Initial admin username or first SaaS platform admin username |
 | `ADMIN_TEST_PHONE` | - | Phone number for test mode sends |
 
 ### Database
@@ -192,7 +192,7 @@ class Config:
 |---------|-------------|------------|
 | `DEBUG` | `True` | `False` |
 | `SECRET_KEY` | Defaults allowed | **Required** |
-| `ADMIN_PASSWORD` | Optional | **Required** |
+| `ADMIN_PASSWORD` | Optional | **Required** for legacy runtime bootstrap; bootstrap-only for first SaaS platform admin provisioning |
 | `SESSION_COOKIE_SECURE` | `False` | `True` |
 | `AUTH_PASSWORD_POLICY_ENFORCE` | Optional | `True` |
 | `TRUSTED_HOSTS` | Optional | **Required** |
@@ -203,7 +203,7 @@ class Config:
 On startup in production (`DEBUG=False`):
 
 1. **SECRET_KEY validation** - App refuses to start with default dev key
-2. **ADMIN_PASSWORD validation** - Required to create initial admin user
+2. **ADMIN_PASSWORD validation** - Legacy runtime uses it to create the initial admin user; the SaaS line provisions the first platform admin explicitly with `python -m app.saas_db --ensure-platform-admin`
 3. **Security hardening validation** - Critical auth/session values must be in safe ranges
 4. **TRUSTED_HOSTS validation** - Must be set to at least one hostname
 
@@ -222,7 +222,9 @@ FLASK_ENV=production
 TRUST_PROXY=1
 TRUSTED_HOSTS=sms.example.com
 
-# Admin (required)
+# Admin bootstrap
+# Legacy runtime uses these directly. SaaS uses them for first-time
+# platform-admin provisioning via `python -m app.saas_db --ensure-platform-admin`.
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your-secure-password
 

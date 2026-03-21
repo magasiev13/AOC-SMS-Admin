@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, request
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import IntegrityError
 from flask_wtf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash
@@ -78,6 +79,7 @@ def _validate_saas_billing_config(app: Flask) -> None:
         "STRIPE_WEBHOOK_SECRET": app.config.get("STRIPE_WEBHOOK_SECRET"),
         "STRIPE_PRICE_ID": app.config.get("STRIPE_PRICE_ID"),
         "SAAS_BASE_URL": app.config.get("SAAS_BASE_URL"),
+        "TWILIO_CREDENTIAL_ENCRYPTION_KEY": app.config.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
     }
     missing = [name for name, value in required_values.items() if not str(value or "").strip()]
     if missing:
@@ -87,6 +89,18 @@ def _validate_saas_billing_config(app: Flask) -> None:
 
 def _run_startup_tasks(app: Flask) -> None:
     with app.app_context():
+        if app.config.get("SAAS_MODE"):
+            from app.saas_migrations.runner import ensure_saas_schema_ready
+
+            saas_report = ensure_saas_schema_ready(db.engine)
+            app.logger.info(
+                "SaaS schema ready for %s; applied=%s pending=%s.",
+                saas_report["db_label"],
+                len(saas_report["applied"]),
+                len(saas_report["pending"]),
+            )
+            return
+
         from app.migrations.runner import (
             check_migrations_compatibility,
             inspect_migrations,
@@ -115,47 +129,53 @@ def _run_startup_tasks(app: Flask) -> None:
                 )
             else:
                 app.logger.info("Schema migrations: none")
-        elif app.config.get("SAAS_MODE"):
-            from app.saas_migrations.runner import ensure_saas_schema_ready
-
-            saas_report = ensure_saas_schema_ready(db.engine)
-            app.logger.info(
-                "SaaS schema ready for %s; applied=%s pending=%s.",
-                saas_report["db_label"],
-                len(saas_report["applied"]),
-                len(saas_report["pending"]),
-            )
         else:
             db.create_all()
             check_migrations_compatibility(db.engine, app.logger)
 
-        from app.models import AppUser
+        _ensure_bootstrap_admin_user(app)
 
-        if AppUser.query.count() == 0:
-            admin_password = app.config.get("ADMIN_PASSWORD")
-            if not admin_password:
-                if not app.config.get("DEBUG"):
-                    raise RuntimeError(
-                        "ADMIN_PASSWORD must be set in production to create the first admin user"
-                    )
-            else:
-                admin_username = app.config.get("ADMIN_USERNAME", "admin")
-                admin_email = app.config.get("ADMIN_EMAIL") or f"{admin_username}@example.com"
-                password_hash = admin_password
-                if not admin_password.startswith(("pbkdf2:", "scrypt:")):
-                    password_hash = generate_password_hash(
-                        admin_password, method="pbkdf2:sha256"
-                    )
 
-                admin_user = AppUser(
-                    username=admin_username,
-                    email=admin_email,
-                    role="admin",
-                    is_platform_admin=bool(app.config.get("SAAS_MODE")),
-                    password_hash=password_hash,
-                )
-                db.session.add(admin_user)
-                db.session.commit()
+def _ensure_bootstrap_admin_user(app: Flask) -> None:
+    from app.models import AppUser
+
+    if AppUser.query.count() != 0:
+        return
+
+    admin_password = app.config.get("ADMIN_PASSWORD")
+    if not admin_password:
+        if not app.config.get("DEBUG"):
+            raise RuntimeError(
+                "ADMIN_PASSWORD must be set in production to create the first admin user"
+            )
+        return
+
+    admin_username = (app.config.get("ADMIN_USERNAME") or "admin").strip() or "admin"
+    admin_email = app.config.get("ADMIN_EMAIL") or f"{admin_username}@example.com"
+    password_hash = admin_password
+    if not admin_password.startswith(("pbkdf2:", "scrypt:")):
+        password_hash = generate_password_hash(admin_password, method="pbkdf2:sha256")
+
+    admin_user = AppUser(
+        username=admin_username,
+        email=admin_email,
+        role="admin",
+        is_platform_admin=bool(app.config.get("SAAS_MODE")),
+        password_hash=password_hash,
+    )
+    db.session.add(admin_user)
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing_user = AppUser.query.filter_by(username=admin_username).first()
+        if existing_user is None:
+            raise
+        app.logger.info(
+            "Bootstrap admin user %s already exists; another startup worker created it.",
+            admin_username,
+        )
 
 
 def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:

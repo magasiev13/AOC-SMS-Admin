@@ -16,9 +16,11 @@ class TestStripeWebhookHardening(unittest.TestCase):
             "FLASK_DEBUG": os.environ.get("FLASK_DEBUG"),
             "DATABASE_URL": os.environ.get("DATABASE_URL"),
             "SAAS_MODE": os.environ.get("SAAS_MODE"),
+            "TWILIO_CREDENTIAL_ENCRYPTION_KEY": os.environ.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
         }
         os.environ["FLASK_DEBUG"] = "1"
         os.environ["SAAS_MODE"] = "1"
+        os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
         os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
@@ -287,6 +289,23 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
             SAAS_BASE_URL="https://beta.example.com",
+            TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
+        )
+
+        with self.assertRaises(RuntimeError):
+            _validate_saas_billing_config(app)
+
+    def test_missing_encryption_key_fails_validation(self) -> None:
+        from app.__init__ import _validate_saas_billing_config
+
+        app = Flask(__name__)
+        app.config.update(
+            SAAS_MODE=True,
+            STRIPE_SECRET_KEY="sk_test_123",
+            STRIPE_WEBHOOK_SECRET="whsec_test_123",
+            STRIPE_PRICE_ID="price_test_123",
+            SAAS_BASE_URL="https://beta.example.com",
+            TWILIO_CREDENTIAL_ENCRYPTION_KEY="",
         )
 
         with self.assertRaises(RuntimeError):

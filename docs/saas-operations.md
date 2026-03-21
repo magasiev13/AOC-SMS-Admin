@@ -38,6 +38,15 @@ TWILIO_AUTH_TOKEN=...
 SECRET_KEY=...
 ```
 
+Bootstrap-only for the first platform admin:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your-secure-password
+```
+
+After the first platform admin exists, `ADMIN_PASSWORD` is no longer required for deploys or runtime startup.
+
 ## SaaS DB Commands
 
 ```bash
@@ -49,6 +58,9 @@ python -m app.saas_db --apply
 
 # Validate schema readiness
 python -m app.saas_db --doctor
+
+# Ensure the first platform admin exists
+python -m app.saas_db --ensure-platform-admin
 
 # Import a legacy SQLite snapshot into one default organization
 python -m app.saas_db --import-legacy /path/to/legacy.db \
@@ -69,6 +81,7 @@ That flow:
 - pulls latest code
 - installs Python dependencies
 - applies SaaS schema migrations
+- ensures the first platform admin exists when needed
 - validates app startup config
 - restarts SaaS web, worker, scheduler, and billing reconciliation timers
 

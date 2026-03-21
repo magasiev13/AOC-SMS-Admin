@@ -31,6 +31,7 @@ def main() -> None:
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_browser"
     os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_browser"
     os.environ["STRIPE_PRICE_ID"] = "price_browser"
+    os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
 
     from app import create_app, db
     from app.models import (
@@ -77,6 +78,7 @@ def main() -> None:
         onboarding_messaging = OrganizationMessagingProfile(
             organization=onboarding_org,
             status="pending",
+            provider_status="pending",
         )
 
         active_org = Organization(name="Acme Bakery", slug="acme-bakery", status="active")
@@ -91,8 +93,11 @@ def main() -> None:
         active_messaging = OrganizationMessagingProfile(
             organization=active_org,
             from_number="+15550001111",
+            messaging_service_sid="MGbrowser1111",
             inbound_identity="+15550001111",
             status="active",
+            provider_status="active",
+            sender_review_status="approved",
         )
 
         owner = AppUser(
