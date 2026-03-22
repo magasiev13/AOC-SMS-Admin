@@ -1,0 +1,180 @@
+name: Deploy SaaS Pilot (codex/saas-pilot-v2 -> beta)
+
+on:
+  push:
+    branches: ["codex/saas-pilot-v2"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-saas-pilot
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Run baseline quality gate
+        run: |
+          ./run/verify.sh
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run test suite
+        run: |
+          python -m pytest -q
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Write SSH key + known_hosts
+        env:
+          PILOT_VPS_HOST: ${{ secrets.PILOT_VPS_HOST }}
+          PILOT_VPS_KNOWN_HOSTS: ${{ secrets.PILOT_VPS_KNOWN_HOSTS }}
+          PILOT_VPS_SSH_KEY: ${{ secrets.PILOT_VPS_SSH_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          SSH_KEY_VALUE="${PILOT_VPS_SSH_KEY:-${VPS_SSH_KEY:-}}"
+          if [ -z "${SSH_KEY_VALUE}" ]; then
+            echo "❌ missing PILOT_VPS_SSH_KEY (or fallback VPS_SSH_KEY)"
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          printf '%s\n' "${SSH_KEY_VALUE}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+
+          if [ -n "${PILOT_VPS_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "${PILOT_VPS_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          else
+            cat > ~/.ssh/known_hosts <<'HOSTS'
+beta.theitwingman.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPXDqus7uGfjIUS5B/jAF64sC3BBT9Epwmk64wreBPe+
+beta.theitwingman.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC5GYE099jCwIscUsaqfrH8qcjclFKnas6y+wUto6b7hcL6KNxpex2a6hOP3r6Fc22RT+Cgq0Js7zjbOKCPZatq7zDZbw/QTK18+wcrUykqN1kruwVFLUisc8lcY+D7t5yw6rhcTaaLWDlvsOwKCPrkf8NVCbIvLNcdnYMJsjlp0UZP2oGDjh09x6IuQels+ZCzAXIoVkMCC2aaztv/pDoB2X7o9/669mVPXL5jfW/aSi0NAuYmfjbZRcrWK5UujBNONcznsax+hw8kbat3Ri1SPS+M/ZQrIKxkG8O43hcIGZVHJWgk6vTuPdTFxGnVftWm1N5NLUh7IpPDtZ0Z6yCK7/eDR/TlyYQNBcPi1m/1r/eRr9nonAtTM+4R0k5jrnofbI4sewMvXUTbiqKXHwBQiXGi59MhPHehCnjYtb4HTuqgeYjen/xEktOq2aR1OepEXPXBf3lfP1Bp49mBUo0qdqqWiu1Brgi6tP+W+xy/r5sihoBjN3acguj0nQFTJ58=
+beta.theitwingman.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBElEwHiGtPGrDaPYwueEjGltZx7WE6cqIC6+EjE0memA63oYc9SX2TXOHr1SMmHPnw7eE9bfjP8q9MEFW6W9SpQ=
+HOSTS
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          PILOT_VPS_HOST: ${{ secrets.PILOT_VPS_HOST }}
+          PILOT_VPS_USER: ${{ secrets.PILOT_VPS_USER }}
+          PILOT_VPS_PORT: ${{ secrets.PILOT_VPS_SSH_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          VPS_HOST="${PILOT_VPS_HOST:-beta.theitwingman.com}"
+          VPS_USER_VALUE="${PILOT_VPS_USER:-${VPS_USER:-}}"
+          VPS_PORT_VALUE="${PILOT_VPS_PORT:-${VPS_PORT:-22}}"
+
+          if [ -z "${VPS_USER_VALUE}" ]; then
+            echo "❌ missing PILOT_VPS_USER (or fallback VPS_USER)"
+            exit 1
+          fi
+
+          ssh -p "${VPS_PORT_VALUE}" \
+            -i ~/.ssh/vps_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${VPS_USER_VALUE}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          APP_ROOT="/opt/sms-saas"
+          APP_USER="smsadmin"
+          REQUIRED_BRANCH="codex/saas-pilot-v2"
+          REQUIRED_TRACKING="origin/codex/saas-pilot-v2"
+
+          fail() {
+            echo "❌ $1" >&2
+            exit 1
+          }
+
+          resolve_health_host() {
+            local trusted_hosts
+            local first_host
+
+            trusted_hosts="$(grep -E '^TRUSTED_HOSTS=' "${APP_ROOT}/.env" | tail -n1 | cut -d= -f2- || true)"
+            first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
+            if [ -n "${first_host}" ]; then
+              printf '%s\n' "${first_host}"
+              return
+            fi
+            printf '127.0.0.1\n'
+          }
+
+          echo "==> Pilot preflight"
+          [ -d "${APP_ROOT}" ] || fail "${APP_ROOT} does not exist. Run deploy/install_saas.sh manually first."
+          [ -f "${APP_ROOT}/.env" ] || fail "${APP_ROOT}/.env is missing."
+          sudo -u "${APP_USER}" test -d "${APP_ROOT}/.git" || fail "${APP_ROOT} is not a git checkout."
+          sudo -u "${APP_USER}" git -C "${APP_ROOT}" diff --quiet || fail "${APP_ROOT} has uncommitted tracked changes."
+          sudo -u "${APP_USER}" git -C "${APP_ROOT}" diff --cached --quiet || fail "${APP_ROOT} has staged changes."
+
+          CURRENT_BRANCH="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse --abbrev-ref HEAD)"
+          [ "${CURRENT_BRANCH}" = "${REQUIRED_BRANCH}" ] || fail "${APP_ROOT} is on ${CURRENT_BRANCH}, expected ${REQUIRED_BRANCH}."
+
+          TRACKING_BRANCH="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+          [ "${TRACKING_BRANCH}" = "${REQUIRED_TRACKING}" ] || fail "${APP_ROOT} tracks ${TRACKING_BRANCH:-<none>}, expected ${REQUIRED_TRACKING}."
+
+          [ -x /usr/local/bin/saas-dbdoctor ] || fail "/usr/local/bin/saas-dbdoctor is missing. Run deploy/install_saas.sh manually first."
+
+          for unit in \
+            sms-saas.service \
+            sms-saas-worker.service \
+            sms-saas-scheduler.timer \
+            sms-saas-billing-reconcile.timer; do
+            systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]" || fail "Missing systemd unit ${unit}. Run deploy/install_saas.sh manually first."
+          done
+
+          for key in \
+            DATABASE_URL \
+            SAAS_BASE_URL \
+            STRIPE_SECRET_KEY \
+            STRIPE_WEBHOOK_SECRET \
+            STRIPE_PRICE_ID \
+            TWILIO_ACCOUNT_SID \
+            TWILIO_AUTH_TOKEN \
+            TWILIO_CREDENTIAL_ENCRYPTION_KEY \
+            SECRET_KEY \
+            TRUSTED_HOSTS; do
+            grep -q "^${key}=" "${APP_ROOT}/.env" || fail "Missing ${key} in ${APP_ROOT}/.env"
+          done
+
+          sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source .env; set +a; /usr/local/bin/saas-dbdoctor --doctor" >/dev/null
+
+          echo "==> Refresh deploy tooling from repo"
+          sudo -u "${APP_USER}" bash -lc "cd \"${APP_ROOT}\" && git pull --ff-only"
+          sudo install -m 0755 "${APP_ROOT}/deploy/deploy_sms_saas.sh" /usr/local/bin/deploy_sms_saas.sh
+          sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" /usr/local/bin/saas-dbdoctor
+
+          echo "==> Deploy latest pilot branch"
+          sudo /usr/local/bin/deploy_sms_saas.sh
+
+          echo "==> Service assertions"
+          sudo systemctl is-active --quiet sms-saas
+          sudo systemctl is-active --quiet sms-saas-worker
+          sudo systemctl is-active --quiet sms-saas-scheduler.timer
+          sudo systemctl is-active --quiet sms-saas-billing-reconcile.timer
+
+          echo "==> Health check"
+          HEALTH_HOST="$(resolve_health_host)"
+          curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null
+
+          echo "✅ SaaS pilot deploy complete and healthy"
+          REMOTE

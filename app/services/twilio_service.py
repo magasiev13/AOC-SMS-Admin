@@ -190,6 +190,24 @@ def _configure_service_webhooks(profile: OrganizationMessagingProfile, *, client
     )
 
 
+def _sender_sync_error_message(exc: Exception, profile: OrganizationMessagingProfile) -> str:
+    if isinstance(exc, TwilioRestException):
+        detail = (getattr(exc, "msg", "") or str(exc)).strip()
+        status = getattr(exc, "status", None)
+        if status == 404:
+            return (
+                f"Twilio could not attach phone number SID {profile.phone_number_sid} to messaging "
+                f"service {profile.messaging_service_sid} under subaccount {profile.twilio_subaccount_sid}. "
+                "Make sure the PN SID already belongs to this organization's Twilio subaccount. "
+                "A phone number from the platform master account or another subaccount will not attach here."
+            )
+        return (
+            f"Twilio error {status or 'unknown'} while attaching phone number SID "
+            f"{profile.phone_number_sid} to messaging service {profile.messaging_service_sid}: {detail}"
+        )
+    return str(exc)
+
+
 def _sync_service_sender(profile: OrganizationMessagingProfile, *, actor_user_id: int | None = None) -> None:
     if not profile.from_number or not profile.phone_number_sid:
         raise ProviderProvisioningError("Both sender number and phone number SID are required.")
@@ -595,15 +613,16 @@ def sync_sender_assignment(organization_id: int, *, actor_user_id: int | None = 
         if organization is None:
             raise
         profile = ensure_messaging_profile(organization)
+        message = _sender_sync_error_message(exc, profile)
         profile.set_provider_status("error")
-        profile.last_provision_error = str(exc)
+        profile.last_provision_error = message
         profile.provider_last_checked_at = utc_now()
         _record_provider_audit(
             organization.id,
             "sender_sync_failed",
             actor_user_id=actor_user_id,
             status="error",
-            message=str(exc),
+            message=message,
             metadata={
                 "from_number": profile.from_number,
                 "phone_number_sid": profile.phone_number_sid,
@@ -611,7 +630,7 @@ def sync_sender_assignment(organization_id: int, *, actor_user_id: int | None = 
             },
         )
         db.session.commit()
-        raise ProviderProvisioningError(str(exc)) from exc
+        raise ProviderProvisioningError(message) from exc
 
 
 def resolve_messaging_profile(payload: dict) -> OrganizationMessagingProfile | None:

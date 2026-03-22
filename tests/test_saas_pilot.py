@@ -310,12 +310,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_uses_subscription_status(self, mock_stripe_module) -> None:
+        from datetime import timedelta
+
         from app.services.billing_service import refresh_subscription_from_stripe
 
         mock_stripe = MagicMock()
         mock_stripe.checkout.Session.list.return_value.data = [
             {
                 "id": "cs_test_123",
+                "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
                 "status": "complete",
                 "customer_email": "owner@acme.test",
                 "customer": "cus_test_123",
@@ -339,6 +342,35 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(subscription.status, "trialing")
         self.assertEqual(subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(subscription.stripe_subscription_id, "sub_test_123")
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_refresh_subscription_from_stripe_ignores_checkout_sessions_older_than_org(self, mock_stripe_module) -> None:
+        from datetime import timedelta
+
+        from app.services.billing_service import refresh_subscription_from_stripe
+
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.list.return_value.data = [
+            {
+                "id": "cs_test_old",
+                "created": int((self.subscription.created_at - timedelta(days=1)).timestamp()),
+                "status": "complete",
+                "customer_email": "owner@acme.test",
+                "customer": "cus_test_old",
+                "subscription": "sub_test_old",
+                "client_reference_id": str(self.organization.id),
+                "metadata": {"organization_id": str(self.organization.id)},
+            }
+        ]
+        mock_stripe_module.return_value = mock_stripe
+
+        subscription = refresh_subscription_from_stripe(self.organization, "owner@acme.test")
+
+        self.assertIsNotNone(subscription)
+        self.assertEqual(subscription.status, "incomplete")
+        self.assertIsNone(subscription.stripe_customer_id)
+        self.assertIsNone(subscription.stripe_subscription_id)
+        mock_stripe.Subscription.retrieve.assert_not_called()
 
     def test_users_list_is_scoped_to_current_organization(self) -> None:
         other_org = self.Organization(name="Other Co", slug="other-co", status="active")

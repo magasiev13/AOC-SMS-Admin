@@ -247,10 +247,13 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_reconcile_billing_subscriptions_repairs_incomplete_subscription(self, mock_stripe_module) -> None:
+        from datetime import timedelta
+
         mock_stripe = MagicMock()
         mock_stripe.checkout.Session.list.return_value.data = [
             {
                 "id": "cs_test_123",
+                "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
                 "status": "complete",
                 "customer_email": "owner@acme.test",
                 "customer": "cus_test_123",
@@ -276,6 +279,35 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.status, "trialing")
         self.assertEqual(self.subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_reconcile_billing_subscriptions_ignores_stale_completed_checkout_sessions(self, mock_stripe_module) -> None:
+        from datetime import timedelta
+
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.list.return_value.data = [
+            {
+                "id": "cs_test_stale",
+                "created": int((self.subscription.created_at - timedelta(days=2)).timestamp()),
+                "status": "complete",
+                "customer_email": "owner@acme.test",
+                "customer": "cus_test_old",
+                "subscription": "sub_test_old",
+                "client_reference_id": str(self.organization.id),
+                "metadata": {"organization_id": str(self.organization.id)},
+            }
+        ]
+        mock_stripe_module.return_value = mock_stripe
+
+        summary = self.reconcile_billing_subscriptions()
+
+        self.assertEqual(summary["scanned"], 1)
+        self.assertEqual(summary["updated"], 0)
+        self.assertEqual(summary["unchanged"], 1)
+        self.assertEqual(self.subscription.status, "incomplete")
+        self.assertIsNone(self.subscription.stripe_customer_id)
+        self.assertIsNone(self.subscription.stripe_subscription_id)
+        mock_stripe.Subscription.retrieve.assert_not_called()
 
 
 class TestSaasBillingConfigValidation(unittest.TestCase):

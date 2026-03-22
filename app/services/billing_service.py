@@ -36,6 +36,7 @@ RECONCILEABLE_SUBSCRIPTION_STATUSES = {
     "incomplete",
 }
 WEBHOOK_PROCESSING_STALE_AFTER = timedelta(minutes=5)
+CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE = timedelta(minutes=5)
 
 
 def subscription_status_allows_sending(status: str | None) -> bool:
@@ -158,6 +159,21 @@ def _subscription_state_snapshot(subscription: OrganizationSubscription | None) 
         period_end.isoformat() if period_end else None,
         bool(subscription.cancel_at_period_end),
     )
+
+
+def _checkout_session_matches_current_subscription(
+    data_object: dict,
+    subscription: OrganizationSubscription,
+) -> bool:
+    reference_candidates = [
+        _as_utc_datetime(subscription.created_at),
+        _as_utc_datetime(subscription.organization.created_at) if subscription.organization is not None else None,
+    ]
+    reference_time = max((candidate for candidate in reference_candidates if candidate is not None), default=None)
+    session_created_at = _event_timestamp_to_utc_datetime(data_object.get("created"))
+    if reference_time is None or session_created_at is None:
+        return True
+    return session_created_at >= (reference_time - CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE)
 
 
 def create_checkout_session(organization: Organization, user_email: str, success_url: str, cancel_url: str):
@@ -497,6 +513,8 @@ def refresh_subscription_from_stripe(
         if user_email and (data_object.get("customer_email") or "").strip().lower() != user_email.strip().lower():
             continue
         if data_object.get("status") != "complete":
+            continue
+        if not _checkout_session_matches_current_subscription(data_object, subscription):
             continue
         return _apply_stripe_event_to_billing_state("checkout.session.completed", data_object)
 

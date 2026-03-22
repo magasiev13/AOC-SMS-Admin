@@ -13,6 +13,19 @@ SAAS_DBDOCTOR_DEST="${SAAS_DBDOCTOR_DEST:-/usr/local/bin/saas-dbdoctor}"
 LOG_DIR="${LOG_DIR:-/var/log/sms-saas}"
 REQUIRED_PYTHON="3.11"
 
+resolve_health_host() {
+  local trusted_hosts
+  local first_host
+
+  trusted_hosts="$(grep -E '^TRUSTED_HOSTS=' "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true)"
+  first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
+  if [[ -n "${first_host}" ]]; then
+    printf '%s\n' "${first_host}"
+    return
+  fi
+  printf '127.0.0.1\n'
+}
+
 echo "============================================"
 echo "  SMS SaaS Install Script"
 echo "============================================"
@@ -112,8 +125,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer
 
 echo "==> Verifying SaaS health"
-if ! curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8100/health >/dev/null; then
-  echo "WARNING: SaaS health check failed on http://127.0.0.1:8100/health" >&2
+HEALTH_HOST="$(resolve_health_host)"
+if ! curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
+  echo "WARNING: SaaS health check failed on http://127.0.0.1:8100/health (Host=${HEALTH_HOST})" >&2
   echo "Check: journalctl -u sms-saas -n 100 --no-pager" >&2
 fi
 

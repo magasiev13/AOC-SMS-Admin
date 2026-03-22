@@ -240,6 +240,38 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(profile.inbound_identity, "+15550001111")
 
     @patch("app.services.twilio_service._build_subaccount_client")
+    def test_sync_sender_assignment_surfaces_phone_sid_subaccount_mismatch(self, mock_build_subaccount_client) -> None:
+        from twilio.base.exceptions import TwilioRestException
+
+        from app.models import utc_now
+        from app.services.twilio_service import ProviderProvisioningError, sync_sender_assignment
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            from_number="+15550001111",
+            phone_number_sid="PN0001",
+            sender_review_status="approved",
+            consent_acknowledged_at=utc_now(),
+        )
+        subaccount_client = mock_build_subaccount_client.return_value
+        service_context = subaccount_client.messaging.v1.services.return_value
+        service_context.phone_numbers.list.return_value = []
+        service_context.phone_numbers.create.side_effect = TwilioRestException(
+            404,
+            "/v1/Services/MGsub0001/PhoneNumbers",
+            msg="Unable to create record: The requested resource /v1/Services/MGsub0001/PhoneNumbers was not found",
+        )
+
+        with self.assertRaises(ProviderProvisioningError) as ctx:
+            sync_sender_assignment(organization.id, actor_user_id=99)
+
+        self.assertIn("belongs to this organization's Twilio subaccount", str(ctx.exception))
+        profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization.id).one()
+        self.assertEqual(profile.provider_status, "error")
+        self.assertIn("belongs to this organization's Twilio subaccount", profile.last_provision_error)
+
+    @patch("app.services.twilio_service._build_subaccount_client")
     def test_release_sender_detaches_existing_service_numbers(self, mock_build_subaccount_client) -> None:
         from app.services.twilio_service import release_sender
 
