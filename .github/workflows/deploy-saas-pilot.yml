@@ -62,11 +62,11 @@ jobs:
           if [ -n "${PILOT_VPS_KNOWN_HOSTS:-}" ]; then
             printf '%s\n' "${PILOT_VPS_KNOWN_HOSTS}" > ~/.ssh/known_hosts
           else
-            cat > ~/.ssh/known_hosts <<'HOSTS'
-            beta.theitwingman.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPXDqus7uGfjIUS5B/jAF64sC3BBT9Epwmk64wreBPe+
-            beta.theitwingman.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC5GYE099jCwIscUsaqfrH8qcjclFKnas6y+wUto6b7hcL6KNxpex2a6hOP3r6Fc22RT+Cgq0Js7zjbOKCPZatq7zDZbw/QTK18+wcrUykqN1kruwVFLUisc8lcY+D7t5yw6rhcTaaLWDlvsOwKCPrkf8NVCbIvLNcdnYMJsjlp0UZP2oGDjh09x6IuQels+ZCzAXIoVkMCC2aaztv/pDoB2X7o9/669mVPXL5jfW/aSi0NAuYmfjbZRcrWK5UujBNONcznsax+hw8kbat3Ri1SPS+M/ZQrIKxkG8O43hcIGZVHJWgk6vTuPdTFxGnVftWm1N5NLUh7IpPDtZ0Z6yCK7/eDR/TlyYQNBcPi1m/1r/eRr9nonAtTM+4R0k5jrnofbI4sewMvXUTbiqKXHwBQiXGi59MhPHehCnjYtb4HTuqgeYjen/xEktOq2aR1OepEXPXBf3lfP1Bp49mBUo0qdqqWiu1Brgi6tP+W+xy/r5sihoBjN3acguj0nQFTJ58=
-            beta.theitwingman.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBElEwHiGtPGrDaPYwueEjGltZx7WE6cqIC6+EjE0memA63oYc9SX2TXOHr1SMmHPnw7eE9bfjP8q9MEFW6W9SpQ=
-            HOSTS
+            printf '%s\n' \
+              'beta.theitwingman.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPXDqus7uGfjIUS5B/jAF64sC3BBT9Epwmk64wreBPe+' \
+              'beta.theitwingman.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC5GYE099jCwIscUsaqfrH8qcjclFKnas6y+wUto6b7hcL6KNxpex2a6hOP3r6Fc22RT+Cgq0Js7zjbOKCPZatq7zDZbw/QTK18+wcrUykqN1kruwVFLUisc8lcY+D7t5yw6rhcTaaLWDlvsOwKCPrkf8NVCbIvLNcdnYMJsjlp0UZP2oGDjh09x6IuQels+ZCzAXIoVkMCC2aaztv/pDoB2X7o9/669mVPXL5jfW/aSi0NAuYmfjbZRcrWK5UujBNONcznsax+hw8kbat3Ri1SPS+M/ZQrIKxkG8O43hcIGZVHJWgk6vTuPdTFxGnVftWm1N5NLUh7IpPDtZ0Z6yCK7/eDR/TlyYQNBcPi1m/1r/eRr9nonAtTM+4R0k5jrnofbI4sewMvXUTbiqKXHwBQiXGi59MhPHehCnjYtb4HTuqgeYjen/xEktOq2aR1OepEXPXBf3lfP1Bp49mBUo0qdqqWiu1Brgi6tP+W+xy/r5sihoBjN3acguj0nQFTJ58=' \
+              'beta.theitwingman.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBElEwHiGtPGrDaPYwueEjGltZx7WE6cqIC6+EjE0memA63oYc9SX2TXOHr1SMmHPnw7eE9bfjP8q9MEFW6W9SpQ=' \
+              > ~/.ssh/known_hosts
           fi
           chmod 600 ~/.ssh/known_hosts
 
