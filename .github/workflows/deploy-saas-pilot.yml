@@ -110,7 +110,7 @@ jobs:
             local trusted_hosts
             local first_host
 
-            trusted_hosts="$(grep -E '^TRUSTED_HOSTS=' "${APP_ROOT}/.env" | tail -n1 | cut -d= -f2- || true)"
+            trusted_hosts="$(sudo grep -E '^TRUSTED_HOSTS=' "${APP_ROOT}/.env" | tail -n1 | cut -d= -f2- || true)"
             first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
             if [ -n "${first_host}" ]; then
               printf '%s\n' "${first_host}"
@@ -153,7 +153,7 @@ jobs:
             TWILIO_CREDENTIAL_ENCRYPTION_KEY \
             SECRET_KEY \
             TRUSTED_HOSTS; do
-            grep -q "^${key}=" "${APP_ROOT}/.env" || fail "Missing ${key} in ${APP_ROOT}/.env"
+            sudo grep -q "^${key}=" "${APP_ROOT}/.env" || fail "Missing ${key} in ${APP_ROOT}/.env"
           done
 
           sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source .env; set +a; /usr/local/bin/saas-dbdoctor --doctor" >/dev/null
