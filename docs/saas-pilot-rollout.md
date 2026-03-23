@@ -34,11 +34,13 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 ## Platform-Managed Twilio Strategy
 
 - Keep `TWILIO_ACCOUNT_SID=AC...`, `TWILIO_AUTH_TOKEN=...`, and `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...` in `.env`.
+- After changing `.env`, restart the SaaS web and worker services before testing Twilio provisioning or outbound messaging.
 - The platform account is the master Twilio account. Each organization should be provisioned with its own Twilio subaccount and Messaging Service.
 - Use `/platform/organizations/<id>/messaging` to provision the provider, then assign an approved sender number and phone number SID.
 - Per-org Twilio secrets are stored encrypted at rest in the database. Do not add organization-specific tokens to `.env`.
 - Messaging stays `pending` until billing is active, compliance is acknowledged, and the sender review is approved.
 - The platform admin should not paste `AC...` or `MG...` values into the organization create form. Provisioning happens from the managed messaging screen.
+- Platform admins must use a separate email from every organization owner or staff account.
 
 ## Stripe Webhooks
 
@@ -88,7 +90,7 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 3. From the Organizations page, use the visible owner invite link:
    - `Open invite` to launch it
    - `Copy link` if you want to open it in a private window
-4. Accept the owner invite.
+4. Accept the owner invite with a non-platform-admin email.
 5. Complete Stripe test checkout.
 6. Return to `/platform/organizations/<id>/messaging`.
 7. Click `Provision Provider` and confirm the org gets a Twilio subaccount plus Messaging Service.

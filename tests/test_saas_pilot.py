@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -26,6 +27,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         from app import create_app, db
         from app.models import (
             AppUser,
+            AuthEvent,
             InboxThread,
             KeywordAutomationRule,
             Organization,
@@ -39,6 +41,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.db = db
         self.AppUser = AppUser
+        self.AuthEvent = AuthEvent
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
         self.Organization = Organization
@@ -152,6 +155,37 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         return response
 
+    def _create_support_organization(
+        self,
+        *,
+        name: str = "Recovery Co",
+        slug: str = "recovery-co",
+        owner_email: str = "pending-owner@acme.test",
+    ):
+        organization = self.Organization(name=name, slug=slug, status="active")
+        subscription = self.OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="incomplete",
+        )
+        messaging_profile = self.OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            status="pending",
+            provider_status="pending",
+            sender_review_status="pending",
+        )
+        invitation = self.OrganizationInvitation(
+            organization=organization,
+            email=owner_email,
+            role="owner",
+            status="pending",
+            invited_by_user_id=self.platform_admin.id,
+        )
+        self.db.session.add_all([organization, subscription, messaging_profile, invitation])
+        self.db.session.commit()
+        return organization, invitation
+
     def test_dashboard_send_requires_active_subscription(self) -> None:
         self._login_owner()
 
@@ -188,6 +222,17 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"bi-buildings", response.data)
         self.assertNotIn(b'href="/community"', response.data)
         self.assertNotIn(b"Search contacts", response.data)
+        self.assertNotIn(b"Restart SaaS Services", response.data)
+
+    def test_platform_admin_sees_restart_control_only_when_enabled(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        self._login_platform_admin()
+
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Restart SaaS Services", response.data)
+        self.assertIn(b"/platform/operations/restart-services", response.data)
 
     def test_owner_does_not_see_platform_organizations_nav_link(self) -> None:
         self._login_owner()
@@ -197,6 +242,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"/platform/organizations", response.data)
         self.assertIn(b"Workspace", response.data)
+        self.assertNotIn(b"Restart SaaS Services", response.data)
 
     def test_platform_admin_is_redirected_from_workspace_dashboard(self) -> None:
         self._login_platform_admin()
@@ -308,6 +354,39 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(self.client.get("/billing").status_code, 403)
         self.assertEqual(self.client.get("/billing/checkout").status_code, 403)
 
+    def test_staff_does_not_see_restart_control(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        staff_user = self.AppUser(
+            username="staff-viewer",
+            email="staff-viewer@acme.test",
+            full_name="Staff Viewer",
+            phone="+15550000013",
+            role="social_manager",
+            must_change_password=False,
+        )
+        staff_user.set_password("Staff-pass1!")
+        self.db.session.add(staff_user)
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=self.organization.id,
+                user_id=staff_user.id,
+                role="staff",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.post(
+            "/login",
+            data={"username": "staff-viewer@acme.test", "password": "Staff-pass1!"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        dashboard_response = self.client.get("/dashboard")
+        self.assertEqual(dashboard_response.status_code, 200)
+        self.assertNotIn(b"Restart SaaS Services", dashboard_response.data)
+
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_uses_subscription_status(self, mock_stripe_module) -> None:
         from datetime import timedelta
@@ -399,6 +478,87 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"owner@acme.test", response.data)
         self.assertNotIn(b"other@org.test", response.data)
 
+    def test_platform_users_list_offers_add_platform_admin_action(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.get("/users")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Add Platform Admin", response.data)
+        self.assertIn(b"Platform Admin", response.data)
+
+    def test_platform_admin_can_create_another_platform_admin(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            "/users/add",
+            data={
+                "username": "ops-admin",
+                "email": "ops-admin@acme.test",
+                "full_name": "Ops Admin",
+                "role": "admin",
+                "is_platform_admin": "on",
+                "phone": "+15550000014",
+                "password": "Operations-pass1!",
+                "must_change_password": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        created_user = self.AppUser.query.filter_by(email="ops-admin@acme.test").first()
+        self.assertIsNotNone(created_user)
+        self.assertTrue(created_user.is_platform_admin)
+        self.assertEqual(created_user.role, "admin")
+
+    def test_platform_admin_cannot_create_non_platform_standalone_user_in_saas_mode(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            "/users/add",
+            data={
+                "username": "standalone-user",
+                "email": "standalone@acme.test",
+                "full_name": "Standalone User",
+                "role": "social_manager",
+                "phone": "+15550000015",
+                "password": "Standalone-pass1!",
+                "must_change_password": "on",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Users created from the platform in SaaS mode must have platform admin access.",
+            response.data,
+        )
+        self.assertIsNone(self.AppUser.query.filter_by(email="standalone@acme.test").first())
+
+    def test_platform_admin_cannot_remove_own_platform_admin_access(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/users/{self.platform_admin.id}/edit",
+            data={
+                "username": "platform-admin",
+                "email": "platform@acme.test",
+                "full_name": "Platform Admin",
+                "role": "admin",
+                "phone": "+15550000009",
+                "must_change_password": "off",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"You cannot remove your own platform admin access.",
+            response.data,
+        )
+        self.db.session.refresh(self.platform_admin)
+        self.assertTrue(self.platform_admin.is_platform_admin)
+
     def test_users_list_shows_pending_invitation_accept_link(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -432,7 +592,212 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"core steps complete", response.data)
         self.assertIn(b"Open invite", response.data)
+        self.assertIn(b"Manage Access", response.data)
         self.assertIn(f"https://beta.example.com/invites/{invitation.token}".encode(), response.data)
+
+    def test_platform_organization_access_page_can_create_staff_invite(self) -> None:
+        self._login_platform_admin()
+
+        page_response = self.client.get(f"/platform/organizations/{self.organization.id}/access")
+
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(b"Invite Staff Member", page_response.data)
+        self.assertIn(b"Owner Recovery", page_response.data)
+        self.assertIn(b"owner@acme.test", page_response.data)
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/invite-staff",
+            data={"email": "support-staff@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Staff invitation created.", response.data)
+        invitation = (
+            self.OrganizationInvitation.query
+            .filter_by(
+                organization_id=self.organization.id,
+                email="support-staff@acme.test",
+                role="staff",
+                status="pending",
+            )
+            .order_by(self.OrganizationInvitation.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(invitation)
+        self.assertIn(
+            f"https://beta.example.com/invites/{invitation.token}".encode(),
+            response.data,
+        )
+        event = (
+            self.AuthEvent.query
+            .filter_by(event_type="platform_organization_staff_invite")
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "success")
+        self.assertEqual(event.metadata_payload.get("target_email"), "support-staff@acme.test")
+
+    def test_platform_organization_access_staff_invite_rejects_platform_admin_email(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/invite-staff",
+            data={"email": "platform@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Platform admin accounts cannot be assigned to an organization.",
+            response.data,
+        )
+        self.assertIsNone(
+            self.OrganizationInvitation.query.filter_by(
+                organization_id=self.organization.id,
+                email="platform@acme.test",
+                role="staff",
+                status="pending",
+            ).first()
+        )
+
+    def test_platform_organization_access_staff_invite_rejects_org_bound_email(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/invite-staff",
+            data={"email": "owner@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"That email is already attached to an organization.", response.data)
+        self.assertIsNone(
+            self.OrganizationInvitation.query.filter_by(
+                organization_id=self.organization.id,
+                email="owner@acme.test",
+                role="staff",
+                status="pending",
+            ).first()
+        )
+
+    def test_platform_organization_access_staff_invite_rejects_duplicate_pending_email(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="duplicate-staff@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/invite-staff",
+            data={"email": "duplicate-staff@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"A pending invitation already exists for that email in this organization.",
+            response.data,
+        )
+        pending_invites = self.OrganizationInvitation.query.filter_by(
+            organization_id=self.organization.id,
+            email="duplicate-staff@acme.test",
+            status="pending",
+        ).all()
+        self.assertEqual(len(pending_invites), 1)
+
+    def test_platform_organization_access_reissues_owner_invite(self) -> None:
+        organization, original_invitation = self._create_support_organization()
+        original_token = original_invitation.token
+
+        self._login_platform_admin()
+        response = self.client.post(
+            f"/platform/organizations/{organization.id}/access/reissue-owner-invite",
+            data={"owner_email": "fixed-owner@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Owner invite reissued with a fresh link.", response.data)
+        self.db.session.refresh(original_invitation)
+        self.assertEqual(original_invitation.status, "revoked")
+        new_invitation = (
+            self.OrganizationInvitation.query
+            .filter_by(
+                organization_id=organization.id,
+                email="fixed-owner@acme.test",
+                role="owner",
+                status="pending",
+            )
+            .order_by(self.OrganizationInvitation.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(new_invitation)
+        self.assertNotEqual(new_invitation.token, original_token)
+        self.assertIn(
+            f"https://beta.example.com/invites/{new_invitation.token}".encode(),
+            response.data,
+        )
+        event = (
+            self.AuthEvent.query
+            .filter_by(event_type="platform_organization_owner_invite_reissue")
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "success")
+        self.assertEqual(event.metadata_payload.get("target_email"), "fixed-owner@acme.test")
+        self.assertEqual(event.metadata_payload.get("revoked_count"), 1)
+
+    def test_platform_organization_access_reissue_owner_invite_blocked_once_owner_joined(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/reissue-owner-invite",
+            data={"owner_email": "replacement-owner@acme.test"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"An owner has already joined this organization. Owner invite recovery is no longer available.",
+            response.data,
+        )
+        self.assertIsNone(
+            self.OrganizationInvitation.query.filter_by(
+                organization_id=self.organization.id,
+                email="replacement-owner@acme.test",
+                role="owner",
+                status="pending",
+            ).first()
+        )
+
+    def test_owner_cannot_access_platform_organization_access_routes(self) -> None:
+        self._login_owner()
+
+        access_response = self.client.get(
+            f"/platform/organizations/{self.organization.id}/access",
+            follow_redirects=False,
+        )
+        invite_response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/invite-staff",
+            data={"email": "owner-route-staff@acme.test"},
+            follow_redirects=False,
+        )
+        reissue_response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/reissue-owner-invite",
+            data={"owner_email": "owner-route-owner@acme.test"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(access_response.status_code, 403)
+        self.assertEqual(invite_response.status_code, 403)
+        self.assertEqual(reissue_response.status_code, 403)
 
     def test_platform_organizations_add_page_shows_admin_setup_guidance(self) -> None:
         self._login_platform_admin()
@@ -468,6 +833,27 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(organization.messaging_profile.sender_review_status, "pending")
         self.assertIsNone(organization.messaging_profile.from_number)
         self.assertIsNone(organization.messaging_profile.messaging_service_sid)
+
+    def test_platform_organizations_add_rejects_platform_admin_owner_email(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            "/platform/organizations/add",
+            data={
+                "name": "Bad Owner Org",
+                "slug": "bad-owner-org",
+                "owner_email": "platform@acme.test",
+                "owner_role": "owner",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Platform admin accounts cannot be assigned to an organization.",
+            response.data,
+        )
+        self.assertIsNone(self.Organization.query.filter_by(slug="bad-owner-org").first())
 
     def test_platform_organizations_messaging_edit_requires_provider_provisioning_before_sender_assignment(self) -> None:
         self._login_platform_admin()
@@ -604,6 +990,35 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(membership)
         self.assertEqual(membership.organization_id, self.organization.id)
         self.assertEqual(membership.role, "owner")
+
+    def test_invitation_accept_rejects_platform_admin_email(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="platform@acme.test",
+            role="owner",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/invites/{invitation.token}",
+            data={
+                "username": "platform-org-owner",
+                "full_name": "Platform Admin Owner",
+                "phone": "+15550000012",
+                "password": "Stronger-pass1!",
+                "confirm_password": "Stronger-pass1!",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Platform admin accounts cannot be assigned to an organization.",
+            response.data,
+        )
+        self.assertEqual(self.OrganizationMembership.query.filter_by(user_id=self.platform_admin.id).count(), 0)
 
     def test_invitation_accept_allows_phone_reuse_after_schema_migration(self) -> None:
         invitation = self.OrganizationInvitation(
@@ -745,6 +1160,115 @@ class TestSaasPilotFoundation(unittest.TestCase):
         invite = self.OrganizationInvitation.query.filter_by(email="new-staff@acme.test").first()
         self.assertIsNotNone(invite)
         self.assertEqual(invite.role, "staff")
+
+    def test_team_invite_rejects_platform_admin_email(self) -> None:
+        self.subscription.status = "trialing"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            "/team/invite",
+            data={
+                "email": "platform@acme.test",
+                "role": "staff",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Platform admin accounts cannot be assigned to an organization.",
+            response.data,
+        )
+        self.assertIsNone(
+            self.OrganizationInvitation.query.filter_by(email="platform@acme.test", status="pending").first()
+        )
+
+    def test_owner_cannot_post_platform_restart_services(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        self._login_owner()
+
+        response = self.client.post("/platform/operations/restart-services", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 403)
+
+    @patch("app.routes.request_platform_service_restart")
+    def test_platform_restart_services_records_success_and_shows_last_result(self, mock_restart) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        mock_restart.return_value = {
+            "success": True,
+            "summary": "Restart queued. The SaaS services will recycle shortly.",
+            "detail": "Queued SaaS service restart using transient unit sms-saas-manual-restart-123.",
+            "script_path": "/usr/local/bin/restart-sms-saas-services",
+        }
+
+        self._login_platform_admin()
+        response = self.client.post(
+            "/platform/operations/restart-services",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Restart queued. The SaaS services will recycle shortly.", response.data)
+        self.assertIn(b"Last request: Succeeded", response.data)
+        event = (
+            self.AuthEvent.query
+            .filter_by(event_type="platform_service_restart")
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "success")
+        self.assertEqual(
+            event.metadata_payload.get("summary"),
+            "Restart queued. The SaaS services will recycle shortly.",
+        )
+
+    @patch("app.routes.request_platform_service_restart")
+    def test_platform_restart_services_records_failure_and_shows_last_result(self, mock_restart) -> None:
+        from app.services.platform_operations_service import PlatformServiceRestartError
+
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        mock_restart.side_effect = PlatformServiceRestartError("sudo helper failed")
+
+        self._login_platform_admin()
+        response = self.client.post(
+            "/platform/operations/restart-services",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"sudo helper failed", response.data)
+        self.assertIn(b"Last request: Failed", response.data)
+        event = (
+            self.AuthEvent.query
+            .filter_by(event_type="platform_service_restart")
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "failed")
+
+    @patch("app.services.platform_operations_service.subprocess.run")
+    def test_request_platform_service_restart_uses_fixed_sudo_command(self, mock_run) -> None:
+        from app.services.platform_operations_service import request_platform_service_restart
+
+        self.app.config["PLATFORM_SERVICE_RESTART_SCRIPT"] = "/usr/local/bin/restart-sms-saas-services"
+        mock_run.return_value = SimpleNamespace(
+            returncode=0,
+            stdout="Queued SaaS service restart using transient unit sms-saas-manual-restart-123.\n",
+            stderr="",
+        )
+
+        result = request_platform_service_restart()
+
+        self.assertTrue(result["success"])
+        args, kwargs = mock_run.call_args
+        self.assertEqual(
+            args[0],
+            ["sudo", "-n", "/usr/local/bin/restart-sms-saas-services"],
+        )
+        self.assertFalse(kwargs.get("shell", False))
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_inbound_sms_routes_by_destination_number(self, mock_get_twilio) -> None:

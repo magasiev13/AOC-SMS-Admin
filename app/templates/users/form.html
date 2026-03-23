@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}{{ 'Edit' if user else 'Create' }} User - SMS Admin{% endblock %}
+{% set platform_account_form = config.SAAS_MODE and current_user.is_platform_admin and (not user or user.is_platform_admin) %}
+{% set platform_access_toggle_visible = config.SAAS_MODE and current_user.is_platform_admin %}
+{% set platform_access_toggle_disabled = config.SAAS_MODE and current_user.is_platform_admin and user and user.memberships and not user.is_platform_admin %}
+{% set entity_label = 'Platform Admin' if platform_account_form else 'User' %}
 
-{% block page_title %}{{ 'Edit' if user else 'Create' }} User{% endblock %}
+{% block title %}{{ 'Edit' if user else 'Create' }} {{ entity_label }} - SMS Admin{% endblock %}
+
+{% block page_title %}{{ 'Edit' if user else 'Create' }} {{ entity_label }}{% endblock %}
 
 {% block breadcrumbs %}
 {% if current_user.is_platform_admin %}
@@ -11,7 +16,7 @@
 <a href="{{ url_for('main.dashboard') }}">Workspace</a> /
 {% endif %}
 <a href="{{ url_for('main.users_list') }}">Users</a> /
-<span>{{ 'Edit' if user else 'Create' }}</span>
+<span>{{ 'Edit' if user else 'Create' }} {{ entity_label }}</span>
 {% endblock %}
 
 {% block content %}
@@ -20,7 +25,7 @@
         <div class="card app-card">
             <div class="card-header">
                 <h5 class="mb-0">
-                    <i class="bi bi-person-gear me-2"></i>{{ 'Edit' if user else 'Create' }} User
+                    <i class="bi bi-person-gear me-2"></i>{{ 'Edit' if user else 'Create' }} {{ entity_label }}
                 </h5>
             </div>
             <div class="card-body">
@@ -60,13 +65,37 @@
                         <select class="form-select" id="role" name="role" required>
                             <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
                             <option value="admin" {% if user and user.role == 'admin' %}selected{% endif %}>
-                                {% if config.SAAS_MODE %}Owner{% else %}Admin{% endif %}
+                                {% if config.SAAS_MODE and not current_user.is_platform_admin %}Owner{% else %}Admin{% endif %}
                             </option>
                             <option value="social_manager" {% if user and user.role == 'social_manager' %}selected{% endif %}>
-                                {% if config.SAAS_MODE %}Staff{% else %}Social Media Manager{% endif %}
+                                {% if config.SAAS_MODE and not current_user.is_platform_admin %}Staff{% else %}Social Media Manager{% endif %}
                             </option>
                         </select>
                     </div>
+
+                    {% if platform_access_toggle_visible %}
+                    <div class="form-check mb-4">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="is_platform_admin"
+                            name="is_platform_admin"
+                            {% if (user and user.is_platform_admin) or (not user) %}checked{% endif %}
+                            {% if platform_access_toggle_disabled %}disabled{% endif %}
+                        >
+                        <label class="form-check-label" for="is_platform_admin">
+                            Grant platform admin access
+                        </label>
+                        <div class="form-text">
+                            Platform admins land on Platform Control and can manage organizations, billing, provider operations, and restart access.
+                        </div>
+                        {% if platform_access_toggle_disabled %}
+                        <div class="form-text text-muted">
+                            This account already belongs to an organization and cannot also be used as a platform admin.
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endif %}
 
                     <div class="mb-4">
                         <label for="password" class="form-label">
@@ -88,7 +117,7 @@
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>{{ 'Update' if user else 'Create' }} User
+                            <i class="bi bi-check-lg me-1"></i>{{ 'Update' if user else 'Create' }} {{ entity_label }}
                         </button>
                         <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>

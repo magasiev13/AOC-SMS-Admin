@@ -78,6 +78,10 @@ from app.services.inbox_service import (
     send_thread_reply,
     update_thread_contact_name,
 )
+from app.services.platform_operations_service import (
+    PlatformServiceRestartError,
+    request_platform_service_restart,
+)
 from app.services.recipient_service import (
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
@@ -239,6 +243,65 @@ def _find_phone_conflict(
         query = query.join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
         query = query.filter(OrganizationMembership.organization_id == organization_id)
     return query.first()
+
+
+def _organization_email_account_status(email: str) -> tuple[AppUser | None, str | None]:
+    normalized_email = (email or '').strip().lower()
+    if not normalized_email:
+        return None, None
+
+    existing_user = AppUser.query.filter(func.lower(AppUser.email) == normalized_email).first()
+    if existing_user is None:
+        return None, None
+    if existing_user.is_platform_admin:
+        return existing_user, 'Platform admin accounts cannot be assigned to an organization. Use a separate owner or staff email.'
+    if existing_user.memberships:
+        return existing_user, 'That email is already attached to an organization.'
+    return existing_user, None
+
+
+def _platform_admin_count() -> int:
+    return AppUser.query.filter_by(is_platform_admin=True).count()
+
+
+def _can_manage_platform_access(user: AppUser | None = None) -> bool:
+    if not saas_mode_enabled() or not current_user.is_platform_admin:
+        return False
+    if user is None:
+        return True
+    return not user.memberships or user.is_platform_admin
+
+
+def _requested_platform_admin_access(user: AppUser | None = None) -> bool:
+    if not _can_manage_platform_access(user):
+        return bool(getattr(user, 'is_platform_admin', False)) if user is not None else False
+    return request.form.get('is_platform_admin') == 'on'
+
+
+def _platform_admin_access_error(
+    *,
+    requested_platform_admin: bool,
+    user: AppUser | None = None,
+) -> str | None:
+    if not saas_mode_enabled() or not current_user.is_platform_admin:
+        return None
+
+    if user is None and not requested_platform_admin:
+        return (
+            'Users created from the platform in SaaS mode must have platform admin access. '
+            'Create owners and staff from the organization workspace.'
+        )
+
+    if requested_platform_admin and user is not None and user.memberships:
+        return 'Organization users cannot be granted platform admin access. Create a separate standalone account.'
+
+    if user is not None and user.is_platform_admin and not requested_platform_admin:
+        if current_user.id == user.id:
+            return 'You cannot remove your own platform admin access. Ask another platform admin to do it.'
+        if _platform_admin_count() <= 1:
+            return 'At least one platform admin is required.'
+
+    return None
 
 
 def _membership_role_from_user_role(role: str) -> str:
@@ -527,6 +590,152 @@ def _platform_organization_rows() -> list[dict]:
     ]
 
 
+def _organization_joined_memberships(organization: Organization) -> list[OrganizationMembership]:
+    memberships = (
+        OrganizationMembership.query
+        .filter_by(organization_id=organization.id)
+        .join(AppUser, AppUser.id == OrganizationMembership.user_id)
+        .all()
+    )
+    memberships.sort(
+        key=lambda membership: (
+            0 if membership.role == 'owner' else 1,
+            (membership.user.full_name or membership.user.username or '').lower(),
+            membership.id,
+        )
+    )
+    return memberships
+
+
+def _organization_pending_invitations(organization: Organization) -> list[OrganizationInvitation]:
+    invitations = (
+        OrganizationInvitation.query
+        .filter_by(organization_id=organization.id, status='pending')
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .all()
+    )
+    invitations.sort(
+        key=lambda invitation: (
+            0 if invitation.role == 'owner' else 1,
+            -(invitation.id or 0),
+        )
+    )
+    return invitations
+
+
+def _organization_pending_invitation_for_email(
+    organization_id: int,
+    email: str,
+) -> OrganizationInvitation | None:
+    normalized_email = (email or '').strip().lower()
+    if not normalized_email:
+        return None
+    return (
+        OrganizationInvitation.query
+        .filter_by(
+            organization_id=organization_id,
+            email=normalized_email,
+            status='pending',
+        )
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .first()
+    )
+
+
+def _record_platform_organization_access_event(
+    event_type: str,
+    *,
+    organization: Organization,
+    target_email: str | None,
+    outcome: str,
+    reason: str | None = None,
+    invitation: OrganizationInvitation | None = None,
+    revoked_count: int | None = None,
+) -> None:
+    metadata: dict[str, object] = {
+        'organization_id': organization.id,
+        'organization_slug': organization.slug,
+    }
+    if target_email:
+        metadata['target_email'] = target_email
+    if reason:
+        metadata['reason'] = reason
+    if revoked_count is not None:
+        metadata['revoked_count'] = revoked_count
+    if invitation is not None:
+        metadata['invitation_id'] = invitation.id
+        metadata['invitation_role'] = invitation.role
+        metadata['invitation_status'] = invitation.status
+    record_auth_event(
+        event_type,
+        outcome=outcome,
+        user=current_user,
+        username=current_user.username,
+        client_ip=request.remote_addr or 'unknown',
+        metadata=metadata,
+    )
+
+
+def _platform_organization_access_context(
+    organization: Organization,
+    *,
+    staff_invite_email: str | None = None,
+    owner_reissue_email: str | None = None,
+) -> dict:
+    joined_memberships = _organization_joined_memberships(organization)
+    pending_invitations = _organization_pending_invitations(organization)
+    pending_invitation_rows = [
+        {
+            'invitation': invitation,
+            'accept_url': _invitation_absolute_url(invitation),
+            'created_display': _format_datetime_display(invitation.created_at),
+            'expires_display': _format_datetime_display(invitation.expires_at),
+        }
+        for invitation in pending_invitations
+    ]
+    owner_membership = next(
+        (membership for membership in joined_memberships if membership.role == 'owner'),
+        None,
+    )
+    pending_owner_invitation = next(
+        (row['invitation'] for row in pending_invitation_rows if row['invitation'].role == 'owner'),
+        None,
+    )
+    return {
+        'organization': organization,
+        'joined_memberships': joined_memberships,
+        'pending_invitation_rows': pending_invitation_rows,
+        'owner_membership': owner_membership,
+        'pending_owner_invitation': pending_owner_invitation,
+        'pending_owner_invitation_url': _invitation_absolute_url(pending_owner_invitation),
+        'owner_recovery_available': owner_membership is None,
+        'staff_invite_email': staff_invite_email or '',
+        'owner_reissue_email': (
+            owner_reissue_email
+            if owner_reissue_email is not None
+            else (pending_owner_invitation.email if pending_owner_invitation is not None else '')
+        ),
+        'onboarding': _organization_onboarding_view(organization),
+        'billing': _subscription_view(organization.subscription),
+    }
+
+
+def _render_platform_organization_access(
+    organization: Organization,
+    *,
+    staff_invite_email: str | None = None,
+    owner_reissue_email: str | None = None,
+):
+    return render_template(
+        'platform/organization_access.html',
+        **_platform_organization_access_context(
+            organization,
+            staff_invite_email=staff_invite_email,
+            owner_reissue_email=owner_reissue_email,
+        ),
+    )
+
+
 def _platform_home_context() -> dict:
     organization_rows = _platform_organization_rows()
     total_organizations = len(organization_rows)
@@ -555,6 +764,23 @@ def _platform_home_context() -> dict:
         if row['onboarding']['completed_required'] < row['onboarding']['required_total']
         or not row['billing']['can_send']
     ][:5]
+    latest_restart_event = (
+        AuthEvent.query
+        .filter(AuthEvent.event_type == 'platform_service_restart')
+        .order_by(AuthEvent.created_at.desc(), AuthEvent.id.desc())
+        .first()
+    )
+    restart_status = None
+    if latest_restart_event is not None:
+        metadata = latest_restart_event.metadata_payload
+        restart_status = {
+            'outcome': latest_restart_event.outcome,
+            'title': 'Succeeded' if latest_restart_event.outcome == 'success' else 'Failed',
+            'badge': 'success' if latest_restart_event.outcome == 'success' else 'danger',
+            'summary': metadata.get('summary') or 'No summary recorded.',
+            'detail': metadata.get('detail'),
+            'created_at_display': _format_datetime_display(latest_restart_event.created_at),
+        }
     return {
         'summary': {
             'total_organizations': total_organizations,
@@ -566,6 +792,10 @@ def _platform_home_context() -> dict:
         },
         'attention_rows': attention_rows,
         'recent_rows': organization_rows[:5],
+        'service_restart': {
+            'enabled': bool(current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED')),
+            'last_result': restart_status,
+        },
     }
 
 
@@ -1215,6 +1445,52 @@ def platform_home():
     )
 
 
+@bp.route('/platform/operations/restart-services', methods=['POST'])
+@login_required
+def platform_restart_services():
+    if not _can_manage_platform():
+        abort(403)
+    if not saas_mode_enabled() or not current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED'):
+        abort(404)
+
+    client_ip = request.remote_addr or 'unknown'
+    script_path = current_app.config.get('PLATFORM_SERVICE_RESTART_SCRIPT')
+
+    try:
+        result = request_platform_service_restart()
+    except PlatformServiceRestartError as exc:
+        message = str(exc)
+        record_auth_event(
+            'platform_service_restart',
+            outcome='failed',
+            user=current_user,
+            username=current_user.username,
+            client_ip=client_ip,
+            metadata={
+                'summary': message,
+                'detail': message,
+                'script_path': script_path,
+            },
+        )
+        flash(message, 'error')
+    else:
+        record_auth_event(
+            'platform_service_restart',
+            outcome='success',
+            user=current_user,
+            username=current_user.username,
+            client_ip=client_ip,
+            metadata={
+                'summary': str(result.get('summary') or ''),
+                'detail': result.get('detail'),
+                'script_path': result.get('script_path') or script_path,
+            },
+        )
+        flash(str(result.get('summary') or 'Restart queued.'), 'success')
+
+    return redirect(url_for('main.platform_home'))
+
+
 # Dashboard - Send Messages
 @bp.route('/dashboard', methods=['GET', 'POST'])
 @login_required
@@ -1561,6 +1837,7 @@ def users_add():
         email = request.form.get('email', '').strip().lower()
         full_name = request.form.get('full_name', '').strip() or None
         role = request.form.get('role', '').strip()
+        requested_platform_admin = _requested_platform_admin_access()
         phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
         must_change_password = request.form.get('must_change_password') == 'on'
@@ -1574,6 +1851,12 @@ def users_add():
 
         if role not in {'admin', 'social_manager'}:
             flash('Role selection is required.', 'error')
+            return render_template('users/form.html', user=None)
+        platform_admin_error = _platform_admin_access_error(
+            requested_platform_admin=requested_platform_admin,
+        )
+        if platform_admin_error:
+            flash(platform_admin_error, 'error')
             return render_template('users/form.html', user=None)
 
         if not password:
@@ -1619,7 +1902,8 @@ def users_add():
             email=email or None,
             full_name=full_name,
             phone=normalized_phone,
-            role=role,
+            role='admin' if requested_platform_admin else role,
+            is_platform_admin=requested_platform_admin,
             must_change_password=must_change_password,
         )
         user.set_password(password)
@@ -1643,6 +1927,7 @@ def users_edit(user_id):
         email = request.form.get('email', '').strip().lower()
         full_name = request.form.get('full_name', '').strip() or None
         role = request.form.get('role', '').strip()
+        requested_platform_admin = _requested_platform_admin_access(user)
         phone_input = request.form.get('phone', '').strip()
         password = request.form.get('password', '')
         must_change_password = request.form.get('must_change_password') == 'on'
@@ -1656,6 +1941,13 @@ def users_edit(user_id):
 
         if role not in {'admin', 'social_manager'}:
             flash('Role selection is required.', 'error')
+            return render_template('users/form.html', user=user)
+        platform_admin_error = _platform_admin_access_error(
+            requested_platform_admin=requested_platform_admin,
+            user=user,
+        )
+        if platform_admin_error:
+            flash(platform_admin_error, 'error')
             return render_template('users/form.html', user=user)
 
         if not phone_input:
@@ -1692,7 +1984,7 @@ def users_edit(user_id):
                 flash('A user with this phone number already exists.', 'error')
             return render_template('users/form.html', user=user)
 
-        if user.role == 'admin' and role != 'admin':
+        if not user.is_platform_admin and user.role == 'admin' and role != 'admin':
             admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
             if admin_count <= 1:
                 flash('At least one admin user is required.', 'error')
@@ -1706,7 +1998,8 @@ def users_edit(user_id):
         user.email = email or None
         user.full_name = full_name
         user.phone = normalized_phone
-        user.role = role
+        user.role = 'admin' if requested_platform_admin else role
+        user.is_platform_admin = requested_platform_admin
         user.must_change_password = must_change_password
         performed_admin_reset = False
         old_password_hash = None
@@ -1769,7 +2062,11 @@ def users_delete(user_id):
         flash('You cannot delete your own account.', 'error')
         return redirect(url_for('main.users_list'))
 
-    if user.role == 'admin':
+    if user.is_platform_admin:
+        if _platform_admin_count() <= 1:
+            flash('At least one platform admin is required.', 'error')
+            return redirect(url_for('main.users_list'))
+    elif user.role == 'admin':
         admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
         if admin_count <= 1:
             flash('At least one admin user is required.', 'error')
@@ -1811,6 +2108,10 @@ def team_invite():
         )
         if existing_membership:
             flash('That email is already on your team.', 'warning')
+            return redirect(url_for('main.users_list'))
+        _, team_email_error = _organization_email_account_status(email)
+        if team_email_error:
+            flash(team_email_error, 'error')
             return redirect(url_for('main.users_list'))
 
         existing_invite = OrganizationInvitation.query.filter_by(email=email, status='pending').first()
@@ -2007,6 +2308,10 @@ def platform_organizations_add():
         if owner_role not in {'owner', 'staff'}:
             flash('Owner role must be owner or staff.', 'error')
             return render_template('platform/organization_form.html')
+        _, owner_email_error = _organization_email_account_status(owner_email)
+        if owner_email_error:
+            flash(owner_email_error, 'error')
+            return render_template('platform/organization_form.html')
         if Organization.query.filter_by(slug=slug).first():
             flash('That organization slug already exists.', 'error')
             return render_template('platform/organization_form.html')
@@ -2047,6 +2352,198 @@ def platform_organizations_add():
         return redirect(url_for('main.platform_organizations_list'))
 
     return render_template('platform/organization_form.html')
+
+
+@bp.route('/platform/organizations/<int:organization_id>/access')
+@login_required
+def platform_organizations_access(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    return _render_platform_organization_access(organization)
+
+
+@bp.route('/platform/organizations/<int:organization_id>/access/invite-staff', methods=['POST'])
+@login_required
+def platform_organizations_invite_staff(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    email = request.form.get('email', '').strip().lower()
+    if not email:
+        flash('Staff email is required.', 'error')
+        _record_platform_organization_access_event(
+            'platform_organization_staff_invite',
+            organization=organization,
+            target_email=email,
+            outcome='failed',
+            reason='missing_email',
+        )
+        return _render_platform_organization_access(
+            organization,
+            staff_invite_email=email,
+        )
+
+    _, email_error = _organization_email_account_status(email)
+    if email_error:
+        flash(email_error, 'error')
+        _record_platform_organization_access_event(
+            'platform_organization_staff_invite',
+            organization=organization,
+            target_email=email,
+            outcome='failed',
+            reason='email_not_eligible',
+        )
+        return _render_platform_organization_access(
+            organization,
+            staff_invite_email=email,
+        )
+
+    existing_invitation = _organization_pending_invitation_for_email(organization.id, email)
+    if existing_invitation is not None:
+        flash('A pending invitation already exists for that email in this organization.', 'warning')
+        _record_platform_organization_access_event(
+            'platform_organization_staff_invite',
+            organization=organization,
+            target_email=email,
+            outcome='failed',
+            reason='duplicate_pending_invitation',
+            invitation=existing_invitation,
+        )
+        return _render_platform_organization_access(
+            organization,
+            staff_invite_email=email,
+        )
+
+    invitation = OrganizationInvitation(
+        organization_id=organization.id,
+        email=email,
+        role='staff',
+        invited_by_user_id=current_user.id,
+        expires_at=utc_now() + timedelta(days=7),
+    )
+    db.session.add(invitation)
+    db.session.commit()
+
+    _record_platform_organization_access_event(
+        'platform_organization_staff_invite',
+        organization=organization,
+        target_email=email,
+        outcome='success',
+        invitation=invitation,
+    )
+    flash('Staff invitation created.', 'success')
+    return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
+
+
+@bp.route('/platform/organizations/<int:organization_id>/access/reissue-owner-invite', methods=['POST'])
+@login_required
+def platform_organizations_reissue_owner_invite(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    owner_email = request.form.get('owner_email', '').strip().lower()
+    owner_membership = _organization_owner_membership(organization)
+    if owner_membership is not None:
+        flash(
+            'An owner has already joined this organization. Owner invite recovery is no longer available.',
+            'error',
+        )
+        _record_platform_organization_access_event(
+            'platform_organization_owner_invite_reissue',
+            organization=organization,
+            target_email=owner_email,
+            outcome='failed',
+            reason='owner_already_joined',
+        )
+        return _render_platform_organization_access(
+            organization,
+            owner_reissue_email=owner_email,
+        )
+
+    if not owner_email:
+        flash('Owner email is required.', 'error')
+        _record_platform_organization_access_event(
+            'platform_organization_owner_invite_reissue',
+            organization=organization,
+            target_email=owner_email,
+            outcome='failed',
+            reason='missing_email',
+        )
+        return _render_platform_organization_access(
+            organization,
+            owner_reissue_email=owner_email,
+        )
+
+    _, owner_email_error = _organization_email_account_status(owner_email)
+    if owner_email_error:
+        flash(owner_email_error, 'error')
+        _record_platform_organization_access_event(
+            'platform_organization_owner_invite_reissue',
+            organization=organization,
+            target_email=owner_email,
+            outcome='failed',
+            reason='email_not_eligible',
+        )
+        return _render_platform_organization_access(
+            organization,
+            owner_reissue_email=owner_email,
+        )
+
+    existing_pending_email_invitation = _organization_pending_invitation_for_email(organization.id, owner_email)
+    if existing_pending_email_invitation is not None and existing_pending_email_invitation.role != 'owner':
+        flash('A pending invitation already exists for that email in this organization.', 'warning')
+        _record_platform_organization_access_event(
+            'platform_organization_owner_invite_reissue',
+            organization=organization,
+            target_email=owner_email,
+            outcome='failed',
+            reason='duplicate_pending_invitation',
+            invitation=existing_pending_email_invitation,
+        )
+        return _render_platform_organization_access(
+            organization,
+            owner_reissue_email=owner_email,
+        )
+
+    pending_owner_invitations = (
+        OrganizationInvitation.query
+        .filter_by(
+            organization_id=organization.id,
+            role='owner',
+            status='pending',
+        )
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .all()
+    )
+    revoked_count = 0
+    for invitation in pending_owner_invitations:
+        invitation.status = 'revoked'
+        revoked_count += 1
+
+    invitation = OrganizationInvitation(
+        organization_id=organization.id,
+        email=owner_email,
+        role='owner',
+        invited_by_user_id=current_user.id,
+        expires_at=utc_now() + timedelta(days=7),
+    )
+    db.session.add(invitation)
+    db.session.commit()
+
+    _record_platform_organization_access_event(
+        'platform_organization_owner_invite_reissue',
+        organization=organization,
+        target_email=owner_email,
+        outcome='success',
+        invitation=invitation,
+        revoked_count=revoked_count,
+    )
+    flash('Owner invite reissued with a fresh link.', 'success')
+    return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
 
 
 @bp.route('/platform/organizations/<int:organization_id>/messaging', methods=['GET', 'POST'])
@@ -2247,9 +2744,9 @@ def invitation_accept(token):
             flash('That username is already taken.', 'error')
             return render_template('auth/accept_invitation.html', invitation=invitation)
 
-        existing_user = AppUser.query.filter(func.lower(AppUser.email) == invitation.email.lower()).first()
-        if existing_user and existing_user.memberships:
-            flash('That email is already attached to an organization.', 'error')
+        existing_user, invitation_email_error = _organization_email_account_status(invitation.email)
+        if invitation_email_error:
+            flash(invitation_email_error, 'error')
             return render_template('auth/accept_invitation.html', invitation=invitation)
         phone_conflict = _find_phone_conflict(
             normalized_phone,

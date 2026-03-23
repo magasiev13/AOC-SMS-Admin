@@ -26,7 +26,7 @@
                     <th>Billing</th>
                     <th>Messaging</th>
                     <th>Owner Invite</th>
-                    <th width="180">Actions</th>
+                    <th width="260">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -118,6 +118,12 @@
                     </td>
                     <td>
                         <div class="d-flex flex-wrap gap-2">
+                            <a
+                                href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}"
+                                class="btn btn-sm btn-outline-secondary"
+                            >
+                                Manage Access
+                            </a>
                             <a
                                 href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}"
                                 class="btn btn-sm btn-outline-primary"

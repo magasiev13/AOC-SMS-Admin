@@ -19,6 +19,8 @@
 >
     {% if config.SAAS_MODE and not current_user.is_platform_admin %}
     <i class="bi bi-envelope-plus me-1"></i>Invite Team Member
+    {% elif config.SAAS_MODE and current_user.is_platform_admin %}
+    <i class="bi bi-plus-lg me-1"></i>Add Platform Admin
     {% else %}
     <i class="bi bi-plus-lg me-1"></i>Add User
     {% endif %}
@@ -74,9 +76,11 @@
                                 <span class="badge bg-secondary ms-2">You</span>
                             {% endif %}
                         </td>
-                        <td data-sort-value="{{ 'Owner' if user.organization_role == 'owner' else ('Staff' if user.organization_role == 'staff' else ('Admin' if user.is_admin else 'Social Media Manager')) }}">
-                            <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
-                                {% if user.organization_role == 'owner' %}
+                        <td data-sort-value="{{ 'Platform Admin' if user.is_platform_admin else ('Owner' if user.organization_role == 'owner' else ('Staff' if user.organization_role == 'staff' else ('Admin' if user.is_admin else 'Social Media Manager'))) }}">
+                            <span class="badge bg-{{ 'dark' if user.is_platform_admin else ('primary' if user.is_admin else 'info') }}">
+                                {% if user.is_platform_admin %}
+                                Platform Admin
+                                {% elif user.organization_role == 'owner' %}
                                 Owner
                                 {% elif user.organization_role == 'staff' %}
                                 Staff
@@ -132,8 +136,10 @@
                     <div>
                         <h6 class="mb-1">{{ user.username }}</h6>
                         <div class="d-flex flex-wrap gap-2 mt-2">
-                            <span class="badge bg-{{ 'primary' if user.is_admin else 'info' }}">
-                                {% if user.organization_role == 'owner' %}
+                            <span class="badge bg-{{ 'dark' if user.is_platform_admin else ('primary' if user.is_admin else 'info') }}">
+                                {% if user.is_platform_admin %}
+                                Platform Admin
+                                {% elif user.organization_role == 'owner' %}
                                 Owner
                                 {% elif user.organization_role == 'staff' %}
                                 Staff
@@ -171,12 +177,16 @@
             <div class="empty-state__text">
                 {% if config.SAAS_MODE and not current_user.is_platform_admin %}
                 Invite your first teammate to test the owner + staff workflow.
+                {% elif config.SAAS_MODE and current_user.is_platform_admin %}
+                Create another platform admin to help manage the control plane.
                 {% else %}
                 Create a user to grant dashboard access.
                 {% endif %}
             </div>
             {% if config.SAAS_MODE and not current_user.is_platform_admin %}
             <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-primary empty-state__action">Invite Team Member</a>
+            {% elif config.SAAS_MODE and current_user.is_platform_admin %}
+            <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add Platform Admin</a>
             {% else %}
             <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add User</a>
             {% endif %}

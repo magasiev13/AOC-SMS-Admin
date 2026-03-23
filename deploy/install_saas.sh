@@ -10,6 +10,11 @@ VENV_BIN="${APP_ROOT}/venv/bin"
 PYTHON_BIN="${VENV_BIN}/python"
 SAAS_DBDOCTOR_SRC="${REPO_ROOT}/bin/saas-dbdoctor"
 SAAS_DBDOCTOR_DEST="${SAAS_DBDOCTOR_DEST:-/usr/local/bin/saas-dbdoctor}"
+RESTART_HELPER_SRC="${REPO_ROOT}/deploy/restart_sms_saas_services.sh"
+RESTART_HELPER_DEST="${RESTART_HELPER_DEST:-/usr/local/bin/restart-sms-saas-services}"
+RESTART_SUDOERS_SRC="${REPO_ROOT}/deploy/sms-saas-restart.sudoers"
+RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/sms-saas-restart}"
+VISUDO_BIN="${VISUDO_BIN:-/usr/sbin/visudo}"
 LOG_DIR="${LOG_DIR:-/var/log/sms-saas}"
 REQUIRED_PYTHON="3.11"
 
@@ -35,6 +40,16 @@ if [[ ! -f "${SAAS_DBDOCTOR_SRC}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${RESTART_HELPER_SRC}" ]]; then
+  echo "ERROR: ${RESTART_HELPER_SRC} not found." >&2
+  exit 1
+fi
+
+if [[ ! -f "${RESTART_SUDOERS_SRC}" ]]; then
+  echo "ERROR: ${RESTART_SUDOERS_SRC} not found." >&2
+  exit 1
+fi
+
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   if ! command -v python3.11 >/dev/null 2>&1; then
     echo "ERROR: ${PYTHON_BIN} not found and python3.11 is unavailable." >&2
@@ -51,6 +66,14 @@ fi
 
 sudo install -m 0755 "${SAAS_DBDOCTOR_SRC}" "${SAAS_DBDOCTOR_DEST}"
 echo "✓ Installed saas-dbdoctor to ${SAAS_DBDOCTOR_DEST}"
+sudo install -o root -g root -m 0755 "${RESTART_HELPER_SRC}" "${RESTART_HELPER_DEST}"
+echo "✓ Installed SaaS restart helper to ${RESTART_HELPER_DEST}"
+tmp_sudoers="$(mktemp)"
+trap 'rm -f "${tmp_sudoers}"' EXIT
+sed "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" "${RESTART_SUDOERS_SRC}" > "${tmp_sudoers}"
+sudo install -o root -g root -m 0440 "${tmp_sudoers}" "${RESTART_SUDOERS_DEST}"
+sudo "${VISUDO_BIN}" -cf "${RESTART_SUDOERS_DEST}" >/dev/null
+echo "✓ Installed sudoers rule to ${RESTART_SUDOERS_DEST}"
 
 sudo touch "${ENV_FILE}"
 sudo chown root:${APP_GROUP} "${ENV_FILE}"
@@ -74,6 +97,8 @@ ensure_env_key "SAAS_MODE" "1"
 ensure_env_key "SCHEDULER_ENABLED" "0"
 ensure_env_key "RQ_QUEUE_NAME" "sms-saas"
 ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 
 required_keys=(
   DATABASE_URL
@@ -123,6 +148,12 @@ sudo install -m 0755 "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer
+
+echo "==> Verifying SaaS restart helper"
+if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then
+  echo "ERROR: ${APP_USER} cannot run ${RESTART_HELPER_DEST} with sudo -n." >&2
+  exit 1
+fi
 
 echo "==> Verifying SaaS health"
 HEALTH_HOST="$(resolve_health_host)"

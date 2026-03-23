@@ -34,6 +34,11 @@ class Config:
     TRUST_PROXY = _env_bool('TRUST_PROXY', '0')
     SAAS_MODE = _env_bool('SAAS_MODE', '0')
     SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
+    PLATFORM_SERVICE_RESTART_ENABLED = _env_bool('PLATFORM_SERVICE_RESTART_ENABLED', '0')
+    PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
+        'PLATFORM_SERVICE_RESTART_SCRIPT',
+        '/usr/local/bin/restart-sms-saas-services',
+    )
 
     # Session Security
     # Keep session cookies inaccessible to browser JavaScript.

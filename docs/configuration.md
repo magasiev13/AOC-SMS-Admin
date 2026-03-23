@@ -49,6 +49,13 @@ cp .env.example .env
 | `ADMIN_USERNAME` | `admin` | Initial admin username or first SaaS platform admin username |
 | `ADMIN_TEST_PHONE` | - | Phone number for test mode sends |
 
+### SaaS Platform Operations
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PLATFORM_SERVICE_RESTART_ENABLED` | `0` | Enable the platform-admin-only restart control on `/platform` |
+| `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-sms-saas-services` | Absolute path to the fixed restart helper executed via `sudo -n` |
+
 ### Database
 
 | Variable | Default | Description |
@@ -179,6 +186,11 @@ class Config:
     TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
     TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
+    PLATFORM_SERVICE_RESTART_ENABLED = os.environ.get('PLATFORM_SERVICE_RESTART_ENABLED', '0') == '1'
+    PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
+        'PLATFORM_SERVICE_RESTART_SCRIPT',
+        '/usr/local/bin/restart-sms-saas-services',
+    )
 
     # Admin
     ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')
@@ -248,6 +260,10 @@ DATABASE_URL=sqlite:///instance/sms.db
 # Redis (required for background jobs)
 REDIS_URL=redis://localhost:6379/0
 RQ_QUEUE_NAME=sms
+
+# Optional SaaS-only platform restart control
+PLATFORM_SERVICE_RESTART_ENABLED=0
+PLATFORM_SERVICE_RESTART_SCRIPT=/usr/local/bin/restart-sms-saas-services
 
 # Scheduler (disabled in prod, use systemd timer)
 SCHEDULER_ENABLED=0

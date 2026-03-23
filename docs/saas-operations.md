@@ -15,6 +15,7 @@ sudo ./deploy/install_saas.sh
 This installs:
 
 - `saas-dbdoctor`
+- `restart-sms-saas-services`
 - `sms-saas.service`
 - `sms-saas-worker.service`
 - `sms-saas-scheduler.timer`
@@ -37,6 +38,7 @@ TWILIO_ACCOUNT_SID=...
 TWILIO_AUTH_TOKEN=...
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=...
 SECRET_KEY=...
+PLATFORM_SERVICE_RESTART_ENABLED=0
 ```
 
 Bootstrap-only for the first platform admin:
@@ -47,6 +49,11 @@ ADMIN_PASSWORD=your-secure-password
 ```
 
 After the first platform admin exists, `ADMIN_PASSWORD` is no longer required for deploys or runtime startup.
+Additional platform admins can be created from `/users` while signed into the platform control plane.
+
+Platform-admin accounts are control-plane only. Use a separate email for each organization owner or staff user.
+
+If you change Twilio or other runtime values in `/opt/sms-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
 
 ## SaaS DB Commands
 

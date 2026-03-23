@@ -113,8 +113,37 @@
                     <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Open Organization Directory</a>
                     <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review Users</a>
                     <a href="{{ url_for('main.security_events') }}" class="btn btn-outline-secondary">Review Security Events</a>
+                    {% if platform_home.service_restart.enabled %}
+                    <form method="POST" action="{{ url_for('main.platform_restart_services') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger w-100">Restart SaaS Services</button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
+            {% if platform_home.service_restart.enabled %}
+            <div class="card app-card mb-4">
+                <div class="card-header">Service Restart</div>
+                <div class="card-body">
+                    {% if platform_home.service_restart.last_result %}
+                    {% set last_restart = platform_home.service_restart.last_result %}
+                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                        <div>
+                            <div class="fw-semibold">Last request: {{ last_restart.title }}</div>
+                            <div class="small text-muted">{{ last_restart.created_at_display }}</div>
+                        </div>
+                        <span class="badge bg-{{ last_restart.badge }}">{{ last_restart.title }}</span>
+                    </div>
+                    <div class="small mt-3">{{ last_restart.summary }}</div>
+                    {% if last_restart.detail and last_restart.detail != last_restart.summary %}
+                    <div class="small text-muted mt-2">{{ last_restart.detail }}</div>
+                    {% endif %}
+                    {% else %}
+                    <div class="text-muted small">No restart requests have been recorded yet.</div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
             <div class="card app-card">
                 <div class="card-header">Recent Organizations</div>
                 <div class="card-body">
