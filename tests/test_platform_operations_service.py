@@ -418,9 +418,12 @@ class TestRestartDeployArtifacts(unittest.TestCase):
 
         self.assertIn("restart_sms_saas_services.sh", deploy_script)
         self.assertIn("restart-sms-saas-services", deploy_script)
+        self.assertIn("sms-saas-restart.sudoers", deploy_script)
+        self.assertIn("RESTART_SUDOERS_DEST", deploy_script)
         self.assertIn("sms-saas-platform-restart-queue.service", deploy_script)
         self.assertIn("sms-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)
+        self.assertIn("visudo", deploy_script)
         self.assertIn('systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"', deploy_script)
         self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
         self.assertIn('"sms-saas-platform-restart-queue.timer"', runtime_units)

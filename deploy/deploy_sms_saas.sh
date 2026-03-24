@@ -8,7 +8,10 @@ VENV_BIN="${APP_ROOT}/venv/bin"
 SAAS_DBDOCTOR_BIN="${SAAS_DBDOCTOR_BIN:-/usr/local/bin/saas-dbdoctor}"
 RESTART_HELPER_SRC="${APP_ROOT}/deploy/restart_sms_saas_services.sh"
 RESTART_HELPER_DEST="${RESTART_HELPER_DEST:-/usr/local/bin/restart-sms-saas-services}"
+RESTART_SUDOERS_SRC="${APP_ROOT}/deploy/sms-saas-restart.sudoers"
+RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/sms-saas-restart}"
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+VISUDO_BIN="${VISUDO_BIN:-/usr/sbin/visudo}"
 SAAS_SYSTEMD_UNITS=(
   "sms-saas.service"
   "sms-saas-worker.service"
@@ -42,9 +45,15 @@ resolve_health_host() {
 
 sync_deploy_artifacts() {
   local unit
+  local tmp_sudoers
 
   echo "==> Syncing SaaS deploy artifacts"
   sudo install -o root -g root -m 0755 "${RESTART_HELPER_SRC}" "${RESTART_HELPER_DEST}"
+  tmp_sudoers="$(mktemp)"
+  trap 'rm -f "${tmp_sudoers}"' RETURN
+  sed "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" "${RESTART_SUDOERS_SRC}" > "${tmp_sudoers}"
+  sudo install -o root -g root -m 0440 "${tmp_sudoers}" "${RESTART_SUDOERS_DEST}"
+  sudo "${VISUDO_BIN}" -cf "${RESTART_SUDOERS_DEST}" >/dev/null
   for unit in "${SAAS_SYSTEMD_UNITS[@]}"; do
     sudo install -m 0644 "${APP_ROOT}/deploy/${unit}" "${SYSTEMD_UNIT_DIR}/${unit}"
   done
