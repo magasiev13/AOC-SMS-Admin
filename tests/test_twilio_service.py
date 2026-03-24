@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -211,6 +212,39 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         mock_configure_service_webhooks.assert_called_once()
         self.assertEqual(self.OrganizationProviderAuditLog.query.filter_by(organization_id=organization.id).count(), 2)
 
+    @patch("app.services.twilio_service._configure_service_webhooks")
+    @patch("app.services.twilio_service._build_subaccount_client")
+    @patch("app.services.twilio_service._master_client")
+    def test_provision_org_failure_preserves_remote_identifiers_for_retry(
+        self,
+        mock_master_client,
+        mock_build_subaccount_client,
+        mock_configure_service_webhooks,
+    ) -> None:
+        from app.services.provider_secret_service import decrypt_provider_secret
+        from app.services.twilio_service import ProviderProvisioningError, provision_org
+
+        organization, _ = self._create_org_with_profile()
+        master_client = mock_master_client.return_value
+        master_client.api.v2010.accounts.create.return_value = SimpleNamespace(
+            sid="ACsub0002",
+            auth_token="subaccount-token-2",
+        )
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.messaging.v1.services.create.return_value = SimpleNamespace(sid="MGsub0002")
+        mock_configure_service_webhooks.side_effect = RuntimeError("webhook bind failed")
+
+        with self.assertRaises(ProviderProvisioningError) as ctx:
+            provision_org(organization.id, actor_user_id=99)
+
+        self.assertIn("webhook bind failed", str(ctx.exception))
+        profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization.id).one()
+        self.assertEqual(profile.provider_status, "error")
+        self.assertEqual(profile.twilio_subaccount_sid, "ACsub0002")
+        self.assertEqual(profile.messaging_service_sid, "MGsub0002")
+        self.assertEqual(decrypt_provider_secret(profile.twilio_auth_token_encrypted), "subaccount-token-2")
+        self.assertIn("webhook bind failed", profile.last_provision_error)
+
     @patch("app.services.twilio_service._build_subaccount_client")
     def test_sync_sender_assignment_attaches_phone_number_and_configures_inbound_webhook(self, mock_build_subaccount_client) -> None:
         from app.models import utc_now
@@ -318,6 +352,46 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(record.source, "reply")
         self.assertEqual(record.twilio_subaccount_sid, "ACsub0001")
         self.assertEqual(record.reconciliation_status, "pending")
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_reconcile_messaging_usage_uses_read_only_client_for_suspended_provider(self, mock_build_subaccount_client) -> None:
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import reconcile_messaging_usage
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0003",
+            twilio_auth_token_encrypted=encrypt_provider_secret("subaccount-token-3"),
+            provider_status="suspended",
+            status="suspended",
+        )
+        self.db.session.add(
+            self.MessagingUsageRecord(
+                organization_id=organization.id,
+                message_sid="SMusage-read-only",
+                source="scheduled",
+                reconciliation_status="pending",
+            )
+        )
+        self.db.session.commit()
+
+        mock_client = mock_build_subaccount_client.return_value
+        mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            status="delivered",
+            num_segments="2",
+            price="-0.0400",
+            price_unit="usd",
+            date_created=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            account_sid="ACsub0003",
+        )
+
+        summary = reconcile_messaging_usage()
+
+        self.db.session.expire_all()
+        record = self.MessagingUsageRecord.query.filter_by(message_sid="SMusage-read-only").one()
+        self.assertEqual(summary["records_finalized"], 1)
+        self.assertEqual(record.reconciliation_status, "finalized")
+        self.assertEqual(record.billable_units, 2)
+        self.assertEqual(record.twilio_subaccount_sid, "ACsub0003")
 
     def test_upsert_closed_usage_billing_periods_summarizes_overage(self) -> None:
         from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods

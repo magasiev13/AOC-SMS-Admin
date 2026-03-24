@@ -12,6 +12,15 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(page.locator('.app-page-title')).toHaveText('Platform');
   await expect(page.getByRole('link', { name: 'Platform' })).toBeVisible();
   await expect(page.locator('.app-nav .app-nav-link').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Restart SaaS Services' })).toBeVisible();
+  await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
+  await expect(
+    page.locator('.card-body .small.mt-3').filter({ hasText: 'Restart request queued. Waiting for the host processor.' }),
+  ).toBeVisible();
+  await expect(page.getByText('Last request: Queued')).toBeVisible();
+  await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
+  await expect(page.getByText('Last request: Queued')).toBeVisible();
+
   const organizationsNavLink = page.locator('.app-nav a[href="/platform/organizations"]').first();
   await expect(organizationsNavLink).toBeVisible();
   await organizationsNavLink.click();
@@ -29,6 +38,7 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();
   await expect(page.getByText(/Platform-managed Twilio by default/)).toBeVisible();
   await expect(page.getByText(/Twilio subaccounts and messaging services are provisioned later/)).toBeVisible();
+  await expect(page.getByLabel('Initial Role')).toHaveCount(0);
 });
 
 test('owner sees human-readable billing state and pending invite links', async ({ page }) => {
@@ -45,6 +55,14 @@ test('owner sees human-readable billing state and pending invite links', async (
   await expect(page.getByText('Pending Invitations')).toBeVisible();
   const staffInviteLink = page.getByRole('link', { name: 'Open invite' }).first();
   await expect(staffInviteLink).toHaveAttribute('href', /browser-staff-invite-token/);
+});
+
+test('trial owner is returned to billing overview on checkout GET', async ({ page }) => {
+  await login(page, 'trial-owner@browser.test', 'TrialOwner-pass1!');
+  await page.goto('/billing/checkout');
+
+  await expect(page).toHaveURL(/\/billing$/);
+  await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
 });
 
 test('staff is blocked from billing', async ({ page }) => {

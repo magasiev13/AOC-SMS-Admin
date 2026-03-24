@@ -297,6 +297,37 @@ class StripeWebhookEvent(db.Model):
         return f'<StripeWebhookEvent {self.stripe_event_id} status={self.status}>'
 
 
+class PlatformServiceRestartRequest(db.Model):
+    """Durable platform restart requests processed outside the web request path."""
+    __tablename__ = 'platform_service_restart_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    requested_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    requested_username = db.Column(db.String(80), nullable=True, index=True)
+    client_ip = db.Column(db.String(45), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    transient_unit = db.Column(db.String(120), nullable=True, unique=True)
+    summary = db.Column(db.Text, nullable=True)
+    detail = db.Column(db.Text, nullable=True)
+    requested_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    last_checked_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    requested_by_user = db.relationship('AppUser')
+
+    @validates("status")
+    def _normalize_status(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"pending", "queued", "succeeded", "failed"}:
+            raise ValueError("Platform restart request status must be pending, queued, succeeded, or failed.")
+        return normalized
+
+    def __repr__(self):
+        return f'<PlatformServiceRestartRequest {self.id} status={self.status}>'
+
+
 class OrganizationMessagingProfile(db.Model):
     """Provider-managed messaging resources for one organization."""
     __tablename__ = 'organization_messaging_profiles'

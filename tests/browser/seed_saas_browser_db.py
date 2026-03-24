@@ -111,6 +111,15 @@ def main() -> None:
             must_change_password=False,
         )
         owner.set_password("Owner-pass1!")
+        trial_owner = AppUser(
+            username="trial-owner-browser",
+            email="trial-owner@browser.test",
+            full_name="Trial Owner Browser",
+            phone="+15550001004",
+            role="admin",
+            must_change_password=False,
+        )
+        trial_owner.set_password("TrialOwner-pass1!")
         staff = AppUser(
             username="staff-browser",
             email="staff@browser.test",
@@ -131,10 +140,16 @@ def main() -> None:
             active_subscription,
             active_messaging,
             owner,
+            trial_owner,
             staff,
         ])
         db.session.flush()
         db.session.add_all([
+            OrganizationMembership(
+                organization_id=onboarding_org.id,
+                user_id=trial_owner.id,
+                role="owner",
+            ),
             OrganizationMembership(
                 organization_id=active_org.id,
                 user_id=owner.id,

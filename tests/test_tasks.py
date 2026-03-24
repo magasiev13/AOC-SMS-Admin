@@ -113,6 +113,84 @@ class TestSendBulkJob(unittest.TestCase):
         self.assertEqual(details[0].get("phone"), "+15550000003")
         self.assertTrue(details[0].get("success"))
 
+    @patch("app.tasks.record_usage_candidates")
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    def test_usage_recording_failure_does_not_mark_successful_send_failed(
+        self,
+        mock_get_twilio,
+        mock_process_failure_details,
+        mock_record_usage_candidates,
+    ) -> None:
+        log_id = self._create_log(details=[])
+        recipients = [{"phone": "+15550000004", "name": "Success"}]
+
+        mock_service = MagicMock()
+        mock_service.send_bulk.return_value = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15550000004", "success": True, "error": None, "sid": "SMusage-1"}],
+        }
+        mock_get_twilio.return_value = mock_service
+        mock_process_failure_details.return_value = {}
+        mock_record_usage_candidates.side_effect = RuntimeError("usage ledger down")
+
+        self.send_bulk_job(log_id, recipients, "Hello", delay=0)
+
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
+
+    @patch("app.tasks.get_current_job")
+    @patch("app.tasks.record_usage_candidates")
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    def test_usage_recording_failure_does_not_mark_transient_retry_failed(
+        self,
+        mock_get_twilio,
+        mock_process_failure_details,
+        mock_record_usage_candidates,
+        mock_get_current_job,
+    ) -> None:
+        from app.services.twilio_service import TwilioTransientError
+
+        log_id = self._create_log(details=[])
+        recipients = [
+            {"phone": "+15550000005", "name": "First"},
+            {"phone": "+15550000006", "name": "Second"},
+        ]
+
+        mock_service = MagicMock()
+        mock_service.send_bulk.side_effect = TwilioTransientError(
+            "provider retry",
+            results={
+                "total": 2,
+                "success_count": 1,
+                "failure_count": 0,
+                "details": [{"phone": "+15550000005", "success": True, "error": None, "sid": "SMusage-2"}],
+            },
+            failed_index=1,
+        )
+        mock_get_twilio.return_value = mock_service
+        mock_process_failure_details.return_value = {}
+        mock_record_usage_candidates.side_effect = RuntimeError("usage ledger down")
+        mock_get_current_job.return_value = type("Job", (), {"retries_left": 1})()
+
+        with self.assertRaises(TwilioTransientError):
+            self.send_bulk_job(log_id, recipients, "Hello", delay=0)
+
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.status, "processing")
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
+        details = json.loads(log.details or "[]")
+        self.assertEqual(len(details), 1)
+        self.assertEqual(details[0].get("phone"), "+15550000005")
+
     @patch("app.tasks.get_current_job", return_value=None)
     def test_should_mark_failed_when_no_job_context(self, _mock_get_job) -> None:
         self.assertTrue(self._should_mark_failed())

@@ -39,9 +39,12 @@
                             Open Billing Portal
                         </button>
                     </form>
-                    <a href="{{ url_for('main.billing_checkout') }}" class="btn btn-primary">
-                        {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
-                    </a>
+                    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-primary">
+                            {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
+                        </button>
+                    </form>
                 </div>
                 {% if not subscription or not subscription.stripe_customer_id %}
                 <div class="form-text mt-2">The billing portal becomes available after Stripe creates the customer record.</div>

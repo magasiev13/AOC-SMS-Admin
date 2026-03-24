@@ -78,6 +78,27 @@ def _count_detail_outcomes(detail_rows: list[dict]) -> tuple[int, int]:
     return success_count, failure_count
 
 
+def _record_usage_candidates_safely(
+    *,
+    scheduled_id: int,
+    organization_id: int | None,
+    details: list[dict] | None,
+    source: str,
+    db,
+) -> None:
+    try:
+        record_usage_candidates(organization_id, details, source=source)
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception(
+            "[Scheduler] Failed recording usage candidates for message id=%d organization_id=%s source=%s: %s",
+            scheduled_id,
+            organization_id,
+            source,
+            exc,
+        )
+
+
 def _upsert_message_log_for_scheduled_send(
     *,
     scheduled,
@@ -480,10 +501,12 @@ def send_scheduled_messages(app):
                     scheduled.error_message = None
                     scheduled.next_retry_at = None
                     db.session.commit()
-                    record_usage_candidates(
-                        scheduled.organization_id,
-                        result.get('details', []),
+                    _record_usage_candidates_safely(
+                        scheduled_id=scheduled.id,
+                        organization_id=scheduled.organization_id,
+                        details=result.get('details', []),
                         source='scheduled',
+                        db=db,
                     )
 
                     sent_count += 1
@@ -522,10 +545,13 @@ def send_scheduled_messages(app):
                         MessageLog=MessageLog,
                         db=db,
                     )
-                    record_usage_candidates(
-                        scheduled.organization_id,
-                        partial_result.get('details', []),
+                    db.session.commit()
+                    _record_usage_candidates_safely(
+                        scheduled_id=scheduled.id,
+                        organization_id=scheduled.organization_id,
+                        details=partial_result.get('details', []),
                         source='scheduled',
+                        db=db,
                     )
                 was_requeued = _handle_transient_failure(
                     scheduled=scheduled,

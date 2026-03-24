@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -35,6 +36,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             Organization,
             OrganizationMembership,
             OrganizationSubscription,
+            OrganizationUsageBillingPeriod,
             StripeWebhookEvent,
             utc_now,
         )
@@ -48,6 +50,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.Organization = Organization
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationSubscription = OrganizationSubscription
+        self.OrganizationUsageBillingPeriod = OrganizationUsageBillingPeriod
         self.StripeWebhookEvent = StripeWebhookEvent
         self.utc_now = utc_now
         self.process_stripe_webhook_event = process_stripe_webhook_event
@@ -281,6 +284,67 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
 
     @patch("app.services.billing_service._stripe_module")
+    def test_refresh_subscription_from_stripe_paginates_checkout_sessions_until_match(self, mock_stripe_module) -> None:
+        from datetime import timedelta
+
+        from app.services.billing_service import refresh_subscription_from_stripe
+
+        first_page = SimpleNamespace(
+            data=[
+                {
+                    "id": "cs_page_1",
+                    "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
+                    "status": "complete",
+                    "customer_email": "other@acme.test",
+                    "customer": "cus_other",
+                    "subscription": "sub_other",
+                    "client_reference_id": str(self.organization.id),
+                    "metadata": {"organization_id": str(self.organization.id)},
+                }
+            ],
+            has_more=True,
+        )
+        second_page = SimpleNamespace(
+            data=[
+                {
+                    "id": "cs_target",
+                    "created": int((self.subscription.created_at + timedelta(minutes=2)).timestamp()),
+                    "status": "complete",
+                    "customer_email": "owner@acme.test",
+                    "customer": "cus_test_123",
+                    "subscription": "sub_test_123",
+                    "client_reference_id": str(self.organization.id),
+                    "metadata": {"organization_id": str(self.organization.id)},
+                }
+            ],
+            has_more=False,
+        )
+
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.list.side_effect = [first_page, second_page]
+        mock_stripe.Subscription.retrieve.return_value = {
+            "id": "sub_test_123",
+            "customer": "cus_test_123",
+            "status": "trialing",
+            "current_period_end": 1775107599,
+            "items": {"data": [{"price": {"id": "price_test_123"}}]},
+        }
+        mock_stripe_module.return_value = mock_stripe
+
+        subscription = refresh_subscription_from_stripe(self.organization, "owner@acme.test")
+
+        self.assertIsNotNone(subscription)
+        self.assertEqual(subscription.status, "trialing")
+        self.assertEqual(mock_stripe.checkout.Session.list.call_count, 2)
+        first_call = mock_stripe.checkout.Session.list.call_args_list[0].kwargs
+        second_call = mock_stripe.checkout.Session.list.call_args_list[1].kwargs
+        self.assertEqual(first_call["status"], "complete")
+        self.assertEqual(first_call["limit"], 100)
+        self.assertIn("created", first_call)
+        self.assertNotIn("starting_after", first_call)
+        self.assertEqual(second_call["starting_after"], "cs_page_1")
+
+    @patch("app.services.billing_service._stripe_module")
     def test_reconcile_billing_subscriptions_ignores_stale_completed_checkout_sessions(self, mock_stripe_module) -> None:
         from datetime import timedelta
 
@@ -308,6 +372,58 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertIsNone(self.subscription.stripe_customer_id)
         self.assertIsNone(self.subscription.stripe_subscription_id)
         mock_stripe.Subscription.retrieve.assert_not_called()
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_usage_invoice_posting_retries_with_stable_idempotency_key(self, mock_stripe_module) -> None:
+        from app.services.billing_service import _post_closed_usage_invoice_items
+        from app.services.twilio_service import previous_billing_period_window
+
+        self.subscription.stripe_customer_id = "cus_test_123"
+        period_start, period_end = previous_billing_period_window()
+        period = self.OrganizationUsageBillingPeriod(
+            organization_id=self.organization.id,
+            period_start=period_start,
+            period_end=period_end,
+            included_units=1000,
+            used_units=1005,
+            overage_units=5,
+            sell_amount=Decimal("0.1500"),
+            currency="usd",
+            status="pending",
+        )
+        self.db.session.add(period)
+        self.db.session.commit()
+
+        mock_stripe = MagicMock()
+        mock_stripe.InvoiceItem.create.return_value = SimpleNamespace(id="ii_test_123")
+        mock_stripe_module.return_value = mock_stripe
+
+        real_commit = self.db.session.commit
+        state = {"calls": 0}
+
+        def flaky_commit():
+            state["calls"] += 1
+            if state["calls"] == 1:
+                raise RuntimeError("db write failed")
+            return real_commit()
+
+        with patch("app.services.billing_service.db.session.commit", side_effect=flaky_commit):
+            with self.assertRaises(RuntimeError):
+                _post_closed_usage_invoice_items()
+            self.db.session.rollback()
+            self.db.session.expire_all()
+            second_summary = _post_closed_usage_invoice_items()
+
+        self.db.session.expire_all()
+        period = self.OrganizationUsageBillingPeriod.query.filter_by(organization_id=self.organization.id).one()
+        self.assertEqual(second_summary["periods_posted"], 1)
+        self.assertEqual(period.status, "posted")
+        self.assertEqual(period.stripe_invoice_item_id, "ii_test_123")
+        self.assertEqual(mock_stripe.InvoiceItem.create.call_count, 2)
+        first_call = mock_stripe.InvoiceItem.create.call_args_list[0].kwargs
+        second_call = mock_stripe.InvoiceItem.create.call_args_list[1].kwargs
+        self.assertEqual(first_call["idempotency_key"], second_call["idempotency_key"])
+        self.assertIn(f"sms-overage:{self.organization.id}:", first_call["idempotency_key"])
 
 
 class TestSaasBillingConfigValidation(unittest.TestCase):

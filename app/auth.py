@@ -25,6 +25,7 @@ login_manager.login_message_category = "warning"
 login_manager.session_protection = "strong"
 
 bp = Blueprint("auth", __name__)
+SUSPENDED_ORGANIZATION_MESSAGE = "Your organization is currently suspended. Contact your platform admin."
 
 TENANT_ENDPOINT_PREFIXES = (
     "main.dashboard",
@@ -59,6 +60,22 @@ def _is_platform_admin_tenant_endpoint(endpoint: str | None) -> bool:
     return any(endpoint.startswith(prefix) for prefix in TENANT_ENDPOINT_PREFIXES)
 
 
+def _organization_status_for_user(user) -> str | None:
+    organization = getattr(user, "organization", None)
+    if organization is None:
+        return None
+    normalized = (getattr(organization, "status", None) or "").strip().lower()
+    return normalized or None
+
+
+def _deny_suspended_organization_access():
+    logout_user()
+    session.clear()
+    clear_current_organization_id()
+    flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
+    return redirect(url_for("auth.login"))
+
+
 def require_roles(*roles):
     def decorator(view):
         @wraps(view)
@@ -81,6 +98,10 @@ def enforce_account_security():
     if not current_user.is_authenticated:
         return None
 
+    endpoint = request.endpoint or ""
+    if endpoint.startswith("static"):
+        return None
+
     if current_app.config.get("SAAS_MODE") and not getattr(current_user, "is_platform_admin", False):
         organization_id = getattr(current_user, "organization_id", None)
         if not organization_id:
@@ -90,12 +111,15 @@ def enforce_account_security():
             return redirect(url_for("auth.login"))
         set_current_organization_id(organization_id)
 
+        if _organization_status_for_user(current_user) == "suspended":
+            allowed_endpoints = {
+                "auth.logout",
+            }
+            if endpoint not in allowed_endpoints:
+                return _deny_suspended_organization_access()
+
     # Keep idle timeout enforcement active by using permanent sessions.
     session.permanent = True
-
-    endpoint = request.endpoint or ""
-    if endpoint.startswith("static"):
-        return None
 
     if current_user.must_change_password:
         allowed_endpoints = {
@@ -194,6 +218,19 @@ def login():
             )
 
         if user and user.check_password(password):
+            if current_app.config.get("SAAS_MODE") and not getattr(user, "is_platform_admin", False):
+                if _organization_status_for_user(user) == "suspended":
+                    record_auth_event(
+                        "login_denied",
+                        outcome="blocked",
+                        user=user,
+                        username=user.username,
+                        client_ip=client_ip,
+                        metadata={"reason": "organization_suspended"},
+                    )
+                    flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
+                    return render_template("auth/login.html")
+
             # Clear existing client session before issuing a new authenticated session.
             session.clear()
             login_user(user, remember=remember)

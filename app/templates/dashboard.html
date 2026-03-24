@@ -26,7 +26,10 @@
                     <div class="d-flex gap-2">
                         <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
                         {% if not can_send_messages %}
-                        <a href="{{ url_for('main.billing_checkout') }}" class="btn btn-primary">Activate Subscription</a>
+                        <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-primary">Activate Subscription</button>
+                        </form>
                         {% endif %}
                     </div>
                 </div>

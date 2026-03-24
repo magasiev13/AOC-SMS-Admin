@@ -42,6 +42,26 @@ def _append_error_detail(details: list, error_message: str) -> list:
     return payload
 
 
+def _record_usage_candidates_safely(
+    *,
+    log_id: int,
+    organization_id: int | None,
+    details: list[dict] | None,
+    source: str,
+) -> None:
+    try:
+        record_usage_candidates(organization_id, details, source=source)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Failed recording usage candidates for log_id=%s organization_id=%s source=%s: %s",
+            log_id,
+            organization_id,
+            source,
+            exc,
+        )
+
+
 def send_bulk_job(
     log_id: int,
     organization_id: int | list | None = None,
@@ -110,7 +130,12 @@ def send_bulk_job(
                 log.details = json.dumps(combined_details)
                 log.status = 'sent' if log.failure_count == 0 else 'failed'
                 db.session.commit()
-                record_usage_candidates(organization_id, result['details'], source='blast')
+                _record_usage_candidates_safely(
+                    log_id=log.id,
+                    organization_id=organization_id,
+                    details=result['details'],
+                    source='blast',
+                )
                 current_app.logger.info(
                     "Bulk send job finished log_id=%s organization_id=%s status=%s success_count=%s failure_count=%s",
                     log.id,
@@ -136,7 +161,12 @@ def send_bulk_job(
                     log.failure_count = existing_failure + exc.results.get('failure_count', 0)
                     log.details = json.dumps(combined_details)
                     db.session.commit()
-                    record_usage_candidates(organization_id, exc.results.get('details', []), source='blast')
+                    _record_usage_candidates_safely(
+                        log_id=log.id,
+                        organization_id=organization_id,
+                        details=exc.results.get('details', []),
+                        source='blast',
+                    )
                 if _should_mark_failed():
                     log.status = 'failed'
                     base_details = combined_details if exc.results else existing_details

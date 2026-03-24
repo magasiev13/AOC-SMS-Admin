@@ -174,6 +174,13 @@ def _build_subaccount_client(profile: OrganizationMessagingProfile) -> Client:
     return Client(master_account_sid, master_auth_token, profile.twilio_subaccount_sid)
 
 
+def _client_for_usage_reconciliation(organization_id: int | None) -> Client:
+    profile = _messaging_profile_for_org(organization_id)
+    if profile is not None and profile.provider_mode == "platform_managed" and profile.twilio_subaccount_sid:
+        return _build_subaccount_client(profile)
+    return _master_client()
+
+
 def _service_context(profile: OrganizationMessagingProfile, client: Client | None = None):
     if not profile.messaging_service_sid:
         raise ProviderProvisioningError("Messaging service is not provisioned for this organization.")
@@ -454,6 +461,7 @@ def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> 
             auth_token = getattr(subaccount, "auth_token", None)
             if auth_token:
                 profile.twilio_auth_token_encrypted = encrypt_provider_secret(auth_token)
+            db.session.commit()
 
         subaccount_client = _build_subaccount_client(profile)
         if not profile.messaging_service_sid:
@@ -461,6 +469,7 @@ def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> 
                 friendly_name=organization.name[:64]
             )
             profile.messaging_service_sid = service.sid
+            db.session.commit()
         _configure_service_webhooks(profile, client=subaccount_client)
 
         if not profile.inbound_identity:
@@ -765,8 +774,8 @@ def reconcile_messaging_usage() -> dict[str, int]:
     for record in pending_records:
         summary["records_seen"] += 1
         try:
-            provider = TwilioService(record.organization_id)
-            message = provider.client.messages(record.message_sid).fetch()
+            reconciliation_client = _client_for_usage_reconciliation(record.organization_id)
+            message = reconciliation_client.messages(record.message_sid).fetch()
             status = (getattr(message, "status", None) or "").strip().lower() or None
             segments = getattr(message, "num_segments", None)
             price = getattr(message, "price", None)

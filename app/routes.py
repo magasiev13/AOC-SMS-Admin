@@ -79,8 +79,8 @@ from app.services.inbox_service import (
     update_thread_contact_name,
 )
 from app.services.platform_operations_service import (
-    PlatformServiceRestartError,
-    request_platform_service_restart,
+    enqueue_platform_service_restart_request,
+    latest_platform_service_restart_request,
 )
 from app.services.recipient_service import (
     filter_suppressed_recipients,
@@ -117,6 +117,12 @@ from app.utils import (
 
 bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
+BLAST_QUEUE_UNAVAILABLE_FLASH = (
+    'Background queue is unavailable right now. The blast was not queued. Check Redis/worker health and try again.'
+)
+BACKFILL_QUEUE_UNAVAILABLE_FLASH = (
+    'Background queue is unavailable right now. Backfill was not queued. Check Redis/worker health and try again.'
+)
 
 
 def _is_explicit_production() -> bool:
@@ -737,6 +743,42 @@ def _render_platform_organization_access(
     )
 
 
+def _platform_restart_status_view() -> dict | None:
+    restart_request = latest_platform_service_restart_request()
+    if restart_request is None:
+        return None
+
+    status = (restart_request.status or '').strip().lower()
+    if status in {'pending', 'queued'}:
+        title = 'Queued'
+        badge = 'warning text-dark'
+        default_summary = (
+            'Restart request queued. Waiting for the host processor.'
+            if status == 'pending'
+            else 'Restart queued. The SaaS services are restarting.'
+        )
+        timestamp = restart_request.started_at or restart_request.requested_at
+    elif status == 'succeeded':
+        title = 'Succeeded'
+        badge = 'success'
+        default_summary = 'Restart completed successfully.'
+        timestamp = restart_request.completed_at or restart_request.last_checked_at or restart_request.requested_at
+    else:
+        title = 'Failed'
+        badge = 'danger'
+        default_summary = 'Restart failed.'
+        timestamp = restart_request.completed_at or restart_request.last_checked_at or restart_request.requested_at
+
+    return {
+        'outcome': status,
+        'title': title,
+        'badge': badge,
+        'summary': restart_request.summary or default_summary,
+        'detail': restart_request.detail,
+        'created_at_display': _format_datetime_display(timestamp),
+    }
+
+
 def _platform_home_context() -> dict:
     organization_rows = _platform_organization_rows()
     total_organizations = len(organization_rows)
@@ -765,23 +807,6 @@ def _platform_home_context() -> dict:
         if row['onboarding']['completed_required'] < row['onboarding']['required_total']
         or not row['billing']['can_send']
     ][:5]
-    latest_restart_event = (
-        AuthEvent.query
-        .filter(AuthEvent.event_type == 'platform_service_restart')
-        .order_by(AuthEvent.created_at.desc(), AuthEvent.id.desc())
-        .first()
-    )
-    restart_status = None
-    if latest_restart_event is not None:
-        metadata = latest_restart_event.metadata_payload
-        restart_status = {
-            'outcome': latest_restart_event.outcome,
-            'title': 'Succeeded' if latest_restart_event.outcome == 'success' else 'Failed',
-            'badge': 'success' if latest_restart_event.outcome == 'success' else 'danger',
-            'summary': metadata.get('summary') or 'No summary recorded.',
-            'detail': metadata.get('detail'),
-            'created_at_display': _format_datetime_display(latest_restart_event.created_at),
-        }
     return {
         'summary': {
             'total_organizations': total_organizations,
@@ -795,7 +820,7 @@ def _platform_home_context() -> dict:
         'recent_rows': organization_rows[:5],
         'service_restart': {
             'enabled': bool(current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED')),
-            'last_result': restart_status,
+            'last_result': _platform_restart_status_view(),
         },
     }
 
@@ -821,7 +846,7 @@ def _organization_can_transmit_messages(organization: Organization | None) -> bo
 def _send_access_denied_response(organization: Organization | None):
     if not organization_can_send(organization):
         flash('Billing must be trialing or active before messages can be sent.', 'error')
-        return redirect(url_for('main.billing_checkout'))
+        return redirect(url_for('main.billing_overview'))
     flash('Messaging is not provisioned for this organization yet. Contact your platform admin.', 'error')
     return redirect(url_for('main.billing_overview'))
 
@@ -840,6 +865,17 @@ def _require_billing_access():
         abort(403)
     if saas_mode_enabled() and getattr(current_user, 'organization_role', None) != 'owner':
         abort(403)
+
+
+def _get_queue_with_preflight():
+    from app.queue import get_queue
+
+    queue = get_queue()
+    connection = getattr(queue, 'connection', None)
+    ping = getattr(connection, 'ping', None)
+    if callable(ping):
+        ping()
+    return queue
 
 
 def _cleanup_bootstrap_admin_password_if_needed() -> None:
@@ -1508,39 +1544,41 @@ def platform_restart_services():
         abort(404)
 
     client_ip = request.remote_addr or 'unknown'
-    script_path = current_app.config.get('PLATFORM_SERVICE_RESTART_SCRIPT')
 
     try:
-        result = request_platform_service_restart()
-    except PlatformServiceRestartError as exc:
-        message = str(exc)
-        record_auth_event(
-            'platform_service_restart',
-            outcome='failed',
-            user=current_user,
-            username=current_user.username,
+        restart_request, created = enqueue_platform_service_restart_request(
+            requested_by_user=current_user,
             client_ip=client_ip,
-            metadata={
-                'summary': message,
-                'detail': message,
-                'script_path': script_path,
-            },
         )
-        flash(message, 'error')
+    except Exception as exc:
+        current_app.logger.exception(
+            'Failed to queue platform restart request user_id=%s client_ip=%s.',
+            current_user.id,
+            client_ip,
+        )
+        flash(str(exc), 'error')
     else:
-        record_auth_event(
-            'platform_service_restart',
-            outcome='success',
-            user=current_user,
-            username=current_user.username,
-            client_ip=client_ip,
-            metadata={
-                'summary': str(result.get('summary') or ''),
-                'detail': result.get('detail'),
-                'script_path': result.get('script_path') or script_path,
-            },
-        )
-        flash(str(result.get('summary') or 'Restart queued.'), 'success')
+        summary = str(restart_request.summary or 'Restart request queued.')
+        if created:
+            record_auth_event(
+                'platform_service_restart',
+                outcome='queued',
+                user=current_user,
+                username=current_user.username,
+                client_ip=client_ip,
+                metadata={
+                    'request_id': restart_request.id,
+                    'status': restart_request.status,
+                    'summary': restart_request.summary,
+                    'detail': restart_request.detail,
+                },
+            )
+            flash(summary, 'success')
+        else:
+            flash(
+                summary or 'A restart request is already in progress. The latest status will appear below shortly.',
+                'info',
+            )
 
     return redirect(url_for('main.platform_home'))
 
@@ -1815,6 +1853,19 @@ def dashboard():
         if include_unsubscribe:
             final_message = message_body + "\n\nReply STOP to unsubscribe."
 
+        try:
+            from rq import Retry
+
+            queue = _get_queue_with_preflight()
+        except Exception:
+            current_app.logger.exception(
+                'Background queue unavailable for blast enqueue organization_id=%s target=%s.',
+                _current_organization_id() if saas_mode_enabled() else None,
+                target,
+            )
+            flash(BLAST_QUEUE_UNAVAILABLE_FLASH, 'error')
+            return render_dashboard()
+
         # Persist log before sending begins
         log = MessageLog(
             message_body=final_message,
@@ -1830,10 +1881,6 @@ def dashboard():
         db.session.commit()
 
         try:
-            from rq import Retry
-            from app.queue import get_queue
-
-            queue = get_queue()
             queue.enqueue(
                 'app.tasks.send_bulk_job',
                 log.id,
@@ -1844,12 +1891,17 @@ def dashboard():
             )
             flash('Blast queued. Sending in the background.', 'success')
             return redirect(url_for('main.log_detail', log_id=log.id))
-        except Exception as e:
+        except Exception:
+            current_app.logger.exception(
+                'Failed to enqueue blast log_id=%s organization_id=%s.',
+                log.id,
+                log.organization_id,
+            )
             log.status = 'failed'
-            log.details = json.dumps([{'error': str(e)}])
+            log.details = json.dumps([{'error': BLAST_QUEUE_UNAVAILABLE_FLASH}])
             db.session.commit()
-            flash(f'Error queueing messages: {str(e)}', 'error')
-    
+            flash(BLAST_QUEUE_UNAVAILABLE_FLASH, 'error')
+
     return render_dashboard()
 
 
@@ -2754,20 +2806,32 @@ def platform_organizations_toggle_status(organization_id):
         abort(403)
 
     organization = db.get_or_404(Organization, organization_id)
-    organization.status = 'suspended' if organization.status != 'suspended' else 'active'
-    db.session.commit()
-    if organization.messaging_profile is not None:
-        try:
-            if organization.status == 'suspended':
+    target_status = 'suspended' if organization.status != 'suspended' else 'active'
+    organization.status = target_status
+    try:
+        if organization.messaging_profile is not None:
+            if target_status == 'suspended':
                 suspend_org(organization.id, actor_user_id=current_user.id)
             else:
                 resume_org(organization.id, actor_user_id=current_user.id)
-        except ProviderProvisioningError:
-            current_app.logger.exception(
-                'Failed to sync provider status for organization_id=%s after platform toggle.',
-                organization.id,
-            )
-    flash(f'Organization status updated to {organization.status}.', 'success')
+        else:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        persisted = db.session.get(Organization, organization_id)
+        current_status = persisted.status if persisted is not None else 'unknown'
+        current_app.logger.exception(
+            'Failed to sync organization_id=%s to status=%s during platform toggle.',
+            organization_id,
+            target_status,
+        )
+        flash(
+            f'Could not update organization status to {target_status}. Organization remains {current_status}.',
+            'error',
+        )
+        return redirect(url_for('main.platform_organizations_list'))
+
+    flash(f'Organization status updated to {target_status}.', 'success')
     return redirect(url_for('main.platform_organizations_list'))
 
 
@@ -2858,7 +2922,7 @@ def invitation_accept(token):
         session.clear()
         login_user(user)
         if invitation.role == 'owner':
-            return redirect(url_for('main.billing_checkout'))
+            return redirect(url_for('main.billing_overview'))
         flash('Invitation accepted.', 'success')
         return redirect(url_for('main.dashboard'))
 
@@ -2900,23 +2964,23 @@ def billing_checkout():
     if organization_can_send(organization):
         return redirect(url_for('main.dashboard'))
 
-    if request.method == 'POST' or request.method == 'GET':
-        success_url = f"{_absolute_url('main.billing_overview')}?session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url = _absolute_url('main.billing_overview')
-        try:
-            checkout_session = create_checkout_session(
-                organization,
-                current_user.email or '',
-                success_url,
-                cancel_url,
-            )
-        except Exception as exc:
-            current_app.logger.exception('Failed to create Stripe checkout session.')
-            flash(str(exc), 'error')
-            return redirect(url_for('main.billing_overview'))
-        return redirect(checkout_session.url, code=303)
+    if request.method != 'POST':
+        return redirect(url_for('main.billing_overview'))
 
-    return redirect(url_for('main.billing_overview'))
+    success_url = f"{_absolute_url('main.billing_overview')}?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = _absolute_url('main.billing_overview')
+    try:
+        checkout_session = create_checkout_session(
+            organization,
+            current_user.email or '',
+            success_url,
+            cancel_url,
+        )
+    except Exception as exc:
+        current_app.logger.exception('Failed to create Stripe checkout session.')
+        flash(str(exc), 'error')
+        return redirect(url_for('main.billing_overview'))
+    return redirect(checkout_session.url, code=303)
 
 
 @bp.route('/billing/portal', methods=['POST'])
@@ -4051,9 +4115,7 @@ def unsubscribed_list():
 @require_roles('admin')
 def unsubscribed_backfill():
     try:
-        from app.queue import get_queue
-
-        queue = get_queue()
+        queue = _get_queue_with_preflight()
         job = queue.enqueue('app.tasks.backfill_suppressions_job')
         message = f"Backfill queued (job {job.id}). Results will appear shortly."
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
@@ -4062,8 +4124,8 @@ def unsubscribed_backfill():
     except Exception:
         current_app.logger.exception('Failed to queue backfill job')
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return jsonify({'error': 'Failed to queue backfill. Check server logs.'}), 500
-        flash('Failed to queue backfill. Check server logs.', 'error')
+            return jsonify({'error': BACKFILL_QUEUE_UNAVAILABLE_FLASH}), 500
+        flash(BACKFILL_QUEUE_UNAVAILABLE_FLASH, 'error')
     return redirect(url_for('main.unsubscribed_list'))
 
 

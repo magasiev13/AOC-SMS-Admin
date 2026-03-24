@@ -39,6 +39,8 @@ class Config:
         'PLATFORM_SERVICE_RESTART_SCRIPT',
         '/usr/local/bin/restart-sms-saas-services',
     )
+    PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS = _env_int('PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS', '15')
+    PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS = _env_int('PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS', '300')
 
     # Session Security
     # Keep session cookies inaccessible to browser JavaScript.

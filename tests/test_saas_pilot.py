@@ -28,12 +28,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
         from app.models import (
             AppUser,
             AuthEvent,
+            CommunityMember,
             InboxThread,
             KeywordAutomationRule,
+            MessageLog,
             Organization,
             OrganizationInvitation,
             OrganizationMembership,
             OrganizationMessagingProfile,
+            PlatformServiceRestartRequest,
             OrganizationSubscription,
         )
         from app.services.inbox_service import process_inbound_sms
@@ -42,12 +45,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.db = db
         self.AppUser = AppUser
         self.AuthEvent = AuthEvent
+        self.CommunityMember = CommunityMember
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
+        self.MessageLog = MessageLog
         self.Organization = Organization
         self.OrganizationInvitation = OrganizationInvitation
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
+        self.PlatformServiceRestartRequest = PlatformServiceRestartRequest
         self.OrganizationSubscription = OrganizationSubscription
         self.organization_context = organization_context
         self.process_inbound_sms = process_inbound_sms
@@ -201,7 +207,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/billing/checkout", response.headers.get("Location", ""))
+        self.assertIn("/billing", response.headers.get("Location", ""))
+        self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
 
     def test_platform_admin_login_redirects_to_platform_home(self) -> None:
         response = self._login_platform_admin()
@@ -212,6 +219,34 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self._login_owner()
 
         self.assertIn("/dashboard", response.headers.get("Location", ""))
+
+    def test_suspended_organization_owner_cannot_log_in(self) -> None:
+        self.organization.status = "suspended"
+        self.db.session.commit()
+
+        response = self.client.post(
+            "/login",
+            data={"username": "owner@acme.test", "password": "Owner-pass1!"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Your organization is currently suspended. Contact your platform admin.", response.data)
+        self.assertIn(b"Login", response.data)
+        dashboard = self.client.get("/dashboard", follow_redirects=False)
+        self.assertEqual(dashboard.status_code, 302)
+        self.assertIn("/login", dashboard.headers.get("Location", ""))
+
+    def test_suspended_organization_invalidates_existing_session(self) -> None:
+        self._login_owner()
+        self.organization.status = "suspended"
+        self.db.session.commit()
+
+        response = self.client.get("/dashboard", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Your organization is currently suspended. Contact your platform admin.", response.data)
+        self.assertIn(b"Login", response.data)
 
     def test_platform_admin_sees_organizations_nav_link(self) -> None:
         self._login_platform_admin()
@@ -355,6 +390,33 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(self.client.get("/billing").status_code, 403)
         self.assertEqual(self.client.get("/billing/checkout").status_code, 403)
+
+    @patch("app.routes.create_checkout_session")
+    def test_billing_checkout_get_redirects_to_overview_without_creating_session(self, mock_create_checkout) -> None:
+        self._login_owner()
+
+        response = self.client.get("/billing/checkout", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/billing", response.headers.get("Location", ""))
+        self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
+        mock_create_checkout.assert_not_called()
+
+    @patch("app.routes.create_checkout_session")
+    def test_billing_checkout_post_creates_session(self, mock_create_checkout) -> None:
+        mock_create_checkout.return_value = SimpleNamespace(url="https://checkout.stripe.test/session")
+
+        self._login_owner()
+        response = self.client.post("/billing/checkout", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers.get("Location"), "https://checkout.stripe.test/session")
+        mock_create_checkout.assert_called_once()
+        args = mock_create_checkout.call_args.args
+        self.assertEqual(args[0].id, self.organization.id)
+        self.assertEqual(args[1], "owner@acme.test")
+        self.assertIn("session_id={CHECKOUT_SESSION_ID}", args[2])
+        self.assertTrue(args[3].endswith("/billing"))
 
     def test_staff_does_not_see_restart_control(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
@@ -1124,7 +1186,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/billing/checkout", response.headers.get("Location", ""))
+        self.assertIn("/billing", response.headers.get("Location", ""))
+        self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
         user = self.AppUser.query.filter_by(email="new-owner@acme.test").first()
         self.assertIsNotNone(user)
         membership = self.OrganizationMembership.query.filter_by(user_id=user.id).first()
@@ -1333,15 +1396,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @patch("app.routes.request_platform_service_restart")
-    def test_platform_restart_services_records_success_and_shows_last_result(self, mock_restart) -> None:
+    def test_platform_restart_services_creates_durable_request_and_records_queued_auth_event(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
-        mock_restart.return_value = {
-            "success": True,
-            "summary": "Restart queued. The SaaS services will recycle shortly.",
-            "detail": "Queued SaaS service restart using transient unit sms-saas-manual-restart-123.",
-            "script_path": "/usr/local/bin/restart-sms-saas-services",
-        }
 
         self._login_platform_admin()
         response = self.client.post(
@@ -1350,66 +1406,187 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Restart queued. The SaaS services will recycle shortly.", response.data)
+        self.assertIn(b"Restart request queued. Waiting for the host processor.", response.data)
+        self.assertIn(b"Last request: Queued", response.data)
+        restart_request = (
+            self.PlatformServiceRestartRequest.query
+            .order_by(self.PlatformServiceRestartRequest.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(restart_request)
+        self.assertEqual(restart_request.status, "pending")
+        self.assertEqual(restart_request.requested_by_user_id, self.platform_admin.id)
+        self.assertEqual(restart_request.requested_username, "platform-admin")
+        event = (
+            self.AuthEvent.query
+            .filter_by(event_type="platform_service_restart")
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(event)
+        self.assertEqual(event.outcome, "queued")
+        self.assertEqual(event.metadata_payload.get("request_id"), restart_request.id)
+        self.assertEqual(event.metadata_payload.get("status"), "pending")
+
+    def test_platform_restart_services_dedupes_active_request(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        restart_request = self.PlatformServiceRestartRequest(
+            requested_by_user_id=self.platform_admin.id,
+            requested_username=self.platform_admin.username,
+            client_ip="127.0.0.1",
+            status="queued",
+            transient_unit="sms-saas-manual-restart-123",
+            summary="Restart queued. The SaaS services are restarting.",
+        )
+        self.db.session.add(restart_request)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.post(
+            "/platform/operations/restart-services",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Restart queued. The SaaS services are restarting.", response.data)
+        self.assertEqual(self.PlatformServiceRestartRequest.query.count(), 1)
+        self.assertEqual(self.AuthEvent.query.filter_by(event_type="platform_service_restart").count(), 0)
+
+    def test_platform_home_shows_queued_restart_request(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        self.db.session.add(
+            self.PlatformServiceRestartRequest(
+                requested_by_user_id=self.platform_admin.id,
+                requested_username=self.platform_admin.username,
+                client_ip="127.0.0.1",
+                status="queued",
+                transient_unit="sms-saas-manual-restart-555",
+                summary="Restart queued. The SaaS services are restarting.",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Last request: Queued", response.data)
+        self.assertIn(b"Restart queued. The SaaS services are restarting.", response.data)
+
+    def test_platform_home_shows_succeeded_restart_request(self) -> None:
+        self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
+        self.db.session.add(
+            self.PlatformServiceRestartRequest(
+                requested_by_user_id=self.platform_admin.id,
+                requested_username=self.platform_admin.username,
+                client_ip="127.0.0.1",
+                status="succeeded",
+                transient_unit="sms-saas-manual-restart-777",
+                summary="Restart completed successfully.",
+                detail="Transient unit sms-saas-manual-restart-777 completed with result success.",
+                completed_at=self.organization.created_at,
+            )
+        )
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
         self.assertIn(b"Last request: Succeeded", response.data)
-        event = (
-            self.AuthEvent.query
-            .filter_by(event_type="platform_service_restart")
-            .order_by(self.AuthEvent.id.desc())
-            .first()
-        )
-        self.assertIsNotNone(event)
-        self.assertEqual(event.outcome, "success")
-        self.assertEqual(
-            event.metadata_payload.get("summary"),
-            "Restart queued. The SaaS services will recycle shortly.",
-        )
+        self.assertIn(b"Restart completed successfully.", response.data)
 
-    @patch("app.routes.request_platform_service_restart")
-    def test_platform_restart_services_records_failure_and_shows_last_result(self, mock_restart) -> None:
-        from app.services.platform_operations_service import PlatformServiceRestartError
-
+    def test_platform_home_shows_failed_restart_request(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
-        mock_restart.side_effect = PlatformServiceRestartError("sudo helper failed")
+        self.db.session.add(
+            self.PlatformServiceRestartRequest(
+                requested_by_user_id=self.platform_admin.id,
+                requested_username=self.platform_admin.username,
+                client_ip="127.0.0.1",
+                status="failed",
+                transient_unit="sms-saas-manual-restart-999",
+                summary="Restart failed.",
+                detail="Transient unit sms-saas-manual-restart-999 finished with result failed.",
+                completed_at=self.organization.created_at,
+            )
+        )
+        self.db.session.commit()
 
         self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Last request: Failed", response.data)
+        self.assertIn(b"Restart failed.", response.data)
+
+    @patch("app.routes.suspend_org")
+    def test_platform_toggle_status_rolls_back_when_provider_suspend_fails(self, mock_suspend_org) -> None:
+        from app.services.twilio_service import ProviderProvisioningError
+
+        mock_suspend_org.side_effect = ProviderProvisioningError("Twilio unavailable")
+        self._login_platform_admin()
+
         response = self.client.post(
-            "/platform/operations/restart-services",
+            f"/platform/organizations/{self.organization.id}/toggle-status",
             follow_redirects=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"sudo helper failed", response.data)
-        self.assertIn(b"Last request: Failed", response.data)
-        event = (
-            self.AuthEvent.query
-            .filter_by(event_type="platform_service_restart")
-            .order_by(self.AuthEvent.id.desc())
-            .first()
-        )
-        self.assertIsNotNone(event)
-        self.assertEqual(event.outcome, "failed")
+        self.assertIn(b"Could not update organization status to suspended.", response.data)
+        self.db.session.expire_all()
+        organization = self.db.session.get(self.Organization, self.organization.id)
+        self.assertEqual(organization.status, "active")
 
-    @patch("app.services.platform_operations_service.subprocess.run")
-    def test_request_platform_service_restart_uses_fixed_sudo_command(self, mock_run) -> None:
-        from app.services.platform_operations_service import request_platform_service_restart
+    @patch("app.routes.suspend_org")
+    def test_platform_toggle_status_updates_organization_after_provider_suspend(self, mock_suspend_org) -> None:
+        mock_suspend_org.return_value = self.messaging_profile
+        self._login_platform_admin()
 
-        self.app.config["PLATFORM_SERVICE_RESTART_SCRIPT"] = "/usr/local/bin/restart-sms-saas-services"
-        mock_run.return_value = SimpleNamespace(
-            returncode=0,
-            stdout="Queued SaaS service restart using transient unit sms-saas-manual-restart-123.\n",
-            stderr="",
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/toggle-status",
+            follow_redirects=True,
         )
 
-        result = request_platform_service_restart()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Organization status updated to suspended.", response.data)
+        self.db.session.expire_all()
+        organization = self.db.session.get(self.Organization, self.organization.id)
+        self.assertEqual(organization.status, "suspended")
 
-        self.assertTrue(result["success"])
-        args, kwargs = mock_run.call_args
-        self.assertEqual(
-            args[0],
-            ["sudo", "-n", "/usr/local/bin/restart-sms-saas-services"],
+    @patch("app.queue.get_queue")
+    def test_dashboard_queue_preflight_failure_does_not_create_message_log(self, mock_get_queue) -> None:
+        self.subscription.status = "trialing"
+        self.db.session.add(
+            self.CommunityMember(
+                organization_id=self.organization.id,
+                name="Queue Target",
+                phone="+15550001010",
+            )
         )
-        self.assertFalse(kwargs.get("shell", False))
+        self.db.session.commit()
+
+        mock_queue = MagicMock()
+        mock_queue.connection.ping.side_effect = RuntimeError("redis unavailable")
+        mock_get_queue.return_value = mock_queue
+
+        self._login_owner()
+        before_logs = self.MessageLog.query.count()
+        response = self.client.post(
+            "/dashboard",
+            data={
+                "message_body": "Hello queue",
+                "target": "community",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Background queue is unavailable right now. The blast was not queued. Check Redis/worker health and try again.",
+            response.data,
+        )
+        self.assertEqual(self.MessageLog.query.count(), before_logs)
+        mock_queue.enqueue.assert_not_called()
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_inbound_sms_routes_by_destination_number(self, mock_get_twilio) -> None:

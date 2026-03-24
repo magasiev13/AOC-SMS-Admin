@@ -31,6 +31,7 @@ export SAAS_MODE=1
 export SCHEDULER_ENABLED=0
 export SECRET_KEY="playwright-browser-secret"
 export SAAS_BASE_URL="${PLAYWRIGHT_BASE_URL}"
+export PLATFORM_SERVICE_RESTART_ENABLED=1
 export STRIPE_SECRET_KEY="sk_test_browser"
 export STRIPE_WEBHOOK_SECRET="whsec_browser"
 export STRIPE_PRICE_ID="price_browser"

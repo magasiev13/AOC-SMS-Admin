@@ -154,19 +154,103 @@ def _subscription_state_snapshot(subscription: OrganizationSubscription | None) 
     )
 
 
-def _checkout_session_matches_current_subscription(
-    data_object: dict,
-    subscription: OrganizationSubscription,
-) -> bool:
+def _checkout_session_reference_time(subscription: OrganizationSubscription) -> datetime | None:
     reference_candidates = [
         as_utc_datetime(subscription.created_at),
         as_utc_datetime(subscription.organization.created_at) if subscription.organization is not None else None,
     ]
-    reference_time = max((candidate for candidate in reference_candidates if candidate is not None), default=None)
+    return max((candidate for candidate in reference_candidates if candidate is not None), default=None)
+
+
+def _checkout_session_matches_current_subscription(
+    data_object: dict,
+    subscription: OrganizationSubscription,
+) -> bool:
+    reference_time = _checkout_session_reference_time(subscription)
     session_created_at = _event_timestamp_to_utc_datetime(data_object.get("created"))
     if reference_time is None or session_created_at is None:
         return True
     return session_created_at >= (reference_time - CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE)
+
+
+def _stripe_collection_data(collection) -> list:
+    if isinstance(collection, dict):
+        data = collection.get("data") or []
+    else:
+        data = getattr(collection, "data", []) or []
+    if isinstance(data, list):
+        return data
+    return list(data)
+
+
+def _stripe_collection_has_more(collection) -> bool:
+    if isinstance(collection, dict):
+        return bool(collection.get("has_more", False))
+    has_more = getattr(collection, "has_more", False)
+    return has_more if isinstance(has_more, bool) else False
+
+
+def _find_matching_checkout_session(
+    stripe,
+    organization: Organization,
+    subscription: OrganizationSubscription,
+    user_email: str = "",
+) -> dict | None:
+    normalized_email = user_email.strip().lower()
+    reference_time = _checkout_session_reference_time(subscription)
+    params = {
+        "status": "complete",
+        "limit": 100,
+    }
+    if reference_time is not None:
+        params["created"] = {
+            "gte": int((reference_time - CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE).timestamp()),
+        }
+    if subscription.stripe_customer_id:
+        params["customer"] = subscription.stripe_customer_id
+
+    starting_after = None
+    while True:
+        page_params = dict(params)
+        if starting_after:
+            page_params["starting_after"] = starting_after
+
+        page = stripe.checkout.Session.list(**page_params)
+        sessions = _stripe_collection_data(page)
+        if not sessions:
+            return None
+
+        oldest_session_created_at = None
+        for checkout_session in sessions:
+            data_object = _stripe_object_to_dict(checkout_session)
+            created_at = _event_timestamp_to_utc_datetime(data_object.get("created"))
+            if created_at is not None and (
+                oldest_session_created_at is None or created_at < oldest_session_created_at
+            ):
+                oldest_session_created_at = created_at
+
+            metadata = data_object.get("metadata") or {}
+            organization_id = metadata.get("organization_id") or data_object.get("client_reference_id")
+            if str(organization_id or "") != str(organization.id):
+                continue
+            if normalized_email and (data_object.get("customer_email") or "").strip().lower() != normalized_email:
+                continue
+            if data_object.get("status") != "complete":
+                continue
+            if not _checkout_session_matches_current_subscription(data_object, subscription):
+                continue
+            return data_object
+
+        if reference_time is not None and oldest_session_created_at is not None:
+            if oldest_session_created_at < (reference_time - CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE):
+                return None
+        if not _stripe_collection_has_more(page):
+            return None
+
+        last_session = _stripe_object_to_dict(sessions[-1])
+        starting_after = last_session.get("id")
+        if not starting_after:
+            return None
 
 
 def create_checkout_session(organization: Organization, user_email: str, success_url: str, cancel_url: str):
@@ -496,20 +580,14 @@ def refresh_subscription_from_stripe(
                 _stripe_object_to_dict(stripe_subscriptions.data[0]),
             )
 
-    checkout_sessions = stripe.checkout.Session.list(limit=20)
-    for checkout_session in checkout_sessions.data:
-        data_object = _stripe_object_to_dict(checkout_session)
-        metadata = data_object.get("metadata") or {}
-        organization_id = metadata.get("organization_id") or data_object.get("client_reference_id")
-        if str(organization_id or "") != str(organization.id):
-            continue
-        if user_email and (data_object.get("customer_email") or "").strip().lower() != user_email.strip().lower():
-            continue
-        if data_object.get("status") != "complete":
-            continue
-        if not _checkout_session_matches_current_subscription(data_object, subscription):
-            continue
-        return _apply_stripe_event_to_billing_state("checkout.session.completed", data_object)
+    checkout_session = _find_matching_checkout_session(
+        stripe,
+        organization,
+        subscription,
+        user_email,
+    )
+    if checkout_session is not None:
+        return _apply_stripe_event_to_billing_state("checkout.session.completed", checkout_session)
 
     return subscription
 
@@ -517,6 +595,13 @@ def refresh_subscription_from_stripe(
 def _decimal_to_cents(value: Decimal | int | float | str) -> int:
     normalized = Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return int(normalized * 100)
+
+
+def _usage_invoice_item_idempotency_key(period: OrganizationUsageBillingPeriod) -> str:
+    return (
+        f"sms-overage:{period.organization_id}:"
+        f"{period.period_start.isoformat()}:{period.period_end.isoformat()}"
+    )
 
 
 def _post_closed_usage_invoice_items() -> dict[str, int]:
@@ -567,6 +652,7 @@ def _post_closed_usage_invoice_items() -> dict[str, int]:
                     "period_end": period_end.date().isoformat(),
                     "overage_units": str(period.overage_units),
                 },
+                idempotency_key=_usage_invoice_item_idempotency_key(period),
             )
             period.stripe_invoice_item_id = invoice_item.id
             period.status = "posted"

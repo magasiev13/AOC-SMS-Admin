@@ -20,6 +20,7 @@ REQUIRED_TABLES = (
     "organization_provider_audit_logs",
     "messaging_usage_records",
     "organization_usage_billing_periods",
+    "platform_service_restart_requests",
     "community_members",
     "event_registrations",
     "message_logs",

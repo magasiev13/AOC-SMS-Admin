@@ -141,13 +141,16 @@ sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-scheduler.service" /etc/syste
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-scheduler.timer" /etc/systemd/system/sms-saas-scheduler.timer
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.service" /etc/systemd/system/sms-saas-billing-reconcile.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.timer" /etc/systemd/system/sms-saas-billing-reconcile.timer
+sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.service" /etc/systemd/system/sms-saas-platform-restart-queue.service
+sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.timer" /etc/systemd/system/sms-saas-platform-restart-queue.timer
 sudo install -m 0755 "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh"
+sudo install -m 0755 "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${APP_ROOT}/deploy/run_platform_restart_queue_once.sh"
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer
+sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer
 
 echo "==> Verifying SaaS restart helper"
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then

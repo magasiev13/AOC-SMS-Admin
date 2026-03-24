@@ -87,6 +87,43 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         self.assertEqual(updated.status, "sent", "Message should transition from pending to sent")
         self.assertIsNotNone(updated.sent_at)
 
+    @patch("app.services.scheduler_service.record_usage_candidates")
+    @patch("app.services.scheduler_service.get_twilio_service")
+    def test_usage_recording_failure_does_not_mark_sent_message_failed(self, mock_twilio, mock_record_usage_candidates):
+        member = CommunityMember(name="Usage Failure", phone="+15551234568")
+        db.session.add(member)
+
+        past_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Usage failure test",
+            target="community",
+            scheduled_at=past_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        mock_service = MagicMock()
+        mock_service.send_bulk.return_value = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15551234568", "status": "sent", "sid": "SMsched-1"}],
+        }
+        mock_twilio.return_value = mock_service
+        mock_record_usage_candidates.side_effect = RuntimeError("usage ledger down")
+
+        send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "sent")
+        self.assertIsNotNone(updated.message_log_id)
+        log = db.session.get(MessageLog, updated.message_log_id)
+        self.assertEqual(log.success_count, 1)
+
     def test_future_message_not_picked_up(self):
         """A scheduled message with scheduled_at > now should remain pending."""
         member = CommunityMember(name="Test User", phone="+15551234567")
@@ -335,6 +372,50 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         self.assertIsNotNone(log)
         self.assertEqual(log.total_recipients, 2)
         self.assertEqual(log.success_count, 2)
+
+    @patch("app.services.scheduler_service.record_usage_candidates")
+    @patch("app.services.scheduler_service.get_twilio_service")
+    def test_usage_recording_failure_does_not_break_transient_retry(self, mock_twilio, mock_record_usage_candidates):
+        self.app.config["SCHEDULED_SEND_MAX_RETRIES"] = 2
+
+        member = CommunityMember(name="Retry Usage Failure", phone="+15550002203")
+        db.session.add(member)
+        due_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Retry usage failure",
+            target="community",
+            scheduled_at=due_time,
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        mock_service = MagicMock()
+        mock_service.send_bulk.side_effect = TwilioTransientError(
+            "twilio 503",
+            results={
+                "total": 1,
+                "success_count": 1,
+                "failure_count": 0,
+                "details": [{"phone": "+15550002203", "success": True, "error": None, "sid": "SMsched-2"}],
+            },
+            failed_index=1,
+        )
+        mock_twilio.return_value = mock_service
+        mock_record_usage_candidates.side_effect = RuntimeError("usage ledger down")
+
+        send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "pending")
+        self.assertIsNotNone(updated.next_retry_at)
+        self.assertIsNotNone(updated.message_log_id)
+        log = db.session.get(MessageLog, updated.message_log_id)
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
 
     def test_transient_failure_exhausts_retry_budget(self):
         """Transient failures should become failed when retry budget is exhausted."""
