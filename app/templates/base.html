@@ -125,8 +125,8 @@
                         <span class="navbar-toggler-icon"></span>
                     </button>
                 </div>
-                <div class="collapse app-mobile-nav" id="appMobileNav">
-                    <div class="app-mobile-nav-panel p-3 border-top">
+                <div class="collapse app-mobile-nav" id="appMobileNav" data-mobile-nav>
+                    <div class="app-mobile-nav-panel p-3" data-mobile-nav-panel>
                         {% if not platform_user %}
                         {% block app_search_mobile %}
                         <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
@@ -410,6 +410,32 @@
             });
         }
 
+        function initMobileNav() {
+            const mobileNav = document.querySelector('[data-mobile-nav]');
+            if (!mobileNav) {
+                return;
+            }
+
+            const collapseInstance = bootstrap.Collapse.getOrCreateInstance(mobileNav, { toggle: false });
+            const syncBodyState = (isOpen) => {
+                document.body.classList.toggle('app-mobile-nav-open', isOpen);
+            };
+
+            mobileNav.addEventListener('show.bs.collapse', () => syncBodyState(true));
+            mobileNav.addEventListener('hide.bs.collapse', () => syncBodyState(false));
+            mobileNav.addEventListener('click', (event) => {
+                if (event.target === mobileNav) {
+                    collapseInstance.hide();
+                }
+            });
+
+            mobileNav.querySelectorAll('a.app-nav-link').forEach((linkEl) => {
+                linkEl.addEventListener('click', () => collapseInstance.hide());
+            });
+
+            syncBodyState(mobileNav.classList.contains('show'));
+        }
+
         function initRowActionOverflow() {
             const stripActionButtonClasses = (actionEl) => {
                 const removableClasses = [
@@ -539,6 +565,7 @@
         window.addEventListener('resize', updateTableScrollHints);
         initPageActionOverflow();
         initRowActionOverflow();
+        initMobileNav();
     </script>
     {% block scripts %}{% endblock %}
 </body>

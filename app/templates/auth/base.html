@@ -11,7 +11,8 @@
 <body class="app-body">
     <div class="app-shell">
         <div class="app-main w-100">
-            <main class="app-content container">
+            <main class="app-content container {% block auth_main_class %}{% endblock %}">
+                {% block auth_header %}
                 <header class="app-page-header">
                     <div>
                         <div class="app-breadcrumbs">
@@ -25,6 +26,7 @@
                         {% block page_actions %}{% endblock %}
                     </div>
                 </header>
+                {% endblock %}
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         <div class="app-toast-container">

@@ -18,9 +18,9 @@
                     <div>
                         <div class="text-muted small text-uppercase mb-1">Organization</div>
                         <div class="h5 mb-1">{{ current_organization.name }}</div>
-                        <div class="text-muted small">
-                            Billing:
-                            <strong>{{ current_subscription.status if current_subscription else 'incomplete' }}</strong>
+                        <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
+                            <span class="badge bg-{{ current_subscription_view.badge }}">{{ current_subscription_view.title }}</span>
+                            <span class="text-muted small">Sending {{ 'enabled' if can_send_messages else 'paused' }}</span>
                         </div>
                     </div>
                     <div class="d-flex gap-2">
@@ -233,6 +233,51 @@
             </div>
         </section>
 
+        {% if dashboard_is_empty %}
+        <section class="mb-4 dashboard-section dashboard-section-empty">
+            <div class="row g-3">
+                <div class="col-lg-7">
+                    <div class="chart-card workspace-launchpad h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title"><i class="bi bi-stars"></i> Start here</h6>
+                        </div>
+                        <p class="workspace-launchpad__copy">
+                            This workspace is ready for first-use testing. Add recipients, invite staff, and send the first blast to unlock reporting, recent activity, and inbound insights.
+                        </p>
+                        <div class="workspace-launchpad__actions">
+                            <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-primary">Open Community</a>
+                            {% if config.SAAS_MODE and current_user.is_admin and not current_user.is_platform_admin %}
+                            <a href="{{ url_for('main.team_invite') }}" class="btn btn-outline-secondary">Invite Team Member</a>
+                            {% endif %}
+                            <a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">Review Logs</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-5">
+                    <div class="chart-card workspace-launchpad workspace-launchpad--muted h-100">
+                        <div class="chart-card__header">
+                            <h6 class="chart-card__title"><i class="bi bi-layout-text-window"></i> What appears next</h6>
+                        </div>
+                        <div class="workspace-launchpad__list">
+                            <div class="workspace-launchpad__item">
+                                <strong>Delivery trends</strong>
+                                <span>Populate after the first scheduled or immediate blast.</span>
+                            </div>
+                            <div class="workspace-launchpad__item">
+                                <strong>Audience insights</strong>
+                                <span>Grow once community imports or event RSVPs are added.</span>
+                            </div>
+                            <div class="workspace-launchpad__item">
+                                <strong>Inbound activity</strong>
+                                <span>Shows up when replies, surveys, and keyword matches start coming in.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        {% else %}
+
         <!-- Charts Row -->
         <section class="mb-4 dashboard-section dashboard-section-charts">
             <div class="row g-3">
@@ -391,6 +436,7 @@
             </div>
             {% endif %}
         </section>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

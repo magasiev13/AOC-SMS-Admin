@@ -49,7 +49,7 @@ test('owner sees human-readable billing state and pending invite links', async (
 
   await expect(page.locator('.badge').filter({ hasText: 'Trial active' }).first()).toBeVisible();
   await expect(page.getByText(/Ready for owner/)).toBeVisible();
-  await expect(page.getByText('Sending access:')).toBeVisible();
+  await expect(page.getByText('Sending enabled')).toBeVisible();
 
   await page.goto('/users');
   await expect(page.getByText('Pending Invitations')).toBeVisible();

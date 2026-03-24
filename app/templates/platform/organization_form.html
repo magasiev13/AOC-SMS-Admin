@@ -22,7 +22,7 @@
                 <div class="org-create-kicker">Platform admin setup</div>
                 <h2 class="org-create-hero-title">Create the next business and keep telecom provisioning on the managed path.</h2>
                 <p class="org-create-hero-copy mb-0">
-                    Start with business identity and owner access. Twilio subaccounts and messaging services are provisioned later from the provider management screen after billing and compliance are in place.
+                    Start with the business name and owner invite. Twilio subaccounts and messaging services are provisioned later, after billing and compliance are in place.
                 </p>
             </div>
         </div>
@@ -52,7 +52,7 @@
                                 placeholder="Acme Bakery"
                                 value="{{ form_name }}"
                             >
-                            <div class="form-text">Use the public-facing business name the owner will recognize immediately.</div>
+                            <div class="form-text">Use the public-facing name the owner will recognize immediately.</div>
                         </div>
                         <div class="col-md-5">
                             <label class="form-label" for="slug">Workspace Slug</label>
@@ -66,7 +66,7 @@
                                 placeholder="acme-bakery"
                                 value="{{ form_slug }}"
                             >
-                            <div class="form-text">Lowercase URL-friendly handle used to identify this workspace internally.</div>
+                            <div class="form-text">Lowercase URL handle for internal workspace management.</div>
                         </div>
                     </div>
 
@@ -100,7 +100,7 @@
                                 placeholder="owner@example.com"
                                 value="{{ form_owner_email }}"
                             >
-                            <div class="form-text">After creation, the owner invite link appears on the Organizations page so you can open or copy it locally.</div>
+                            <div class="form-text">After creation, the owner invite link appears on the Organizations page for quick open or copy.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="owner_role_display">First Invite Role</label>
@@ -110,7 +110,7 @@
                                 value="Owner"
                                 disabled
                             >
-                            <div class="form-text">The first invite must be an owner so billing and team setup stay available. Add staff later from the workspace team flow.</div>
+                            <div class="form-text">The first invite stays owner-only so billing and team setup remain available.</div>
                         </div>
                     </div>
                 </div>
@@ -129,7 +129,7 @@
                     <div class="org-create-callout" role="note">
                         <div class="org-create-callout__title">Managed by platform</div>
                         <div class="org-create-callout__body">
-                            This organization starts in pending provider status. After the owner joins and billing is active, use the messaging management screen to provision a Twilio subaccount, create a messaging service, and assign an approved sender.
+                            This organization starts in pending provider status. After the owner joins and billing is active, use the messaging screen to provision Twilio and assign an approved sender.
                         </div>
                     </div>
 
@@ -150,39 +150,31 @@
 
     <aside class="org-create-side">
         <div class="org-create-sticky">
-            <div class="card app-card org-create-summary-card mb-4">
-                <div class="card-body">
-                    <div class="org-create-section-kicker">What happens next</div>
-                    <h3 class="org-create-side-title">Admin workflow after you click create</h3>
-                    <ol class="org-create-checklist mb-0">
-                        <li>The new workspace appears on the Organizations page.</li>
-                        <li>The owner invite link is generated immediately.</li>
-                        <li>The owner accepts the invite and completes billing.</li>
-                        <li>You provision the Twilio provider and assign an approved sender from the messaging screen.</li>
-                    </ol>
-                </div>
-            </div>
-
-            <div class="card app-card org-create-summary-card mb-4">
-                <div class="card-body">
-                    <div class="org-create-section-kicker">Provider model</div>
-                    <h3 class="org-create-side-title">Platform-managed Twilio by default</h3>
-                    <ul class="org-create-rule-list mb-0">
-                        <li><strong>`AC...`</strong> and the platform auth token stay on the server for master-account access.</li>
-                        <li>Each organization gets its own subaccount and messaging service.</li>
-                        <li>Per-org Twilio secrets are stored encrypted in the database, not in `.env`.</li>
-                        <li>BYO-Twilio is intentionally out of the default onboarding path.</li>
-                    </ul>
-                </div>
-            </div>
-
             <div class="card app-card org-create-summary-card">
                 <div class="card-body">
                     <div class="org-create-section-kicker">Readiness</div>
-                    <h3 class="org-create-side-title">What to finish before live SMS</h3>
+                    <h3 class="org-create-side-title">What happens after you click create</h3>
                     <p class="text-muted mb-3">
                         Create the workspace now, invite the owner, finish billing, acknowledge compliance, provision the Twilio provider, and then attach the approved sender number.
                     </p>
+                    <details class="org-create-side-details" open>
+                        <summary>What happens next</summary>
+                        <ol class="org-create-checklist mb-0 mt-3">
+                            <li>The new workspace appears on the Organizations page.</li>
+                            <li>The owner invite link is generated immediately.</li>
+                            <li>The owner accepts the invite and completes billing.</li>
+                            <li>You provision the Twilio provider and assign an approved sender from the messaging screen.</li>
+                        </ol>
+                    </details>
+                    <details class="org-create-side-details mt-3">
+                        <summary>Platform-managed Twilio by default</summary>
+                        <ul class="org-create-rule-list mb-0 mt-3">
+                            <li><strong>`AC...`</strong> and the platform auth token stay on the server for master-account access.</li>
+                            <li>Each organization gets its own subaccount and messaging service.</li>
+                            <li>Per-org Twilio secrets are stored encrypted in the database, not in `.env`.</li>
+                            <li>BYO-Twilio is intentionally out of the default onboarding path.</li>
+                        </ul>
+                    </details>
                     <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-primary w-100">Back to Organization List</a>
                 </div>
             </div>

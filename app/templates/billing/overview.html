@@ -9,30 +9,26 @@
 {% endblock %}
 
 {% block content %}
-<div class="row g-4 justify-content-center">
-    <div class="col-lg-7">
-        <div class="card app-card h-100">
+<div class="row g-4 align-items-start">
+    <div class="col-lg-6">
+        <div class="card app-card billing-summary-card">
             <div class="card-body">
-                <div class="mb-4">
+                <div class="billing-summary-card__header">
                     <div class="text-muted small text-uppercase mb-1">Organization</div>
                     <h4 class="mb-1">{{ organization.name if organization else 'Unknown organization' }}</h4>
-                    <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
+                    <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
                         <span class="badge bg-{{ subscription_view.badge }}">{{ subscription_view.title }}</span>
-                        <span class="text-muted">Internal status: <strong>{{ subscription.status if subscription else 'incomplete' }}</strong></span>
+                        {% if subscription_view.period_value %}
+                        <span class="billing-summary-chip">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</span>
+                        {% endif %}
+                        <span class="billing-summary-chip">Sending {{ 'enabled' if subscription_view.can_send else 'paused' }}</span>
                     </div>
                 </div>
-                <div class="mb-4">
+                <div class="billing-summary-card__body">
                     <p class="mb-2">{{ subscription_view.summary }}</p>
-                    <div class="text-muted">{{ subscription_view.next_step }}</div>
-                    {% if subscription_view.period_value %}
-                    <div class="text-muted mt-2">{{ subscription_view.period_label }}: <strong>{{ subscription_view.period_value }}</strong></div>
-                    {% endif %}
-                    <div class="text-muted mt-2">
-                        Sending access:
-                        <strong>{{ 'Enabled' if subscription_view.can_send else 'Paused until billing is fixed' }}</strong>
-                    </div>
+                    <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
                 </div>
-                <div class="d-flex flex-wrap gap-2">
+                <div class="d-flex flex-wrap gap-2 mt-4">
                     <form method="POST" action="{{ url_for('main.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-secondary" {% if not subscription or not subscription.stripe_customer_id %}disabled{% endif %}>
@@ -52,8 +48,8 @@
             </div>
         </div>
     </div>
-    <div class="col-lg-5">
-        <div class="card app-card h-100">
+    <div class="col-lg-6">
+        <div class="card app-card billing-onboarding-card">
             <div class="card-body">
                 <div class="text-muted small text-uppercase mb-1">Onboarding</div>
                 <h5 class="mb-1">{{ onboarding_view.headline if onboarding_view else 'No onboarding state yet' }}</h5>

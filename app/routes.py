@@ -487,7 +487,12 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
 
 
 def _organization_onboarding_view(organization: Organization) -> dict:
-    invitation = _primary_organization_invitation(organization)
+    invitation = (
+        OrganizationInvitation.query
+        .filter_by(organization_id=organization.id, role='owner')
+        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .first()
+    )
     owner_membership = _organization_owner_membership(organization)
     owner_invited = invitation is not None or owner_membership is not None
     staff_membership_count = (
@@ -581,6 +586,62 @@ def _organization_onboarding_view(organization: Organization) -> dict:
     }
 
 
+def _organization_messaging_view(organization: Organization) -> dict:
+    profile = organization.messaging_profile
+    if profile is None:
+        return {
+            'badge': 'warning text-dark',
+            'title': 'Pending',
+            'summary': 'Provisioning still needed',
+            'detail': 'Create the organization, then provision Twilio after billing.',
+        }
+
+    normalized_status = (profile.provider_status or '').strip().lower()
+    if profile.can_send or normalized_status == 'active':
+        return {
+            'badge': 'success',
+            'title': 'Ready',
+            'summary': profile.from_number or profile.messaging_service_sid or 'Sender assigned',
+            'detail': 'Messaging is configured and ready for owner testing.',
+        }
+
+    if normalized_status == 'suspended':
+        return {
+            'badge': 'secondary',
+            'title': 'Suspended',
+            'summary': profile.from_number or profile.messaging_service_sid or 'Provider suspended',
+            'detail': 'Messaging is paused until the provider is resumed.',
+        }
+
+    if normalized_status == 'error':
+        return {
+            'badge': 'danger',
+            'title': 'Error',
+            'summary': profile.messaging_service_sid or 'Provisioning error',
+            'detail': 'Review the provider setup before enabling live SMS.',
+        }
+
+    if normalized_status == 'provisioning':
+        detail = (
+            'Assign a reviewed sender to finish provisioning.'
+            if profile.twilio_subaccount_sid
+            else 'Twilio subaccount not provisioned yet.'
+        )
+        return {
+            'badge': 'warning text-dark',
+            'title': 'Provisioning',
+            'summary': profile.messaging_service_sid or 'Provisioning still needed',
+            'detail': detail,
+        }
+
+    return {
+        'badge': 'warning text-dark',
+        'title': 'Pending',
+        'summary': profile.messaging_service_sid or 'Provisioning still needed',
+        'detail': 'Twilio subaccount not provisioned yet.',
+    }
+
+
 def _platform_organization_rows() -> list[dict]:
     organizations = (
         Organization.query
@@ -592,6 +653,7 @@ def _platform_organization_rows() -> list[dict]:
             'organization': organization,
             'onboarding': _organization_onboarding_view(organization),
             'billing': _subscription_view(organization.subscription),
+            'messaging': _organization_messaging_view(organization),
         }
         for organization in organizations
     ]
@@ -1720,7 +1782,19 @@ def dashboard():
             'top_keywords': top_keywords,
             'current_organization': organization,
             'current_subscription': subscription,
+            'current_subscription_view': _subscription_view(subscription),
             'can_send_messages': _organization_can_transmit_messages(organization) if saas_mode_enabled() else True,
+            'dashboard_is_empty': (
+                total_recipients == 0
+                and latest_log is None
+                and pending_scheduled_count == 0
+                and inbound_count_7d == 0
+                and unread_threads_count == 0
+                and active_survey_sessions == 0
+                and not top_keywords
+                and not recent_logs
+                and chart_data is None
+            ),
         }
 
     def render_dashboard():

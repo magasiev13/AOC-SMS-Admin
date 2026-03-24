@@ -3,12 +3,21 @@
 {% block title %}Login - SMS Admin{% endblock %}
 
 {% block page_title %}Sign In{% endblock %}
+{% block auth_main_class %}auth-login-main{% endblock %}
+{% block auth_header %}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-5 col-lg-4">
-        <div class="card app-card">
-            <div class="card-body p-4">
+<section class="login-shell">
+    <div class="login-layout">
+        <div class="login-intro">
+            <div class="login-kicker">SMS Admin</div>
+            <h1 class="login-title">Sign in to your messaging workspace.</h1>
+            <p class="login-copy">
+                Platform admins manage onboarding here. Owners and staff handle messaging, inbox, billing, and team operations inside their organization workspace.
+            </p>
+        </div>
+        <div class="card app-card login-card">
+            <div class="card-body p-4 p-lg-5">
                 <div class="text-center mb-4">
                     <div class="d-flex justify-content-center mb-3">
                         <a class="app-sidebar-brand app-sidebar-brand--light" href="/dashboard">
@@ -19,9 +28,10 @@
                             <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
                         </a>
                     </div>
-                    <p class="text-muted">Sign in to continue</p>
+                    <h2 class="login-card__title">Welcome back</h2>
+                    <p class="text-muted mb-0">Sign in to continue</p>
                 </div>
-                
+
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
@@ -31,7 +41,7 @@
                             <input type="text" class="form-control" id="username" name="username" required autofocus autocomplete="username">
                         </div>
                     </div>
-                    
+
                     <div class="mb-3">
                         <label for="password" class="form-label">Password</label>
                         <div class="input-group">
@@ -39,12 +49,12 @@
                             <input type="password" class="form-control" id="password" name="password" required autocomplete="current-password">
                         </div>
                     </div>
-                    
-                    <div class="mb-3 form-check">
+
+                    <div class="mb-4 form-check">
                         <input type="checkbox" class="form-check-input" id="remember" name="remember">
                         <label class="form-check-label" for="remember">Remember me</label>
                     </div>
-                    
+
                     <button type="submit" class="btn btn-primary w-100">
                         <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
                     </button>
@@ -52,5 +62,5 @@
             </div>
         </div>
     </div>
-</div>
+</section>
 {% endblock %}

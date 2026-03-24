@@ -16,7 +16,7 @@
 
 {% block content %}
 <div class="card app-card">
-    <div class="table-responsive">
+    <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover mb-0">
             <thead class="table-light">
                 <tr>
@@ -34,7 +34,9 @@
                 {% set organization = row.organization %}
                 {% set onboarding = row.onboarding %}
                 {% set billing = row.billing %}
+                {% set messaging = row.messaging %}
                 {% set owner_invitation = onboarding.owner_invitation %}
+                {% set progress_text = onboarding.completed_required ~ '/' ~ onboarding.required_total ~ ' core steps complete' %}
                 <tr>
                     <td>
                         <div class="fw-semibold">{{ organization.name }}</div>
@@ -45,7 +47,9 @@
                     </td>
                     <td>
                         <div class="fw-semibold">{{ onboarding.headline }}</div>
-                        <div class="small text-muted">{{ onboarding.completed_required }}/{{ onboarding.required_total }} core steps complete</div>
+                        {% if onboarding.headline != progress_text %}
+                        <div class="small text-muted">{{ progress_text }}</div>
+                        {% endif %}
                         <details class="mt-2">
                             <summary class="small">View checklist</summary>
                             <ul class="list-unstyled small mt-2 mb-0">
@@ -62,7 +66,7 @@
                             </ul>
                         </details>
                     </td>
-                    <td><span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning' }}">{{ organization.status }}</span></td>
+                    <td><span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span></td>
                     <td>
                         <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
                         <div class="small text-muted mt-1">{{ billing.summary }}</div>
@@ -71,22 +75,9 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if organization.messaging_profile %}
-                        {% set profile = organization.messaging_profile %}
-                        <span class="badge bg-{{ 'success' if profile.provider_status == 'active' else ('secondary' if profile.provider_status == 'suspended' else ('danger' if profile.provider_status == 'error' else 'warning text-dark')) }}">
-                            {{ profile.provider_status }}
-                        </span>
-                        <div class="small text-muted mt-1">
-                            {{ profile.from_number or profile.messaging_service_sid or 'Provisioning still needed' }}
-                        </div>
-                        <div class="small text-muted">
-                            {{ profile.twilio_subaccount_sid or 'Twilio subaccount not provisioned yet' }}
-                        </div>
-                        {% else %}
-                        <span class="badge bg-warning text-dark">pending</span>
-                        <div class="small text-muted mt-1">No provider profile yet.</div>
-                        <div class="small text-muted">Create the organization, then provision Twilio after billing.</div>
-                        {% endif %}
+                        <span class="badge bg-{{ messaging.badge }}">{{ messaging.title }}</span>
+                        <div class="small text-muted mt-1">{{ messaging.summary }}</div>
+                        <div class="small text-muted">{{ messaging.detail }}</div>
                     </td>
                     <td>
                         {% if owner_invitation %}
@@ -146,6 +137,99 @@
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+    <div class="card-list d-lg-none">
+        {% for row in organization_rows %}
+        {% set organization = row.organization %}
+        {% set onboarding = row.onboarding %}
+        {% set billing = row.billing %}
+        {% set messaging = row.messaging %}
+        {% set owner_invitation = onboarding.owner_invitation %}
+        {% set progress_text = onboarding.completed_required ~ '/' ~ onboarding.required_total ~ ' core steps complete' %}
+        <article class="card-list-item platform-org-card">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+                <div>
+                    <h6>{{ organization.name }}</h6>
+                    <div class="small text-muted"><code>{{ organization.slug }}</code></div>
+                    {% if owner_invitation %}
+                    <div class="small text-muted mt-2">Primary contact: {{ owner_invitation.email }}</div>
+                    {% endif %}
+                </div>
+                <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
+            </div>
+
+            <div class="platform-org-card__meta">
+                <div class="platform-org-card__section">
+                    <div class="platform-org-card__label">Onboarding</div>
+                    <div class="fw-semibold">{{ onboarding.headline }}</div>
+                    {% if onboarding.headline != progress_text %}
+                    <div class="small text-muted">{{ progress_text }}</div>
+                    {% endif %}
+                </div>
+                <div class="platform-org-card__section">
+                    <div class="platform-org-card__label">Billing</div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
+                    </div>
+                    <div class="small text-muted mt-1">{{ billing.summary }}</div>
+                    {% if billing.period_value %}
+                    <div class="small text-muted">{{ billing.period_label }}: {{ billing.period_value }}</div>
+                    {% endif %}
+                </div>
+                <div class="platform-org-card__section">
+                    <div class="platform-org-card__label">Messaging</div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <span class="badge bg-{{ messaging.badge }}">{{ messaging.title }}</span>
+                    </div>
+                    <div class="small text-muted mt-1">{{ messaging.summary }}</div>
+                    <div class="small text-muted">{{ messaging.detail }}</div>
+                </div>
+                <div class="platform-org-card__section">
+                    <div class="platform-org-card__label">Owner invite</div>
+                    {% if owner_invitation %}
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <span class="badge bg-{{ 'success' if owner_invitation.status == 'accepted' else ('warning text-dark' if owner_invitation.status == 'pending' else 'secondary') }}">
+                            {{ owner_invitation.status }}
+                        </span>
+                    </div>
+                    {% if onboarding.owner_invitation_url %}
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <a href="{{ onboarding.owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-copy-text="{{ onboarding.owner_invitation_url }}" data-copy-feedback="Copied">
+                            Copy link
+                        </button>
+                    </div>
+                    {% else %}
+                    <div class="small text-muted mt-1">The owner has already joined.</div>
+                    {% endif %}
+                    {% else %}
+                    <div class="small text-muted">
+                        {{ 'The owner has already joined.' if onboarding.owner_joined else 'No invite available yet.' }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="row-actions mt-2" data-row-actions>
+                <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">Manage Access</a>
+                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                    {{ 'Manage provider' if organization.messaging_profile else 'Set up provider' }}
+                </a>
+                <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">
+                        {{ 'Suspend' if organization.status == 'active' else 'Reactivate' }}
+                    </button>
+                </form>
+            </div>
+        </article>
+        {% else %}
+        <div class="empty-state py-4">
+            <i class="bi bi-buildings empty-state__icon"></i>
+            <div class="empty-state__title">No organizations created yet</div>
+            <div class="empty-state__text">Create your first business account to start onboarding owners and provisioning messaging.</div>
+        </div>
+        {% endfor %}
     </div>
 </div>
 {% endblock %}

@@ -323,7 +323,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/billing")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"trialing", response.data)
+        self.assertIn(b"Trial active", response.data)
         mock_refresh.assert_called_once_with(self.organization, "owner@acme.test")
 
     @patch("app.routes.sync_checkout_session_by_id")
@@ -341,7 +341,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/billing?session_id=cs_test_123")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"trialing", response.data)
+        self.assertIn(b"Trial active", response.data)
         mock_sync.assert_called_once_with("cs_test_123", self.organization)
 
     def test_billing_overview_shows_human_readable_status_and_onboarding(self) -> None:
@@ -356,7 +356,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
-        self.assertIn(b"Sending access:", response.data)
+        self.assertIn(b"Sending enabled", response.data)
         self.assertIn(b"Ready for owner testing", response.data)
         self.assertIn(b"Messaging configured", response.data)
 
@@ -990,7 +990,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Platform-managed Twilio by default", response.data)
         self.assertIn(b"Twilio subaccounts and messaging services are provisioned later", response.data)
         self.assertIn(b"First Invite Role", response.data)
-        self.assertIn(b"The first invite must be an owner", response.data)
+        self.assertIn(b"The first invite stays owner-only", response.data)
         self.assertNotIn(b"Initial Role", response.data)
 
     def test_platform_organizations_add_allows_pending_messaging_profile(self) -> None:
