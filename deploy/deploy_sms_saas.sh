@@ -6,6 +6,26 @@ APP_USER="${APP_USER:-smsadmin}"
 ENV_FILE="${APP_ROOT}/.env"
 VENV_BIN="${APP_ROOT}/venv/bin"
 SAAS_DBDOCTOR_BIN="${SAAS_DBDOCTOR_BIN:-/usr/local/bin/saas-dbdoctor}"
+RESTART_HELPER_SRC="${APP_ROOT}/deploy/restart_sms_saas_services.sh"
+RESTART_HELPER_DEST="${RESTART_HELPER_DEST:-/usr/local/bin/restart-sms-saas-services}"
+SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+SAAS_SYSTEMD_UNITS=(
+  "sms-saas.service"
+  "sms-saas-worker.service"
+  "sms-saas-scheduler.service"
+  "sms-saas-scheduler.timer"
+  "sms-saas-billing-reconcile.service"
+  "sms-saas-billing-reconcile.timer"
+  "sms-saas-platform-restart-queue.service"
+  "sms-saas-platform-restart-queue.timer"
+)
+SAAS_RUNTIME_UNITS=(
+  "sms-saas"
+  "sms-saas-worker"
+  "sms-saas-scheduler.timer"
+  "sms-saas-billing-reconcile.timer"
+  "sms-saas-platform-restart-queue.timer"
+)
 
 resolve_health_host() {
   local trusted_hosts
@@ -20,9 +40,21 @@ resolve_health_host() {
   printf '127.0.0.1\n'
 }
 
+sync_deploy_artifacts() {
+  local unit
+
+  echo "==> Syncing SaaS deploy artifacts"
+  sudo install -o root -g root -m 0755 "${RESTART_HELPER_SRC}" "${RESTART_HELPER_DEST}"
+  for unit in "${SAAS_SYSTEMD_UNITS[@]}"; do
+    sudo install -m 0644 "${APP_ROOT}/deploy/${unit}" "${SYSTEMD_UNIT_DIR}/${unit}"
+  done
+  sudo systemctl daemon-reload
+}
+
 echo "==> Deploying SMS SaaS"
 
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
+sync_deploy_artifacts
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${SAAS_DBDOCTOR_BIN}\" --apply && \"${SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${SAAS_DBDOCTOR_BIN}\" --doctor"
 
@@ -35,7 +67,14 @@ PY"; then
   exit 1
 fi
 
-sudo systemctl restart sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer
+sudo systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"
+
+if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then
+  echo "==> SaaS restart helper validation failed." >&2
+  exit 1
+fi
+
+sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}"
 
 HEALTH_HOST="$(resolve_health_host)"
 HEALTH_OK=0

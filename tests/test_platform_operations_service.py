@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import tempfile
 import unittest
@@ -396,20 +397,44 @@ class TestPlatformOperationsService(unittest.TestCase):
 
 
 class TestRestartDeployArtifacts(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.repo_root = Path(__file__).resolve().parents[1]
+
+    def _read_repo_file(self, *parts: str) -> str:
+        return (self.repo_root.joinpath(*parts)).read_text(encoding="utf-8")
+
     def test_install_script_installs_and_enables_restart_queue_timer(self) -> None:
-        repo_root = "/Users/magasiev/.codex/worktrees/4f7e/AOC-SMS-saas"
-        with open(os.path.join(repo_root, "deploy", "install_saas.sh"), "r", encoding="utf-8") as handle:
-            install_script = handle.read()
+        install_script = self._read_repo_file("deploy", "install_saas.sh")
 
         self.assertIn("sms-saas-platform-restart-queue.service", install_script)
         self.assertIn("sms-saas-platform-restart-queue.timer", install_script)
         self.assertIn("run_platform_restart_queue_once.sh", install_script)
         self.assertIn("sms-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
 
+    def test_deploy_script_syncs_restart_helper_and_restart_queue_timer(self) -> None:
+        deploy_script = self._read_repo_file("deploy", "deploy_sms_saas.sh")
+        runtime_units = deploy_script.split("SAAS_RUNTIME_UNITS=(", 1)[1].split(")", 1)[0]
+
+        self.assertIn("restart_sms_saas_services.sh", deploy_script)
+        self.assertIn("restart-sms-saas-services", deploy_script)
+        self.assertIn("sms-saas-platform-restart-queue.service", deploy_script)
+        self.assertIn("sms-saas-platform-restart-queue.timer", deploy_script)
+        self.assertIn("systemctl daemon-reload", deploy_script)
+        self.assertIn('systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"', deploy_script)
+        self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
+        self.assertIn('"sms-saas-platform-restart-queue.timer"', runtime_units)
+
+    def test_deploy_workflow_asserts_restart_queue_timer_and_helper(self) -> None:
+        workflow = self._read_repo_file(".github", "workflows", "deploy-saas-pilot.yml")
+
+        self.assertIn("sudo systemctl is-active --quiet sms-saas-platform-restart-queue.timer", workflow)
+        self.assertIn("restart-sms-saas-services --check", workflow)
+
     def test_restart_helper_status_rejects_unsupported_unit_safely(self) -> None:
-        helper_path = "/Users/magasiev/.codex/worktrees/4f7e/AOC-SMS-saas/deploy/restart_sms_saas_services.sh"
+        helper_path = self.repo_root / "deploy" / "restart_sms_saas_services.sh"
         completed = subprocess.run(
-            ["bash", helper_path, "--status", "bad unit name"],
+            ["bash", str(helper_path), "--status", "bad unit name"],
             capture_output=True,
             text=True,
             check=False,

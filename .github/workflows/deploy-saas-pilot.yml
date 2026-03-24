@@ -171,6 +171,10 @@ jobs:
           sudo systemctl is-active --quiet sms-saas-worker
           sudo systemctl is-active --quiet sms-saas-scheduler.timer
           sudo systemctl is-active --quiet sms-saas-billing-reconcile.timer
+          sudo systemctl is-active --quiet sms-saas-platform-restart-queue.timer
+
+          echo "==> Restart helper smoke check"
+          sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-sms-saas-services --check >/dev/null
 
           echo "==> Health check"
           HEALTH_HOST="$(resolve_health_host)"

@@ -20,6 +20,8 @@ class TestSaasSchemaMigrations(unittest.TestCase):
                 "SECRET_KEY": "test-secret-key",
                 "SAAS_MODE": "1",
                 "SCHEDULER_ENABLED": "0",
+                "ADMIN_USERNAME": "admin",
+                "ADMIN_EMAIL": "admin@example.com",
                 "ADMIN_PASSWORD": "bootstrap-secret",
             }
         )
