@@ -93,6 +93,17 @@ class TestAuthHardening(unittest.TestCase):
         dashboard = self.client.get("/dashboard", follow_redirects=False)
         self.assertEqual(dashboard.status_code, 200)
 
+    def test_login_ignores_cross_origin_next_parameter(self) -> None:
+        response = self.client.post(
+            "/login?next=https://evil.example/phish",
+            data={"username": "admin", "password": "admin-pass"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertNotIn("evil.example", response.headers.get("Location", ""))
+
     def test_password_change_rotates_session_and_requires_relogin(self) -> None:
         self._login("admin", "admin-pass")
 

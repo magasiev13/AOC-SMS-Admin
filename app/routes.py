@@ -5,7 +5,7 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -103,25 +103,20 @@ from app.sort_utils import normalize_sort_params
 from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
+    as_utc_datetime,
     escape_like,
     find_invalid_template_tokens,
+    is_safe_url,
     normalize_keyword,
     normalize_phone,
     parse_recipients_csv,
+    phone_digits_sql,
     sanitize_csv_cell,
     validate_phone,
 )
 
 bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
-
-
-def _is_safe_url(target):
-    if not target:
-        return False
-    host_url = urlparse(request.host_url)
-    redirect_url = urlparse(urljoin(request.host_url, target))
-    return redirect_url.scheme in ('http', 'https') and host_url.netloc == redirect_url.netloc
 
 
 def _is_explicit_production() -> bool:
@@ -135,13 +130,6 @@ def _normalize_org_messaging_values(
     normalized_sender = normalize_phone(sender_number) if sender_number else None
     normalized_service_sid = messaging_service_sid.strip().upper() if messaging_service_sid else None
     return normalized_sender or None, normalized_service_sid or None
-
-
-def _messaging_profile_status(
-    sender_number: str | None,
-    messaging_service_sid: str | None,
-) -> str:
-    return 'active' if (sender_number or messaging_service_sid) else 'pending'
 
 
 def _validate_org_messaging_profile_input(
@@ -309,16 +297,8 @@ def _membership_role_from_user_role(role: str) -> str:
     return 'owner' if normalized_role in {'admin', 'owner'} else 'staff'
 
 
-def _as_utc_datetime(value):
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
 def _format_datetime_display(value):
-    normalized = _as_utc_datetime(value)
+    normalized = as_utc_datetime(value)
     if normalized is None:
         return None
     return normalized.strftime('%b %d, %Y %I:%M %p UTC')
@@ -418,6 +398,27 @@ def _organization_owner_membership(organization: Organization) -> OrganizationMe
         .order_by(OrganizationMembership.id.asc())
         .first()
     )
+
+
+def _organization_membership_for_user(
+    user: AppUser,
+    *,
+    organization_id: int | None = None,
+) -> OrganizationMembership | None:
+    target_organization_id = organization_id
+    if target_organization_id is None and not getattr(current_user, 'is_platform_admin', False):
+        target_organization_id = _current_organization_id()
+    if target_organization_id is not None:
+        return (
+            OrganizationMembership.query
+            .filter_by(user_id=user.id, organization_id=target_organization_id)
+            .first()
+        )
+    return user.primary_membership
+
+
+def _organization_owner_count(organization_id: int) -> int:
+    return OrganizationMembership.query.filter_by(organization_id=organization_id, role='owner').count()
 
 
 def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
@@ -1003,14 +1004,6 @@ def _redirect_to_inbox(*, thread_id: int | None = None) -> object:
     return redirect(url_for('main.inbox_list', **query_args))
 
 
-def _phone_digits_sql(column):
-    """Normalize stored phone values to digits-only for flexible search matching."""
-    normalized = func.replace(column, '+', '')
-    for token in ('(', ')', '-', ' ', '.'):
-        normalized = func.replace(normalized, token, '')
-    return normalized
-
-
 def _survey_submission_search_phones(survey_id: int, search: str) -> set[str]:
     search_text = search.strip()
     if not search_text:
@@ -1380,6 +1373,67 @@ def _stream_csv_rows(rows: object) -> object:
         output.truncate(0)
         writer.writerow([sanitize_csv_cell(cell) for cell in row])
         yield output.getvalue()
+
+
+def _csv_import_error_response(
+    *,
+    template_name: str | None = None,
+    redirect_endpoint: str | None = None,
+    redirect_values: dict | None = None,
+):
+    if template_name is not None:
+        return render_template(template_name)
+    if redirect_endpoint is not None:
+        return redirect(url_for(redirect_endpoint, **(redirect_values or {})))
+    raise ValueError("CSV import error response requires a template or redirect endpoint.")
+
+
+def _read_uploaded_csv_text(
+    *,
+    template_name: str | None = None,
+    redirect_endpoint: str | None = None,
+    redirect_values: dict | None = None,
+):
+    if 'file' not in request.files:
+        flash('No file uploaded.', 'error')
+        return None, None, _csv_import_error_response(
+            template_name=template_name,
+            redirect_endpoint=redirect_endpoint,
+            redirect_values=redirect_values,
+        )
+
+    uploaded_file = request.files['file']
+    if uploaded_file.filename == '':
+        flash('No file selected.', 'error')
+        return uploaded_file, None, _csv_import_error_response(
+            template_name=template_name,
+            redirect_endpoint=redirect_endpoint,
+            redirect_values=redirect_values,
+        )
+
+    return uploaded_file, uploaded_file.read().decode('utf-8'), None
+
+
+def _dedupe_recipients_by_phone(parsed: list[dict]) -> tuple[list[dict], int]:
+    unique_recipients: list[dict] = []
+    seen_phones: set[str] = set()
+    duplicate_count = 0
+
+    for recipient in parsed:
+        phone = recipient['phone']
+        if phone in seen_phones:
+            duplicate_count += 1
+            continue
+        seen_phones.add(phone)
+        unique_recipients.append(recipient)
+
+    return unique_recipients, duplicate_count
+
+
+def _csv_download_response(filename: str, rows: object) -> Response:
+    response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
 
 
 def _parse_message_log_details(raw_details: str | None) -> list[dict]:
@@ -1984,7 +2038,19 @@ def users_edit(user_id):
                 flash('A user with this phone number already exists.', 'error')
             return render_template('users/form.html', user=user)
 
-        if not user.is_platform_admin and user.role == 'admin' and role != 'admin':
+        membership = None
+        membership_role = None
+        if saas_mode_enabled() and not user.is_platform_admin:
+            membership = _organization_membership_for_user(user)
+            if membership is not None:
+                membership_role = _membership_role_from_user_role(role)
+                if membership.role == 'owner' and membership_role != 'owner':
+                    owner_count = _organization_owner_count(membership.organization_id)
+                    if owner_count <= 1:
+                        flash('At least one owner is required.', 'error')
+                        return render_template('users/form.html', user=user)
+
+        if membership is None and not user.is_platform_admin and user.role == 'admin' and role != 'admin':
             admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
             if admin_count <= 1:
                 flash('At least one admin user is required.', 'error')
@@ -1998,7 +2064,11 @@ def users_edit(user_id):
         user.email = email or None
         user.full_name = full_name
         user.phone = normalized_phone
-        user.role = 'admin' if requested_platform_admin else role
+        if membership is not None and membership_role is not None:
+            membership.role = membership_role
+            user.role = 'admin' if membership_role == 'owner' else 'social_manager'
+        else:
+            user.role = 'admin' if requested_platform_admin else role
         user.is_platform_admin = requested_platform_admin
         user.must_change_password = must_change_password
         performed_admin_reset = False
@@ -2305,8 +2375,8 @@ def platform_organizations_add():
         if not owner_email:
             flash('Owner email is required.', 'error')
             return render_template('platform/organization_form.html')
-        if owner_role not in {'owner', 'staff'}:
-            flash('Owner role must be owner or staff.', 'error')
+        if owner_role != 'owner':
+            flash('The initial organization invite must be for an owner.', 'error')
             return render_template('platform/organization_form.html')
         _, owner_email_error = _organization_email_account_status(owner_email)
         if owner_email_error:
@@ -2325,7 +2395,7 @@ def platform_organizations_add():
         invitation = OrganizationInvitation(
             organization=organization,
             email=owner_email,
-            role=owner_role,
+            role='owner',
             invited_by_user_id=current_user.id,
             expires_at=utc_now() + timedelta(days=7),
         )
@@ -2707,7 +2777,7 @@ def invitation_accept(token):
     if invitation.status != 'pending':
         flash('This invitation is no longer active.', 'error')
         return redirect(url_for('auth.login'))
-    expires_at = _as_utc_datetime(invitation.expires_at)
+    expires_at = as_utc_datetime(invitation.expires_at)
     if expires_at and expires_at < utc_now():
         invitation.status = 'expired'
         db.session.commit()
@@ -2923,7 +2993,7 @@ def community_list():
         search_digits = re.sub(r'\D', '', search)
         if search_digits:
             digits_pattern = f'%{escape_like(search_digits)}%'
-            search_filters.append(_phone_digits_sql(CommunityMember.phone).ilike(digits_pattern, escape='\\'))
+            search_filters.append(phone_digits_sql(CommunityMember.phone).ilike(digits_pattern, escape='\\'))
         query = query.filter(
             db.or_(*search_filters)
         )
@@ -3026,20 +3096,17 @@ def community_delete(member_id):
 @require_roles('admin')
 def community_export():
     members = CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone).all()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['name', 'phone', 'created_at'])
-    for member in members:
-        writer.writerow([
-            sanitize_csv_cell(member.name or ''),
-            sanitize_csv_cell(member.phone),
-            sanitize_csv_cell(member.created_at.isoformat() if member.created_at else ''),
-        ])
 
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = 'attachment; filename=community_members.csv'
-    return response
+    def rows():
+        yield ['name', 'phone', 'created_at']
+        for member in members:
+            yield [
+                member.name or '',
+                member.phone,
+                member.created_at.isoformat() if member.created_at else '',
+            ]
+
+    return _csv_download_response('community_members.csv', rows())
 
 
 @bp.route('/community/bulk-delete', methods=['POST'])
@@ -3073,54 +3140,43 @@ def community_bulk_delete():
 @require_roles('admin')
 def community_import():
     if request.method == 'POST':
-        if 'file' not in request.files:
-            flash('No file uploaded.', 'error')
-            return render_template('community/import.html')
-        
-        file = request.files['file']
-        if file.filename == '':
-            flash('No file selected.', 'error')
-            return render_template('community/import.html')
-        
+        file = None
         try:
-            content = file.read().decode('utf-8')
+            file, content, error_response = _read_uploaded_csv_text(template_name='community/import.html')
+            if error_response is not None:
+                return error_response
             parsed = parse_recipients_csv(content)
-            
+
             if not parsed:
                 flash('No valid members found in CSV.', 'error')
                 return render_template('community/import.html')
-            
+
+            parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
-            skipped = 0
-            seen_phones: set[str] = set()
-            
+
             for rec in parsed:
                 phone = rec['phone']
-                if phone in seen_phones:
-                    skipped += 1
-                    continue
-                seen_phones.add(phone)
 
                 existing = CommunityMember.query.filter_by(phone=phone).first()
                 if existing:
                     skipped += 1
                     continue
-                
+
                 member = CommunityMember(
                     name=rec['name'],
                     phone=phone
                 )
                 db.session.add(member)
                 added += 1
-            
+
             db.session.commit()
             flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.community_list'))
-            
+
         except Exception:
             current_app.logger.exception(
                 'Community CSV import failed (filename=%r, user_id=%s).',
-                file.filename,
+                file.filename if file is not None else None,
                 current_user.id if current_user.is_authenticated else None,
             )
             db.session.rollback()
@@ -3357,63 +3413,55 @@ def event_registration_unsubscribe(event_id, registration_id):
 @require_roles('admin', 'social_manager')
 def event_import_registrations(event_id):
     event = _tenant_get_or_404(Event, event_id)
-    
-    if 'file' not in request.files:
-        flash('No file uploaded.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
-    
-    file = request.files['file']
-    if file.filename == '':
-        flash('No file selected.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
-    
+
+    file = None
     try:
-        content = file.read().decode('utf-8')
+        file, content, error_response = _read_uploaded_csv_text(
+            redirect_endpoint='main.event_detail',
+            redirect_values={'event_id': event_id},
+        )
+        if error_response is not None:
+            return error_response
         parsed = parse_recipients_csv(content)
-        
+
         if not parsed:
             flash('No valid entries found in CSV.', 'error')
             return redirect(url_for('main.event_detail', event_id=event_id))
-        
+
+        parsed, already_registered = _dedupe_recipients_by_phone(parsed)
         added = 0
-        already_registered = 0
-        seen_phones: set[str] = set()
-        
+
         for rec in parsed:
             phone = rec['phone']
-            if phone in seen_phones:
-                already_registered += 1
-                continue
-            seen_phones.add(phone)
 
             # Check if already registered for this event
             existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
             if existing:
                 already_registered += 1
                 continue
-            
+
             registration = EventRegistration(event_id=event_id, name=rec['name'], phone=phone)
             db.session.add(registration)
             added += 1
-        
+
         db.session.commit()
-        
+
         msg = f'Added {added} registrations.'
         if already_registered:
             msg += f' {already_registered} already registered.'
-        
+
         flash(msg, 'success' if added > 0 else 'warning')
-        
+
     except Exception:
         current_app.logger.exception(
             'Event CSV import failed (event_id=%s, filename=%r, user_id=%s).',
             event_id,
-            file.filename,
+            file.filename if file is not None else None,
             current_user.id if current_user.is_authenticated else None,
         )
         db.session.rollback()
         flash(CSV_IMPORT_ERROR_FLASH, 'error')
-    
+
     return redirect(url_for('main.event_detail', event_id=event_id))
 
 
@@ -3422,20 +3470,17 @@ def event_import_registrations(event_id):
 def event_export_registrations(event_id):
     event = _tenant_get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['name', 'phone', 'created_at'])
-    for reg in registrations:
-        writer.writerow([
-            sanitize_csv_cell(reg.name or ''),
-            sanitize_csv_cell(reg.phone),
-            sanitize_csv_cell(reg.created_at.isoformat() if reg.created_at else ''),
-        ])
 
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = f'attachment; filename=event_{event.id}_registrations.csv'
-    return response
+    def rows():
+        yield ['name', 'phone', 'created_at']
+        for reg in registrations:
+            yield [
+                reg.name or '',
+                reg.phone,
+                reg.created_at.isoformat() if reg.created_at else '',
+            ]
+
+    return _csv_download_response(f'event_{event.id}_registrations.csv', rows())
 
 
 # Message Logs
@@ -4045,7 +4090,7 @@ def unsubscribed_add():
         existing = UnsubscribedContact.query.filter_by(phone=phone).first()
         if existing:
             flash('That phone number is already unsubscribed.', 'warning')
-            if next_url and _is_safe_url(next_url):
+            if next_url and is_safe_url(next_url, request.host_url):
                 return redirect(next_url)
             return redirect(url_for('main.unsubscribed_list'))
 
@@ -4054,7 +4099,7 @@ def unsubscribed_add():
         db.session.commit()
         flash('Added to unsubscribed list.', 'success')
 
-        if next_url and _is_safe_url(next_url):
+        if next_url and is_safe_url(next_url, request.host_url):
             return redirect(next_url)
         return redirect(url_for('main.unsubscribed_list'))
 
@@ -4066,33 +4111,22 @@ def unsubscribed_add():
 @require_roles('admin')
 def unsubscribed_import():
     if request.method == 'POST':
-        if 'file' not in request.files:
-            flash('No file uploaded.', 'error')
-            return render_template('unsubscribed/import.html')
-
-        file = request.files['file']
-        if file.filename == '':
-            flash('No file selected.', 'error')
-            return render_template('unsubscribed/import.html')
-
+        file = None
         try:
-            content = file.read().decode('utf-8')
+            file, content, error_response = _read_uploaded_csv_text(template_name='unsubscribed/import.html')
+            if error_response is not None:
+                return error_response
             parsed = parse_recipients_csv(content)
 
             if not parsed:
                 flash('No valid entries found in CSV.', 'error')
                 return render_template('unsubscribed/import.html')
 
+            parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
-            skipped = 0
-            seen_phones: set[str] = set()
 
             for rec in parsed:
                 phone = rec['phone']
-                if phone in seen_phones:
-                    skipped += 1
-                    continue
-                seen_phones.add(phone)
 
                 existing = UnsubscribedContact.query.filter_by(phone=phone).first()
                 if existing:
@@ -4114,7 +4148,7 @@ def unsubscribed_import():
         except Exception:
             current_app.logger.exception(
                 'Unsubscribed CSV import failed (filename=%r, user_id=%s).',
-                file.filename,
+                file.filename if file is not None else None,
                 current_user.id if current_user.is_authenticated else None,
             )
             db.session.rollback()
@@ -4128,22 +4162,19 @@ def unsubscribed_import():
 @require_roles('admin')
 def unsubscribed_export():
     entries = UnsubscribedContact.query.order_by(UnsubscribedContact.created_at.desc()).all()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['name', 'phone', 'reason', 'source', 'created_at'])
-    for entry in entries:
-        writer.writerow([
-            sanitize_csv_cell(entry.name or ''),
-            sanitize_csv_cell(entry.phone),
-            sanitize_csv_cell(entry.reason or ''),
-            sanitize_csv_cell(entry.source),
-            sanitize_csv_cell(entry.created_at.isoformat() if entry.created_at else ''),
-        ])
 
-    response = make_response(output.getvalue())
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = 'attachment; filename=unsubscribed_contacts.csv'
-    return response
+    def rows():
+        yield ['name', 'phone', 'reason', 'source', 'created_at']
+        for entry in entries:
+            yield [
+                entry.name or '',
+                entry.phone,
+                entry.reason or '',
+                entry.source,
+                entry.created_at.isoformat() if entry.created_at else '',
+            ]
+
+    return _csv_download_response('unsubscribed_contacts.csv', rows())
 
 
 @bp.route('/unsubscribed/<int:entry_id>/delete', methods=['POST'])

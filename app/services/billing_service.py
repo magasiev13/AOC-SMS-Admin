@@ -16,6 +16,7 @@ from app.models import (
     utc_now,
 )
 from app.services.twilio_service import previous_billing_period_window, reconcile_messaging_usage
+from app.utils import as_utc_datetime
 
 
 ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active"}
@@ -88,14 +89,6 @@ def _stripe_object_to_dict(value):
     return dict(value)
 
 
-def _as_utc_datetime(value):
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
 def _event_timestamp_to_utc_datetime(value) -> datetime | None:
     try:
         return datetime.fromtimestamp(int(value), tz=timezone.utc)
@@ -150,7 +143,7 @@ def _owner_email_for_organization(organization: Organization) -> str:
 def _subscription_state_snapshot(subscription: OrganizationSubscription | None) -> tuple:
     if subscription is None:
         return ()
-    period_end = _as_utc_datetime(subscription.current_period_end)
+    period_end = as_utc_datetime(subscription.current_period_end)
     return (
         subscription.status,
         subscription.stripe_customer_id,
@@ -166,8 +159,8 @@ def _checkout_session_matches_current_subscription(
     subscription: OrganizationSubscription,
 ) -> bool:
     reference_candidates = [
-        _as_utc_datetime(subscription.created_at),
-        _as_utc_datetime(subscription.organization.created_at) if subscription.organization is not None else None,
+        as_utc_datetime(subscription.created_at),
+        as_utc_datetime(subscription.organization.created_at) if subscription.organization is not None else None,
     ]
     reference_time = max((candidate for candidate in reference_candidates if candidate is not None), default=None)
     session_created_at = _event_timestamp_to_utc_datetime(data_object.get("created"))
@@ -342,7 +335,7 @@ def process_stripe_webhook_event(event: dict) -> StripeWebhookEvent:
     previous_status = record.status if record is not None else None
     previous_processed_at = record.processed_at if record is not None else None
     previous_last_activity = (
-        _as_utc_datetime(record.last_seen_at or record.received_at)
+        as_utc_datetime(record.last_seen_at or record.received_at)
         if record is not None
         else None
     )

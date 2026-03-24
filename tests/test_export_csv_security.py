@@ -76,6 +76,7 @@ class TestCsvExportSecurity(unittest.TestCase):
 
         response = self.client.get("/community/export")
         self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment; filename=community_members.csv", response.headers.get("Content-Disposition", ""))
 
         rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
         self.assertEqual(len(rows), 1)
@@ -93,6 +94,10 @@ class TestCsvExportSecurity(unittest.TestCase):
 
         response = self.client.get(f"/events/{event.id}/export")
         self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            f"attachment; filename=event_{event.id}_registrations.csv",
+            response.headers.get("Content-Disposition", ""),
+        )
 
         rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
         self.assertEqual(len(rows), 1)
@@ -112,6 +117,10 @@ class TestCsvExportSecurity(unittest.TestCase):
 
         response = self.client.get("/unsubscribed/export")
         self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "attachment; filename=unsubscribed_contacts.csv",
+            response.headers.get("Content-Disposition", ""),
+        )
 
         rows = list(csv.DictReader(io.StringIO(response.get_data(as_text=True))))
         self.assertEqual(len(rows), 1)

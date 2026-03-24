@@ -4,6 +4,16 @@
 {% set platform_access_toggle_visible = config.SAAS_MODE and current_user.is_platform_admin %}
 {% set platform_access_toggle_disabled = config.SAAS_MODE and current_user.is_platform_admin and user and user.memberships and not user.is_platform_admin %}
 {% set entity_label = 'Platform Admin' if platform_account_form else 'User' %}
+{% set selected_role = '' %}
+{% if user %}
+    {% if config.SAAS_MODE and user.organization_role == 'owner' %}
+        {% set selected_role = 'admin' %}
+    {% elif config.SAAS_MODE and user.organization_role == 'staff' %}
+        {% set selected_role = 'social_manager' %}
+    {% else %}
+        {% set selected_role = user.role %}
+    {% endif %}
+{% endif %}
 
 {% block title %}{{ 'Edit' if user else 'Create' }} {{ entity_label }} - SMS Admin{% endblock %}
 
@@ -64,10 +74,10 @@
                         <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
                         <select class="form-select" id="role" name="role" required>
                             <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
-                            <option value="admin" {% if user and user.role == 'admin' %}selected{% endif %}>
+                            <option value="admin" {% if selected_role == 'admin' %}selected{% endif %}>
                                 {% if config.SAAS_MODE and not current_user.is_platform_admin %}Owner{% else %}Admin{% endif %}
                             </option>
-                            <option value="social_manager" {% if user and user.role == 'social_manager' %}selected{% endif %}>
+                            <option value="social_manager" {% if selected_role == 'social_manager' %}selected{% endif %}>
                                 {% if config.SAAS_MODE and not current_user.is_platform_admin %}Staff{% else %}Social Media Manager{% endif %}
                             </option>
                         </select>

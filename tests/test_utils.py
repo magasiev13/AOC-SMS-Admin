@@ -4,14 +4,18 @@ Run with: python -m unittest tests.test_utils
 """
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from app.utils import (
+    as_utc_datetime,
     escape_like,
     find_invalid_template_tokens,
+    is_safe_url,
     normalize_keyword,
     normalize_phone,
     parse_recipients_csv,
     parse_phones_csv,
+    phone_lookup_variants,
     render_message_template,
     sanitize_csv_cell,
     validate_phone,
@@ -63,6 +67,35 @@ class TestEscapeLike(unittest.TestCase):
     def test_escapes_backslash_and_wildcards(self) -> None:
         value = "foo\\bar%_"
         self.assertEqual(escape_like(value), "foo\\\\bar\\%\\_")
+
+
+class TestIsSafeUrl(unittest.TestCase):
+    def test_accepts_same_origin_relative_url(self) -> None:
+        self.assertTrue(is_safe_url("/dashboard", "https://example.com/"))
+
+    def test_accepts_same_origin_absolute_url(self) -> None:
+        self.assertTrue(is_safe_url("https://example.com/account", "https://example.com/"))
+
+    def test_rejects_cross_origin_url(self) -> None:
+        self.assertFalse(is_safe_url("https://evil.example/login", "https://example.com/"))
+
+    def test_rejects_non_http_scheme(self) -> None:
+        self.assertFalse(is_safe_url("javascript:alert(1)", "https://example.com/"))
+
+
+class TestAsUtcDatetime(unittest.TestCase):
+    def test_none_stays_none(self) -> None:
+        self.assertIsNone(as_utc_datetime(None))
+
+    def test_naive_datetime_is_marked_utc(self) -> None:
+        value = datetime(2026, 4, 1, 9, 30, 0)
+        result = as_utc_datetime(value)
+        self.assertEqual(result, datetime(2026, 4, 1, 9, 30, 0, tzinfo=timezone.utc))
+
+    def test_aware_datetime_is_converted_to_utc(self) -> None:
+        value = datetime(2026, 4, 1, 9, 30, 0, tzinfo=timezone(timedelta(hours=-6)))
+        result = as_utc_datetime(value)
+        self.assertEqual(result, datetime(2026, 4, 1, 15, 30, 0, tzinfo=timezone.utc))
 
 
 class TestSanitizeCsvCell(unittest.TestCase):
@@ -130,6 +163,17 @@ class TestParsePhonesCsv(unittest.TestCase):
             parse_phones_csv(content),
             ["+17203832388", "+13105551212", "+14155552671"],
         )
+
+
+class TestPhoneLookupVariants(unittest.TestCase):
+    def test_eleven_digit_number_includes_ten_digit_variant(self) -> None:
+        self.assertEqual(phone_lookup_variants("+17205550102"), ["17205550102", "7205550102"])
+
+    def test_ten_digit_number_includes_us_country_code_variant(self) -> None:
+        self.assertEqual(phone_lookup_variants("720-555-0102"), ["17205550102", "7205550102"])
+
+    def test_invalid_input_returns_no_variants(self) -> None:
+        self.assertEqual(phone_lookup_variants("not-a-phone"), [])
 
 
 class TestRenderMessageTemplate(unittest.TestCase):

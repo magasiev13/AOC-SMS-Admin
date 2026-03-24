@@ -1,5 +1,4 @@
 from functools import wraps
-from urllib.parse import urljoin, urlparse
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
@@ -8,6 +7,7 @@ from sqlalchemy import func
 from app import db
 from app.models import AppUser
 from app.tenant import clear_current_organization_id, set_current_organization_id
+from app.utils import is_safe_url
 from app.services.auth_security_service import (
     check_login_limited,
     clear_failed_logins,
@@ -45,14 +45,6 @@ TENANT_ENDPOINT_PREFIXES = (
 
 def _get_client_ip() -> str:
     return request.remote_addr or "unknown"
-
-
-def _is_safe_url(target: str | None) -> bool:
-    if not target:
-        return False
-    host_url = urlparse(request.host_url)
-    redirect_url = urlparse(urljoin(request.host_url, target))
-    return redirect_url.scheme in ("http", "https") and host_url.netloc == redirect_url.netloc
 
 
 def home_endpoint_for_user(user) -> str:
@@ -219,7 +211,7 @@ def login():
                 return redirect(url_for("main.change_password"))
 
             next_page = request.args.get("next")
-            if next_page and _is_safe_url(next_page):
+            if next_page and is_safe_url(next_page, request.host_url):
                 return redirect(next_page)
             return redirect(url_for(home_endpoint_for_user(user)))
 

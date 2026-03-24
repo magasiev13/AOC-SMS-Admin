@@ -26,7 +26,13 @@ from app.services.twilio_service import (
     resolve_messaging_profile,
 )
 from app.tenant import organization_context, saas_mode_enabled
-from app.utils import normalize_keyword, normalize_phone, validate_phone
+from app.utils import (
+    normalize_keyword,
+    normalize_phone,
+    phone_digits_sql,
+    phone_lookup_variants,
+    validate_phone,
+)
 
 
 STOP_KEYWORDS = {'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'}
@@ -235,38 +241,18 @@ def _normalize_unsubscribed_name(name: str | None) -> str | None:
     return normalized[:100]
 
 
-def _phone_digits_sql(column):
-    normalized = func.replace(column, '+', '')
-    for token in ('(', ')', '-', ' ', '.'):
-        normalized = func.replace(normalized, token, '')
-    return normalized
-
-
-def _phone_lookup_variants(phone: str) -> list[str]:
-    digits = ''.join(char for char in (phone or '') if char.isdigit())
-    if not digits:
-        return []
-
-    variants: list[str] = [digits]
-    if len(digits) == 11 and digits.startswith('1'):
-        variants.append(digits[1:])
-    elif len(digits) == 10:
-        variants.append(f'1{digits}')
-    return list(dict.fromkeys(variants))
-
-
 def _community_member_for_phone(phone: str) -> CommunityMember | None:
     member = CommunityMember.query.filter_by(phone=phone).first()
     if member is not None:
         return member
 
-    variants = _phone_lookup_variants(phone)
+    variants = phone_lookup_variants(phone)
     if not variants:
         return None
 
     return (
         CommunityMember.query
-        .filter(_phone_digits_sql(CommunityMember.phone).in_(variants))
+        .filter(phone_digits_sql(CommunityMember.phone).in_(variants))
         .order_by(CommunityMember.id.desc())
         .first()
     )
@@ -277,13 +263,13 @@ def _thread_for_phone(phone: str) -> InboxThread | None:
     if thread is not None:
         return thread
 
-    variants = _phone_lookup_variants(phone)
+    variants = phone_lookup_variants(phone)
     if not variants:
         return None
 
     return (
         InboxThread.query
-        .filter(_phone_digits_sql(InboxThread.phone).in_(variants))
+        .filter(phone_digits_sql(InboxThread.phone).in_(variants))
         .order_by(InboxThread.id.desc())
         .first()
     )
@@ -298,13 +284,13 @@ def _event_registrations_for_phone(phone: str) -> list[EventRegistration]:
     if registrations:
         return registrations
 
-    variants = _phone_lookup_variants(phone)
+    variants = phone_lookup_variants(phone)
     if not variants:
         return []
 
     return (
         EventRegistration.query
-        .filter(_phone_digits_sql(EventRegistration.phone).in_(variants))
+        .filter(phone_digits_sql(EventRegistration.phone).in_(variants))
         .order_by(EventRegistration.created_at.desc(), EventRegistration.id.desc())
         .all()
     )
@@ -319,13 +305,13 @@ def _unsubscribed_entry_for_phone(phone: str) -> UnsubscribedContact | None:
     if entry is not None:
         return entry
 
-    variants = _phone_lookup_variants(normalized_phone)
+    variants = phone_lookup_variants(normalized_phone)
     if not variants:
         return None
 
     return (
         UnsubscribedContact.query
-        .filter(_phone_digits_sql(UnsubscribedContact.phone).in_(variants))
+        .filter(phone_digits_sql(UnsubscribedContact.phone).in_(variants))
         .order_by(UnsubscribedContact.id.desc())
         .first()
     )

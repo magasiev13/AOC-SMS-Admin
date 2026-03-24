@@ -14,7 +14,6 @@
 {% set form_name = request.form.get('name', '') %}
 {% set form_slug = request.form.get('slug', '') %}
 {% set form_owner_email = request.form.get('owner_email', '') %}
-{% set form_owner_role = request.form.get('owner_role', 'owner') %}
 
 <div class="org-create-shell">
     <div class="org-create-main">
@@ -104,12 +103,14 @@
                             <div class="form-text">After creation, the owner invite link appears on the Organizations page so you can open or copy it locally.</div>
                         </div>
                         <div class="col-md-4">
-                            <label class="form-label" for="owner_role">Initial Role</label>
-                            <select class="form-select" id="owner_role" name="owner_role">
-                                <option value="owner" {% if form_owner_role == 'owner' %}selected{% endif %}>Owner</option>
-                                <option value="staff" {% if form_owner_role == 'staff' %}selected{% endif %}>Staff</option>
-                            </select>
-                            <div class="form-text">Use Owner for billing/account control. Staff is only for limited internal testing.</div>
+                            <label class="form-label" for="owner_role_display">First Invite Role</label>
+                            <input
+                                class="form-control"
+                                id="owner_role_display"
+                                value="Owner"
+                                disabled
+                            >
+                            <div class="form-text">The first invite must be an owner so billing and team setup stay available. Add staff later from the workspace team flow.</div>
                         </div>
                     </div>
                 </div>

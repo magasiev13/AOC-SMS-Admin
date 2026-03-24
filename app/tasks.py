@@ -36,20 +36,6 @@ def _load_details(log: MessageLog) -> list:
         return []
 
 
-def _persist_progress(
-    log: MessageLog,
-    total_recipients: int,
-    success_count: int,
-    failure_count: int,
-    details: list,
-) -> None:
-    log.total_recipients = total_recipients
-    log.success_count = success_count
-    log.failure_count = failure_count
-    log.details = json.dumps(details)
-    db.session.commit()
-
-
 def _append_error_detail(details: list, error_message: str) -> list:
     payload = list(details) if isinstance(details, list) else []
     payload.append({'error': error_message})

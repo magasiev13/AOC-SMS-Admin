@@ -138,20 +138,22 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 os.environ[key] = value
 
     def _login_owner(self):
+        return self._login_with_credentials("owner@acme.test", "Owner-pass1!")
+
+    def _login_platform_admin(self):
+        return self._login_with_credentials("platform@acme.test", "Platform-pass1!")
+
+    def _login_with_credentials(self, username: str, password: str):
         response = self.client.post(
             "/login",
-            data={"username": "owner@acme.test", "password": "Owner-pass1!"},
+            data={"username": username, "password": password},
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 302)
         return response
 
-    def _login_platform_admin(self):
-        response = self.client.post(
-            "/login",
-            data={"username": "platform@acme.test", "password": "Platform-pass1!"},
-            follow_redirects=False,
-        )
+    def _logout(self):
+        response = self.client.post("/logout", follow_redirects=False)
         self.assertEqual(response.status_code, 302)
         return response
 
@@ -559,6 +561,123 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.db.session.refresh(self.platform_admin)
         self.assertTrue(self.platform_admin.is_platform_admin)
 
+    def test_users_edit_promotes_saas_member_to_owner_membership_and_owner_access(self) -> None:
+        staff_user = self.AppUser(
+            username="staff-user",
+            email="staff-user@acme.test",
+            full_name="Staff User",
+            phone="+15550000016",
+            role="social_manager",
+            must_change_password=False,
+        )
+        staff_user.set_password("Staff-pass1!")
+        self.db.session.add(staff_user)
+        self.db.session.flush()
+        membership = self.OrganizationMembership(
+            organization_id=self.organization.id,
+            user_id=staff_user.id,
+            role="staff",
+        )
+        self.db.session.add(membership)
+        self.subscription.status = "trialing"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            f"/users/{staff_user.id}/edit",
+            data={
+                "username": "staff-user",
+                "email": "staff-user@acme.test",
+                "full_name": "Staff User",
+                "role": "admin",
+                "phone": "+15550000016",
+                "must_change_password": "off",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(staff_user)
+        self.db.session.refresh(membership)
+        self.assertEqual(staff_user.role, "admin")
+        self.assertEqual(membership.role, "owner")
+
+        self._logout()
+        self._login_with_credentials("staff-user@acme.test", "Staff-pass1!")
+
+        self.assertEqual(self.client.get("/billing").status_code, 200)
+        self.assertEqual(self.client.get("/team/invite").status_code, 200)
+
+    def test_users_edit_demotes_saas_owner_membership_and_revokes_billing_access(self) -> None:
+        second_owner = self.AppUser(
+            username="second-owner",
+            email="second-owner@acme.test",
+            full_name="Second Owner",
+            phone="+15550000017",
+            role="admin",
+            must_change_password=False,
+        )
+        second_owner.set_password("SecondOwner-pass1!")
+        self.db.session.add(second_owner)
+        self.db.session.flush()
+        membership = self.OrganizationMembership(
+            organization_id=self.organization.id,
+            user_id=second_owner.id,
+            role="owner",
+        )
+        self.db.session.add(membership)
+        self.subscription.status = "trialing"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            f"/users/{second_owner.id}/edit",
+            data={
+                "username": "second-owner",
+                "email": "second-owner@acme.test",
+                "full_name": "Second Owner",
+                "role": "social_manager",
+                "phone": "+15550000017",
+                "must_change_password": "off",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(second_owner)
+        self.db.session.refresh(membership)
+        self.assertEqual(second_owner.role, "social_manager")
+        self.assertEqual(membership.role, "staff")
+
+        self._logout()
+        self._login_with_credentials("second-owner@acme.test", "SecondOwner-pass1!")
+
+        self.assertEqual(self.client.get("/billing").status_code, 403)
+
+    def test_users_edit_rejects_demoting_last_saas_owner(self) -> None:
+        self._login_owner()
+
+        response = self.client.post(
+            f"/users/{self.owner.id}/edit",
+            data={
+                "username": "owner",
+                "email": "owner@acme.test",
+                "full_name": "Owner User",
+                "role": "social_manager",
+                "phone": "+15550000001",
+                "must_change_password": "off",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"At least one owner is required.", response.data)
+        self.db.session.refresh(self.owner)
+        membership = self.OrganizationMembership.query.filter_by(user_id=self.owner.id).first()
+        self.assertIsNotNone(membership)
+        self.assertEqual(self.owner.role, "admin")
+        self.assertEqual(membership.role, "owner")
+
     def test_users_list_shows_pending_invitation_accept_link(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -808,6 +927,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Create Business Account", response.data)
         self.assertIn(b"Platform-managed Twilio by default", response.data)
         self.assertIn(b"Twilio subaccounts and messaging services are provisioned later", response.data)
+        self.assertIn(b"First Invite Role", response.data)
+        self.assertIn(b"The first invite must be an owner", response.data)
+        self.assertNotIn(b"Initial Role", response.data)
 
     def test_platform_organizations_add_allows_pending_messaging_profile(self) -> None:
         self._login_platform_admin()
@@ -833,6 +955,25 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(organization.messaging_profile.sender_review_status, "pending")
         self.assertIsNone(organization.messaging_profile.from_number)
         self.assertIsNone(organization.messaging_profile.messaging_service_sid)
+
+    def test_platform_organizations_add_requires_owner_initial_invite(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            "/platform/organizations/add",
+            data={
+                "name": "Staff First Org",
+                "slug": "staff-first-org",
+                "owner_email": "staff-first@acme.test",
+                "owner_role": "staff",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"The initial organization invite must be for an owner.", response.data)
+        self.assertIsNone(self.Organization.query.filter_by(slug="staff-first-org").first())
+        self.assertIsNone(self.OrganizationInvitation.query.filter_by(email="staff-first@acme.test").first())
 
     def test_platform_organizations_add_rejects_platform_admin_owner_email(self) -> None:
         self._login_platform_admin()

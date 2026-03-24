@@ -1,7 +1,11 @@
-import re
 import csv
 import io
+import re
+from datetime import timezone
 from typing import Optional
+from urllib.parse import urljoin, urlparse
+
+from sqlalchemy import func
 
 
 ALLOWED_TEMPLATE_TOKENS = ("name", "first_name", "full_name")
@@ -21,6 +25,22 @@ def escape_like(value: str) -> str:
     if not value:
         return value
     return value.replace('\\', r'\\').replace('%', r'\%').replace('_', r'\_')
+
+
+def is_safe_url(target: str | None, host_url: str) -> bool:
+    if not target or not host_url:
+        return False
+    parsed_host_url = urlparse(host_url)
+    redirect_url = urlparse(urljoin(host_url, target))
+    return redirect_url.scheme in ("http", "https") and parsed_host_url.netloc == redirect_url.netloc
+
+
+def as_utc_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def normalize_keyword(value: str) -> str:
@@ -57,6 +77,27 @@ def normalize_phone(phone: object) -> str:
 
     # Fall back to prefixed digits for non-US inputs without '+'
     return f'+{digits}'
+
+
+def phone_digits_sql(column):
+    normalized = func.replace(column, '+', '')
+    for token in ('(', ')', '-', ' ', '.'):
+        normalized = func.replace(normalized, token, '')
+    return normalized
+
+
+def phone_lookup_variants(phone: str) -> list[str]:
+    normalized_phone = normalize_phone(phone)
+    digits = ''.join(char for char in normalized_phone if char.isdigit())
+    if not digits:
+        return []
+
+    variants: list[str] = [digits]
+    if len(digits) == 11 and digits.startswith('1'):
+        variants.append(digits[1:])
+    elif len(digits) == 10:
+        variants.append(f'1{digits}')
+    return list(dict.fromkeys(variants))
 
 
 def validate_phone(phone: str) -> bool:

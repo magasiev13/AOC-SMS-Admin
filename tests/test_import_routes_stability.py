@@ -94,6 +94,19 @@ class TestImportRoutesStability(unittest.TestCase):
         members = self.CommunityMember.query.order_by(self.CommunityMember.phone.asc()).all()
         self.assertEqual([member.phone for member in members], ["+17205550201", "+17205550202"])
 
+    def test_community_import_requires_uploaded_file(self) -> None:
+        self._login()
+
+        response = self.client.post(
+            "/community/import",
+            data={},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No file uploaded.", response.data)
+
     def test_event_import_skips_duplicate_rows_inside_same_file(self) -> None:
         self._login()
         event = self.Event(title="Import Event")
@@ -122,6 +135,22 @@ class TestImportRoutesStability(unittest.TestCase):
             self.EventRegistration.phone.asc()
         ).all()
         self.assertEqual([registration.phone for registration in registrations], ["+17205550211", "+17205550212"])
+
+    def test_event_import_rejects_empty_filename(self) -> None:
+        self._login()
+        event = self.Event(title="Missing File Event")
+        self.db.session.add(event)
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/events/{event.id}/import",
+            data={"file": (io.BytesIO(b"name,phone\nPat,720-555-0211"), "")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No file selected.", response.data)
 
     def test_unsubscribed_import_skips_duplicate_rows_inside_same_file(self) -> None:
         self._login()

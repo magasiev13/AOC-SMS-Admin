@@ -1,29 +1,6 @@
 from typing import Iterable
 
-from sqlalchemy import func
-
-from app.utils import normalize_phone
-
-
-def _phone_digits_sql(column):
-    normalized = func.replace(column, '+', '')
-    for token in ('(', ')', '-', ' ', '.'):
-        normalized = func.replace(normalized, token, '')
-    return normalized
-
-
-def _phone_lookup_variants(phone: str) -> list[str]:
-    normalized_phone = normalize_phone(phone)
-    digits = ''.join(char for char in normalized_phone if char.isdigit())
-    if not digits:
-        return []
-
-    variants: list[str] = [digits]
-    if len(digits) == 11 and digits.startswith('1'):
-        variants.append(digits[1:])
-    elif len(digits) == 10:
-        variants.append(f'1{digits}')
-    return list(dict.fromkeys(variants))
+from app.utils import normalize_phone, phone_digits_sql, phone_lookup_variants
 
 
 def _normalize_recipient(recipient: dict) -> tuple[dict, str]:
@@ -46,12 +23,12 @@ def get_unsubscribed_phone_set(phones: Iterable[str]) -> set[str]:
 
     from app.models import UnsubscribedContact
 
-    variants = {variant for phone in normalized_phones for variant in _phone_lookup_variants(phone)}
+    variants = {variant for phone in normalized_phones for variant in phone_lookup_variants(phone)}
     if not variants:
         return set()
 
     unsubscribed = UnsubscribedContact.query.filter(
-        _phone_digits_sql(UnsubscribedContact.phone).in_(variants)
+        phone_digits_sql(UnsubscribedContact.phone).in_(variants)
     ).all()
     return {normalize_phone(entry.phone) for entry in unsubscribed if normalize_phone(entry.phone)}
 
@@ -82,12 +59,12 @@ def get_suppressed_phone_set(phones: Iterable[str]) -> set[str]:
 
     from app.models import SuppressedContact
 
-    variants = {variant for phone in normalized_phones for variant in _phone_lookup_variants(phone)}
+    variants = {variant for phone in normalized_phones for variant in phone_lookup_variants(phone)}
     if not variants:
         return set()
 
     suppressed = SuppressedContact.query.filter(
-        _phone_digits_sql(SuppressedContact.phone).in_(variants)
+        phone_digits_sql(SuppressedContact.phone).in_(variants)
     ).all()
     return {normalize_phone(entry.phone) for entry in suppressed if normalize_phone(entry.phone)}
 
