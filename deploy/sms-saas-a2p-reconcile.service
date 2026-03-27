@@ -1,0 +1,19 @@
+[Unit]
+Description=SMS SaaS Twilio A2P Reconciliation Service (oneshot)
+After=network.target
+
+[Service]
+Type=oneshot
+User=smsadmin
+Group=smsadmin
+WorkingDirectory=/opt/sms-saas
+Environment="PATH=/opt/sms-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="APP_ROOT=/opt/sms-saas"
+Environment="SAAS_MODE=1"
+EnvironmentFile=-/opt/sms-saas/.env
+ExecStartPre=/opt/sms-saas/deploy/check_python_runtime.sh
+ExecStartPre=/usr/local/bin/saas-dbdoctor --apply
+ExecStart=/bin/bash /opt/sms-saas/deploy/run_a2p_reconcile_once.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sms-saas-a2p-reconcile

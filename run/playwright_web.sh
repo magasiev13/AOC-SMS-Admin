@@ -36,6 +36,9 @@ export STRIPE_SECRET_KEY="sk_test_browser"
 export STRIPE_WEBHOOK_SECRET="whsec_browser"
 export STRIPE_PRICE_ID="price_browser"
 export TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
+export TWILIO_A2P_ONBOARDING_ENABLED=1
+export TWILIO_PRIMARY_CUSTOMER_PROFILE_SID="BUbrowserprimary123"
+export TWILIO_A2P_FAKE_QUEUE=1
 export ADMIN_USERNAME="platform-admin"
 export ADMIN_EMAIL="platform@browser.test"
 export ADMIN_PASSWORD="Platform-pass1!"

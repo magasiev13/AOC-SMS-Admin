@@ -32,6 +32,24 @@
                     </div>
                 </div>
 
+                <div class="alert alert-light border mb-4" role="note">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <div>
+                            <div class="fw-semibold mb-1">A2P onboarding</div>
+                            <div class="small text-muted">
+                                Status: <strong>{{ onboarding.onboarding_status if onboarding else 'draft' }}</strong>
+                                {% if onboarding and (onboarding.brand_status or onboarding.campaign_status) %}
+                                · Brand: {{ onboarding.brand_status or 'pending' }}
+                                · Campaign: {{ onboarding.campaign_status or 'pending' }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                            Manage A2P Onboarding
+                        </a>
+                    </div>
+                </div>
+
                 {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
                 <div class="alert alert-danger border mb-4" role="alert">
                     <div class="fw-semibold mb-1">Provider sync error</div>

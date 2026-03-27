@@ -99,6 +99,7 @@ ensure_env_key "RQ_QUEUE_NAME" "sms-saas"
 ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
+ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
 
 required_keys=(
   DATABASE_URL
@@ -125,6 +126,24 @@ if [[ ${#missing_required[@]} -gt 0 ]]; then
   exit 1
 fi
 
+a2p_enabled="$(current_env_value "TWILIO_A2P_ONBOARDING_ENABLED")"
+if [[ "${a2p_enabled}" == "1" ]]; then
+  a2p_required_keys=(
+    TWILIO_PRIMARY_CUSTOMER_PROFILE_SID
+  )
+  missing_a2p=()
+  for key in "${a2p_required_keys[@]}"; do
+    value="$(current_env_value "${key}")"
+    if [[ -z "${value}" ]]; then
+      missing_a2p+=("${key}")
+    fi
+  done
+  if [[ ${#missing_a2p[@]} -gt 0 ]]; then
+    echo "ERROR: Missing required A2P env keys in ${ENV_FILE}: ${missing_a2p[*]}" >&2
+    exit 1
+  fi
+fi
+
 echo "==> Installing Python dependencies"
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 
@@ -143,14 +162,17 @@ sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.service" /e
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.timer" /etc/systemd/system/sms-saas-billing-reconcile.timer
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.service" /etc/systemd/system/sms-saas-platform-restart-queue.service
 sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.timer" /etc/systemd/system/sms-saas-platform-restart-queue.timer
+sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-a2p-reconcile.service" /etc/systemd/system/sms-saas-a2p-reconcile.service
+sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-a2p-reconcile.timer" /etc/systemd/system/sms-saas-a2p-reconcile.timer
 sudo install -m 0755 "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${APP_ROOT}/deploy/run_platform_restart_queue_once.sh"
+sudo install -m 0755 "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh"
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer
+sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer
 
 echo "==> Verifying SaaS restart helper"
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then

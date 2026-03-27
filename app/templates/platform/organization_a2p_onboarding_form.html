@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% block title %}A2P Onboarding - SMS Admin{% endblock %}
+
+{% block page_title %}A2P Onboarding{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> /
+<a href="{{ url_for('main.platform_organizations_list') }}">Organizations</a> /
+<a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}">Messaging</a> /
+<span>{{ organization.name }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+                    <div>
+                        <h2 class="h5 mb-1">{{ organization.name }}</h2>
+                        <div class="small text-muted"><code>{{ organization.slug }}</code></div>
+                    </div>
+                    <span class="badge bg-{{ 'success' if onboarding and onboarding.onboarding_status == 'approved' else ('danger' if onboarding and onboarding.onboarding_status in ('rejected', 'error') else ('secondary' if onboarding and onboarding.onboarding_status == 'canceled' else 'warning text-dark')) }}">
+                        {{ onboarding.onboarding_status if onboarding else 'draft' }}
+                    </span>
+                </div>
+
+                {% if onboarding and onboarding.last_error %}
+                <div class="alert alert-danger border mb-4" role="alert">
+                    <div class="fw-semibold mb-1">Last onboarding error</div>
+                    <div class="small mb-0">{{ onboarding.last_error }}</div>
+                </div>
+                {% endif %}
+
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="submit">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="registration_path">Registration Path</label>
+                            <select class="form-select" id="registration_path" name="registration_path">
+                                {% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'standard') %}
+                                {% for value, label in registration_path_choices %}
+                                <option value="{{ value }}" {% if selected_registration_path == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="number_strategy">Number Strategy</label>
+                            <select class="form-select" id="number_strategy" name="number_strategy">
+                                {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') %}
+                                {% for value, label in number_strategy_choices %}
+                                <option value="{{ value }}" {% if selected_number_strategy == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="business_name">Legal Business Name</label>
+                            <input class="form-control" id="business_name" name="business_name" required value="{{ request.form.get('business_name', onboarding.business_name if onboarding else organization.name) }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="business_type">Business Type</label>
+                            <input class="form-control" id="business_type" name="business_type" placeholder="Nonprofit, LLC, Sole Proprietor" value="{{ request.form.get('business_type', onboarding.business_type if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="email">Business Email</label>
+                            <input class="form-control" id="email" name="email" type="email" required value="{{ request.form.get('email', onboarding.email if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="phone_number">Business Phone</label>
+                            <input class="form-control" id="phone_number" name="phone_number" placeholder="+15551234567" value="{{ request.form.get('phone_number', onboarding.phone_number if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="mobile_number">Mobile / OTP Phone</label>
+                            <input class="form-control" id="mobile_number" name="mobile_number" placeholder="+15551234567" value="{{ request.form.get('mobile_number', onboarding.mobile_number if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="website_url">Website URL</label>
+                            <input class="form-control" id="website_url" name="website_url" placeholder="https://example.org" value="{{ request.form.get('website_url', onboarding.website_url if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="social_profile_url">Social Profile URL</label>
+                            <input class="form-control" id="social_profile_url" name="social_profile_url" placeholder="https://facebook.com/example" value="{{ request.form.get('social_profile_url', onboarding.social_profile_url if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="first_name">Rep First Name</label>
+                            <input class="form-control" id="first_name" name="first_name" required value="{{ request.form.get('first_name', onboarding.first_name if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="last_name">Rep Last Name</label>
+                            <input class="form-control" id="last_name" name="last_name" required value="{{ request.form.get('last_name', onboarding.last_name if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="job_position">Rep Title</label>
+                            <input class="form-control" id="job_position" name="job_position" placeholder="Owner, Director, CEO" value="{{ request.form.get('job_position', onboarding.job_position if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="business_registration_identifier">Registration Identifier</label>
+                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" value="{{ request.form.get('business_registration_identifier', onboarding.business_registration_identifier if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="business_registration_number">Registration Number</label>
+                            <input class="form-control" id="business_registration_number" name="business_registration_number" placeholder="Stored encrypted once submitted" value="{{ request.form.get('business_registration_number', '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="campaign_verify_token">Campaign Verify Token</label>
+                            <input class="form-control" id="campaign_verify_token" name="campaign_verify_token" placeholder="Optional for 527 orgs" value="{{ request.form.get('campaign_verify_token', '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="address_sid">Twilio Address SID</label>
+                            <input class="form-control" id="address_sid" name="address_sid" placeholder="ADxxxxxxxx" value="{{ request.form.get('address_sid', onboarding.address_sid if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="supporting_document_sid">Supporting Document SID</label>
+                            <input class="form-control" id="supporting_document_sid" name="supporting_document_sid" placeholder="RDxxxxxxxx" value="{{ request.form.get('supporting_document_sid', onboarding.supporting_document_sid if onboarding else '') }}">
+                        </div>
+                    </div>
+
+                    <hr class="my-4">
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="campaign_use_case">Campaign Use Case</label>
+                            <select class="form-select" id="campaign_use_case" name="campaign_use_case">
+                                {% set selected_campaign_use_case = request.form.get('campaign_use_case', onboarding.campaign_use_case if onboarding else 'MIXED') %}
+                                {% for value, label in campaign_use_case_choices %}
+                                <option value="{{ value }}" {% if selected_campaign_use_case == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="campaign_description">Campaign Description</label>
+                            <input class="form-control" id="campaign_description" name="campaign_description" required placeholder="Announcements and member reminders" value="{{ request.form.get('campaign_description', onboarding.campaign_description if onboarding else '') }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="message_flow">Opt-in / Message Flow</label>
+                            <textarea class="form-control" id="message_flow" name="message_flow" rows="4" required>{{ request.form.get('message_flow', onboarding.message_flow if onboarding else '') }}</textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="message_samples">Message Samples</label>
+                            <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
+                            <div class="form-text">One message sample per line.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="opt_in_message">Opt-in Message</label>
+                            <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', onboarding.opt_in_message if onboarding else '') }}</textarea>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="opt_out_message">Opt-out Message</label>
+                            <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', onboarding.opt_out_message if onboarding else '') }}</textarea>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="help_message">Help Message</label>
+                            <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', onboarding.help_message if onboarding else '') }}</textarea>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="opt_in_keywords">Opt-in Keywords</label>
+                            <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" placeholder="START,SUBSCRIBE,YES" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords or 'START,SUBSCRIBE,YES') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="opt_out_keywords">Opt-out Keywords</label>
+                            <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" placeholder="STOP,UNSUBSCRIBE,END" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords or 'STOP,UNSUBSCRIBE,END') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="help_keywords">Help Keywords</label>
+                            <input class="form-control" id="help_keywords" name="help_keywords" placeholder="HELP,INFO" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords or 'HELP,INFO') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="desired_phone_number">Desired Phone Number</label>
+                            <input class="form-control" id="desired_phone_number" name="desired_phone_number" placeholder="+15551234567" value="{{ request.form.get('desired_phone_number', onboarding.desired_phone_number if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="desired_phone_number_sid">Existing Phone Number SID</label>
+                            <input class="form-control" id="desired_phone_number_sid" name="desired_phone_number_sid" placeholder="PNxxxxxxxx" value="{{ request.form.get('desired_phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') }}">
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="has_embedded_links" name="has_embedded_links" {% if request.form.get('has_embedded_links') == 'on' or (request.method != 'POST' and a2p_form_defaults.has_embedded_links) %}checked{% endif %}>
+                                <label class="form-check-label" for="has_embedded_links">Messages include links</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="has_embedded_phone" name="has_embedded_phone" {% if request.form.get('has_embedded_phone') == 'on' or (request.method != 'POST' and a2p_form_defaults.has_embedded_phone) %}checked{% endif %}>
+                                <label class="form-check-label" for="has_embedded_phone">Messages include phone numbers</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 flex-wrap mt-4">
+                        <button type="submit" class="btn btn-primary">Submit A2P Onboarding</button>
+                        <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-outline-secondary">Back to Messaging</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="card app-card mb-4">
+            <div class="card-body">
+                <div class="small text-muted text-uppercase mb-2">Current Status</div>
+                <ul class="list-unstyled small mb-0">
+                    <li class="mb-2"><strong>Onboarding:</strong> {{ onboarding.onboarding_status if onboarding else 'draft' }}</li>
+                    <li class="mb-2"><strong>Brand:</strong> {{ onboarding.brand_status or 'not submitted' }}</li>
+                    <li class="mb-2"><strong>Campaign:</strong> {{ onboarding.campaign_status or 'not submitted' }}</li>
+                    <li class="mb-2"><strong>Verification:</strong> {{ onboarding.verification_status or 'n/a' }}</li>
+                    <li><strong>Messaging service:</strong> {{ messaging_profile.messaging_service_sid or 'not provisioned yet' }}</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="small text-muted text-uppercase mb-3">Actions</div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="refresh">
+                        <button type="submit" class="btn btn-outline-primary" {% if not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>
+                            Refresh Status
+                        </button>
+                    </form>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="cancel">
+                        <button type="submit" class="btn btn-outline-danger" {% if not onboarding or onboarding.onboarding_status in ('draft', 'approved', 'canceled') %}disabled{% endif %}>
+                            Cancel
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

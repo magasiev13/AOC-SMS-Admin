@@ -86,6 +86,20 @@ def _validate_saas_billing_config(app: Flask) -> None:
         details = "\n - ".join(f"{name} must be configured for SaaS billing." for name in missing)
         raise RuntimeError(f"SaaS billing configuration is invalid:\n - {details}")
 
+    api_key_sid = (app.config.get("TWILIO_API_KEY_SID") or "").strip()
+    api_key_secret = (app.config.get("TWILIO_API_KEY_SECRET") or "").strip()
+    if bool(api_key_sid) != bool(api_key_secret):
+        raise RuntimeError(
+            "SaaS billing configuration is invalid:\n - TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET must be configured together."
+        )
+
+    if app.config.get("TWILIO_A2P_ONBOARDING_ENABLED"):
+        primary_customer_profile_sid = (app.config.get("TWILIO_PRIMARY_CUSTOMER_PROFILE_SID") or "").strip()
+        if not primary_customer_profile_sid:
+            raise RuntimeError(
+                "SaaS billing configuration is invalid:\n - TWILIO_PRIMARY_CUSTOMER_PROFILE_SID must be configured when TWILIO_A2P_ONBOARDING_ENABLED=1."
+            )
+
 
 def _run_startup_tasks(app: Flask) -> None:
     with app.app_context():

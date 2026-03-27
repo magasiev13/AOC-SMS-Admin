@@ -37,6 +37,7 @@ def main() -> None:
     from app.models import (
         AppUser,
         Organization,
+        OrganizationA2POnboarding,
         OrganizationInvitation,
         OrganizationMembership,
         OrganizationMessagingProfile,
@@ -102,6 +103,216 @@ def main() -> None:
             sender_review_status="approved",
         )
 
+        queued_org = Organization(name="Queued Bakery", slug="queued-bakery", status="active")
+        queued_subscription = OrganizationSubscription(
+            organization=queued_org,
+            stripe_price_id="price_browser",
+            status="trialing",
+            current_period_end=utc_now() + timedelta(days=14),
+        )
+        queued_messaging = OrganizationMessagingProfile(
+            organization=queued_org,
+            twilio_subaccount_sid="ACqueued0001",
+            messaging_service_sid="MGqueued0001",
+            status="pending",
+            provider_status="pending",
+            business_type="Bakery",
+            use_case="Announcements",
+        )
+        queued_onboarding = OrganizationA2POnboarding(
+            organization=queued_org,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="queued",
+            business_name="Queued Bakery",
+            email="ops@queued.test",
+            first_name="Quinn",
+            last_name="Queue",
+            campaign_description="Queued messages",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Queued sample message"]',
+            submitted_at=utc_now(),
+        )
+
+        pending_org = Organization(name="Pending Review Bakery", slug="pending-review-bakery", status="active")
+        pending_subscription = OrganizationSubscription(
+            organization=pending_org,
+            stripe_price_id="price_browser",
+            status="trialing",
+            current_period_end=utc_now() + timedelta(days=14),
+        )
+        pending_messaging = OrganizationMessagingProfile(
+            organization=pending_org,
+            twilio_subaccount_sid="ACpending0001",
+            messaging_service_sid="MGpending0001",
+            status="pending",
+            provider_status="pending",
+            business_type="Bakery",
+            use_case="Announcements",
+        )
+        pending_onboarding = OrganizationA2POnboarding(
+            organization=pending_org,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="pending",
+            brand_status="pending-review",
+            campaign_status="pending",
+            verification_status="pending",
+            business_name="Pending Review Bakery",
+            email="ops@pending.test",
+            first_name="Penny",
+            last_name="Pending",
+            campaign_description="Pending review messages",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Pending sample message"]',
+            raw_submission_json='{"has_embedded_links": true, "has_embedded_phone": true}',
+            submitted_at=utc_now(),
+            last_synced_at=utc_now(),
+        )
+
+        approved_org = Organization(name="Approved Bakery", slug="approved-bakery", status="active")
+        approved_subscription = OrganizationSubscription(
+            organization=approved_org,
+            stripe_price_id="price_browser",
+            status="active",
+            current_period_end=utc_now() + timedelta(days=30),
+        )
+        approved_messaging = OrganizationMessagingProfile(
+            organization=approved_org,
+            twilio_subaccount_sid="ACapproved0001",
+            messaging_service_sid="MGapproved0001",
+            phone_number_sid="PNapproved0001",
+            from_number="+15550002222",
+            inbound_identity="+15550002222",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+            business_type="Bakery",
+            use_case="Announcements",
+            consent_acknowledged_at=utc_now(),
+        )
+        approved_onboarding = OrganizationA2POnboarding(
+            organization=approved_org,
+            registration_path="standard",
+            number_strategy="existing_subaccount_number",
+            onboarding_status="approved",
+            brand_status="approved",
+            campaign_status="approved",
+            business_name="Approved Bakery",
+            email="ops@approved.test",
+            first_name="Avery",
+            last_name="Approved",
+            campaign_description="Approved messages",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Approved sample message"]',
+            desired_phone_number_sid="PNapproved0001",
+            submitted_at=utc_now(),
+            approved_at=utc_now(),
+            last_synced_at=utc_now(),
+        )
+
+        rejected_org = Organization(name="Rejected Bakery", slug="rejected-bakery", status="active")
+        rejected_subscription = OrganizationSubscription(
+            organization=rejected_org,
+            stripe_price_id="price_browser",
+            status="trialing",
+            current_period_end=utc_now() + timedelta(days=14),
+        )
+        rejected_messaging = OrganizationMessagingProfile(
+            organization=rejected_org,
+            twilio_subaccount_sid="ACrejected0001",
+            messaging_service_sid="MGrejected0001",
+            status="error",
+            provider_status="error",
+            last_provision_error="Twilio rejected the registration because the campaign description was too vague.",
+            business_type="Bakery",
+            use_case="Marketing",
+        )
+        rejected_onboarding = OrganizationA2POnboarding(
+            organization=rejected_org,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="rejected",
+            brand_status="approved",
+            campaign_status="rejected",
+            business_name="Rejected Bakery",
+            email="ops@rejected.test",
+            first_name="Riley",
+            last_name="Rejected",
+            campaign_description="Rejected campaign",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Rejected sample message"]',
+            submitted_at=utc_now(),
+            last_synced_at=utc_now(),
+            last_error="Twilio rejected the registration because the campaign description was too vague.",
+        )
+
+        error_org = Organization(name="Error Bakery", slug="error-bakery", status="active")
+        error_subscription = OrganizationSubscription(
+            organization=error_org,
+            stripe_price_id="price_browser",
+            status="trialing",
+            current_period_end=utc_now() + timedelta(days=14),
+        )
+        error_messaging = OrganizationMessagingProfile(
+            organization=error_org,
+            twilio_subaccount_sid="ACerror0001",
+            messaging_service_sid="MGerror0001",
+            status="error",
+            provider_status="error",
+            last_provision_error="Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.",
+            business_type="Bakery",
+            use_case="Announcements",
+        )
+        error_onboarding = OrganizationA2POnboarding(
+            organization=error_org,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="error",
+            business_name="Error Bakery",
+            email="ops@error.test",
+            first_name="Erin",
+            last_name="Error",
+            campaign_description="Error messages",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Error sample message"]',
+            submitted_at=utc_now(),
+            last_synced_at=utc_now(),
+            last_error="Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.",
+        )
+
+        canceled_org = Organization(name="Canceled Bakery", slug="canceled-bakery", status="active")
+        canceled_subscription = OrganizationSubscription(
+            organization=canceled_org,
+            stripe_price_id="price_browser",
+            status="trialing",
+            current_period_end=utc_now() + timedelta(days=14),
+        )
+        canceled_messaging = OrganizationMessagingProfile(
+            organization=canceled_org,
+            twilio_subaccount_sid="ACcanceled0001",
+            messaging_service_sid="MGcanceled0001",
+            status="pending",
+            provider_status="pending",
+            business_type="Bakery",
+            use_case="Announcements",
+        )
+        canceled_onboarding = OrganizationA2POnboarding(
+            organization=canceled_org,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="canceled",
+            business_name="Canceled Bakery",
+            email="ops@canceled.test",
+            first_name="Casey",
+            last_name="Canceled",
+            campaign_description="Canceled messages",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Canceled sample message"]',
+            submitted_at=utc_now(),
+            canceled_at=utc_now(),
+        )
+
         owner = AppUser(
             username="owner-browser",
             email="owner@browser.test",
@@ -139,6 +350,30 @@ def main() -> None:
             active_org,
             active_subscription,
             active_messaging,
+            queued_org,
+            queued_subscription,
+            queued_messaging,
+            queued_onboarding,
+            pending_org,
+            pending_subscription,
+            pending_messaging,
+            pending_onboarding,
+            approved_org,
+            approved_subscription,
+            approved_messaging,
+            approved_onboarding,
+            rejected_org,
+            rejected_subscription,
+            rejected_messaging,
+            rejected_onboarding,
+            error_org,
+            error_subscription,
+            error_messaging,
+            error_onboarding,
+            canceled_org,
+            canceled_subscription,
+            canceled_messaging,
+            canceled_onboarding,
             owner,
             trial_owner,
             staff,

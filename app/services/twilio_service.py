@@ -137,9 +137,18 @@ def _master_credentials() -> tuple[str, str]:
     return account_sid, auth_token
 
 
-def _master_client() -> Client:
+def _master_rest_credentials() -> tuple[str, str, str]:
     account_sid, auth_token = _master_credentials()
-    return Client(account_sid, auth_token)
+    api_key_sid = (current_app.config.get("TWILIO_API_KEY_SID") or "").strip()
+    api_key_secret = (current_app.config.get("TWILIO_API_KEY_SECRET") or "").strip()
+    if api_key_sid and api_key_secret:
+        return account_sid, api_key_sid, api_key_secret
+    return account_sid, account_sid, auth_token
+
+
+def _master_client() -> Client:
+    account_sid, username, password = _master_rest_credentials()
+    return Client(username, password, account_sid)
 
 
 def _twilio_inbound_webhook_url() -> str:
@@ -170,8 +179,8 @@ def _build_subaccount_client(profile: OrganizationMessagingProfile) -> Client:
             raise ValueError("Stored subaccount auth token is empty.")
         return Client(profile.twilio_subaccount_sid, auth_token)
 
-    master_account_sid, master_auth_token = _master_credentials()
-    return Client(master_account_sid, master_auth_token, profile.twilio_subaccount_sid)
+    master_account_sid, username, password = _master_rest_credentials()
+    return Client(username, password, profile.twilio_subaccount_sid)
 
 
 def _client_for_usage_reconciliation(organization_id: int | None) -> Client:

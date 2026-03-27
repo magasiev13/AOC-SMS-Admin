@@ -215,6 +215,80 @@ class TestSendBulkJob(unittest.TestCase):
         mock_get_job.return_value = object()
         self.assertTrue(self._should_mark_failed())
 
+class TestA2PTaskJobs(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_env = os.environ.copy()
+        self._temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(self._temp_dir.name, "sms.db")
+        os.environ.update(
+            {
+                "DATABASE_URL": f"sqlite:///{db_path}",
+                "FLASK_DEBUG": "1",
+                "SECRET_KEY": "test-secret-key",
+                "SAAS_MODE": "1",
+                "STRIPE_SECRET_KEY": "sk_test_123",
+                "STRIPE_WEBHOOK_SECRET": "whsec_test_123",
+                "STRIPE_PRICE_ID": "price_test_123",
+                "SAAS_BASE_URL": "https://beta.example.com",
+                "TWILIO_CREDENTIAL_ENCRYPTION_KEY": "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
+                "TWILIO_A2P_ONBOARDING_ENABLED": "1",
+                "TWILIO_PRIMARY_CUSTOMER_PROFILE_SID": "BUprimary123",
+            }
+        )
+
+        import app.config
+
+        importlib.reload(app.config)
+        from app import create_app, db
+        from app.tasks import process_a2p_onboarding_job, reconcile_a2p_onboardings_job
+
+        self.db = db
+        self.process_a2p_onboarding_job = process_a2p_onboarding_job
+        self.reconcile_a2p_onboardings_job = reconcile_a2p_onboardings_job
+        self.app = create_app(run_startup_tasks=False, start_scheduler=False)
+        self.app.config["TESTING"] = True
+        self._ctx = self.app.app_context()
+        self._ctx.push()
+        self.db.create_all()
+
+    def tearDown(self) -> None:
+        self.db.session.remove()
+        self.db.drop_all()
+        self._ctx.pop()
+        self._temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self._original_env)
+
+    @patch("app.tasks.process_a2p_onboarding")
+    def test_process_a2p_onboarding_job_returns_status_summary(self, mock_process) -> None:
+        mock_process.return_value = type(
+            "Onboarding",
+            (),
+            {"onboarding_status": "approved", "brand_status": "approved", "campaign_status": "approved"},
+        )()
+
+        result = self.process_a2p_onboarding_job(12, 99)
+
+        self.assertEqual(
+            result,
+            {
+                "organization_id": 12,
+                "onboarding_status": "approved",
+                "brand_status": "approved",
+                "campaign_status": "approved",
+            },
+        )
+        mock_process.assert_called_once_with(12, actor_user_id=99)
+
+    @patch("app.tasks.reconcile_pending_a2p_onboardings")
+    def test_reconcile_a2p_onboardings_job_returns_service_summary(self, mock_reconcile) -> None:
+        mock_reconcile.return_value = {"records_seen": 3, "records_processed": 2, "records_failed": 1}
+
+        result = self.reconcile_a2p_onboardings_job()
+
+        self.assertEqual(result["records_seen"], 3)
+        mock_reconcile.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

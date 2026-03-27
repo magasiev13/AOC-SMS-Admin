@@ -33,6 +33,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             KeywordAutomationRule,
             MessageLog,
             Organization,
+            OrganizationA2POnboarding,
             OrganizationInvitation,
             OrganizationMembership,
             OrganizationMessagingProfile,
@@ -50,6 +51,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.KeywordAutomationRule = KeywordAutomationRule
         self.MessageLog = MessageLog
         self.Organization = Organization
+        self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationInvitation = OrganizationInvitation
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
@@ -64,6 +66,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
             WTF_CSRF_ENABLED=False,
             TWILIO_VALIDATE_INBOUND_SIGNATURE=False,
             INBOUND_AUTO_REPLY_ENABLED=True,
+            TWILIO_A2P_ONBOARDING_ENABLED=True,
+            TWILIO_PRIMARY_CUSTOMER_PROFILE_SID="BUprimary123",
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
@@ -1162,6 +1166,153 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(other_messaging_profile.messaging_service_sid, "MGother0001")
         self.assertEqual(other_messaging_profile.phone_number_sid, "PN1234567890ABCDE")
         self.assertEqual(other_messaging_profile.inbound_identity, "+15550009999")
+
+    def test_platform_admin_can_open_a2p_onboarding_wizard(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"A2P Onboarding", response.data)
+        self.assertIn(b"Legal Business Name", response.data)
+
+    def test_platform_admin_sees_manage_a2p_onboarding_link_on_messaging_page_before_onboarding_exists(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Manage A2P Onboarding", response.data)
+        self.assertIn(b"Status: <strong>draft</strong>", response.data)
+
+    def test_platform_admin_get_onboarding_restores_saved_checkbox_defaults(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="pending",
+            business_name="Acme Co",
+            email="ops@acme.test",
+            first_name="Avery",
+            last_name="Admin",
+            campaign_description="Announcements",
+            message_flow="Users opt in on the website.",
+            message_samples_json='["Sample message"]',
+            raw_submission_json='{"has_embedded_links": true, "has_embedded_phone": true}',
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        self._login_platform_admin()
+
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data, rb'id="has_embedded_links"[^>]*checked')
+        self.assertRegex(response.data, rb'id="has_embedded_phone"[^>]*checked')
+
+    @patch("app.routes.submit_a2p_onboarding")
+    def test_platform_admin_can_submit_a2p_onboarding(self, mock_submit_a2p_onboarding) -> None:
+        mock_submit_a2p_onboarding.return_value = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            registration_path="standard",
+            number_strategy="auto_buy",
+        )
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={
+                "action": "submit",
+                "registration_path": "standard",
+                "number_strategy": "auto_buy",
+                "business_name": "Acme",
+                "email": "ops@acme.test",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "campaign_description": "Announcements",
+                "message_flow": "Users opt in on the website.",
+                "message_samples": "Sample message",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/messaging/onboarding", response.headers.get("Location", ""))
+        mock_submit_a2p_onboarding.assert_called_once()
+
+    @patch("app.routes.submit_a2p_onboarding")
+    def test_platform_admin_submit_a2p_onboarding_surfaces_provider_errors(self, mock_submit_a2p_onboarding) -> None:
+        from app.services.twilio_service import ProviderProvisioningError
+
+        mock_submit_a2p_onboarding.side_effect = ProviderProvisioningError("Queue is unavailable.")
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={
+                "action": "submit",
+                "registration_path": "standard",
+                "number_strategy": "auto_buy",
+                "business_name": "Acme",
+                "email": "ops@acme.test",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "campaign_description": "Announcements",
+                "message_flow": "Users opt in on the website.",
+                "message_samples": "Sample message",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Queue is unavailable.", response.data)
+        self.assertIn(b"A2P Onboarding", response.data)
+        self.assertIn(b"ops@acme.test", response.data)
+        self.assertIn(b"Announcements", response.data)
+
+    def test_owner_cannot_access_platform_onboarding_route(self) -> None:
+        self._login_owner()
+
+        response = self.client.get(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_cannot_access_platform_onboarding_route(self) -> None:
+        staff_user = self.AppUser(
+            username="staff-user-a2p",
+            email="staff-a2p@acme.test",
+            full_name="Staff User",
+            phone="+15550000010",
+            role="social_manager",
+            must_change_password=False,
+        )
+        staff_user.set_password("Staff-pass1!")
+        self.db.session.add(staff_user)
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=self.organization.id,
+                user_id=staff_user.id,
+                role="staff",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.post(
+            "/login",
+            data={"username": "staff-a2p@acme.test", "password": "Staff-pass1!"},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        route_response = self.client.get(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            follow_redirects=False,
+        )
+        self.assertEqual(route_response.status_code, 403)
 
     def test_invitation_accept_creates_membership_and_redirects_owner_to_billing(self) -> None:
         invitation = self.OrganizationInvitation(

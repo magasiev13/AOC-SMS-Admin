@@ -52,6 +52,26 @@ def _doctor(engine) -> int:
     if not inspect(engine).get_table_names():
         issues.append("Target database is empty. Run `python -m app.saas_db --apply` first.")
 
+    inspector = inspect(engine)
+    if "organization_a2p_onboardings" in inspector.get_table_names():
+        with engine.connect() as connection:
+            rows = connection.exec_driver_sql(
+                """
+                SELECT onboarding_status, COUNT(*)
+                FROM organization_a2p_onboardings
+                GROUP BY onboarding_status
+                """
+            ).fetchall()
+        if rows:
+            status_summary = ", ".join(f"{status}={count}" for status, count in rows)
+            print(f"A2P onboarding: {status_summary}")
+        problematic_statuses = {"error", "needs_action", "rejected"}
+        if any(status in problematic_statuses for status, _count in rows):
+            issues.append(
+                "A2P onboarding has records requiring attention: "
+                + ", ".join(f"{status}={count}" for status, count in rows if status in problematic_statuses)
+            )
+
     if issues:
         for issue in issues:
             print(f"ERROR: {issue}", file=sys.stderr)

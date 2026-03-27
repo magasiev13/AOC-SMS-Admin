@@ -12,6 +12,10 @@ from app.services.twilio_service import (
     get_twilio_service,
     record_usage_candidates,
 )
+from app.services.twilio_a2p_service import (
+    process_a2p_onboarding,
+    reconcile_pending_a2p_onboardings,
+)
 
 
 def _should_mark_failed() -> bool:
@@ -221,3 +225,23 @@ def backfill_suppressions_job() -> dict:
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         return backfill_suppressions()
+
+
+def process_a2p_onboarding_job(organization_id: int, actor_user_id: int | None = None) -> dict:
+    """Process or advance Twilio A2P onboarding for one organization."""
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    with app.app_context():
+        onboarding = process_a2p_onboarding(organization_id, actor_user_id=actor_user_id)
+        return {
+            "organization_id": organization_id,
+            "onboarding_status": onboarding.onboarding_status,
+            "brand_status": onboarding.brand_status,
+            "campaign_status": onboarding.campaign_status,
+        }
+
+
+def reconcile_a2p_onboardings_job() -> dict[str, int]:
+    """Poll pending Twilio A2P registrations and advance ready records."""
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    with app.app_context():
+        return reconcile_pending_a2p_onboardings()

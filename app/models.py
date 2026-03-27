@@ -163,6 +163,12 @@ class Organization(db.Model):
         uselist=False,
         cascade='all, delete-orphan',
     )
+    a2p_onboarding = db.relationship(
+        'OrganizationA2POnboarding',
+        back_populates='organization',
+        uselist=False,
+        cascade='all, delete-orphan',
+    )
 
     @validates("name")
     def _normalize_name(self, key, value):
@@ -406,6 +412,120 @@ class OrganizationMessagingProfile(db.Model):
 
     def __repr__(self):
         return f'<OrganizationMessagingProfile org={self.organization_id} status={self.provider_status}>'
+
+
+class OrganizationA2POnboarding(db.Model):
+    """Tracked Twilio A2P onboarding state for one organization."""
+    __tablename__ = 'organization_a2p_onboardings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
+    registration_path = db.Column(db.String(32), nullable=False, default='standard')
+    number_strategy = db.Column(db.String(32), nullable=False, default='auto_buy')
+    onboarding_status = db.Column(db.String(20), nullable=False, default='draft', index=True)
+    brand_status = db.Column(db.String(30), nullable=True, index=True)
+    campaign_status = db.Column(db.String(30), nullable=True, index=True)
+    verification_status = db.Column(db.String(30), nullable=True, index=True)
+    business_name = db.Column(db.String(120), nullable=True)
+    business_type = db.Column(db.String(80), nullable=True)
+    business_identity = db.Column(db.String(40), nullable=True)
+    business_registration_identifier = db.Column(db.String(40), nullable=True)
+    business_registration_number_encrypted = db.Column(db.Text, nullable=True)
+    website_url = db.Column(db.String(255), nullable=True)
+    social_profile_url = db.Column(db.String(255), nullable=True)
+    email = db.Column(db.String(255), nullable=True)
+    phone_number = db.Column(db.String(20), nullable=True)
+    mobile_number = db.Column(db.String(20), nullable=True)
+    first_name = db.Column(db.String(80), nullable=True)
+    last_name = db.Column(db.String(80), nullable=True)
+    job_position = db.Column(db.String(80), nullable=True)
+    address_sid = db.Column(db.String(64), nullable=True)
+    supporting_document_sid = db.Column(db.String(64), nullable=True)
+    customer_profile_sid = db.Column(db.String(64), nullable=True, unique=True)
+    trust_product_sid = db.Column(db.String(64), nullable=True, unique=True)
+    brand_registration_sid = db.Column(db.String(64), nullable=True, unique=True)
+    vetting_sid = db.Column(db.String(64), nullable=True, unique=True)
+    campaign_sid = db.Column(db.String(64), nullable=True, unique=True)
+    campaign_use_case = db.Column(db.String(40), nullable=False, default='MIXED')
+    campaign_description = db.Column(db.Text, nullable=True)
+    message_flow = db.Column(db.Text, nullable=True)
+    message_samples_json = db.Column(db.Text, nullable=True)
+    opt_in_message = db.Column(db.Text, nullable=True)
+    opt_out_message = db.Column(db.Text, nullable=True)
+    help_message = db.Column(db.Text, nullable=True)
+    opt_in_keywords_json = db.Column(db.Text, nullable=True)
+    opt_out_keywords_json = db.Column(db.Text, nullable=True)
+    help_keywords_json = db.Column(db.Text, nullable=True)
+    campaign_verify_token_encrypted = db.Column(db.Text, nullable=True)
+    desired_phone_number = db.Column(db.String(20), nullable=True)
+    desired_phone_number_sid = db.Column(db.String(64), nullable=True)
+    raw_submission_json = db.Column(db.Text, nullable=True)
+    raw_status_json = db.Column(db.Text, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    failure_code = db.Column(db.String(80), nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    last_synced_at = db.Column(db.DateTime, nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    canceled_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='a2p_onboarding')
+
+    @validates("registration_path")
+    def _normalize_registration_path(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"standard", "low_volume_standard", "nonprofit", "government", "sole_proprietor"}:
+            raise ValueError(
+                "Registration path must be standard, low_volume_standard, nonprofit, government, or sole_proprietor."
+            )
+        return normalized
+
+    @validates("number_strategy")
+    def _normalize_number_strategy(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"auto_buy", "existing_subaccount_number", "transfer_parent_number"}:
+            raise ValueError(
+                "Number strategy must be auto_buy, existing_subaccount_number, or transfer_parent_number."
+            )
+        return normalized
+
+    @validates("onboarding_status")
+    def _normalize_onboarding_status(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {
+            "draft",
+            "queued",
+            "processing",
+            "pending",
+            "approved",
+            "needs_action",
+            "rejected",
+            "canceled",
+            "error",
+        }:
+            raise ValueError(
+                "Onboarding status must be draft, queued, processing, pending, approved, needs_action, rejected, canceled, or error."
+            )
+        return normalized
+
+    @validates("phone_number", "mobile_number", "desired_phone_number")
+    def _normalize_phone_value(self, key, value):
+        if value is None:
+            return None
+        normalized = normalize_phone(value)
+        return normalized or None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.onboarding_status in {"approved", "rejected", "canceled", "error"}
+
+    @property
+    def is_pending_review(self) -> bool:
+        return self.onboarding_status in {"queued", "processing", "pending"}
+
+    def __repr__(self):
+        return f'<OrganizationA2POnboarding org={self.organization_id} status={self.onboarding_status}>'
 
 
 class OrganizationProviderAuditLog(db.Model):

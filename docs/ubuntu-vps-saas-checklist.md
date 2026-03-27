@@ -118,7 +118,11 @@ STRIPE_WEBHOOK_SECRET=whsec_replace_me
 STRIPE_PRICE_ID=price_replace_me
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
+TWILIO_API_KEY_SID=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_KEY_SECRET=replace_me
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
+TWILIO_A2P_ONBOARDING_ENABLED=0
+TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=
 APP_TIMEZONE=America/Denver
 AUTH_PASSWORD_POLICY_ENFORCE=1
 AUTH_PASSWORD_MIN_LENGTH=12
@@ -145,6 +149,7 @@ Adjust at least these placeholders before continuing:
 - Stripe values
 - Twilio values
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` when A2P automation is enabled
 
 ## 6. Create The Virtualenv And Install Python Dependencies
 
@@ -273,7 +278,7 @@ This script will:
 Check service state:
 
 ```bash
-sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer --no-pager
+sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer sms-saas-a2p-reconcile.timer --no-pager
 ```
 
 Check the health endpoint again:

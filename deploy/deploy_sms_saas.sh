@@ -67,6 +67,23 @@ sync_deploy_artifacts
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${SAAS_DBDOCTOR_BIN}\" --apply && \"${SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${SAAS_DBDOCTOR_BIN}\" --doctor"
 
+echo "==> Refreshing systemd units and helper scripts"
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas.service" /etc/systemd/system/sms-saas.service
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-worker.service" /etc/systemd/system/sms-saas-worker.service
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-scheduler.service" /etc/systemd/system/sms-saas-scheduler.service
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-scheduler.timer" /etc/systemd/system/sms-saas-scheduler.timer
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-billing-reconcile.service" /etc/systemd/system/sms-saas-billing-reconcile.service
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-billing-reconcile.timer" /etc/systemd/system/sms-saas-billing-reconcile.timer
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-a2p-reconcile.service" /etc/systemd/system/sms-saas-a2p-reconcile.service
+sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-a2p-reconcile.timer" /etc/systemd/system/sms-saas-a2p-reconcile.timer
+sudo install -m 0755 "${APP_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
+sudo install -m 0755 "${APP_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
+sudo install -m 0755 "${APP_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
+sudo install -m 0755 "${APP_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh"
+sudo install -m 0755 "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh"
+sudo systemctl daemon-reload
+sudo systemctl enable --now sms-saas-a2p-reconcile.timer
+
 if ! sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${VENV_BIN}/python\" - <<'PY'
 from app import create_app
 create_app(run_startup_tasks=False, start_scheduler=False)

@@ -88,6 +88,15 @@ from app.services.recipient_service import (
     get_unsubscribed_phone_set,
 )
 from app.services.twilio_service import validate_inbound_signature_detailed
+from app.services.twilio_a2p_service import (
+    a2p_campaign_use_case_choices,
+    a2p_number_strategy_choices,
+    a2p_registration_path_choices,
+    cancel_a2p_onboarding,
+    ensure_a2p_onboarding,
+    refresh_a2p_onboarding,
+    submit_a2p_onboarding,
+)
 from app.services.twilio_service import (
     ensure_messaging_profile,
     ProviderProvisioningError,
@@ -137,7 +146,44 @@ def _normalize_org_messaging_values(
     normalized_service_sid = messaging_service_sid.strip().upper() if messaging_service_sid else None
     return normalized_sender or None, normalized_service_sid or None
 
+def _messaging_profile_status(
+    sender_number: str | None,
+    messaging_service_sid: str | None,
+) -> str:
+    return 'active' if (sender_number or messaging_service_sid) else 'pending'
 
+
+def _a2p_form_defaults(onboarding) -> dict[str, str]:
+    def _json_text(value: str | None, *, separator: str) -> str:
+        if not value:
+            return ""
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return ""
+        if not isinstance(parsed, list):
+            return ""
+        return separator.join(str(item) for item in parsed if str(item).strip())
+
+    def _json_bool(value: str | None, key: str) -> bool:
+        if not value:
+            return False
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(parsed, dict):
+            return False
+        return bool(parsed.get(key))
+
+    return {
+        "message_samples": _json_text(getattr(onboarding, "message_samples_json", None), separator="\n"),
+        "opt_in_keywords": _json_text(getattr(onboarding, "opt_in_keywords_json", None), separator=","),
+        "opt_out_keywords": _json_text(getattr(onboarding, "opt_out_keywords_json", None), separator=","),
+        "help_keywords": _json_text(getattr(onboarding, "help_keywords_json", None), separator=","),
+        "has_embedded_links": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_links"),
+        "has_embedded_phone": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_phone"),
+    }
 def _validate_org_messaging_profile_input(
     sender_number: str | None,
     messaging_service_sid: str | None,
@@ -2870,6 +2916,65 @@ def platform_organizations_messaging_edit(organization_id):
         'platform/organization_messaging_form.html',
         organization=organization,
         messaging_profile=messaging_profile,
+        onboarding=organization.a2p_onboarding,
+    )
+
+
+@bp.route('/platform/organizations/<int:organization_id>/messaging/onboarding', methods=['GET', 'POST'])
+@login_required
+def platform_organizations_messaging_onboarding(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    messaging_profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    if organization.messaging_profile is None or organization.a2p_onboarding is None:
+        db.session.commit()
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or 'submit').strip().lower()
+        try:
+            if action == 'submit':
+                submit_a2p_onboarding(
+                    organization.id,
+                    request.form.to_dict(flat=True),
+                    actor_user_id=current_user.id,
+                )
+                flash('Twilio A2P onboarding queued for processing.', 'success')
+            elif action == 'refresh':
+                refresh_a2p_onboarding(organization.id, actor_user_id=current_user.id)
+                flash('Twilio A2P onboarding refresh queued.', 'success')
+            elif action == 'cancel':
+                cancel_a2p_onboarding(organization.id, actor_user_id=current_user.id)
+                flash('Twilio A2P onboarding canceled.', 'success')
+            else:
+                flash('Unsupported onboarding action.', 'error')
+                return redirect(url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id))
+        except ProviderProvisioningError as exc:
+            flash(str(exc), 'error')
+            onboarding = organization.a2p_onboarding or onboarding
+            return render_template(
+                'platform/organization_a2p_onboarding_form.html',
+                organization=organization,
+                messaging_profile=messaging_profile,
+                onboarding=onboarding,
+                a2p_form_defaults=_a2p_form_defaults(onboarding),
+                registration_path_choices=a2p_registration_path_choices(),
+                number_strategy_choices=a2p_number_strategy_choices(),
+                campaign_use_case_choices=a2p_campaign_use_case_choices(),
+            )
+        return redirect(url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id))
+
+    return render_template(
+        'platform/organization_a2p_onboarding_form.html',
+        organization=organization,
+        messaging_profile=messaging_profile,
+        onboarding=onboarding,
+        a2p_form_defaults=_a2p_form_defaults(onboarding),
+        registration_path_choices=a2p_registration_path_choices(),
+        number_strategy_choices=a2p_number_strategy_choices(),
+        campaign_use_case_choices=a2p_campaign_use_case_choices(),
     )
 
 
