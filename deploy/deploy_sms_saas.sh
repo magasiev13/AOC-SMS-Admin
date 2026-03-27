@@ -76,11 +76,6 @@ sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-billing-reconcile.service" /et
 sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-billing-reconcile.timer" /etc/systemd/system/sms-saas-billing-reconcile.timer
 sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-a2p-reconcile.service" /etc/systemd/system/sms-saas-a2p-reconcile.service
 sudo install -m 0644 "${APP_ROOT}/deploy/sms-saas-a2p-reconcile.timer" /etc/systemd/system/sms-saas-a2p-reconcile.timer
-sudo install -m 0755 "${APP_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
-sudo install -m 0755 "${APP_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
-sudo install -m 0755 "${APP_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
-sudo install -m 0755 "${APP_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh"
-sudo install -m 0755 "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh"
 sudo systemctl daemon-reload
 sudo systemctl enable --now sms-saas-a2p-reconcile.timer
 
