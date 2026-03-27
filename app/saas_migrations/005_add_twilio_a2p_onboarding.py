@@ -78,10 +78,10 @@ def _table_exists(connection, table_name: str) -> bool:
 def apply(connection, logger) -> None:
     if not _table_exists(connection, "organization_a2p_onboardings"):
         connection.execute(text(TABLE_STATEMENT))
-        logger.info("SaaS migration 004: created organization_a2p_onboardings.")
+        logger.info("SaaS migration 005: created organization_a2p_onboardings.")
     else:
-        logger.info("SaaS migration 004: organization_a2p_onboardings already exists.")
+        logger.info("SaaS migration 005: organization_a2p_onboardings already exists.")
 
     for statement in INDEX_STATEMENTS:
         connection.execute(text(statement))
-    logger.info("SaaS migration 004: ensured organization_a2p_onboardings indexes.")
+    logger.info("SaaS migration 005: ensured organization_a2p_onboardings indexes.")

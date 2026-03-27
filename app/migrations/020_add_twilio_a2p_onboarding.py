@@ -66,9 +66,9 @@ def apply(connection, logger):
             )
             """
         )
-        logger.info("Migration 019: created organization_a2p_onboardings.")
+        logger.info("Migration 020: created organization_a2p_onboardings.")
     else:
-        logger.info("Migration 019: organization_a2p_onboardings already exists.")
+        logger.info("Migration 020: organization_a2p_onboardings already exists.")
 
     index_statements = (
         "CREATE INDEX IF NOT EXISTS ix_org_a2p_onboardings_status ON organization_a2p_onboardings (onboarding_status)",
@@ -83,4 +83,4 @@ def apply(connection, logger):
     )
     for statement in index_statements:
         connection.exec_driver_sql(statement)
-    logger.info("Migration 019: ensured organization_a2p_onboardings indexes.")
+    logger.info("Migration 020: ensured organization_a2p_onboardings indexes.")

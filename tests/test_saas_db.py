@@ -50,12 +50,12 @@ class TestSaasSchemaMigrations(unittest.TestCase):
         run_pending_saas_migrations(self.engine, self.logger, target_version="001")
         partial_report = inspect_saas_migrations(self.engine)
         self.assertEqual(partial_report["applied"], ["001"])
-        self.assertEqual(partial_report["pending"], ["002", "003", "004"])
+        self.assertEqual(partial_report["pending"], ["002", "003", "004", "005"])
         self.assertIn("saas_import_runs", partial_report["missing_tables"])
 
         run_pending_saas_migrations(self.engine, self.logger)
         final_report = inspect_saas_migrations(self.engine)
-        self.assertEqual(final_report["applied"], ["001", "002", "003", "004"])
+        self.assertEqual(final_report["applied"], ["001", "002", "003", "004", "005"])
         self.assertEqual(final_report["pending"], [])
         self.assertEqual(final_report["missing_tables"], [])
 
