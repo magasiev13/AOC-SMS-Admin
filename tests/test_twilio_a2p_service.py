@@ -148,6 +148,48 @@ class TestTwilioA2PService(unittest.TestCase):
                 actor_user_id=7,
             )
 
+    def test_submit_a2p_onboarding_requires_business_type_for_standard_paths(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "Business type is required"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                {
+                    "registration_path": "standard",
+                    "number_strategy": "auto_buy",
+                    "business_name": "Acme",
+                    "email": "ops@acme.test",
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "campaign_description": "Community updates",
+                    "message_flow": "Users opt in.",
+                    "message_samples": "Sample message",
+                },
+                actor_user_id=7,
+            )
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_defaults_nonprofit_business_type_from_registration_path(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            {
+                "registration_path": "nonprofit",
+                "number_strategy": "auto_buy",
+                "business_name": "Acme Nonprofit",
+                "email": "ops@acme.test",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "campaign_description": "Community updates",
+                "message_flow": "Users opt in.",
+                "message_samples": "Sample message",
+            },
+            actor_user_id=11,
+        )
+
+        self.assertEqual(onboarding.business_type, "Nonprofit")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 11)
+
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_marks_record_error_when_queueing_fails(self, mock_get_queue) -> None:
         queue = MagicMock()
@@ -161,6 +203,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "registration_path": "standard",
                     "number_strategy": "auto_buy",
                     "business_name": "Acme",
+                    "business_type": "LLC",
                     "email": "ops@acme.test",
                     "first_name": "Jane",
                     "last_name": "Doe",
@@ -201,6 +244,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.registration_path = "standard"
         onboarding.number_strategy = "auto_buy"
         onboarding.business_name = "Acme"
+        onboarding.business_type = "LLC"
         onboarding.email = "ops@acme.test"
         onboarding.first_name = "Jane"
         onboarding.last_name = "Doe"

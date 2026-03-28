@@ -68,6 +68,7 @@
                         <div class="col-md-6">
                             <label class="form-label" for="business_type">Business Type</label>
                             <input class="form-control" id="business_type" name="business_type" placeholder="Nonprofit, LLC, Sole Proprietor" value="{{ request.form.get('business_type', onboarding.business_type if onboarding else '') }}">
+                            <div class="form-text">Required for standard and low-volume registrations. Nonprofit and government paths are filled automatically.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="email">Business Email</label>

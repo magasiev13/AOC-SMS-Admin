@@ -167,6 +167,19 @@ def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
     return candidate
 
 
+def _normalize_business_type(registration_path: str, raw_value: str | None) -> str | None:
+    candidate = (raw_value or "").strip() or None
+    if registration_path == "sole_proprietor":
+        return candidate or "Sole Proprietor"
+    if candidate:
+        return candidate
+    if registration_path == "nonprofit":
+        return "Nonprofit"
+    if registration_path == "government":
+        return "Government"
+    raise ProviderProvisioningError("Business type is required for standard or low-volume A2P onboarding.")
+
+
 def _business_identity(registration_path: str) -> str:
     if registration_path == "government":
         return "government"
@@ -240,7 +253,7 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         registration_path=registration_path,
         number_strategy=number_strategy,
         business_name=business_name,
-        business_type=(payload.get("business_type") or "").strip() or None,
+        business_type=_normalize_business_type(registration_path, payload.get("business_type")),
         website_url=(payload.get("website_url") or "").strip() or None,
         social_profile_url=(payload.get("social_profile_url") or "").strip() or None,
         email=email,
@@ -557,7 +570,7 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "social_media_profile_urls": onboarding.social_profile_url or "",
                     "website_url": onboarding.website_url or "",
                     "business_regions_of_operation": "USA_AND_CANADA",
-                    "business_type": onboarding.business_type or "Nonprofit",
+                    "business_type": _normalize_business_type(onboarding.registration_path, onboarding.business_type) or "",
                     "business_registration_identifier": onboarding.business_registration_identifier or "EIN",
                     "business_identity": onboarding.business_identity or "direct_customer",
                     "business_industry": "OTHER",
