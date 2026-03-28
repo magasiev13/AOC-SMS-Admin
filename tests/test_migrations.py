@@ -3,6 +3,8 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from sqlalchemy import text
 
@@ -305,6 +307,28 @@ class TestMigrations(unittest.TestCase):
         self.assertIn("ix_stripe_webhook_events_stripe_object_id", indexes)
         self.assertIn("ix_stripe_webhook_events_stripe_customer_id", indexes)
         self.assertIn("ix_stripe_webhook_events_stripe_subscription_id", indexes)
+
+    def test_saas_postgres_primary_key_repair_migration_targets_saas_tables(self) -> None:
+        from app.saas_migrations.runner import _load_migration, _migration_files
+
+        repair_migration = next(
+            migration
+            for migration in _migration_files()
+            if migration.name == "006_fix_postgres_primary_key_defaults"
+        )
+        repair_module = _load_migration(repair_migration)
+
+        connection = Mock()
+        connection.dialect = SimpleNamespace(name="postgresql")
+
+        with patch.object(repair_module, "_table_exists", return_value=True):
+            repair_module.apply(connection, self.app.logger)
+
+        executed_sql = "\n".join(str(call.args[0]) for call in connection.execute.call_args_list)
+        self.assertIn("organization_a2p_onboardings_id_seq", executed_sql)
+        self.assertIn("platform_service_restart_requests_id_seq", executed_sql)
+        self.assertIn("ALTER TABLE organization_a2p_onboardings ALTER COLUMN id SET DEFAULT", executed_sql)
+        self.assertIn("ALTER TABLE organization_provider_audit_logs ALTER COLUMN id SET DEFAULT", executed_sql)
 
 
 if __name__ == "__main__":
