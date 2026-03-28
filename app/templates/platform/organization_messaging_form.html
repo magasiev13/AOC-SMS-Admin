@@ -119,7 +119,7 @@
                             id="sender_number"
                             name="sender_number"
                             placeholder="+15551234567"
-                            value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') }}"
+                            value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
                         >
                         <div class="form-text">
                             Enter the live sender number after you assign it inside the organization subaccount.
@@ -133,7 +133,7 @@
                             id="phone_number_sid"
                             name="phone_number_sid"
                             placeholder="PNxxxxxxxx"
-                            value="{{ request.form.get('phone_number_sid', messaging_profile.phone_number_sid if messaging_profile else '') }}"
+                            value="{{ request.form.get('phone_number_sid', messaging_profile.phone_number_sid if messaging_profile else '') or '' }}"
                         >
                         <div class="form-text">
                             This PN SID must already belong to the organization's Twilio subaccount. A master-account PN SID will fail to attach.
@@ -148,7 +148,7 @@
                                 id="business_type"
                                 name="business_type"
                                 placeholder="Real estate, nonprofit, church"
-                                value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') }}"
+                                value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') or '' }}"
                             >
                         </div>
                         <div class="col-md-6">
@@ -158,7 +158,7 @@
                                 id="use_case"
                                 name="use_case"
                                 placeholder="Announcements, reminders, campaigns"
-                                value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') }}"
+                                value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') or '' }}"
                             >
                         </div>
                     </div>
@@ -167,7 +167,7 @@
                         <div class="col-md-6">
                             <label class="form-label" for="sender_review_status">Sender Review Status</label>
                             <select class="form-select" id="sender_review_status" name="sender_review_status">
-                                {% set selected_sender_review_status = request.form.get('sender_review_status', messaging_profile.sender_review_status if messaging_profile else 'pending') %}
+                                {% set selected_sender_review_status = request.form.get('sender_review_status', messaging_profile.sender_review_status if messaging_profile else 'pending') or 'pending' %}
                                 <option value="pending" {% if selected_sender_review_status == 'pending' %}selected{% endif %}>pending</option>
                                 <option value="approved" {% if selected_sender_review_status == 'approved' %}selected{% endif %}>approved</option>
                                 <option value="rejected" {% if selected_sender_review_status == 'rejected' %}selected{% endif %}>rejected</option>

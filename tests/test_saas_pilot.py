@@ -1186,6 +1186,19 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Manage A2P Onboarding", response.data)
         self.assertIn(b"Status: <strong>draft</strong>", response.data)
 
+    def test_platform_admin_messaging_page_does_not_render_none_field_values(self) -> None:
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.business_type = None
+        self.messaging_profile.use_case = None
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(b'value="None"', response.data)
+
     def test_platform_admin_get_onboarding_restores_saved_checkbox_defaults(self) -> None:
         onboarding = self.OrganizationA2POnboarding(
             organization_id=self.organization.id,
