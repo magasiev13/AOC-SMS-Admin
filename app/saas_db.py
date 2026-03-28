@@ -44,6 +44,7 @@ def _doctor(engine) -> int:
     report = inspect_saas_migrations(engine)
     _print_report(report)
     issues: list[str] = []
+    warnings: list[str] = []
     if report["pending"]:
         issues.append("Pending SaaS migrations: " + ", ".join(report["pending"]))
     if report["missing_tables"]:
@@ -67,10 +68,13 @@ def _doctor(engine) -> int:
             print(f"A2P onboarding: {status_summary}")
         problematic_statuses = {"error", "needs_action", "rejected"}
         if any(status in problematic_statuses for status, _count in rows):
-            issues.append(
+            warnings.append(
                 "A2P onboarding has records requiring attention: "
                 + ", ".join(f"{status}={count}" for status, count in rows if status in problematic_statuses)
             )
+
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
 
     if issues:
         for issue in issues:

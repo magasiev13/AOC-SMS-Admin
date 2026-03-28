@@ -1,8 +1,10 @@
 import importlib
+import io
 import logging
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -34,9 +36,11 @@ class TestSaasSchemaMigrations(unittest.TestCase):
         self.saas_db = importlib.reload(app.saas_db)
         self.engine = create_engine(os.environ["DATABASE_URL"])
         self.logger = logging.getLogger("tests.saas_db")
-        from app.models import AppUser
+        from app.models import AppUser, Organization, OrganizationA2POnboarding
 
         self.AppUser = AppUser
+        self.Organization = Organization
+        self.OrganizationA2POnboarding = OrganizationA2POnboarding
 
     def tearDown(self) -> None:
         self.engine.dispose()
@@ -135,3 +139,34 @@ class TestSaasSchemaMigrations(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             self.saas_db.ensure_platform_admin(self.engine, self.logger)
+
+    def test_doctor_warns_but_does_not_fail_for_a2p_onboarding_errors(self) -> None:
+        from app.saas_migrations.runner import run_pending_saas_migrations
+
+        run_pending_saas_migrations(self.engine, self.logger)
+
+        session = sessionmaker(bind=self.engine)()
+        try:
+            organization = self.Organization(name="Acme", slug="acme", status="active")
+            session.add(organization)
+            session.flush()
+            session.add(
+                self.OrganizationA2POnboarding(
+                    organization_id=organization.id,
+                    business_name="Acme",
+                    onboarding_status="error",
+                    last_error="Twilio rejected the request.",
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = self.saas_db._doctor(self.engine)
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("A2P onboarding: error=1", stdout.getvalue())
+        self.assertIn("WARNING: A2P onboarding has records requiring attention: error=1", stderr.getvalue())
