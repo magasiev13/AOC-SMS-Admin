@@ -16,17 +16,15 @@
 
 {% block content %}
 <div class="platform-home-shell">
-    <section class="platform-home-hero card app-card">
-        <div class="card-body">
-            <div class="platform-home-kicker">Platform Admin</div>
-            <h2 class="platform-home-title">Operate the platform here. Run your business from a separate organization account.</h2>
-            <p class="platform-home-copy mb-0">
-                This control plane is for onboarding, organization management, and platform oversight. Normal messaging, inbox, billing, and team operations belong inside a dedicated owner account within each organization.
-            </p>
-        </div>
+    <section class="platform-home-hero" aria-labelledby="platform-home-title">
+        <div class="platform-home-kicker">Platform Admin</div>
+        <h2 id="platform-home-title" class="platform-home-title">Manage organizations, onboarding, and provider readiness.</h2>
+        <p class="platform-home-copy mb-0">
+            Use this workspace to create business accounts, review onboarding blockers, manage platform access, and finish provider setup. Day-to-day messaging, inbox, billing, and team operations stay inside each organization account.
+        </p>
     </section>
 
-    <section class="row g-3 mt-1">
+    <section class="row g-3 platform-home-stats">
         <div class="col-sm-6 col-xl-3">
             <div class="platform-stat-card card app-card h-100">
                 <div class="card-body">
@@ -65,7 +63,7 @@
         </div>
     </section>
 
-    <section class="row g-4 mt-1">
+    <section class="row g-4 platform-home-panels">
         <div class="col-lg-7">
             <div class="card app-card mb-4">
                 <div class="card-header d-flex justify-content-between align-items-center">
