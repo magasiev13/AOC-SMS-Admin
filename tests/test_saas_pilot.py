@@ -1175,6 +1175,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"A2P Onboarding", response.data)
         self.assertIn(b"Legal Business Name", response.data)
+        self.assertNotIn(b'value="None"', response.data)
 
     def test_platform_admin_sees_manage_a2p_onboarding_link_on_messaging_page_before_onboarding_exists(self) -> None:
         self._login_platform_admin()

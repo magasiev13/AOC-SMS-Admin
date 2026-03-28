@@ -135,15 +135,22 @@ def a2p_campaign_use_case_choices() -> tuple[tuple[str, str], ...]:
     return A2P_CAMPAIGN_USE_CASES
 
 
+def _clean_text(raw_value: Any, *, lowercase: bool = False) -> str | None:
+    value = str(raw_value or "").strip()
+    if not value or value.lower() in {"none", "null"}:
+        return None
+    return value.lower() if lowercase else value
+
+
 def _normalized_csv_list(raw_value: str | None, *, default: list[str] | None = None) -> list[str]:
-    value = (raw_value or "").strip()
+    value = _clean_text(raw_value) or ""
     if not value:
         return list(default or [])
     return [part.strip().upper() for part in value.split(",") if part.strip()]
 
 
 def _normalized_multiline_list(raw_value: str | None) -> list[str]:
-    value = (raw_value or "").strip()
+    value = _clean_text(raw_value) or ""
     if not value:
         return []
     return [line.strip() for line in value.splitlines() if line.strip()]
@@ -168,7 +175,7 @@ def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
 
 
 def _normalize_business_type(registration_path: str, raw_value: str | None) -> str | None:
-    candidate = (raw_value or "").strip() or None
+    candidate = _clean_text(raw_value)
     if registration_path == "sole_proprietor":
         return candidate or "Sole Proprietor"
     if candidate:
@@ -214,6 +221,17 @@ def _status_value(raw_value: Any) -> str | None:
     return normalized.lower() or None
 
 
+def _friendly_provider_error_message(raw_message: str) -> str:
+    message = (raw_message or "").strip()
+    if "Secondary Customer Profile for direct_customer can only be created through Twilio console." in message:
+        return (
+            "Twilio rejected automated secondary profile creation because the parent account is still set up as a "
+            "Direct Customer profile. Reclassify the primary Twilio Customer Profile to ISV Reseller or Partner "
+            "in Twilio Trust Hub or through Twilio Support, then retry onboarding."
+        )
+    return message
+
+
 def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2PFormData:
     registration_path = (payload.get("registration_path") or "standard").strip().lower()
     number_strategy = (payload.get("number_strategy") or "auto_buy").strip().lower()
@@ -221,12 +239,12 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         raise ProviderProvisioningError("Choose a valid Twilio A2P registration path.")
     if number_strategy not in A2P_NUMBER_STRATEGY_VALUES:
         raise ProviderProvisioningError("Choose a valid Twilio A2P number strategy.")
-    business_name = (payload.get("business_name") or organization.name or "").strip()
-    email = (payload.get("email") or "").strip().lower()
-    first_name = (payload.get("first_name") or "").strip()
-    last_name = (payload.get("last_name") or "").strip()
-    campaign_description = (payload.get("campaign_description") or "").strip()
-    message_flow = (payload.get("message_flow") or "").strip()
+    business_name = _clean_text(payload.get("business_name")) or organization.name or ""
+    email = _clean_text(payload.get("email"), lowercase=True) or ""
+    first_name = _clean_text(payload.get("first_name")) or ""
+    last_name = _clean_text(payload.get("last_name")) or ""
+    campaign_description = _clean_text(payload.get("campaign_description")) or ""
+    message_flow = _clean_text(payload.get("message_flow")) or ""
     if not business_name:
         raise ProviderProvisioningError("Legal business name is required for A2P onboarding.")
     if not email:
@@ -242,8 +260,8 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
     if not message_samples:
         raise ProviderProvisioningError("At least one message sample is required.")
 
-    mobile_number = (payload.get("mobile_number") or "").strip() or None
-    desired_phone_number_sid = (payload.get("desired_phone_number_sid") or "").strip() or None
+    mobile_number = _clean_text(payload.get("mobile_number"))
+    desired_phone_number_sid = _clean_text(payload.get("desired_phone_number_sid"))
     if registration_path == "sole_proprietor" and not mobile_number:
         raise ProviderProvisioningError("A mobile number is required for sole proprietor onboarding.")
     if number_strategy in {"existing_subaccount_number", "transfer_parent_number"} and not desired_phone_number_sid:
@@ -254,33 +272,33 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         number_strategy=number_strategy,
         business_name=business_name,
         business_type=_normalize_business_type(registration_path, payload.get("business_type")),
-        website_url=(payload.get("website_url") or "").strip() or None,
-        social_profile_url=(payload.get("social_profile_url") or "").strip() or None,
+        website_url=_clean_text(payload.get("website_url")),
+        social_profile_url=_clean_text(payload.get("social_profile_url")),
         email=email,
-        phone_number=(payload.get("phone_number") or "").strip() or None,
+        phone_number=_clean_text(payload.get("phone_number")),
         mobile_number=mobile_number,
         first_name=first_name,
         last_name=last_name,
-        job_position=(payload.get("job_position") or "").strip() or None,
-        business_registration_identifier=(payload.get("business_registration_identifier") or "").strip() or None,
-        business_registration_number=(payload.get("business_registration_number") or "").strip() or None,
-        address_sid=(payload.get("address_sid") or "").strip() or None,
-        supporting_document_sid=(payload.get("supporting_document_sid") or "").strip() or None,
+        job_position=_clean_text(payload.get("job_position")),
+        business_registration_identifier=_clean_text(payload.get("business_registration_identifier")),
+        business_registration_number=_clean_text(payload.get("business_registration_number")),
+        address_sid=_clean_text(payload.get("address_sid")),
+        supporting_document_sid=_clean_text(payload.get("supporting_document_sid")),
         campaign_use_case=_normalize_use_case(registration_path, payload.get("campaign_use_case")),
         campaign_description=campaign_description,
         message_flow=message_flow,
         message_samples=message_samples,
-        opt_in_message=(payload.get("opt_in_message") or "").strip() or None,
-        opt_out_message=(payload.get("opt_out_message") or "").strip() or None,
-        help_message=(payload.get("help_message") or "").strip() or None,
+        opt_in_message=_clean_text(payload.get("opt_in_message")),
+        opt_out_message=_clean_text(payload.get("opt_out_message")),
+        help_message=_clean_text(payload.get("help_message")),
         opt_in_keywords=_normalized_csv_list(payload.get("opt_in_keywords"), default=DEFAULT_OPT_IN_KEYWORDS),
         opt_out_keywords=_normalized_csv_list(payload.get("opt_out_keywords"), default=DEFAULT_OPT_OUT_KEYWORDS),
         help_keywords=_normalized_csv_list(payload.get("help_keywords"), default=DEFAULT_HELP_KEYWORDS),
         has_embedded_links=_coerce_bool(payload.get("has_embedded_links")),
         has_embedded_phone=_coerce_bool(payload.get("has_embedded_phone")),
-        desired_phone_number=(payload.get("desired_phone_number") or "").strip() or None,
+        desired_phone_number=_clean_text(payload.get("desired_phone_number")),
         desired_phone_number_sid=desired_phone_number_sid,
-        campaign_verify_token=(payload.get("campaign_verify_token") or "").strip() or None,
+        campaign_verify_token=_clean_text(payload.get("campaign_verify_token")),
     )
 
 
@@ -881,23 +899,24 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
             raise
         onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
         profile = organization.messaging_profile or ensure_messaging_profile(organization)
+        error_message = _friendly_provider_error_message(str(exc))
         _set_status(
             onboarding,
             profile,
             onboarding_status="error",
             brand_status=onboarding.brand_status,
             campaign_status=onboarding.campaign_status,
-            error_message=str(exc),
+            error_message=error_message,
         )
         _record_provider_audit(
             organization.id,
             "a2p_failed",
             actor_user_id=actor_user_id,
             status="error",
-            message=str(exc),
+            message=error_message,
         )
         db.session.commit()
-        raise ProviderProvisioningError(str(exc)) from exc
+        raise ProviderProvisioningError(error_message) from exc
 
 
 def reconcile_pending_a2p_onboardings() -> dict[str, int]:

@@ -30,6 +30,7 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Registration Path')).toBeVisible();
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.getByLabel('Legal Business Name')).toHaveValue('Onboarding Bakery');
+  await expect(page.getByLabel('Business Type')).toHaveValue('');
   await expect(page.getByLabel('Business Email')).toBeVisible();
   await expect(page.getByLabel('Rep First Name')).toBeVisible();
   await expect(page.getByLabel('Rep Last Name')).toBeVisible();
@@ -40,6 +41,7 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
   await expect(page.getByText('Messaging service: not provisioned yet')).toBeVisible();
 
+  await page.getByLabel('Business Type').fill('LLC');
   await page.getByLabel('Business Email').fill('ops@onboarding.test');
   await page.getByLabel('Rep First Name').fill('Olivia');
   await page.getByLabel('Rep Last Name').fill('Owner');

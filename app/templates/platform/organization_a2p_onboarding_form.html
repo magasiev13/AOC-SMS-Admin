@@ -63,48 +63,48 @@
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="business_name">Legal Business Name</label>
-                            <input class="form-control" id="business_name" name="business_name" required value="{{ request.form.get('business_name', onboarding.business_name if onboarding else organization.name) }}">
+                            <input class="form-control" id="business_name" name="business_name" required value="{{ request.form.get('business_name', onboarding.business_name if onboarding and onboarding.business_name else organization.name) }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="business_type">Business Type</label>
-                            <input class="form-control" id="business_type" name="business_type" placeholder="Nonprofit, LLC, Sole Proprietor" value="{{ request.form.get('business_type', onboarding.business_type if onboarding else '') }}">
+                            <input class="form-control" id="business_type" name="business_type" placeholder="Nonprofit, LLC, Sole Proprietor" value="{{ request.form.get('business_type', (onboarding.business_type if onboarding else '') or '') }}">
                             <div class="form-text">Required for standard and low-volume registrations. Nonprofit and government paths are filled automatically.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="email">Business Email</label>
-                            <input class="form-control" id="email" name="email" type="email" required value="{{ request.form.get('email', onboarding.email if onboarding else '') }}">
+                            <input class="form-control" id="email" name="email" type="email" required value="{{ request.form.get('email', (onboarding.email if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="phone_number">Business Phone</label>
-                            <input class="form-control" id="phone_number" name="phone_number" placeholder="+15551234567" value="{{ request.form.get('phone_number', onboarding.phone_number if onboarding else '') }}">
+                            <input class="form-control" id="phone_number" name="phone_number" placeholder="+15551234567" value="{{ request.form.get('phone_number', (onboarding.phone_number if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="mobile_number">Mobile / OTP Phone</label>
-                            <input class="form-control" id="mobile_number" name="mobile_number" placeholder="+15551234567" value="{{ request.form.get('mobile_number', onboarding.mobile_number if onboarding else '') }}">
+                            <input class="form-control" id="mobile_number" name="mobile_number" placeholder="+15551234567" value="{{ request.form.get('mobile_number', (onboarding.mobile_number if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="website_url">Website URL</label>
-                            <input class="form-control" id="website_url" name="website_url" placeholder="https://example.org" value="{{ request.form.get('website_url', onboarding.website_url if onboarding else '') }}">
+                            <input class="form-control" id="website_url" name="website_url" placeholder="https://example.org" value="{{ request.form.get('website_url', (onboarding.website_url if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="social_profile_url">Social Profile URL</label>
-                            <input class="form-control" id="social_profile_url" name="social_profile_url" placeholder="https://facebook.com/example" value="{{ request.form.get('social_profile_url', onboarding.social_profile_url if onboarding else '') }}">
+                            <input class="form-control" id="social_profile_url" name="social_profile_url" placeholder="https://facebook.com/example" value="{{ request.form.get('social_profile_url', (onboarding.social_profile_url if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-3">
                             <label class="form-label" for="first_name">Rep First Name</label>
-                            <input class="form-control" id="first_name" name="first_name" required value="{{ request.form.get('first_name', onboarding.first_name if onboarding else '') }}">
+                            <input class="form-control" id="first_name" name="first_name" required value="{{ request.form.get('first_name', (onboarding.first_name if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-3">
                             <label class="form-label" for="last_name">Rep Last Name</label>
-                            <input class="form-control" id="last_name" name="last_name" required value="{{ request.form.get('last_name', onboarding.last_name if onboarding else '') }}">
+                            <input class="form-control" id="last_name" name="last_name" required value="{{ request.form.get('last_name', (onboarding.last_name if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="job_position">Rep Title</label>
-                            <input class="form-control" id="job_position" name="job_position" placeholder="Owner, Director, CEO" value="{{ request.form.get('job_position', onboarding.job_position if onboarding else '') }}">
+                            <input class="form-control" id="job_position" name="job_position" placeholder="Owner, Director, CEO" value="{{ request.form.get('job_position', (onboarding.job_position if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="business_registration_identifier">Registration Identifier</label>
-                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" value="{{ request.form.get('business_registration_identifier', onboarding.business_registration_identifier if onboarding else '') }}">
+                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" value="{{ request.form.get('business_registration_identifier', (onboarding.business_registration_identifier if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="business_registration_number">Registration Number</label>
@@ -116,11 +116,11 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="address_sid">Twilio Address SID</label>
-                            <input class="form-control" id="address_sid" name="address_sid" placeholder="ADxxxxxxxx" value="{{ request.form.get('address_sid', onboarding.address_sid if onboarding else '') }}">
+                            <input class="form-control" id="address_sid" name="address_sid" placeholder="ADxxxxxxxx" value="{{ request.form.get('address_sid', (onboarding.address_sid if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="supporting_document_sid">Supporting Document SID</label>
-                            <input class="form-control" id="supporting_document_sid" name="supporting_document_sid" placeholder="RDxxxxxxxx" value="{{ request.form.get('supporting_document_sid', onboarding.supporting_document_sid if onboarding else '') }}">
+                            <input class="form-control" id="supporting_document_sid" name="supporting_document_sid" placeholder="RDxxxxxxxx" value="{{ request.form.get('supporting_document_sid', (onboarding.supporting_document_sid if onboarding else '') or '') }}">
                         </div>
                     </div>
 
@@ -138,11 +138,11 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="campaign_description">Campaign Description</label>
-                            <input class="form-control" id="campaign_description" name="campaign_description" required placeholder="Announcements and member reminders" value="{{ request.form.get('campaign_description', onboarding.campaign_description if onboarding else '') }}">
+                            <input class="form-control" id="campaign_description" name="campaign_description" required placeholder="Announcements and member reminders" value="{{ request.form.get('campaign_description', (onboarding.campaign_description if onboarding else '') or '') }}">
                         </div>
                         <div class="col-12">
                             <label class="form-label" for="message_flow">Opt-in / Message Flow</label>
-                            <textarea class="form-control" id="message_flow" name="message_flow" rows="4" required>{{ request.form.get('message_flow', onboarding.message_flow if onboarding else '') }}</textarea>
+                            <textarea class="form-control" id="message_flow" name="message_flow" rows="4" required>{{ request.form.get('message_flow', (onboarding.message_flow if onboarding else '') or '') }}</textarea>
                         </div>
                         <div class="col-12">
                             <label class="form-label" for="message_samples">Message Samples</label>
@@ -151,15 +151,15 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_in_message">Opt-in Message</label>
-                            <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', onboarding.opt_in_message if onboarding else '') }}</textarea>
+                            <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', (onboarding.opt_in_message if onboarding else '') or '') }}</textarea>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_out_message">Opt-out Message</label>
-                            <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', onboarding.opt_out_message if onboarding else '') }}</textarea>
+                            <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', (onboarding.opt_out_message if onboarding else '') or '') }}</textarea>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="help_message">Help Message</label>
-                            <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', onboarding.help_message if onboarding else '') }}</textarea>
+                            <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', (onboarding.help_message if onboarding else '') or '') }}</textarea>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_in_keywords">Opt-in Keywords</label>
@@ -175,11 +175,11 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="desired_phone_number">Desired Phone Number</label>
-                            <input class="form-control" id="desired_phone_number" name="desired_phone_number" placeholder="+15551234567" value="{{ request.form.get('desired_phone_number', onboarding.desired_phone_number if onboarding else '') }}">
+                            <input class="form-control" id="desired_phone_number" name="desired_phone_number" placeholder="+15551234567" value="{{ request.form.get('desired_phone_number', (onboarding.desired_phone_number if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="desired_phone_number_sid">Existing Phone Number SID</label>
-                            <input class="form-control" id="desired_phone_number_sid" name="desired_phone_number_sid" placeholder="PNxxxxxxxx" value="{{ request.form.get('desired_phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') }}">
+                            <input class="form-control" id="desired_phone_number_sid" name="desired_phone_number_sid" placeholder="PNxxxxxxxx" value="{{ request.form.get('desired_phone_number_sid', (onboarding.desired_phone_number_sid if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6 d-flex align-items-end">
                             <div class="form-check">

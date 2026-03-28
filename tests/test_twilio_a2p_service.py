@@ -166,6 +166,25 @@ class TestTwilioA2PService(unittest.TestCase):
                 actor_user_id=7,
             )
 
+    def test_submit_a2p_onboarding_treats_none_literal_as_missing_business_type(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "Business type is required"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                {
+                    "registration_path": "standard",
+                    "number_strategy": "auto_buy",
+                    "business_name": "Acme",
+                    "business_type": "None",
+                    "email": "ops@acme.test",
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "campaign_description": "Community updates",
+                    "message_flow": "Users opt in.",
+                    "message_samples": "Sample message",
+                },
+                actor_user_id=7,
+            )
+
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_defaults_nonprofit_business_type_from_registration_path(self, mock_get_queue) -> None:
         queue = MagicMock()
@@ -303,6 +322,35 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(self.messaging_profile.provider_status, "active")
         mock_upsert.assert_called_once()
         mock_complete_number_setup.assert_called_once()
+
+    @patch(
+        "app.services.twilio_a2p_service._upsert_a2p_resources",
+        side_effect=RuntimeError(
+            "HTTP 400 error: Unable to create record: Secondary Customer Profile for direct_customer can only be created through Twilio console."
+        ),
+    )
+    def test_process_a2p_onboarding_maps_direct_customer_console_only_error(self, _mock_upsert) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.number_strategy = "auto_buy"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "LLC"
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample"]'
+        onboarding.onboarding_status = "queued"
+        self.db.session.commit()
+
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "ISV Reseller or Partner"):
+            self.process_a2p_onboarding(self.organization.id, actor_user_id=7)
+
+        self.db.session.refresh(onboarding)
+        self.assertEqual(onboarding.onboarding_status, "error")
+        self.assertIn("ISV Reseller or Partner", onboarding.last_error or "")
+        self.assertEqual(self.messaging_profile.provider_status, "error")
 
 
 if __name__ == "__main__":
