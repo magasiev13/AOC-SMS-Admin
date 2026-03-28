@@ -9,135 +9,168 @@
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('main.platform_organizations_add') }}" class="btn btn-primary">
-    <i class="bi bi-building-add me-1"></i>Add Organization
+<a href="{{ url_for('main.platform_organizations_add') }}" class="btn btn-primary page-action-primary">
+    <i class="bi bi-building-add"></i>Add Organization
 </a>
 {% endblock %}
 
 {% block content %}
-<div class="card app-card">
-    <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Business</th>
-                    <th>Onboarding</th>
-                    <th>Status</th>
-                    <th>Billing</th>
-                    <th>Messaging</th>
-                    <th>Owner Invite</th>
-                    <th width="260">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in organization_rows %}
-                {% set organization = row.organization %}
-                {% set onboarding = row.onboarding %}
-                {% set billing = row.billing %}
-                {% set messaging = row.messaging %}
-                {% set owner_invitation = onboarding.owner_invitation %}
-                {% set progress_text = onboarding.completed_required ~ '/' ~ onboarding.required_total ~ ' core steps complete' %}
-                <tr>
-                    <td>
-                        <div class="fw-semibold">{{ organization.name }}</div>
-                        <div class="small text-muted"><code>{{ organization.slug }}</code></div>
-                        {% if owner_invitation %}
-                        <div class="small text-muted mt-2">Primary contact: {{ owner_invitation.email }}</div>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <div class="fw-semibold">{{ onboarding.headline }}</div>
-                        {% if onboarding.headline != progress_text %}
-                        <div class="small text-muted">{{ progress_text }}</div>
-                        {% endif %}
-                        <details class="mt-2">
-                            <summary class="small">View checklist</summary>
-                            <ul class="list-unstyled small mt-2 mb-0">
-                                {% for step in onboarding.steps %}
-                                <li class="mb-2">
-                                    <span class="me-1">{% if step.complete %}✓{% elif step.optional %}○{% else %}•{% endif %}</span>
+<div class="platform-shell">
+    <section class="platform-shell__summary">
+        <div class="platform-shell__summary-header">
+            <div>
+                <div class="platform-shell__eyebrow">Platform directory</div>
+                <h2 class="platform-shell__summary-title">Review onboarding, provider readiness, and owner access in one place.</h2>
+            </div>
+        </div>
+        <p class="platform-shell__summary-copy">
+            Use this directory to spot organizations that still need billing, onboarding, or messaging work. Keep platform interventions here, then hand day-to-day operations back to the owner account.
+        </p>
+    </section>
+
+    {% if organization_rows %}
+    <div class="d-none d-lg-block">
+        <section class="platform-directory" aria-label="Organization directory">
+            <div class="platform-directory__header" aria-hidden="true">
+                <div>Business</div>
+                <div>Onboarding</div>
+                <div>Readiness</div>
+                <div>Owner Invite</div>
+                <div>Actions</div>
+            </div>
+
+            {% for row in organization_rows %}
+            {% set organization = row.organization %}
+            {% set onboarding = row.onboarding %}
+            {% set billing = row.billing %}
+            {% set messaging = row.messaging %}
+            {% set owner_invitation = onboarding.owner_invitation %}
+            {% set progress_text = onboarding.completed_required ~ '/' ~ onboarding.required_total ~ ' core steps complete' %}
+            {% set provider_needs_attention = messaging.title != 'Ready' %}
+            <article class="platform-directory__row">
+                <div class="platform-directory__cell">
+                    <h3 class="platform-directory__name">{{ organization.name }}</h3>
+                    <div class="platform-directory__slug"><code>{{ organization.slug }}</code></div>
+                    {% if owner_invitation %}
+                    <p class="platform-directory__subtext">Primary contact: {{ owner_invitation.email }}</p>
+                    {% endif %}
+                </div>
+
+                <div class="platform-directory__cell">
+                    <div class="platform-mini-label">Progress</div>
+                    <div class="platform-key-value">{{ onboarding.headline }}</div>
+                    {% if onboarding.headline != progress_text %}
+                    <p class="platform-directory__subtext">{{ progress_text }}</p>
+                    {% endif %}
+                    <details class="platform-inline-details">
+                        <summary>View checklist</summary>
+                        <ul class="platform-checklist">
+                            {% for step in onboarding.steps %}
+                            <li>
+                                <span class="platform-checklist__marker">{% if step.complete %}✓{% elif step.optional %}○{% else %}•{% endif %}</span>
+                                <span>
                                     <strong>{{ step.label }}</strong>
                                     {% if step.optional %}
                                     <span class="badge bg-light text-dark ms-1">Optional</span>
                                     {% endif %}
-                                    <div class="text-muted">{{ step.detail }}</div>
-                                </li>
-                                {% endfor %}
-                            </ul>
-                        </details>
-                    </td>
-                    <td><span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span></td>
-                    <td>
-                        <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
-                        <div class="small text-muted mt-1">{{ billing.summary }}</div>
-                        {% if billing.period_value %}
-                        <div class="small text-muted">{{ billing.period_label }}: {{ billing.period_value }}</div>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <span class="badge bg-{{ messaging.badge }}">{{ messaging.title }}</span>
-                        <div class="small text-muted mt-1">{{ messaging.summary }}</div>
-                        <div class="small text-muted">{{ messaging.detail }}</div>
-                    </td>
-                    <td>
-                        {% if owner_invitation %}
-                        <div class="small mb-2">
-                            <span class="badge bg-{{ 'success' if owner_invitation.status == 'accepted' else ('warning text-dark' if owner_invitation.status == 'pending' else 'secondary') }}">
-                                {{ owner_invitation.status }}
-                            </span>
+                                    <br>
+                                    {{ step.detail }}
+                                </span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </details>
+                </div>
+
+                <div class="platform-directory__cell">
+                    <div class="platform-readiness-grid">
+                        <div class="platform-readiness-item">
+                            <div class="platform-mini-label">Account</div>
+                            <div>
+                                <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
+                            </div>
                         </div>
-                        {% if onboarding.owner_invitation_url %}
-                        <div class="d-flex flex-wrap gap-2">
-                            <a href="{{ onboarding.owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
-                            <button
-                                type="button"
-                                class="btn btn-sm btn-outline-secondary"
-                                data-copy-text="{{ onboarding.owner_invitation_url }}"
-                                data-copy-feedback="Copied"
-                            >
-                                Copy link
+                        <div class="platform-readiness-item">
+                            <div class="platform-mini-label">Billing</div>
+                            <div>
+                                <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
+                            </div>
+                            <p class="platform-directory__subtext">{{ billing.summary }}</p>
+                            {% if billing.period_value %}
+                            <p class="platform-directory__subtext">{{ billing.period_label }}: {{ billing.period_value }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="platform-readiness-item">
+                            <div class="platform-mini-label">Messaging</div>
+                            <div>
+                                <span class="badge bg-{{ messaging.badge }}">{{ messaging.title }}</span>
+                            </div>
+                            <p class="platform-directory__subtext">{{ messaging.summary }}</p>
+                            <p class="platform-directory__subtext">{{ messaging.detail }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="platform-directory__cell">
+                    <div class="platform-mini-label">Owner status</div>
+                    {% if owner_invitation %}
+                    <div>
+                        <span class="badge bg-{{ 'success' if owner_invitation.status == 'accepted' else ('warning text-dark' if owner_invitation.status == 'pending' else 'secondary') }}">
+                            {{ owner_invitation.status }}
+                        </span>
+                    </div>
+                    {% if onboarding.owner_invitation_url %}
+                    <div class="platform-directory__invite-actions">
+                        <a href="{{ onboarding.owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            data-copy-text="{{ onboarding.owner_invitation_url }}"
+                            data-copy-feedback="Copied"
+                        >
+                            Copy link
+                        </button>
+                    </div>
+                    {% else %}
+                    <p class="platform-directory__subtext">The owner has already joined.</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="platform-directory__subtext">
+                        {{ 'The owner has already joined.' if onboarding.owner_joined else 'No invite available yet.' }}
+                    </p>
+                    {% endif %}
+                </div>
+
+                <div class="platform-directory__cell">
+                    <div class="row-actions platform-directory__actions" data-row-actions data-row-actions-primary="1">
+                        {% if provider_needs_attention %}
+                        <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                            {{ 'Manage provider' if organization.messaging_profile else 'Set up provider' }}
+                        </a>
+                        <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">
+                            Manage Access
+                        </a>
+                        {% else %}
+                        <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                            Manage Access
+                        </a>
+                        <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">
+                            Manage provider
+                        </a>
+                        {% endif %}
+                        <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                {{ 'Suspend' if organization.status == 'active' else 'Reactivate' }}
                             </button>
-                        </div>
-                        {% else %}
-                        <div class="small text-muted">The owner has already joined.</div>
-                        {% endif %}
-                        {% else %}
-                        <div class="small text-muted">
-                            {{ 'The owner has already joined.' if onboarding.owner_joined else 'No invite available yet.' }}
-                        </div>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <div class="d-flex flex-wrap gap-2">
-                            <a
-                                href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}"
-                                class="btn btn-sm btn-outline-secondary"
-                            >
-                                Manage Access
-                            </a>
-                            <a
-                                href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}"
-                                class="btn btn-sm btn-outline-primary"
-                            >
-                                {{ 'Manage provider' if organization.messaging_profile else 'Set up provider' }}
-                            </a>
-                            <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                    {{ 'Suspend' if organization.status == 'active' else 'Reactivate' }}
-                                </button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {% else %}
-                <tr>
-                    <td colspan="7" class="text-center text-muted py-4">No organizations created yet.</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                        </form>
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </section>
     </div>
+
     <div class="card-list d-lg-none">
         {% for row in organization_rows %}
         {% set organization = row.organization %}
@@ -146,11 +179,12 @@
         {% set messaging = row.messaging %}
         {% set owner_invitation = onboarding.owner_invitation %}
         {% set progress_text = onboarding.completed_required ~ '/' ~ onboarding.required_total ~ ' core steps complete' %}
+        {% set provider_needs_attention = messaging.title != 'Ready' %}
         <article class="card-list-item platform-org-card">
             <div class="d-flex justify-content-between align-items-start gap-3">
                 <div>
                     <h6>{{ organization.name }}</h6>
-                    <div class="small text-muted"><code>{{ organization.slug }}</code></div>
+                    <div class="platform-directory__slug"><code>{{ organization.slug }}</code></div>
                     {% if owner_invitation %}
                     <div class="small text-muted mt-2">Primary contact: {{ owner_invitation.email }}</div>
                     {% endif %}
@@ -167,21 +201,12 @@
                     {% endif %}
                 </div>
                 <div class="platform-org-card__section">
-                    <div class="platform-org-card__label">Billing</div>
+                    <div class="platform-org-card__label">Readiness</div>
                     <div class="d-flex flex-wrap gap-2 align-items-center">
                         <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
-                    </div>
-                    <div class="small text-muted mt-1">{{ billing.summary }}</div>
-                    {% if billing.period_value %}
-                    <div class="small text-muted">{{ billing.period_label }}: {{ billing.period_value }}</div>
-                    {% endif %}
-                </div>
-                <div class="platform-org-card__section">
-                    <div class="platform-org-card__label">Messaging</div>
-                    <div class="d-flex flex-wrap gap-2 align-items-center">
                         <span class="badge bg-{{ messaging.badge }}">{{ messaging.title }}</span>
                     </div>
-                    <div class="small text-muted mt-1">{{ messaging.summary }}</div>
+                    <div class="small text-muted mt-1">{{ billing.summary }}</div>
                     <div class="small text-muted">{{ messaging.detail }}</div>
                 </div>
                 <div class="platform-org-card__section">
@@ -210,11 +235,16 @@
                 </div>
             </div>
 
-            <div class="row-actions mt-2" data-row-actions>
-                <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">Manage Access</a>
+            <div class="row-actions mt-2" data-row-actions data-row-actions-primary="1">
+                {% if provider_needs_attention %}
                 <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
                     {{ 'Manage provider' if organization.messaging_profile else 'Set up provider' }}
                 </a>
+                <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">Manage Access</a>
+                {% else %}
+                <a href="{{ url_for('main.platform_organizations_access', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">Manage Access</a>
+                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-secondary">Manage provider</a>
+                {% endif %}
                 <form method="POST" action="{{ url_for('main.platform_organizations_toggle_status', organization_id=organization.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-secondary">
@@ -223,13 +253,17 @@
                 </form>
             </div>
         </article>
-        {% else %}
-        <div class="empty-state py-4">
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card app-card">
+        <div class="empty-state py-5">
             <i class="bi bi-buildings empty-state__icon"></i>
             <div class="empty-state__title">No organizations created yet</div>
             <div class="empty-state__text">Create your first business account to start onboarding owners and provisioning messaging.</div>
+            <a href="{{ url_for('main.platform_organizations_add') }}" class="btn btn-primary empty-state__action">Add Organization</a>
         </div>
-        {% endfor %}
     </div>
+    {% endif %}
 </div>
 {% endblock %}

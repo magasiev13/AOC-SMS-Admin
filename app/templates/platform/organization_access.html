@@ -16,29 +16,32 @@
 {% endblock %}
 
 {% block content %}
-<div class="row g-4">
-    <div class="col-lg-7">
-        <div class="card app-card mb-4">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                    <div>
-                        <div class="small text-muted text-uppercase">Organization</div>
-                        <h2 class="h5 mb-1">{{ organization.name }}</h2>
-                        <div class="text-muted small"><code>{{ organization.slug }}</code></div>
-                    </div>
-                    <div class="d-flex gap-2 flex-wrap">
-                        <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
-                        <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
-                    </div>
-                </div>
-                <div class="small text-muted mt-3">{{ onboarding.headline }}</div>
-                <div class="small text-muted mt-2">
+<div class="platform-shell">
+    <section class="platform-shell__summary">
+        <div class="platform-shell__summary-header">
+            <div class="platform-shell__summary-body">
+                <div class="platform-shell__eyebrow">Organization access</div>
+                <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
+                <p class="platform-shell__summary-copy">
                     Platform support stays invite-only. Use staff invites for team help, and reissue the owner invite only when initial onboarding is blocked.
-                </div>
+                </p>
             </div>
         </div>
+        <div class="platform-shell__summary-meta">
+            <div class="platform-shell__summary-identity">
+                <span class="platform-directory__slug"><code>{{ organization.slug }}</code></span>
+                <span class="platform-shell__summary-context">{{ onboarding.headline }}</span>
+            </div>
+            <div class="platform-shell__summary-badges">
+                <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
+                <span class="badge bg-{{ billing.badge }}">{{ billing.title }}</span>
+            </div>
+        </div>
+    </section>
 
-        <div class="card app-card mb-4">
+    <div class="platform-shell__body">
+    <div class="platform-main">
+        <div class="card app-card mb-4 platform-table-card">
             <div class="card-header">Joined Members</div>
             <div class="card-body p-0">
                 {% if joined_memberships %}
@@ -71,12 +74,12 @@
                     </table>
                 </div>
                 {% else %}
-                <div class="p-3 text-muted">No users have joined this organization yet.</div>
+                <div class="p-4 text-muted">No users have joined this organization yet.</div>
                 {% endif %}
             </div>
         </div>
 
-        <div class="card app-card">
+        <div class="card app-card platform-table-card">
             <div class="card-header">Pending Invitations</div>
             <div class="card-body p-0">
                 {% if pending_invitation_rows %}
@@ -105,7 +108,7 @@
                                 <td>{{ row.expires_display or '-' }}</td>
                                 <td>
                                     {% if row.accept_url %}
-                                    <div class="d-flex flex-wrap gap-2">
+                                    <div class="row-actions" data-row-actions data-row-actions-primary="1" data-row-actions-min-overflow="3">
                                         <a href="{{ row.accept_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
                                         <button
                                             type="button"
@@ -126,100 +129,103 @@
                     </table>
                 </div>
                 {% else %}
-                <div class="p-3 text-muted">No pending invitations for this organization.</div>
+                <div class="p-4 text-muted">No pending invitations for this organization.</div>
                 {% endif %}
             </div>
         </div>
     </div>
 
-    <div class="col-lg-5">
-        <div class="card app-card mb-4">
-            <div class="card-header">Invite Staff Member</div>
-            <div class="card-body">
-                <p class="text-muted small">
-                    Create an org-scoped staff invite without becoming a member of the organization yourself.
-                </p>
-                <form method="POST" action="{{ url_for('main.platform_organizations_invite_staff', organization_id=organization.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="email">Staff Email</label>
-                        <input
-                            class="form-control"
-                            id="email"
-                            name="email"
-                            type="email"
-                            required
-                            autocomplete="email"
-                            placeholder="staff@example.com"
-                            value="{{ staff_invite_email }}"
-                        >
+    <aside class="platform-shell__side">
+        <div class="platform-shell__sticky">
+            <div class="card app-card mb-4 platform-side-card">
+                <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-2">Invite Staff Member</div>
+                    <p class="text-muted small">
+                        Create an org-scoped staff invite without becoming a member of the organization yourself.
+                    </p>
+                    <form method="POST" action="{{ url_for('main.platform_organizations_invite_staff', organization_id=organization.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label class="form-label" for="email">Staff Email</label>
+                            <input
+                                class="form-control"
+                                id="email"
+                                name="email"
+                                type="email"
+                                required
+                                autocomplete="email"
+                                placeholder="staff@example.com"
+                                value="{{ staff_invite_email }}"
+                            >
+                        </div>
+                        <div class="small text-muted mb-3">
+                            The invited user will finish account setup from the invite link and join as Staff.
+                        </div>
+                        <button type="submit" class="btn btn-primary">Create Staff Invite</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card app-card platform-side-card">
+                <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-2">Owner Recovery</div>
+                    {% if owner_recovery_available %}
+                    <p class="text-muted small">
+                        Use this only when the initial owner onboarding email is wrong or the owner needs a fresh invite link.
+                    </p>
+                    <form method="POST" action="{{ url_for('main.platform_organizations_reissue_owner_invite', organization_id=organization.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="mb-3">
+                            <label class="form-label" for="owner_email">Owner Email</label>
+                            <input
+                                class="form-control"
+                                id="owner_email"
+                                name="owner_email"
+                                type="email"
+                                required
+                                autocomplete="email"
+                                placeholder="owner@example.com"
+                                value="{{ owner_reissue_email }}"
+                            >
+                        </div>
+                        <div class="small text-muted mb-3">
+                            Reissuing revokes any pending owner invite for this organization and creates a fresh owner link.
+                        </div>
+                        <button type="submit" class="btn btn-outline-primary">Reissue Owner Invite</button>
+                    </form>
+
+                    {% if pending_owner_invitation %}
+                    <div class="platform-note mt-4">
+                        <div class="platform-note__title">Current pending owner invite</div>
+                        <div class="platform-note__copy">{{ pending_owner_invitation.email }}</div>
+                        <div class="platform-note__actions">
+                            <a href="{{ pending_owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
+                            <button
+                                type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                data-copy-text="{{ pending_owner_invitation_url }}"
+                                data-copy-feedback="Copied"
+                            >
+                                Copy link
+                            </button>
+                        </div>
                     </div>
-                    <div class="small text-muted mb-3">
-                        The invited user will finish account setup from the invite link and join as Staff.
+                    {% endif %}
+                    {% else %}
+                    <div class="text-muted small">
+                        Owner recovery is unavailable because an owner has already joined this organization.
                     </div>
-                    <button type="submit" class="btn btn-primary">Create Staff Invite</button>
-                </form>
+                    {% if owner_membership %}
+                    <div class="platform-note mt-4">
+                        <div class="platform-note__title">Current owner</div>
+                        <div class="platform-note__copy">{{ owner_membership.user.email or owner_membership.user.username }}</div>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                </div>
             </div>
         </div>
-
-        <div class="card app-card">
-            <div class="card-header">Owner Recovery</div>
-            <div class="card-body">
-                {% if owner_recovery_available %}
-                <p class="text-muted small">
-                    Use this only when the initial owner onboarding email is wrong or the owner needs a fresh invite link.
-                </p>
-                <form method="POST" action="{{ url_for('main.platform_organizations_reissue_owner_invite', organization_id=organization.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="owner_email">Owner Email</label>
-                        <input
-                            class="form-control"
-                            id="owner_email"
-                            name="owner_email"
-                            type="email"
-                            required
-                            autocomplete="email"
-                            placeholder="owner@example.com"
-                            value="{{ owner_reissue_email }}"
-                        >
-                    </div>
-                    <div class="small text-muted mb-3">
-                        Reissuing revokes any pending owner invite for this organization and creates a fresh owner link.
-                    </div>
-                    <button type="submit" class="btn btn-outline-primary">Reissue Owner Invite</button>
-                </form>
-
-                {% if pending_owner_invitation %}
-                <div class="border rounded p-3 mt-4">
-                    <div class="fw-semibold">Current pending owner invite</div>
-                    <div class="small text-muted mt-1">{{ pending_owner_invitation.email }}</div>
-                    <div class="d-flex flex-wrap gap-2 mt-3">
-                        <a href="{{ pending_owner_invitation_url }}" class="btn btn-sm btn-outline-primary" target="_blank" rel="noopener">Open invite</a>
-                        <button
-                            type="button"
-                            class="btn btn-sm btn-outline-secondary"
-                            data-copy-text="{{ pending_owner_invitation_url }}"
-                            data-copy-feedback="Copied"
-                        >
-                            Copy link
-                        </button>
-                    </div>
-                </div>
-                {% endif %}
-                {% else %}
-                <div class="text-muted small">
-                    Owner recovery is unavailable because an owner has already joined this organization.
-                </div>
-                {% if owner_membership %}
-                <div class="border rounded p-3 mt-4">
-                    <div class="fw-semibold">Current owner</div>
-                    <div class="small text-muted mt-1">{{ owner_membership.user.email or owner_membership.user.username }}</div>
-                </div>
-                {% endif %}
-                {% endif %}
-            </div>
-        </div>
+    </aside>
     </div>
 </div>
 {% endblock %}

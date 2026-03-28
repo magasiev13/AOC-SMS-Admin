@@ -8,6 +8,7 @@ async function login(page, username, password) {
 }
 
 test('platform admin can review onboarding progress and owner invite access', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
   await login(page, 'platform@browser.test', 'Platform-pass1!');
   await expect(page.locator('.app-page-title')).toHaveText('Platform');
   await expect(page.getByRole('link', { name: 'Platform' })).toBeVisible();
@@ -25,11 +26,12 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(organizationsNavLink).toBeVisible();
   await organizationsNavLink.click();
 
-  const onboardingRow = page.locator('tr').filter({ hasText: 'Onboarding Bakery' });
+  const onboardingRow = page.locator('.platform-directory__row').filter({ hasText: 'Onboarding Bakery' });
   await expect(onboardingRow).toBeVisible();
   await expect(onboardingRow.getByText(/core steps complete/).first()).toBeVisible();
   await expect(onboardingRow.getByText(/Twilio subaccount not provisioned yet/)).toBeVisible();
   await expect(onboardingRow.getByRole('link', { name: 'Manage provider' })).toBeVisible();
+  await expect(onboardingRow.getByRole('button', { name: 'More actions' })).toBeVisible();
   const ownerInviteLink = onboardingRow.getByRole('link', { name: 'Open invite' });
   await expect(ownerInviteLink).toBeVisible();
   await expect(ownerInviteLink).toHaveAttribute('href', /browser-owner-invite-token/);

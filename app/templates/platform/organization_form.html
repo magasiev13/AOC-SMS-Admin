@@ -15,29 +15,32 @@
 {% set form_slug = request.form.get('slug', '') %}
 {% set form_owner_email = request.form.get('owner_email', '') %}
 
-<div class="org-create-shell">
-    <div class="org-create-main">
-        <div class="card app-card org-create-hero-card mb-4">
-            <div class="card-body">
-                <div class="org-create-kicker">Platform admin setup</div>
-                <h2 class="org-create-hero-title">Create the next business and keep telecom provisioning on the managed path.</h2>
-                <p class="org-create-hero-copy mb-0">
-                    Start with the business name and owner invite. Twilio subaccounts and messaging services are provisioned later, after billing and compliance are in place.
-                </p>
+<div class="platform-shell">
+    <section class="platform-shell__summary">
+        <div class="platform-shell__summary-header">
+            <div>
+                <div class="platform-shell__eyebrow">Platform admin setup</div>
+                <h2 class="platform-shell__summary-title">Create the next business account and keep telecom provisioning on the managed path.</h2>
             </div>
         </div>
+        <p class="platform-shell__summary-copy">
+            Start with the business name and owner invite. Twilio subaccounts and messaging services are provisioned later, after billing and compliance are in place.
+        </p>
+    </section>
 
-        <form method="POST" class="org-create-form">
+    <div class="platform-shell__body">
+        <div class="org-create-main">
+        <form method="POST" class="org-create-form platform-grid-list">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <div class="card app-card org-create-section-card mb-4">
+            <div class="card app-card org-create-section-card platform-section-card">
                 <div class="card-body">
-                    <div class="org-create-section-header">
+                    <div class="org-create-section-header platform-section-header">
                         <div>
                             <div class="org-create-section-kicker">Business setup</div>
                             <h3 class="org-create-section-title">Name the account and set its URL slug</h3>
                         </div>
-                        <span class="org-create-step-badge">Step 1</span>
+                        <span class="platform-step-badge">Step 1</span>
                     </div>
 
                     <div class="row g-3">
@@ -77,14 +80,14 @@
                 </div>
             </div>
 
-            <div class="card app-card org-create-section-card mb-4">
+            <div class="card app-card org-create-section-card platform-section-card">
                 <div class="card-body">
-                    <div class="org-create-section-header">
+                    <div class="org-create-section-header platform-section-header">
                         <div>
                             <div class="org-create-section-kicker">Owner access</div>
                             <h3 class="org-create-section-title">Decide who receives the first invite</h3>
                         </div>
-                        <span class="org-create-step-badge">Step 2</span>
+                        <span class="platform-step-badge">Step 2</span>
                     </div>
 
                     <div class="row g-3 align-items-start">
@@ -116,14 +119,14 @@
                 </div>
             </div>
 
-            <div class="card app-card org-create-section-card">
+            <div class="card app-card org-create-section-card platform-section-card">
                 <div class="card-body">
-                    <div class="org-create-section-header">
+                    <div class="org-create-section-header platform-section-header">
                         <div>
                             <div class="org-create-section-kicker">Messaging lifecycle</div>
                             <h3 class="org-create-section-title">Provision messaging after billing, review, and sender assignment</h3>
                         </div>
-                        <span class="org-create-step-badge">Step 3</span>
+                        <span class="platform-step-badge">Step 3</span>
                     </div>
 
                     <div class="org-create-callout" role="note">
@@ -139,18 +142,18 @@
                         <li>Number purchase and release can stay admin-reviewed while provisioning is automated.</li>
                     </ul>
 
-                    <div class="org-create-form-actions mt-4">
+                    <div class="platform-form-actions mt-4">
                         <button type="submit" class="btn btn-primary">Create Business Account</button>
                         <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </div>
             </div>
         </form>
-    </div>
+        </div>
 
-    <aside class="org-create-side">
-        <div class="org-create-sticky">
-            <div class="card app-card org-create-summary-card">
+        <aside class="org-create-side platform-shell__side">
+        <div class="platform-shell__sticky org-create-sticky">
+            <div class="card app-card org-create-summary-card platform-side-card">
                 <div class="card-body">
                     <div class="org-create-section-kicker">Readiness</div>
                     <h3 class="org-create-side-title">What happens after you click create</h3>
@@ -179,7 +182,8 @@
                 </div>
             </div>
         </div>
-    </aside>
+        </aside>
+    </div>
 </div>
 {% endblock %}
 

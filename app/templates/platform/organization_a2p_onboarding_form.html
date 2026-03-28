@@ -12,24 +12,38 @@
 {% endblock %}
 
 {% block content %}
-<div class="row g-4">
-    <div class="col-lg-8">
-        <div class="card app-card">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
-                    <div>
-                        <h2 class="h5 mb-1">{{ organization.name }}</h2>
-                        <div class="small text-muted"><code>{{ organization.slug }}</code></div>
-                    </div>
-                    <span class="badge bg-{{ 'success' if onboarding and onboarding.onboarding_status == 'approved' else ('danger' if onboarding and onboarding.onboarding_status in ('rejected', 'error') else ('secondary' if onboarding and onboarding.onboarding_status == 'canceled' else 'warning text-dark')) }}">
-                        {{ onboarding.onboarding_status if onboarding else 'draft' }}
-                    </span>
-                </div>
+<div class="platform-shell">
+    <section class="platform-shell__summary">
+        <div class="platform-shell__summary-header">
+            <div class="platform-shell__summary-body">
+                <div class="platform-shell__eyebrow">A2P onboarding</div>
+                <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
+                <p class="platform-shell__summary-copy">
+                    Submit and monitor the registration package here. Keep messaging setup separate, then return once carrier review is complete.
+                </p>
+            </div>
+        </div>
+        <div class="platform-shell__summary-meta">
+            <div class="platform-shell__summary-identity">
+                <span class="platform-directory__slug"><code>{{ organization.slug }}</code></span>
+                <span class="platform-shell__summary-context">Messaging service {{ 'provisioned' if messaging_profile and messaging_profile.messaging_service_sid else 'not provisioned' }}</span>
+            </div>
+            <div class="platform-shell__summary-badges">
+                <span class="badge bg-{{ 'success' if onboarding and onboarding.onboarding_status == 'approved' else ('danger' if onboarding and onboarding.onboarding_status in ('rejected', 'error') else ('secondary' if onboarding and onboarding.onboarding_status == 'canceled' else 'warning text-dark')) }}">
+                    {{ onboarding.onboarding_status if onboarding else 'draft' }}
+                </span>
+            </div>
+        </div>
+    </section>
 
+    <div class="platform-shell__body">
+    <div class="platform-main">
+        <div class="card app-card platform-section-card">
+            <div class="card-body">
                 {% if onboarding and onboarding.last_error %}
-                <div class="alert alert-danger border mb-4" role="alert">
-                    <div class="fw-semibold mb-1">Last onboarding error</div>
-                    <div class="small mb-0">{{ onboarding.last_error }}</div>
+                <div class="platform-note platform-note--danger mb-4" role="alert">
+                    <div class="platform-note__title">Last onboarding error</div>
+                    <div class="platform-note__copy">{{ onboarding.last_error }}</div>
                 </div>
                 {% endif %}
 
@@ -37,6 +51,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit">
 
+                    <div class="platform-shell__eyebrow mb-2">Registration settings</div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="registration_path">Registration Path</label>
@@ -60,6 +75,7 @@
 
                     <hr class="my-4">
 
+                    <div class="platform-shell__eyebrow mb-2">Business identity</div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="business_name">Legal Business Name</label>
@@ -126,6 +142,7 @@
 
                     <hr class="my-4">
 
+                    <div class="platform-shell__eyebrow mb-2">Campaign behavior</div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="campaign_use_case">Campaign Use Case</label>
@@ -195,7 +212,7 @@
                         </div>
                     </div>
 
-                    <div class="d-flex gap-2 flex-wrap mt-4">
+                    <div class="platform-form-actions mt-4">
                         <button type="submit" class="btn btn-primary">Submit A2P Onboarding</button>
                         <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-outline-secondary">Back to Messaging</a>
                     </div>
@@ -204,41 +221,44 @@
         </div>
     </div>
 
-    <div class="col-lg-4">
-        <div class="card app-card mb-4">
-            <div class="card-body">
-                <div class="small text-muted text-uppercase mb-2">Current Status</div>
-                <ul class="list-unstyled small mb-0">
-                    <li class="mb-2"><strong>Onboarding:</strong> {{ onboarding.onboarding_status if onboarding else 'draft' }}</li>
-                    <li class="mb-2"><strong>Brand:</strong> {{ onboarding.brand_status or 'not submitted' }}</li>
-                    <li class="mb-2"><strong>Campaign:</strong> {{ onboarding.campaign_status or 'not submitted' }}</li>
-                    <li class="mb-2"><strong>Verification:</strong> {{ onboarding.verification_status or 'n/a' }}</li>
-                    <li><strong>Messaging service:</strong> {{ messaging_profile.messaging_service_sid or 'not provisioned yet' }}</li>
-                </ul>
+    <aside class="platform-shell__side">
+        <div class="platform-shell__sticky">
+            <div class="card app-card mb-4 platform-side-card">
+                <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-2">Current Status</div>
+                    <ul class="platform-status-list">
+                        <li><strong>Onboarding</strong><span>{{ onboarding.onboarding_status if onboarding else 'draft' }}</span></li>
+                        <li><strong>Brand</strong><span>{{ onboarding.brand_status or 'not submitted' }}</span></li>
+                        <li><strong>Campaign</strong><span>{{ onboarding.campaign_status or 'not submitted' }}</span></li>
+                        <li><strong>Verification</strong><span>{{ onboarding.verification_status or 'n/a' }}</span></li>
+                        <li><strong>Messaging service</strong><span>{{ messaging_profile.messaging_service_sid or 'not provisioned yet' }}</span></li>
+                    </ul>
+                </div>
             </div>
-        </div>
 
-        <div class="card app-card">
-            <div class="card-body">
-                <div class="small text-muted text-uppercase mb-3">Actions</div>
-                <div class="d-flex gap-2 flex-wrap">
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="refresh">
-                        <button type="submit" class="btn btn-outline-primary" {% if not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>
-                            Refresh Status
-                        </button>
-                    </form>
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="cancel">
-                        <button type="submit" class="btn btn-outline-danger" {% if not onboarding or onboarding.onboarding_status in ('draft', 'approved', 'canceled') %}disabled{% endif %}>
-                            Cancel
-                        </button>
-                    </form>
+            <div class="card app-card platform-side-card">
+                <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-3">Actions</div>
+                    <div class="platform-form-actions">
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="refresh">
+                            <button type="submit" class="btn btn-outline-primary" {% if not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>
+                                Refresh Status
+                            </button>
+                        </form>
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="cancel">
+                            <button type="submit" class="btn btn-outline-danger" {% if not onboarding or onboarding.onboarding_status in ('draft', 'approved', 'canceled') %}disabled{% endif %}>
+                                Cancel
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </div>
         </div>
+    </aside>
     </div>
 </div>
 {% endblock %}
