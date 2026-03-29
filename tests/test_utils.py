@@ -31,6 +31,10 @@ class TestNormalizePhone(unittest.TestCase):
     def test_non_numeric_input_returns_empty(self) -> None:
         self.assertEqual(normalize_phone("foo"), "")
 
+    def test_ascii_letters_in_phone_are_rejected(self) -> None:
+        self.assertEqual(normalize_phone("+1 (415) 555-2671 ext 9"), "")
+        self.assertEqual(normalize_phone("+1 415 555 FLOW"), "")
+
     def test_multiple_plus_prefixes_are_normalized(self) -> None:
         self.assertEqual(normalize_phone("++++"), "")
 
