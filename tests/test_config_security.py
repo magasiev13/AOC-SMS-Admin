@@ -46,6 +46,24 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         self.assertIn("AUTH_LOCKOUT_SECONDS must be an integer", str(ctx.exception))
 
+    def test_bool_config_accepts_common_true_false_strings(self) -> None:
+        os.environ["TRUST_PROXY"] = "true"
+        os.environ["TWILIO_VALIDATE_INBOUND_SIGNATURE"] = "no"
+
+        config_module = self._reload_config_module()
+        Config = config_module.Config
+
+        self.assertTrue(Config.TRUST_PROXY)
+        self.assertFalse(Config.TWILIO_VALIDATE_INBOUND_SIGNATURE)
+
+    def test_invalid_boolean_config_raises_clear_error(self) -> None:
+        os.environ["INBOUND_AUTO_REPLY_ENABLED"] = "sometimes"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reload_config_module()
+
+        self.assertIn("INBOUND_AUTO_REPLY_ENABLED must be a boolean value", str(ctx.exception))
+
     def test_production_requires_trusted_hosts(self) -> None:
         os.environ["FLASK_ENV"] = "production"
         os.environ["SECRET_KEY"] = "test-production-secret-key"

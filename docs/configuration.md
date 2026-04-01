@@ -16,9 +16,9 @@ cp .env.example .env
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `TWILIO_ACCOUNT_SID` | Twilio Account SID | `ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `TWILIO_FROM_NUMBER` | Twilio phone number (E.164) | `+18005551234` |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID. In SaaS platform-managed mode this must be the parent/master account used to provision subaccounts. | `ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token for the same parent/master account | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
+| `TWILIO_FROM_NUMBER` | Twilio phone number (E.164). Required for the legacy single-tenant runtime; optional in SaaS platform-managed mode. | `+18005551234` |
 
 ### Flask Security
 
@@ -53,8 +53,23 @@ cp .env.example .env
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `SAAS_MODE` | `0` | Enable the SaaS control plane and SaaS startup validation |
+| `SAAS_BASE_URL` | empty | Public base URL used for Twilio inbound webhook binding and other absolute links |
 | `PLATFORM_SERVICE_RESTART_ENABLED` | `0` | Enable the platform-admin-only restart control on `/platform` |
 | `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-sms-saas-services` | Absolute path to the fixed restart helper executed via `sudo -n` |
+
+### SaaS Twilio Platform Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TWILIO_API_KEY_SID` | empty | Optional Twilio API Key SID for production REST auth. Must be paired with `TWILIO_API_KEY_SECRET`. |
+| `TWILIO_API_KEY_SECRET` | empty | Optional Twilio API Key secret for production REST auth. Must be paired with `TWILIO_API_KEY_SID`. |
+| `TWILIO_CREDENTIAL_ENCRYPTION_KEY` | empty | Required in SaaS mode. Fernet key used to encrypt per-organization Twilio secrets at rest. |
+| `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enable automated Twilio Trust Hub / A2P onboarding flows for organizations. |
+| `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | empty | Required when `TWILIO_A2P_ONBOARDING_ENABLED=1`. Must be the primary Trust Hub customer-profile bundle (`BU...`), not an address or supporting-document bundle. |
+| `TWILIO_A2P_NUMBER_COUNTRY` | `US` | Default country used when the app auto-buys an A2P sender number. |
+
+There is no separate `TWILIO_PARENT_ACCOUNT_SID` setting. The app treats `TWILIO_ACCOUNT_SID` as the parent/master account for provisioning and parent-number transfer.
 
 ### Database
 
@@ -135,6 +150,8 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
     DEBUG = os.environ.get('FLASK_DEBUG') == '1' or os.environ.get('FLASK_ENV') == 'development'
     TRUST_PROXY = os.environ.get('TRUST_PROXY', '0') == '1'
+    SAAS_MODE = os.environ.get('SAAS_MODE', '0') == '1'
+    SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
 
     # Security
     SESSION_COOKIE_HTTPONLY = True
@@ -185,7 +202,13 @@ class Config:
     # Twilio
     TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
     TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+    TWILIO_API_KEY_SID = os.environ.get('TWILIO_API_KEY_SID')
+    TWILIO_API_KEY_SECRET = os.environ.get('TWILIO_API_KEY_SECRET')
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
+    TWILIO_CREDENTIAL_ENCRYPTION_KEY = os.environ.get('TWILIO_CREDENTIAL_ENCRYPTION_KEY')
+    TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
+    TWILIO_A2P_ONBOARDING_ENABLED = os.environ.get('TWILIO_A2P_ONBOARDING_ENABLED', '0') == '1'
+    TWILIO_PRIMARY_CUSTOMER_PROFILE_SID = os.environ.get('TWILIO_PRIMARY_CUSTOMER_PROFILE_SID')
     PLATFORM_SERVICE_RESTART_ENABLED = os.environ.get('PLATFORM_SERVICE_RESTART_ENABLED', '0') == '1'
     PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
         'PLATFORM_SERVICE_RESTART_SCRIPT',
@@ -223,8 +246,11 @@ On startup in production (`DEBUG=False`):
 
 ```bash
 # Twilio (required)
+# In SaaS mode, use the parent/master Twilio account here.
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Legacy single-tenant sender. Optional for SaaS platform-managed tenant testing.
 TWILIO_FROM_NUMBER=+18005551234
 
 # Flask (required)
@@ -254,6 +280,17 @@ AUTH_PASSWORD_POLICY_ENFORCE=1
 # Optional: Test phone for test mode
 ADMIN_TEST_PHONE=+1234567890
 
+# SaaS platform runtime
+# Required when running the SaaS control plane
+SAAS_MODE=1
+SAAS_BASE_URL=https://beta.example.com
+TWILIO_API_KEY_SID=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_API_KEY_SECRET=replace_me
+TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
+TWILIO_A2P_ONBOARDING_ENABLED=1
+# Must be the primary Trust Hub customer-profile bundle, not an address/supporting-doc bundle
+TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BUxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
 # Database (optional, defaults work)
 DATABASE_URL=sqlite:///instance/sms.db
 
@@ -276,6 +313,7 @@ APP_TIMEZONE=America/Denver
 
 ```bash
 # Twilio (required for actual SMS sending)
+# In SaaS mode, use the parent/master Twilio account here.
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_FROM_NUMBER=+18005551234
@@ -289,6 +327,13 @@ ADMIN_PASSWORD=admin
 
 # Test phone
 ADMIN_TEST_PHONE=+1234567890
+
+# Optional SaaS settings for local platform-managed Twilio testing
+# SAAS_MODE=1
+# SAAS_BASE_URL=http://127.0.0.1:5000
+# TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
+# TWILIO_A2P_ONBOARDING_ENABLED=1
+# TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BUxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Scheduler (enabled for dev)
 SCHEDULER_ENABLED=1

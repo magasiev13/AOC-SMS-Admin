@@ -45,6 +45,8 @@ SECRET_KEY=...
 PLATFORM_SERVICE_RESTART_ENABLED=0
 ```
 
+Use the parent/master Twilio account for `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. There is no separate `TWILIO_PARENT_ACCOUNT_SID` setting in this app. When automated A2P onboarding is enabled, `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` must be the primary Trust Hub customer-profile bundle (`BU...`), not an address or supporting-document bundle.
+
 Bootstrap-only for the first platform admin:
 
 ```bash

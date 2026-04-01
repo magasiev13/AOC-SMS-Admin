@@ -4,7 +4,14 @@ from pathlib import Path
 
 
 def _env_bool(name: str, default: str) -> bool:
-    return os.environ.get(name, default) == '1'
+    raw_value = str(os.environ.get(name, default)).strip().lower()
+    if raw_value in {'1', 'true', 't', 'yes', 'y', 'on'}:
+        return True
+    if raw_value in {'0', 'false', 'f', 'no', 'n', 'off'}:
+        return False
+    raise RuntimeError(
+        f"{name} must be a boolean value (1/0, true/false, yes/no, on/off), got {raw_value!r}."
+    )
 
 
 def _env_int(name: str, default: str) -> int:
@@ -149,12 +156,12 @@ class Config:
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
     TWILIO_PLATFORM_FRIENDLY_NAME = os.environ.get('TWILIO_PLATFORM_FRIENDLY_NAME', 'SMS Admin SaaS')
     TWILIO_CREDENTIAL_ENCRYPTION_KEY = os.environ.get('TWILIO_CREDENTIAL_ENCRYPTION_KEY')
-    TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
+    TWILIO_VALIDATE_INBOUND_SIGNATURE = _env_bool('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1')
     TWILIO_A2P_ONBOARDING_ENABLED = _env_bool('TWILIO_A2P_ONBOARDING_ENABLED', '0')
     TWILIO_PRIMARY_CUSTOMER_PROFILE_SID = os.environ.get('TWILIO_PRIMARY_CUSTOMER_PROFILE_SID')
     TWILIO_A2P_NUMBER_COUNTRY = (os.environ.get('TWILIO_A2P_NUMBER_COUNTRY') or 'US').strip().upper() or 'US'
     TWILIO_A2P_FAKE_QUEUE = _env_bool('TWILIO_A2P_FAKE_QUEUE', '0')
-    INBOUND_AUTO_REPLY_ENABLED = os.environ.get('INBOUND_AUTO_REPLY_ENABLED', '1') == '1'
+    INBOUND_AUTO_REPLY_ENABLED = _env_bool('INBOUND_AUTO_REPLY_ENABLED', '1')
     SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
     BILLING_TRIAL_DAYS = _env_int('BILLING_TRIAL_DAYS', '14')
     BILLING_INCLUDED_OUTBOUND_SEGMENTS = _env_int('BILLING_INCLUDED_OUTBOUND_SEGMENTS', '1000')

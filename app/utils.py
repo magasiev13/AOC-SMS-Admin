@@ -59,6 +59,10 @@ def normalize_phone(phone: object) -> str:
     raw = str(phone).strip()
     if not raw:
         return ''
+    # Reject alphabetic content (e.g. "ext", vanity numbers) so we do not
+    # accidentally merge extensions/words into a valid SMS destination.
+    if re.search(r'[A-Za-z]', raw):
+        return ''
     digits = re.sub(r'[^0-9]', '', raw)
     if not digits:
         return ''

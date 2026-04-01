@@ -37,8 +37,9 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 ## Platform-Managed Twilio Strategy
 
 - Keep `TWILIO_ACCOUNT_SID=AC...`, `TWILIO_AUTH_TOKEN=...`, and `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...` in `.env`.
+- The app does not use a separate `TWILIO_PARENT_ACCOUNT_SID`; `TWILIO_ACCOUNT_SID` must be the parent/master account.
 - After changing `.env`, restart the SaaS web and worker services before testing Twilio provisioning or outbound messaging.
-- When automated A2P onboarding is enabled, also keep `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...` in `.env`.
+- When automated A2P onboarding is enabled, also keep `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...` in `.env`. This must be the primary Trust Hub customer-profile bundle, not an address/supporting-document bundle.
 - The platform account is the master Twilio account. Each organization should be provisioned with its own Twilio subaccount and Messaging Service.
 - Use `/platform/organizations/<id>/messaging` to provision the provider, then assign an approved sender number and phone number SID.
 - Use `/platform/organizations/<id>/messaging/onboarding` to submit and monitor automated Twilio A2P onboarding.
