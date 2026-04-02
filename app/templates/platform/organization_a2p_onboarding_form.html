@@ -38,12 +38,21 @@
 
     <div class="platform-shell__body">
     <div class="platform-main">
-        <div class="card app-card platform-section-card">
+            <div class="card app-card platform-section-card">
             <div class="card-body">
                 {% if onboarding and onboarding.last_error %}
                 <div class="platform-note platform-note--danger mb-4" role="alert">
                     <div class="platform-note__title">Last onboarding error</div>
                     <div class="platform-note__copy">{{ onboarding.last_error }}</div>
+                </div>
+                {% endif %}
+
+                {% if onboarding and onboarding.is_pending_review %}
+                <div class="platform-note mb-4" role="status">
+                    <div class="platform-note__title">Automatic refresh is on</div>
+                    <div class="platform-note__copy">
+                        This page checks for A2P status updates automatically about every 15 seconds while carrier review is in progress.
+                    </div>
                 </div>
                 {% endif %}
 
@@ -335,6 +344,21 @@
         messageSamplesInput.addEventListener('input', syncMessageSampleValidation);
         syncRegistrationRequirements();
         syncMessageSampleValidation();
+    })();
+
+    (() => {
+        const autoRefreshEnabled = {{ 'true' if onboarding and onboarding.is_pending_review else 'false' }};
+        if (!autoRefreshEnabled) {
+            return;
+        }
+
+        window.setInterval(() => {
+            const activeTag = document.activeElement?.tagName || '';
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) {
+                return;
+            }
+            window.location.reload();
+        }, 15000);
     })();
 </script>
 {% endblock %}

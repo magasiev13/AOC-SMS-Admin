@@ -90,12 +90,14 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();
+  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 
   await page.getByRole('link', { name: 'Back to Messaging' }).click();
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
+  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
   await expect(page.getByText('Status:')).toContainText('queued');
 });
 
@@ -104,6 +106,7 @@ test('platform admin sees each seeded onboarding state and action availability',
 
   await openMessagingForOrg(page, 'Pending Review Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
+  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('pending');
   await expect(page.locator('li').filter({ hasText: 'Brand' })).toContainText('pending-review');
   await expect(page.locator('li').filter({ hasText: 'Campaign' })).toContainText('pending');
@@ -135,6 +138,7 @@ test('platform admin sees each seeded onboarding state and action availability',
 
   await openMessagingForOrg(page, 'Queued Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
+  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
   await page.getByRole('button', { name: 'Refresh Status' }).click();
   await expect(page.getByText('Twilio A2P onboarding refresh queued.')).toBeVisible();

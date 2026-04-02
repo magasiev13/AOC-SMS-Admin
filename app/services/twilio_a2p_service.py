@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from flask import current_app
-from twilio.base.exceptions import TwilioRestException
 
 from app import db
 from app.models import (
@@ -471,6 +470,7 @@ def _save_form_data(
     )
     profile.business_type = form_data.business_type
     profile.use_case = form_data.campaign_description[:120]
+    profile.last_provision_error = None
     if profile.provider_status != "suspended":
         profile.set_provider_status("pending")
 
@@ -629,6 +629,8 @@ def _set_status(
     onboarding.last_synced_at = utc_now()
     onboarding.last_error = error_message
     profile.provider_last_checked_at = utc_now()
+    if not error_message:
+        profile.last_provision_error = None
     if error_message and profile.provider_status != "suspended":
         profile.set_provider_status("error")
         profile.last_provision_error = error_message
@@ -650,6 +652,17 @@ def _json_loads_list(value: str | None) -> list[str]:
     except json.JSONDecodeError:
         return []
     return parsed if isinstance(parsed, list) else []
+
+
+def _status_failure_reason(onboarding: OrganizationA2POnboarding) -> str | None:
+    status_payload = _load_status_payload(onboarding)
+    return status_payload.get("campaign_failure_reason") or status_payload.get("brand_failure_reason")
+
+
+def _resolved_campaign_status(onboarding: OrganizationA2POnboarding, campaign_status: str | None) -> str | None:
+    if campaign_status:
+        return campaign_status
+    return "pending" if onboarding.campaign_sid else None
 
 
 def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> None:
@@ -825,31 +838,39 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
         )
         onboarding.brand_registration_sid = brand_registration.sid
 
-    if not onboarding.campaign_sid:
-        submission_payload = json.loads(onboarding.raw_submission_json or "{}")
-        campaign_use_case = _normalize_use_case(onboarding.registration_path, onboarding.campaign_use_case)
-        message_samples = _validate_message_samples(
-            campaign_use_case,
-            _json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
-        )
-        campaign = _build_subaccount_client(profile).messaging.v1.services(profile.messaging_service_sid).us_app_to_person.create(
-            brand_registration_sid=onboarding.brand_registration_sid,
-            description=onboarding.campaign_description or onboarding.business_name,
-            message_flow=onboarding.message_flow or onboarding.campaign_description or onboarding.business_name,
-            message_samples=message_samples,
-            us_app_to_person_usecase=campaign_use_case,
-            has_embedded_links=bool(submission_payload.get("has_embedded_links")),
-            has_embedded_phone=bool(submission_payload.get("has_embedded_phone")),
-            opt_in_message=onboarding.opt_in_message or None,
-            opt_out_message=onboarding.opt_out_message or None,
-            help_message=onboarding.help_message or None,
-            opt_in_keywords=_json_loads_list(onboarding.opt_in_keywords_json),
-            opt_out_keywords=_json_loads_list(onboarding.opt_out_keywords_json),
-            help_keywords=_json_loads_list(onboarding.help_keywords_json),
-        )
-        onboarding.campaign_sid = campaign.sid
-
     _store_status_payload(onboarding, status_payload)
+
+
+def _create_a2p_campaign(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> None:
+    if onboarding.campaign_sid:
+        return
+    if not onboarding.brand_registration_sid:
+        raise ProviderProvisioningError("Twilio brand registration must exist before campaign creation can begin.")
+    if not profile.messaging_service_sid:
+        raise ProviderProvisioningError("Twilio messaging service must exist before campaign creation can begin.")
+
+    submission_payload = json.loads(onboarding.raw_submission_json or "{}")
+    campaign_use_case = _normalize_use_case(onboarding.registration_path, onboarding.campaign_use_case)
+    message_samples = _validate_message_samples(
+        campaign_use_case,
+        _json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
+    )
+    campaign = _build_subaccount_client(profile).messaging.v1.services(profile.messaging_service_sid).us_app_to_person.create(
+        brand_registration_sid=onboarding.brand_registration_sid,
+        description=onboarding.campaign_description or onboarding.business_name,
+        message_flow=onboarding.message_flow or onboarding.campaign_description or onboarding.business_name,
+        message_samples=message_samples,
+        us_app_to_person_usecase=campaign_use_case,
+        has_embedded_links=bool(submission_payload.get("has_embedded_links")),
+        has_embedded_phone=bool(submission_payload.get("has_embedded_phone")),
+        opt_in_message=onboarding.opt_in_message or None,
+        opt_out_message=onboarding.opt_out_message or None,
+        help_message=onboarding.help_message or None,
+        opt_in_keywords=_json_loads_list(onboarding.opt_in_keywords_json),
+        opt_out_keywords=_json_loads_list(onboarding.opt_out_keywords_json),
+        help_keywords=_json_loads_list(onboarding.help_keywords_json),
+    )
+    onboarding.campaign_sid = campaign.sid
 
 
 def _buy_phone_number(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile):
@@ -968,13 +989,26 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
 
     try:
         _upsert_a2p_resources(onboarding, profile)
+        db.session.commit()
         brand_status, campaign_status = _sync_remote_status(onboarding, profile)
         onboarding.brand_status = brand_status
         onboarding.campaign_status = campaign_status
         profile.provider_last_checked_at = utc_now()
 
         normalized_brand_status = brand_status or "pending"
-        normalized_campaign_status = campaign_status or "pending"
+        normalized_campaign_status = _resolved_campaign_status(onboarding, campaign_status)
+        brand_ready_for_campaign = normalized_brand_status in {"approved", "registered"}
+
+        if brand_ready_for_campaign and not onboarding.campaign_sid:
+            _create_a2p_campaign(onboarding, profile)
+            db.session.commit()
+            brand_status, campaign_status = _sync_remote_status(onboarding, profile)
+            onboarding.brand_status = brand_status
+            onboarding.campaign_status = campaign_status
+            profile.provider_last_checked_at = utc_now()
+            normalized_brand_status = brand_status or "pending"
+            normalized_campaign_status = _resolved_campaign_status(onboarding, campaign_status)
+
         if normalized_brand_status in {"failed", "rejected"} or normalized_campaign_status in {"failed", "rejected"}:
             _set_status(
                 onboarding,
@@ -982,11 +1016,9 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
                 onboarding_status="rejected",
                 brand_status=normalized_brand_status,
                 campaign_status=normalized_campaign_status,
-                error_message=_load_status_payload(onboarding).get("campaign_failure_reason")
-                or _load_status_payload(onboarding).get("brand_failure_reason")
-                or "Twilio rejected the A2P registration.",
+                error_message=_status_failure_reason(onboarding) or "Twilio rejected the A2P registration.",
             )
-        elif normalized_brand_status in {"approved"} and normalized_campaign_status in {"approved", "active"}:
+        elif brand_ready_for_campaign and normalized_campaign_status in {"approved", "active"}:
             _complete_number_setup(onboarding, profile, actor_user_id)
             onboarding.onboarding_status = "approved"
             onboarding.approved_at = utc_now()

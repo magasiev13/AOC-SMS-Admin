@@ -66,6 +66,15 @@
                     </div>
                 </div>
 
+                {% if onboarding and onboarding.is_pending_review %}
+                <div class="platform-note mb-4" role="status">
+                    <div class="platform-note__title">Automatic refresh is on</div>
+                    <div class="platform-note__copy">
+                        This page checks for new A2P status updates automatically about every 15 seconds while carrier review is in progress.
+                    </div>
+                </div>
+                {% endif %}
+
                 {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
                 <div class="platform-note platform-note--danger mb-4" role="alert">
                     <div class="platform-note__title">Provider sync error</div>
@@ -235,4 +244,21 @@
     </aside>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% if onboarding and onboarding.is_pending_review %}
+<script>
+    (() => {
+        window.setInterval(() => {
+            const activeTag = document.activeElement?.tagName || '';
+            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) {
+                return;
+            }
+            window.location.reload();
+        }, 15000);
+    })();
+</script>
+{% endif %}
 {% endblock %}
