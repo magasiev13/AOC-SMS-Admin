@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 
 async function login(page, username, password) {
   await page.goto('/login');
-  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In' }).click();
 }
@@ -41,10 +41,16 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.getByLabel('Legal Business Name')).toHaveValue('Onboarding Bakery');
   await expect(page.getByLabel('Business Type')).toHaveValue('');
+  await expect(page.getByLabel('Business Industry')).toBeVisible();
   await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
   await expect(page.getByLabel('Business Email')).toBeVisible();
+  await expect(page.getByLabel('Notification Email')).toBeVisible();
+  await expect(page.getByLabel('Website URL')).toBeVisible();
   await expect(page.getByLabel('Rep First Name')).toBeVisible();
   await expect(page.getByLabel('Rep Last Name')).toBeVisible();
+  await expect(page.getByLabel('Business Title')).toBeVisible();
+  await expect(page.getByLabel('Job Position')).toBeVisible();
+  await expect(page.getByLabel('Address Line 1')).toBeVisible();
   await expect(page.getByLabel('Campaign Description')).toBeVisible();
   await expect(page.getByLabel('Opt-in / Message Flow')).toBeVisible();
   await expect(page.getByLabel('Message Samples')).toBeVisible();
@@ -67,9 +73,19 @@ test('platform admin can navigate onboarding from messaging and submit determini
   expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(true);
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(true);
   await page.getByLabel('Business Type').selectOption('Limited Liability Corporation');
+  await page.getByLabel('Business Industry').selectOption('TECHNOLOGY');
   await page.getByLabel('Business Email').fill('ops@onboarding.test');
+  await page.getByLabel('Notification Email').fill('alerts@onboarding.test');
+  await page.getByLabel('Website URL').fill('https://onboarding.test');
   await page.getByLabel('Rep First Name').fill('Olivia');
   await page.getByLabel('Rep Last Name').fill('Owner');
+  await page.getByLabel('Business Title').fill('Owner');
+  await page.getByLabel('Job Position').selectOption('Director');
+  await page.getByLabel('Address Line 1').fill('123 Main Street');
+  await page.getByLabel('City').fill('Denver');
+  await page.getByLabel('State / Province').fill('CO');
+  await page.getByLabel('Postal Code').fill('80202');
+  await page.getByLabel('USA and Canada').check();
   await page.getByLabel('Campaign Description').fill('Community updates');
   await page.getByLabel('Opt-in / Message Flow').fill('Users opt in from the website.');
   await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder');

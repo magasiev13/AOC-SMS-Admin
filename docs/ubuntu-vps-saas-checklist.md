@@ -325,7 +325,7 @@ After the service is running locally on the VPS, confirm:
 3. `/platform/organizations` loads.
 4. You can create an organization.
 5. Owner invite flow renders.
-6. `/billing` loads for owner and returns `403` for staff.
+6. Owner setup loads at `/setup`, and `/billing` still loads for owners but returns `403` for staff.
 7. The worker is idle but healthy.
 8. The scheduler timer is active.
 

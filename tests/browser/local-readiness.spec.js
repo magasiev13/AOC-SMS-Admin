@@ -2,7 +2,7 @@ const { test, expect } = require('@playwright/test');
 
 async function login(page, username, password) {
   await page.goto('/login');
-  await page.getByLabel('Username').fill(username);
+  await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign In' }).click();
 }

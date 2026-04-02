@@ -1,6 +1,7 @@
 {% extends "auth/base.html" %}
 
-{% block title %}Login - SMS Admin{% endblock %}
+{% set is_platform = auth_surface == 'platform' %}
+{% block title %}{{ 'Platform Login' if is_platform else 'Workspace Login' }} - SMS Admin{% endblock %}
 
 {% block page_title %}Sign In{% endblock %}
 {% block auth_main_class %}auth-login-main{% endblock %}
@@ -10,17 +11,32 @@
 <section class="login-shell">
     <div class="login-layout">
         <div class="login-intro">
-            <div class="login-kicker">SMS Admin</div>
-            <h1 class="login-title">Sign in to your messaging workspace.</h1>
+            <div class="login-kicker">{{ 'Platform control' if is_platform else 'Workspace access' }}</div>
+            <h1 class="login-title">
+                {{ 'Sign in to the control plane.' if is_platform else 'Sign in to your business workspace.' }}
+            </h1>
             <p class="login-copy">
-                Platform admins manage onboarding here. Owners and staff handle messaging, inbox, billing, and team operations inside their organization workspace.
+                {% if is_platform %}
+                Platform admins manage organizations, onboarding recovery, and sender assignment from a separate control surface.
+                {% else %}
+                Owners activate billing, complete compliance, and launch messaging here. Staff join after setup is complete.
+                {% endif %}
             </p>
+            {% if not is_platform %}
+            <div class="login-copy">
+                Need a new workspace? <a href="{{ url_for('auth.signup') }}">Create one here</a>.
+            </div>
+            {% else %}
+            <div class="login-copy">
+                Need your customer workspace instead? <a href="{{ url_for('auth.login') }}">Use the workspace login</a>.
+            </div>
+            {% endif %}
         </div>
         <div class="card app-card login-card">
             <div class="card-body p-4 p-lg-5">
                 <div class="text-center mb-4">
                     <div class="d-flex justify-content-center mb-3">
-                        <a class="app-sidebar-brand app-sidebar-brand--light" href="/dashboard">
+                        <a class="app-sidebar-brand app-sidebar-brand--light" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}">
                             <span class="brand-icon">
                                 <span class="brand-icon__pulse"></span>
                                 <i class="bi bi-send-fill"></i>
@@ -28,17 +44,17 @@
                             <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
                         </a>
                     </div>
-                    <h2 class="login-card__title">Welcome back</h2>
-                    <p class="text-muted mb-0">Sign in to continue</p>
+                    <h2 class="login-card__title">{{ 'Platform admin login' if is_platform else 'Welcome back' }}</h2>
+                    <p class="text-muted mb-0">{{ 'Use your platform admin credentials.' if is_platform else 'Use your email or username to continue.' }}</p>
                 </div>
 
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="mb-3">
-                        <label for="username" class="form-label">Username</label>
+                        <label for="username" class="form-label">Email or username</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-person"></i></span>
-                            <input type="text" class="form-control" id="username" name="username" required autofocus autocomplete="username">
+                            <input type="text" class="form-control" id="username" name="username" required autofocus autocomplete="username" placeholder="Email or username">
                         </div>
                     </div>
 

@@ -1,0 +1,66 @@
+{% extends "auth/base.html" %}
+
+{% block title %}Create Workspace - SMS Admin{% endblock %}
+
+{% block page_title %}Create Workspace{% endblock %}
+{% block auth_main_class %}auth-login-main{% endblock %}
+{% block auth_header %}{% endblock %}
+
+{% block content %}
+<section class="login-shell">
+    <div class="login-layout">
+        <div class="login-intro">
+            <div class="login-kicker">Workspace signup</div>
+            <h1 class="login-title">Create your messaging workspace.</h1>
+            <p class="login-copy">
+                Start the business account, activate billing, complete Twilio compliance once, and move into live messaging without platform-admin handoffs.
+            </p>
+            <div class="login-copy">
+                Already have a workspace? <a href="{{ url_for('auth.login') }}">Sign in here</a>.
+            </div>
+        </div>
+        <div class="card app-card login-card login-card--wide">
+            <div class="card-body p-4 p-lg-5">
+                <div class="mb-4">
+                    <h2 class="login-card__title">Create your owner account</h2>
+                    <p class="text-muted mb-0">This creates the workspace, owner login, billing record, and draft messaging profile in one step.</p>
+                </div>
+                <form method="POST" class="setup-form-grid">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="organization_name">Business name</label>
+                        <input class="form-control" id="organization_name" name="organization_name" required autocomplete="organization">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="full_name">Full name</label>
+                        <input class="form-control" id="full_name" name="full_name" autocomplete="name">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="email">Business email</label>
+                        <input class="form-control" id="email" name="email" type="email" required autocomplete="email">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="username">Username</label>
+                        <input class="form-control" id="username" name="username" required autocomplete="username">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="phone">Mobile phone</label>
+                        <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="password">Password</label>
+                        <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="confirm_password">Confirm password</label>
+                        <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <button type="submit" class="btn btn-primary w-100">Create workspace</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

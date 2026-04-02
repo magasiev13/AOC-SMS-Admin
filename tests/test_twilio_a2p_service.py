@@ -84,6 +84,54 @@ class TestTwilioA2PService(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._original_env)
 
+    def _valid_submission_payload(self, **overrides):
+        payload = {
+            "registration_path": "standard",
+            "number_strategy": "auto_buy",
+            "business_name": "Acme",
+            "business_type": "LLC",
+            "business_industry": "TECHNOLOGY",
+            "business_regions": ["USA_AND_CANADA"],
+            "business_registration_identifier": "EIN",
+            "business_registration_number": "12-3456789",
+            "website_url": "https://acme.test",
+            "email": "ops@acme.test",
+            "notification_email": "ops@acme.test",
+            "phone_number": "+15550000001",
+            "mobile_number": "+15550000002",
+            "first_name": "Jane",
+            "last_name": "Doe",
+            "business_title": "Owner",
+            "job_position": "Director",
+            "address_country": "US",
+            "address_line1": "123 Main Street",
+            "address_city": "Denver",
+            "address_region": "CO",
+            "address_postal_code": "80202",
+            "campaign_description": "Community updates",
+            "message_flow": "Users opt in on the website and reply STOP to opt out.",
+            "message_samples": self.MIXED_MESSAGE_SAMPLES,
+            "campaign_use_case": "MIXED",
+        }
+        payload.update(overrides)
+        return payload
+
+    def _populate_onboarding_profile(self, onboarding, **overrides):
+        onboarding.business_industry = "TECHNOLOGY"
+        onboarding.business_regions_json = '["USA_AND_CANADA"]'
+        onboarding.website_url = "https://acme.test"
+        onboarding.notification_email = "ops@acme.test"
+        onboarding.business_title = "Owner"
+        onboarding.job_position = "Director"
+        onboarding.address_country = "US"
+        onboarding.address_line1 = "123 Main Street"
+        onboarding.address_city = "Denver"
+        onboarding.address_region = "CO"
+        onboarding.address_postal_code = "80202"
+        for key, value in overrides.items():
+            setattr(onboarding, key, value)
+        return onboarding
+
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_persists_and_queues_job(self, mock_get_queue) -> None:
         queue = MagicMock()
@@ -91,26 +139,14 @@ class TestTwilioA2PService(unittest.TestCase):
 
         onboarding = self.submit_a2p_onboarding(
             self.organization.id,
-            {
-                "registration_path": "nonprofit",
-                "number_strategy": "auto_buy",
-                "business_name": "Acme Nonprofit",
-                "business_type": "Nonprofit",
-                "business_registration_identifier": "EIN",
-                "business_registration_number": "12-3456789",
-                "email": "ops@acme.test",
-                "phone_number": "+15550000001",
-                "mobile_number": "+15550000002",
-                "first_name": "Jane",
-                "last_name": "Doe",
-                "job_position": "Director",
-                "campaign_description": "Community updates",
-                "message_flow": "Users opt in on the website and reply STOP to opt out.",
-                "message_samples": "Acme reminder 1\nAcme reminder 2",
-                "campaign_use_case": "MIXED",
-                "has_embedded_links": "on",
-                "has_embedded_phone": "on",
-            },
+            self._valid_submission_payload(
+                registration_path="nonprofit",
+                business_name="Acme Nonprofit",
+                business_type="Nonprofit",
+                message_samples="Acme reminder 1\nAcme reminder 2",
+                has_embedded_links="on",
+                has_embedded_phone="on",
+            ),
             actor_user_id=42,
         )
 
@@ -122,95 +158,59 @@ class TestTwilioA2PService(unittest.TestCase):
 
     def test_submit_a2p_onboarding_rejects_invalid_number_strategy_payload(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Choose a valid Twilio A2P number strategy."):
+            payload = self._valid_submission_payload(registration_path="standard")
+            payload["number_strategy"] = "shared_parent_number"
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "shared_parent_number",
-                    "business_name": "Acme",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                payload,
                 actor_user_id=7,
             )
 
     def test_submit_a2p_onboarding_requires_phone_number_sid_for_existing_number_strategy(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "phone number SID is required"):
+            payload = self._valid_submission_payload(
+                registration_path="standard",
+                number_strategy="existing_subaccount_number",
+            )
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "existing_subaccount_number",
-                    "business_name": "Acme",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                payload,
                 actor_user_id=7,
             )
 
     def test_submit_a2p_onboarding_requires_business_type_for_standard_paths(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Business type is required"):
+            payload = self._valid_submission_payload(registration_path="standard")
+            payload.pop("business_type")
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                payload,
                 actor_user_id=7,
             )
 
     def test_submit_a2p_onboarding_requires_registration_identifier_for_non_sole_paths(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "registration identifier is required"):
+            payload = self._valid_submission_payload(
+                registration_path="low_volume_standard",
+                business_type="LLC",
+            )
+            payload.pop("business_registration_identifier")
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "low_volume_standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "business_type": "LLC",
-                    "business_registration_number": "12-3456789",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                payload,
                 actor_user_id=7,
             )
 
     def test_submit_a2p_onboarding_requires_registration_number_for_non_sole_paths(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "registration number is required"):
+            payload = self._valid_submission_payload(
+                registration_path="low_volume_standard",
+                business_type="LLC",
+            )
+            payload.pop("business_registration_number")
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "low_volume_standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "business_type": "LLC",
-                    "business_registration_identifier": "EIN",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                payload,
                 actor_user_id=7,
             )
 
@@ -218,18 +218,10 @@ class TestTwilioA2PService(unittest.TestCase):
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Business type is required"):
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "business_type": "None",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                self._valid_submission_payload(
+                    registration_path="standard",
+                    business_type="None",
+                ),
                 actor_user_id=7,
             )
 
@@ -240,19 +232,11 @@ class TestTwilioA2PService(unittest.TestCase):
 
         onboarding = self.submit_a2p_onboarding(
             self.organization.id,
-            {
-                "registration_path": "nonprofit",
-                "number_strategy": "auto_buy",
-                "business_name": "Acme Nonprofit",
-                "business_registration_identifier": "EIN",
-                "business_registration_number": "12-3456789",
-                "email": "ops@acme.test",
-                "first_name": "Jane",
-                "last_name": "Doe",
-                "campaign_description": "Community updates",
-                "message_flow": "Users opt in.",
-                "message_samples": self.MIXED_MESSAGE_SAMPLES,
-            },
+            self._valid_submission_payload(
+                registration_path="nonprofit",
+                business_name="Acme Nonprofit",
+                business_type=None,
+            ),
             actor_user_id=11,
         )
 
@@ -266,20 +250,10 @@ class TestTwilioA2PService(unittest.TestCase):
 
         onboarding = self.submit_a2p_onboarding(
             self.organization.id,
-            {
-                "registration_path": "low_volume_standard",
-                "number_strategy": "auto_buy",
-                "business_name": "Acme",
-                "business_type": "Limited Liability Company",
-                "business_registration_identifier": "EIN",
-                "business_registration_number": "12-3456789",
-                "email": "ops@acme.test",
-                "first_name": "Jane",
-                "last_name": "Doe",
-                "campaign_description": "Community updates",
-                "message_flow": "Users opt in.",
-                "message_samples": self.MIXED_MESSAGE_SAMPLES,
-            },
+            self._valid_submission_payload(
+                registration_path="low_volume_standard",
+                business_type="Limited Liability Company",
+            ),
             actor_user_id=12,
         )
 
@@ -293,18 +267,14 @@ class TestTwilioA2PService(unittest.TestCase):
 
         onboarding = self.submit_a2p_onboarding(
             self.organization.id,
-            {
-                "registration_path": "sole_proprietor",
-                "number_strategy": "auto_buy",
-                "business_name": "Jane Doe",
-                "email": "ops@acme.test",
-                "mobile_number": "+15550000002",
-                "first_name": "Jane",
-                "last_name": "Doe",
-                "campaign_description": "Community updates",
-                "message_flow": "Users opt in.",
-                "message_samples": "Sample message",
-            },
+            self._valid_submission_payload(
+                registration_path="sole_proprietor",
+                business_name="Jane Doe",
+                business_registration_identifier=None,
+                business_registration_number=None,
+                message_samples="Sample 1\nSample 2",
+                campaign_use_case="SOLE_PROPRIETOR",
+            ),
             actor_user_id=13,
         )
 
@@ -317,21 +287,10 @@ class TestTwilioA2PService(unittest.TestCase):
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "business_type": "LLC",
-                    "business_registration_identifier": "EIN",
-                    "business_registration_number": "12-3456789",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": "Only one sample",
-                    "campaign_use_case": "MIXED",
-                },
+                self._valid_submission_payload(
+                    message_samples="Only one sample",
+                    campaign_use_case="MIXED",
+                ),
                 actor_user_id=14,
             )
 
@@ -344,20 +303,7 @@ class TestTwilioA2PService(unittest.TestCase):
         with self.assertRaisesRegex(self.ProviderProvisioningError, "could not be queued"):
             self.submit_a2p_onboarding(
                 self.organization.id,
-                {
-                    "registration_path": "standard",
-                    "number_strategy": "auto_buy",
-                    "business_name": "Acme",
-                    "business_type": "LLC",
-                    "business_registration_identifier": "EIN",
-                    "business_registration_number": "12-3456789",
-                    "email": "ops@acme.test",
-                    "first_name": "Jane",
-                    "last_name": "Doe",
-                    "campaign_description": "Community updates",
-                    "message_flow": "Users opt in.",
-                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
-                },
+                self._valid_submission_payload(),
                 actor_user_id=21,
             )
 
@@ -373,6 +319,8 @@ class TestTwilioA2PService(unittest.TestCase):
         mock_build_subaccount_client.return_value = mock_client
         mock_client.trusthub.v1.customer_profiles.create.return_value.sid = "BUcustomer123"
         mock_client.trusthub.v1.trust_products.create.return_value.sid = "BUtrust123"
+        mock_client.trusthub.v1.addresses.create.return_value.sid = "ADaddress123"
+        mock_client.trusthub.v1.supporting_documents.create.return_value.sid = "RDsupport123"
         mock_client.trusthub.v1.end_users.create.side_effect = [
             MagicMock(sid="ITbusiness123"),
             MagicMock(sid="ITauthorized123"),
@@ -401,6 +349,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.raw_submission_json = "{}"
+        self._populate_onboarding_profile(onboarding)
 
         self._upsert_a2p_resources(onboarding, self.messaging_profile)
 
@@ -447,6 +396,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.raw_submission_json = "{}"
+        self._populate_onboarding_profile(onboarding)
 
         with self.assertRaisesRegex(self.ProviderProvisioningError, "registration number is required"):
             self._upsert_a2p_resources(onboarding, self.messaging_profile)
@@ -474,6 +424,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_use_case = "MIXED"
         onboarding.message_samples_json = '["Sample"]'
         onboarding.raw_submission_json = "{}"
+        self._populate_onboarding_profile(onboarding)
 
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
             self._create_a2p_campaign(onboarding, self.messaging_profile)
@@ -500,6 +451,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.raw_submission_json = '{"has_embedded_links": true, "has_embedded_phone": false}'
+        self._populate_onboarding_profile(onboarding)
 
         self._create_a2p_campaign(onboarding, self.messaging_profile)
 

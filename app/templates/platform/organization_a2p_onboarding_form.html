@@ -63,6 +63,9 @@
                     {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') %}
                     {% set selected_business_type = request.form.get('business_type', (onboarding.business_type if onboarding else '') or ('Non-profit Corporation' if selected_registration_path in ('nonprofit', 'government') else ('Sole Proprietor' if selected_registration_path == 'sole_proprietor' else ''))) %}
                     {% set selected_business_registration_identifier = request.form.get('business_registration_identifier', (onboarding.business_registration_identifier if onboarding else '') or ('EIN' if selected_registration_path != 'sole_proprietor' else '')) %}
+                    {% set selected_business_industry = request.form.get('business_industry', (onboarding.business_industry if onboarding else '') or 'OTHER') %}
+                    {% set selected_job_position = request.form.get('job_position', (onboarding.job_position if onboarding else '') or '') %}
+                    {% set selected_business_regions = request.form.getlist('business_regions') if request.form.getlist('business_regions') else ((a2p_form_defaults.business_regions or 'USA_AND_CANADA').split(',')) %}
 
                     <div class="platform-shell__eyebrow mb-2">Registration settings</div>
                     <div class="row g-3">
@@ -103,8 +106,20 @@
                             <div class="form-text">Standard and low-volume registrations must use a Twilio-approved legal structure. Nonprofit, government, and sole proprietor paths are set automatically.</div>
                         </div>
                         <div class="col-md-6">
+                            <label class="form-label" for="business_industry">Business Industry</label>
+                            <select class="form-select" id="business_industry" name="business_industry" required>
+                                {% for value, label in business_industry_choices %}
+                                <option value="{{ value }}" {% if selected_business_industry == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label" for="email">Business Email</label>
                             <input class="form-control" id="email" name="email" type="email" required value="{{ request.form.get('email', (onboarding.email if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="notification_email">Notification Email</label>
+                            <input class="form-control" id="notification_email" name="notification_email" type="email" required value="{{ request.form.get('notification_email', (onboarding.notification_email if onboarding else '') or ((onboarding.email if onboarding else '') or '')) }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="phone_number">Business Phone</label>
@@ -130,13 +145,37 @@
                             <label class="form-label" for="last_name">Rep Last Name</label>
                             <input class="form-control" id="last_name" name="last_name" required value="{{ request.form.get('last_name', (onboarding.last_name if onboarding else '') or '') }}">
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="job_position">Rep Title</label>
-                            <input class="form-control" id="job_position" name="job_position" placeholder="Owner, Director, CEO" value="{{ request.form.get('job_position', (onboarding.job_position if onboarding else '') or '') }}">
+                        <div class="col-md-3">
+                            <label class="form-label" for="business_title">Business Title</label>
+                            <input class="form-control" id="business_title" name="business_title" required value="{{ request.form.get('business_title', (onboarding.business_title if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label" for="job_position">Job Position</label>
+                            <select class="form-select" id="job_position" name="job_position" required>
+                                <option value="">Select a job position</option>
+                                {% for value, label in job_position_choices %}
+                                <option value="{{ value }}" {% if selected_job_position == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Business Regions of Operation</label>
+                            <div class="d-grid gap-2" style="grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));">
+                                {% for value, label in business_region_choices %}
+                                <label class="form-check border rounded p-2">
+                                    <input class="form-check-input me-2" type="checkbox" name="business_regions" value="{{ value }}" {% if value in selected_business_regions %}checked{% endif %}>
+                                    <span class="form-check-label">{{ label }}</span>
+                                </label>
+                                {% endfor %}
+                            </div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="business_registration_identifier">Registration Identifier</label>
-                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" {% if selected_registration_path != 'sole_proprietor' %}required{% endif %} value="{{ selected_business_registration_identifier }}">
+                            <select class="form-select" id="business_registration_identifier" name="business_registration_identifier" {% if selected_registration_path != 'sole_proprietor' %}required{% endif %}>
+                                {% for value, label in registration_identifier_choices %}
+                                <option value="{{ value }}" {% if selected_business_registration_identifier == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
                             <div class="form-text">Required for standard, low-volume, nonprofit, and government registrations. Use EIN for U.S. businesses.</div>
                         </div>
                         <div class="col-md-4">
@@ -148,13 +187,33 @@
                             <label class="form-label" for="campaign_verify_token">Campaign Verify Token</label>
                             <input class="form-control" id="campaign_verify_token" name="campaign_verify_token" placeholder="Optional for 527 orgs" value="{{ request.form.get('campaign_verify_token', '') }}">
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="address_sid">Twilio Address SID</label>
-                            <input class="form-control" id="address_sid" name="address_sid" placeholder="ADxxxxxxxx" value="{{ request.form.get('address_sid', (onboarding.address_sid if onboarding else '') or '') }}">
+                        <div class="col-md-4">
+                            <label class="form-label" for="address_country">Country</label>
+                            {% set selected_country = request.form.get('address_country', (onboarding.address_country if onboarding else '') or 'US') %}
+                            <select class="form-select" id="address_country" name="address_country" required>
+                                <option value="US" {% if selected_country == 'US' %}selected{% endif %}>United States</option>
+                                <option value="CA" {% if selected_country == 'CA' %}selected{% endif %}>Canada</option>
+                            </select>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="supporting_document_sid">Supporting Document SID</label>
-                            <input class="form-control" id="supporting_document_sid" name="supporting_document_sid" placeholder="RDxxxxxxxx" value="{{ request.form.get('supporting_document_sid', (onboarding.supporting_document_sid if onboarding else '') or '') }}">
+                        <div class="col-md-8">
+                            <label class="form-label" for="address_line1">Address Line 1</label>
+                            <input class="form-control" id="address_line1" name="address_line1" required value="{{ request.form.get('address_line1', (onboarding.address_line1 if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label" for="address_line2">Address Line 2</label>
+                            <input class="form-control" id="address_line2" name="address_line2" value="{{ request.form.get('address_line2', (onboarding.address_line2 if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="address_city">City</label>
+                            <input class="form-control" id="address_city" name="address_city" required value="{{ request.form.get('address_city', (onboarding.address_city if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="address_region">State / Province</label>
+                            <input class="form-control" id="address_region" name="address_region" required value="{{ request.form.get('address_region', (onboarding.address_region if onboarding else '') or '') }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="address_postal_code">Postal Code</label>
+                            <input class="form-control" id="address_postal_code" name="address_postal_code" required value="{{ request.form.get('address_postal_code', (onboarding.address_postal_code if onboarding else '') or '') }}">
                         </div>
                     </div>
 

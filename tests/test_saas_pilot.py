@@ -211,7 +211,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/billing", response.headers.get("Location", ""))
+        self.assertIn("/setup", response.headers.get("Location", ""))
         self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
 
     def test_platform_admin_login_redirects_to_platform_home(self) -> None:
@@ -219,10 +219,46 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertIn("/platform", response.headers.get("Location", ""))
 
-    def test_owner_login_redirects_to_workspace_dashboard(self) -> None:
+    def test_owner_login_redirects_to_setup_when_workspace_is_incomplete(self) -> None:
         response = self._login_owner()
 
-        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertIn("/setup", response.headers.get("Location", ""))
+
+    def test_platform_login_rejects_workspace_owner_credentials(self) -> None:
+        response = self.client.post(
+            "/platform/login",
+            data={"username": "owner@acme.test", "password": "Owner-pass1!"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Use the workspace login to access your organization account.", response.data)
+
+    def test_signup_creates_workspace_owner_and_redirects_to_setup(self) -> None:
+        response = self.client.post(
+            "/signup",
+            data={
+                "organization_name": "Beta Bakery",
+                "full_name": "Beta Owner",
+                "email": "beta-owner@acme.test",
+                "username": "beta-owner",
+                "phone": "+15550000077",
+                "password": "Signup-pass1!",
+                "confirm_password": "Signup-pass1!",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup", response.headers.get("Location", ""))
+        organization = self.Organization.query.filter_by(slug="beta-bakery").first()
+        self.assertIsNotNone(organization)
+        self.assertIsNotNone(organization.subscription)
+        self.assertEqual(organization.subscription.status, "incomplete")
+        self.assertIsNotNone(organization.messaging_profile)
+        self.assertEqual(organization.messaging_profile.provider_mode, "platform_managed")
+        self.assertIsNotNone(organization.a2p_onboarding)
+        self.assertEqual(organization.a2p_onboarding.onboarding_status, "draft")
 
     def test_suspended_organization_owner_cannot_log_in(self) -> None:
         self.organization.status = "suspended"
@@ -314,6 +350,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     @patch("app.routes.refresh_subscription_from_stripe")
     def test_billing_overview_refreshes_incomplete_subscription(self, mock_refresh) -> None:
+        self.subscription.stripe_customer_id = "cus_incomplete_seed"
+        self.db.session.commit()
+
         def _refresh(organization, user_email):
             self.subscription.status = "trialing"
             self.subscription.stripe_customer_id = "cus_test_123"
@@ -420,7 +459,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(args[0].id, self.organization.id)
         self.assertEqual(args[1], "owner@acme.test")
         self.assertIn("session_id={CHECKOUT_SESSION_ID}", args[2])
-        self.assertTrue(args[3].endswith("/billing"))
+        self.assertTrue(args[3].endswith("/setup?step=billing"))
 
     def test_staff_does_not_see_restart_control(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
@@ -1328,7 +1367,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
         self.assertEqual(route_response.status_code, 403)
 
-    def test_invitation_accept_creates_membership_and_redirects_owner_to_billing(self) -> None:
+    def test_invitation_accept_creates_membership_and_redirects_owner_to_setup(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
             email="new-owner@acme.test",
@@ -1351,7 +1390,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/billing", response.headers.get("Location", ""))
+        self.assertIn("/setup", response.headers.get("Location", ""))
         self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
         user = self.AppUser.query.filter_by(email="new-owner@acme.test").first()
         self.assertIsNotNone(user)

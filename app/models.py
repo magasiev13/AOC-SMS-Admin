@@ -429,16 +429,26 @@ class OrganizationA2POnboarding(db.Model):
     business_name = db.Column(db.String(120), nullable=True)
     business_type = db.Column(db.String(80), nullable=True)
     business_identity = db.Column(db.String(40), nullable=True)
+    business_industry = db.Column(db.String(40), nullable=True)
     business_registration_identifier = db.Column(db.String(40), nullable=True)
     business_registration_number_encrypted = db.Column(db.Text, nullable=True)
+    business_regions_json = db.Column(db.Text, nullable=True)
     website_url = db.Column(db.String(255), nullable=True)
     social_profile_url = db.Column(db.String(255), nullable=True)
     email = db.Column(db.String(255), nullable=True)
+    notification_email = db.Column(db.String(255), nullable=True)
     phone_number = db.Column(db.String(20), nullable=True)
     mobile_number = db.Column(db.String(20), nullable=True)
     first_name = db.Column(db.String(80), nullable=True)
     last_name = db.Column(db.String(80), nullable=True)
+    business_title = db.Column(db.String(120), nullable=True)
     job_position = db.Column(db.String(80), nullable=True)
+    address_country = db.Column(db.String(2), nullable=True)
+    address_line1 = db.Column(db.String(255), nullable=True)
+    address_line2 = db.Column(db.String(255), nullable=True)
+    address_city = db.Column(db.String(120), nullable=True)
+    address_region = db.Column(db.String(120), nullable=True)
+    address_postal_code = db.Column(db.String(32), nullable=True)
     address_sid = db.Column(db.String(64), nullable=True)
     supporting_document_sid = db.Column(db.String(64), nullable=True)
     customer_profile_sid = db.Column(db.String(64), nullable=True, unique=True)
@@ -467,6 +477,7 @@ class OrganizationA2POnboarding(db.Model):
     last_synced_at = db.Column(db.DateTime, nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
     canceled_at = db.Column(db.DateTime, nullable=True)
+    declaration_accepted_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -484,9 +495,9 @@ class OrganizationA2POnboarding(db.Model):
     @validates("number_strategy")
     def _normalize_number_strategy(self, key, value):
         normalized = (value or "").strip().lower()
-        if normalized not in {"auto_buy", "existing_subaccount_number", "transfer_parent_number"}:
+        if normalized not in {"auto_buy", "existing_subaccount_number", "transfer_parent_number", "platform_assign"}:
             raise ValueError(
-                "Number strategy must be auto_buy, existing_subaccount_number, or transfer_parent_number."
+                "Number strategy must be auto_buy, existing_subaccount_number, transfer_parent_number, or platform_assign."
             )
         return normalized
 

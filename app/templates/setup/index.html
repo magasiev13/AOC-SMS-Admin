@@ -1,0 +1,456 @@
+{% extends "auth/base.html" %}
+
+{% block title %}Workspace Setup - SMS Admin{% endblock %}
+{% block page_title %}Workspace Setup{% endblock %}
+{% block breadcrumbs %}<span>Setup</span>{% endblock %}
+{% block page_actions %}
+<form method="POST" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-outline-secondary btn-sm">Logout</button></form>
+{% endblock %}
+
+{% block content %}
+{% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'standard') %}
+{% set selected_business_type = request.form.get('business_type', onboarding.business_type if onboarding and onboarding.business_type else '') %}
+{% set selected_business_industry = request.form.get('business_industry', onboarding.business_industry if onboarding and onboarding.business_industry else 'OTHER') %}
+{% set selected_job_position = request.form.get('job_position', onboarding.job_position if onboarding and onboarding.job_position else '') %}
+{% set selected_registration_identifier = request.form.get('business_registration_identifier', onboarding.business_registration_identifier if onboarding and onboarding.business_registration_identifier else 'EIN') %}
+{% set selected_regions = request.form.getlist('business_regions') if request.form.getlist('business_regions') else (a2p_form_defaults.business_regions or 'USA_AND_CANADA').split(',') %}
+<section class="setup-shell" data-setup-shell data-current-step="{{ current_step }}" data-onboarding-status="{{ setup_status.onboarding.status }}">
+    <div class="setup-hero">
+        <div class="setup-hero__copy">
+            <div class="login-kicker">Owner setup</div>
+            <h1 class="setup-hero__title">{{ organization.name }}</h1>
+            <p class="setup-hero__text">
+                Finish billing and Twilio compliance in one clean runway. Once approval lands, platform support assigns the first sender and unlocks live messaging.
+            </p>
+        </div>
+        <div class="setup-hero__meta">
+            <span class="setup-pill">{{ subscription_view.title }}</span>
+            <span class="setup-pill setup-pill--muted">A2P {{ setup_status.onboarding.status }}</span>
+            <span class="setup-pill setup-pill--muted">{{ 'Live' if setup_status.messaging.can_send else 'Setup in progress' }}</span>
+        </div>
+    </div>
+
+    <div class="setup-layout">
+        <aside class="setup-sidebar">
+            <ol class="setup-steps" aria-label="Workspace setup steps">
+                {% for step in setup_steps %}
+                <li class="setup-step {% if step.current %}is-current{% elif step.complete %}is-complete{% endif %}">
+                    <a href="{{ url_for('main.setup', step=step.key) }}" class="setup-step__link">
+                        <span class="setup-step__dot">{{ loop.index }}</span>
+                        <span class="setup-step__body">
+                            <strong>{{ step.label }}</strong>
+                            <span>{{ step.detail }}</span>
+                        </span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ol>
+            <div class="app-card setup-status-card">
+                <div class="setup-status-card__row"><span>Brand</span><strong>{{ setup_status.onboarding.brand_status or 'not submitted' }}</strong></div>
+                <div class="setup-status-card__row"><span>Campaign</span><strong>{{ setup_status.onboarding.campaign_status or 'not submitted' }}</strong></div>
+                <div class="setup-status-card__row"><span>Sender</span><strong>{{ setup_status.messaging.from_number or 'pending assignment' }}</strong></div>
+            </div>
+        </aside>
+
+        <div class="setup-main">
+            {% if current_step == 'billing' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 2</div>
+                        <h2>Activate billing</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
+                <div class="setup-callout">
+                    <div>{{ subscription_view.next_step }}</div>
+                    {% if subscription_view.period_value %}
+                    <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
+                    {% endif %}
+                </div>
+                <div class="setup-actions">
+                    <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('main.billing_portal') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-secondary" {% if not subscription or not subscription.stripe_customer_id %}disabled{% endif %}>Open billing portal</button>
+                    </form>
+                </div>
+            </section>
+            {% elif current_step == 'compliance' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 3</div>
+                        <h2>Business profile and compliance</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">Enter the legal business details Twilio requires. This information is stored, reused, and never exposed as raw provider SIDs.</p>
+                <form method="POST" class="setup-form-grid">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="save_compliance">
+                    <input type="hidden" name="number_strategy" value="platform_assign">
+
+                    <div class="setup-field">
+                        <label class="form-label" for="registration_path">Registration path</label>
+                        <select class="form-select" id="registration_path" name="registration_path">
+                            {% for value, label in registration_path_choices %}
+                            <option value="{{ value }}" {% if selected_registration_path == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="business_type">Business type</label>
+                        <select class="form-select" id="business_type" name="business_type" required>
+                            <option value="">Select business type</option>
+                            {% for value, label in business_type_choices %}
+                            <option value="{{ value }}" {% if selected_business_type == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="business_name">Legal business name</label>
+                        <input class="form-control" id="business_name" name="business_name" required value="{{ request.form.get('business_name', onboarding.business_name if onboarding and onboarding.business_name else organization.name) }}">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="website_url">Business website</label>
+                        <input class="form-control" id="website_url" name="website_url" required placeholder="https://example.com" value="{{ request.form.get('website_url', onboarding.website_url if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="social_profile_url">Social profile URL</label>
+                        <input class="form-control" id="social_profile_url" name="social_profile_url" placeholder="https://linkedin.com/company/example" value="{{ request.form.get('social_profile_url', onboarding.social_profile_url if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="business_industry">Business industry</label>
+                        <select class="form-select" id="business_industry" name="business_industry" required>
+                            {% for value, label in business_industry_choices %}
+                            <option value="{{ value }}" {% if selected_business_industry == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="email">Business email</label>
+                        <input class="form-control" id="email" name="email" type="email" required value="{{ request.form.get('email', onboarding.email if onboarding else current_user.email) }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="notification_email">Notification email</label>
+                        <input class="form-control" id="notification_email" name="notification_email" type="email" required value="{{ request.form.get('notification_email', onboarding.notification_email if onboarding else current_user.email) }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="phone_number">Business phone</label>
+                        <input class="form-control" id="phone_number" name="phone_number" placeholder="+15551234567" value="{{ request.form.get('phone_number', onboarding.phone_number if onboarding else current_user.phone) }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="mobile_number">Mobile or OTP phone</label>
+                        <input class="form-control" id="mobile_number" name="mobile_number" placeholder="+15551234567" value="{{ request.form.get('mobile_number', onboarding.mobile_number if onboarding else current_user.phone) }}">
+                    </div>
+
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label">Business regions of operation</label>
+                        <div class="setup-checkbox-grid">
+                            {% for value, label in business_region_choices %}
+                            <label class="setup-checkbox">
+                                <input type="checkbox" name="business_regions" value="{{ value }}" {% if value in selected_regions %}checked{% endif %}>
+                                <span>{{ label }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="setup-field">
+                        <label class="form-label" for="address_country">Country</label>
+                        <select class="form-select" id="address_country" name="address_country" required>
+                            {% set selected_country = request.form.get('address_country', onboarding.address_country if onboarding else 'US') %}
+                            <option value="US" {% if selected_country == 'US' %}selected{% endif %}>United States</option>
+                            <option value="CA" {% if selected_country == 'CA' %}selected{% endif %}>Canada</option>
+                        </select>
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="address_line1">Address line 1</label>
+                        <input class="form-control" id="address_line1" name="address_line1" required value="{{ request.form.get('address_line1', onboarding.address_line1 if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="address_line2">Address line 2</label>
+                        <input class="form-control" id="address_line2" name="address_line2" value="{{ request.form.get('address_line2', onboarding.address_line2 if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="address_city">City</label>
+                        <input class="form-control" id="address_city" name="address_city" required value="{{ request.form.get('address_city', onboarding.address_city if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="address_region">State or province</label>
+                        <input class="form-control" id="address_region" name="address_region" required value="{{ request.form.get('address_region', onboarding.address_region if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="address_postal_code">Postal code</label>
+                        <input class="form-control" id="address_postal_code" name="address_postal_code" required value="{{ request.form.get('address_postal_code', onboarding.address_postal_code if onboarding else '') }}">
+                    </div>
+
+                    <div class="setup-field">
+                        <label class="form-label" for="business_registration_identifier">Registration ID type</label>
+                        <select class="form-select" id="business_registration_identifier" name="business_registration_identifier" required>
+                            {% for value, label in registration_identifier_choices %}
+                            <option value="{{ value }}" {% if selected_registration_identifier == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="business_registration_number">Registration number</label>
+                        <input class="form-control" id="business_registration_number" name="business_registration_number" required value="{{ request.form.get('business_registration_number', '') }}" placeholder="12-3456789">
+                    </div>
+
+                    <div class="setup-field">
+                        <label class="form-label" for="first_name">Authorized rep first name</label>
+                        <input class="form-control" id="first_name" name="first_name" required value="{{ request.form.get('first_name', onboarding.first_name if onboarding else current_user.full_name or '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="last_name">Authorized rep last name</label>
+                        <input class="form-control" id="last_name" name="last_name" required value="{{ request.form.get('last_name', onboarding.last_name if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="business_title">Business title</label>
+                        <input class="form-control" id="business_title" name="business_title" required value="{{ request.form.get('business_title', onboarding.business_title if onboarding else '') }}" placeholder="Owner">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="job_position">Job position</label>
+                        <select class="form-select" id="job_position" name="job_position" required>
+                            <option value="">Select job position</option>
+                            {% for value, label in job_position_choices %}
+                            <option value="{{ value }}" {% if selected_job_position == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="setup-field">
+                        <label class="form-label" for="campaign_use_case">Use case</label>
+                        <select class="form-select" id="campaign_use_case" name="campaign_use_case">
+                            {% set selected_use_case = request.form.get('campaign_use_case', onboarding.campaign_use_case if onboarding else 'MIXED') %}
+                            {% for value, label in campaign_use_case_choices %}
+                            {% if value != 'SOLE_PROPRIETOR' %}
+                            <option value="{{ value }}" {% if selected_use_case == value %}selected{% endif %}>{{ label }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="campaign_description">Campaign description</label>
+                        <input class="form-control" id="campaign_description" name="campaign_description" required value="{{ request.form.get('campaign_description', onboarding.campaign_description if onboarding else '') }}">
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="message_flow">Opt-in and message flow</label>
+                        <textarea class="form-control" id="message_flow" name="message_flow" rows="4" required>{{ request.form.get('message_flow', onboarding.message_flow if onboarding else '') }}</textarea>
+                    </div>
+                    <div class="setup-field setup-field--full">
+                        <label class="form-label" for="message_samples">Message samples</label>
+                        <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
+                        <div class="form-text">Enter one example per line. Mixed campaigns require at least two samples.</div>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="opt_in_keywords">Opt-in keywords</label>
+                        <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords or 'START,SUBSCRIBE,YES') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="opt_out_keywords">Opt-out keywords</label>
+                        <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords or 'STOP,UNSUBSCRIBE,END') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="help_keywords">Help keywords</label>
+                        <input class="form-control" id="help_keywords" name="help_keywords" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords or 'HELP,INFO') }}">
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="opt_in_message">Opt-in message</label>
+                        <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', onboarding.opt_in_message if onboarding else '') }}</textarea>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="opt_out_message">Opt-out message</label>
+                        <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', onboarding.opt_out_message if onboarding else '') }}</textarea>
+                    </div>
+                    <div class="setup-field">
+                        <label class="form-label" for="help_message">Help message</label>
+                        <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', onboarding.help_message if onboarding else '') }}</textarea>
+                    </div>
+                    <div class="setup-field">
+                        <label class="setup-checkbox">
+                            <input type="checkbox" id="has_embedded_links" name="has_embedded_links" {% if request.form.get('has_embedded_links') == 'on' or (request.method != 'POST' and a2p_form_defaults.has_embedded_links) %}checked{% endif %}>
+                            <span>Messages include links</span>
+                        </label>
+                    </div>
+                    <div class="setup-field">
+                        <label class="setup-checkbox">
+                            <input type="checkbox" id="has_embedded_phone" name="has_embedded_phone" {% if request.form.get('has_embedded_phone') == 'on' or (request.method != 'POST' and a2p_form_defaults.has_embedded_phone) %}checked{% endif %}>
+                            <span>Messages include phone numbers</span>
+                        </label>
+                    </div>
+
+                    <div class="setup-field setup-field--full">
+                        <button type="submit" class="btn btn-primary">Save business profile</button>
+                    </div>
+                </form>
+            </section>
+            {% elif current_step == 'review' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 4</div>
+                        <h2>Review and submit</h2>
+                    </div>
+                </div>
+                {% if not onboarding or onboarding.onboarding_status == 'draft' and not onboarding.submitted_at and not onboarding.business_name %}
+                <p class="setup-panel__copy">Complete the business profile first, then come back here to submit.</p>
+                <a href="{{ url_for('main.setup', step='compliance') }}" class="btn btn-primary">Continue to business profile</a>
+                {% else %}
+                <div class="setup-summary-grid">
+                    <div class="setup-summary-card">
+                        <span>Legal business</span>
+                        <strong>{{ onboarding.business_name }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Industry</span>
+                        <strong>{{ onboarding.business_industry }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Authorized rep</span>
+                        <strong>{{ onboarding.first_name }} {{ onboarding.last_name }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Campaign use case</span>
+                        <strong>{{ onboarding.campaign_use_case }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Website</span>
+                        <strong>{{ onboarding.website_url }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Notifications</span>
+                        <strong>{{ onboarding.notification_email or onboarding.email }}</strong>
+                    </div>
+                </div>
+                <form method="POST" class="setup-review-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="submit_onboarding">
+                    <label class="setup-checkbox setup-checkbox--statement">
+                        <input type="checkbox" name="declaration_accepted" value="on" required>
+                        <span>I confirm the information provided is accurate and may be submitted to Twilio for identity verification and A2P campaign review.</span>
+                    </label>
+                    <div class="setup-actions">
+                        <button type="submit" class="btn btn-primary">Submit for Twilio review</button>
+                        <a href="{{ url_for('main.setup', step='compliance') }}" class="btn btn-outline-secondary">Edit business profile</a>
+                    </div>
+                </form>
+                {% endif %}
+            </section>
+            {% elif current_step == 'launch' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 5</div>
+                        <h2>{{ 'Workspace is live' if setup_status.messaging.can_send else 'Await approval and sender assignment' }}</h2>
+                    </div>
+                </div>
+                {% if onboarding and onboarding.last_error %}
+                <div class="platform-note platform-note--danger" role="alert">
+                    <div class="platform-note__title">Latest provider issue</div>
+                    <div class="platform-note__copy">{{ onboarding.last_error }}</div>
+                </div>
+                {% endif %}
+                <p class="setup-panel__copy">
+                    {% if setup_status.messaging.can_send %}
+                    Billing is active and your sender is assigned. You can move into the workspace now.
+                    {% elif onboarding and onboarding.onboarding_status == 'approved' %}
+                    Twilio approved the registration. Platform support will assign the first sender next so you do not incur automatic number spend unexpectedly.
+                    {% else %}
+                    Twilio review is in progress. This page refreshes automatically whenever a new provider update arrives.
+                    {% endif %}
+                </p>
+                <div class="setup-summary-grid">
+                    <div class="setup-summary-card">
+                        <span>Billing</span>
+                        <strong>{{ subscription_view.title }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>A2P status</span>
+                        <strong>{{ onboarding.onboarding_status if onboarding else 'draft' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Brand</span>
+                        <strong>{{ onboarding.brand_status or 'not submitted' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Campaign</span>
+                        <strong>{{ onboarding.campaign_status or 'not submitted' }}</strong>
+                    </div>
+                </div>
+                <div class="setup-actions">
+                    {% if setup_status.messaging.can_send %}
+                    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Open workspace</a>
+                    {% else %}
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="refresh_onboarding">
+                        <button type="submit" class="btn btn-outline-primary" {% if not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>Refresh status</button>
+                    </form>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="cancel_onboarding">
+                        <button type="submit" class="btn btn-outline-danger" {% if not onboarding or onboarding.onboarding_status in ('approved', 'canceled', 'draft') %}disabled{% endif %}>Cancel submission</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </section>
+            {% else %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 1</div>
+                        <h2>Workspace account ready</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">Your owner account is active. Continue into billing to unlock compliance submission and sender setup.</p>
+                <a href="{{ url_for('main.setup', step='billing') }}" class="btn btn-primary">Continue to billing</a>
+            </section>
+            {% endif %}
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    (() => {
+        const shell = document.querySelector('[data-setup-shell]');
+        if (!shell) return;
+        const shouldPoll = ['queued', 'processing', 'pending', 'approved'].includes(shell.dataset.onboardingStatus || '');
+        if (!shouldPoll) return;
+
+        let previous = JSON.stringify({
+            currentStep: shell.dataset.currentStep,
+            onboardingStatus: shell.dataset.onboardingStatus,
+        });
+
+        window.setInterval(async () => {
+            try {
+                const response = await fetch('{{ url_for("main.setup_status") }}', {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin',
+                });
+                if (!response.ok) return;
+                const payload = await response.json();
+                const current = JSON.stringify({
+                    currentStep: payload.current_step,
+                    onboardingStatus: payload.onboarding.status,
+                    messagingReady: payload.messaging.can_send,
+                    lastError: payload.onboarding.last_error || '',
+                });
+                if (current !== previous) {
+                    window.location.reload();
+                }
+            } catch (error) {
+                console.debug('setup poll skipped', error);
+            }
+        }, 8000);
+    })();
+</script>
+{% endblock %}

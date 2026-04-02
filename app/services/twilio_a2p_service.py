@@ -43,6 +43,7 @@ A2P_REGISTRATION_PATHS = (
 )
 
 A2P_NUMBER_STRATEGIES = (
+    ("platform_assign", "Assign the first sender later from platform support"),
     ("auto_buy", "Buy a new number automatically"),
     ("existing_subaccount_number", "Use an existing subaccount number"),
     ("transfer_parent_number", "Transfer an existing parent-account number"),
@@ -65,12 +66,53 @@ A2P_CAMPAIGN_USE_CASES = (
     ("SOLE_PROPRIETOR", "Sole Proprietor"),
 )
 
+A2P_BUSINESS_INDUSTRY_CHOICES = (
+    ("EDUCATION", "Education"),
+    ("FINANCIAL_SERVICES", "Financial Services"),
+    ("GOVERNMENT", "Government"),
+    ("HEALTHCARE", "Healthcare"),
+    ("HOSPITALITY", "Hospitality"),
+    ("INSURANCE", "Insurance"),
+    ("NONPROFIT", "Nonprofit"),
+    ("REAL_ESTATE", "Real Estate"),
+    ("RETAIL", "Retail"),
+    ("TECHNOLOGY", "Technology"),
+    ("TRANSPORTATION", "Transportation"),
+    ("OTHER", "Other"),
+)
+
+A2P_BUSINESS_REGION_CHOICES = (
+    ("AFRICA", "Africa"),
+    ("ASIA", "Asia"),
+    ("AUSTRALIA", "Australia"),
+    ("EUROPE", "Europe"),
+    ("LATIN_AMERICA", "Latin America"),
+    ("USA_AND_CANADA", "USA and Canada"),
+)
+
+A2P_JOB_POSITION_CHOICES = (
+    ("Director", "Director"),
+    ("GM", "GM"),
+    ("VP", "VP"),
+    ("CEO", "CEO"),
+    ("CFO", "CFO"),
+    ("General Counsel", "General Counsel"),
+    ("Other", "Other"),
+)
+
+A2P_REGISTRATION_IDENTIFIER_CHOICES = (
+    ("EIN", "USA: Employer Identification Number (EIN)"),
+)
+
 DEFAULT_OPT_IN_KEYWORDS = ["START", "SUBSCRIBE", "YES"]
 DEFAULT_OPT_OUT_KEYWORDS = ["STOP", "UNSUBSCRIBE", "END"]
 DEFAULT_HELP_KEYWORDS = ["HELP", "INFO"]
 A2P_REGISTRATION_PATH_VALUES = {value for value, _ in A2P_REGISTRATION_PATHS}
 A2P_NUMBER_STRATEGY_VALUES = {value for value, _ in A2P_NUMBER_STRATEGIES}
 A2P_ALLOWED_BUSINESS_TYPES = {value for value, _ in A2P_BUSINESS_TYPE_CHOICES}
+A2P_ALLOWED_BUSINESS_INDUSTRIES = {value for value, _ in A2P_BUSINESS_INDUSTRY_CHOICES}
+A2P_ALLOWED_BUSINESS_REGIONS = {value for value, _ in A2P_BUSINESS_REGION_CHOICES}
+A2P_ALLOWED_JOB_POSITIONS = {value for value, _ in A2P_JOB_POSITION_CHOICES}
 A2P_BUSINESS_TYPE_ALIASES = {
     "co operative": "Co-operative",
     "co operative society": "Co-operative",
@@ -105,18 +147,26 @@ class A2PFormData:
     number_strategy: str
     business_name: str
     business_type: str | None
+    business_industry: str | None
+    business_regions: list[str]
     website_url: str | None
     social_profile_url: str | None
     email: str
+    notification_email: str
     phone_number: str | None
     mobile_number: str | None
     first_name: str
     last_name: str
+    business_title: str | None
     job_position: str | None
     business_registration_identifier: str | None
     business_registration_number: str | None
-    address_sid: str | None
-    supporting_document_sid: str | None
+    address_country: str | None
+    address_line1: str | None
+    address_line2: str | None
+    address_city: str | None
+    address_region: str | None
+    address_postal_code: str | None
     campaign_use_case: str
     campaign_description: str
     message_flow: str
@@ -132,6 +182,7 @@ class A2PFormData:
     desired_phone_number: str | None
     desired_phone_number_sid: str | None
     campaign_verify_token: str | None
+    declaration_accepted: bool
 
 
 def a2p_onboarding_enabled() -> bool:
@@ -168,6 +219,22 @@ def a2p_campaign_use_case_choices() -> tuple[tuple[str, str], ...]:
     return A2P_CAMPAIGN_USE_CASES
 
 
+def a2p_business_industry_choices() -> tuple[tuple[str, str], ...]:
+    return A2P_BUSINESS_INDUSTRY_CHOICES
+
+
+def a2p_business_region_choices() -> tuple[tuple[str, str], ...]:
+    return A2P_BUSINESS_REGION_CHOICES
+
+
+def a2p_job_position_choices() -> tuple[tuple[str, str], ...]:
+    return A2P_JOB_POSITION_CHOICES
+
+
+def a2p_registration_identifier_choices() -> tuple[tuple[str, str], ...]:
+    return A2P_REGISTRATION_IDENTIFIER_CHOICES
+
+
 def _clean_text(raw_value: Any, *, lowercase: bool = False) -> str | None:
     value = str(raw_value or "").strip()
     if not value or value.lower() in {"none", "null"}:
@@ -193,6 +260,140 @@ def _coerce_bool(raw_value: Any) -> bool:
     if isinstance(raw_value, bool):
         return raw_value
     return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _country_code(raw_value: str | None) -> str | None:
+    candidate = _clean_text(raw_value, lowercase=True)
+    if not candidate:
+        return None
+    aliases = {
+        "us": "US",
+        "usa": "US",
+        "united states": "US",
+        "united states of america": "US",
+        "ca": "CA",
+        "canada": "CA",
+    }
+    if candidate in aliases:
+        return aliases[candidate]
+    if len(candidate) == 2 and candidate.isalpha():
+        return candidate.upper()
+    return None
+
+
+def _normalize_address_value(raw_value: str | None) -> str | None:
+    value = _clean_text(raw_value)
+    return value[:255] if value else None
+
+
+def _normalize_business_industry(raw_value: str | None) -> str | None:
+    candidate = (_clean_text(raw_value, lowercase=True) or "").replace("-", "_").replace(" ", "_").upper()
+    if not candidate:
+        raise ProviderProvisioningError("Business industry is required.")
+    if candidate in A2P_ALLOWED_BUSINESS_INDUSTRIES:
+        return candidate
+    raise ProviderProvisioningError("Choose a valid business industry for Twilio A2P onboarding.")
+
+
+def _normalize_business_regions(raw_value: Any) -> list[str]:
+    if isinstance(raw_value, list):
+        values = raw_value
+    else:
+        value = _clean_text(raw_value) or ""
+        if not value:
+            raise ProviderProvisioningError("Choose at least one business region of operation.")
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, list):
+            values = parsed
+        else:
+            values = [part.strip() for part in re.split(r"[,\n]", value) if part.strip()]
+
+    normalized: list[str] = []
+    for item in values:
+        candidate = str(item or "").strip().upper().replace(" ", "_")
+        if candidate == "USA_CANADA":
+            candidate = "USA_AND_CANADA"
+        if candidate == "LATINAMERICA":
+            candidate = "LATIN_AMERICA"
+        if candidate in A2P_ALLOWED_BUSINESS_REGIONS and candidate not in normalized:
+            normalized.append(candidate)
+    if not normalized:
+        raise ProviderProvisioningError("Choose at least one business region of operation.")
+    return normalized
+
+
+def _normalize_job_position(raw_value: str | None) -> str | None:
+    value = _clean_text(raw_value)
+    if not value:
+        raise ProviderProvisioningError("Job position is required for the authorized representative.")
+    if value in A2P_ALLOWED_JOB_POSITIONS:
+        return value
+    raise ProviderProvisioningError("Choose a valid job position for the authorized representative.")
+
+
+def _normalize_business_title(raw_value: str | None, *, fallback: str | None = None) -> str | None:
+    value = _clean_text(raw_value) or _clean_text(fallback)
+    if not value:
+        raise ProviderProvisioningError("Business title is required for the authorized representative.")
+    return value[:120]
+
+
+def _normalize_notification_email(raw_value: str | None, *, fallback: str | None = None) -> str:
+    candidate = _clean_text(raw_value, lowercase=True) or _clean_text(fallback, lowercase=True) or ""
+    if not candidate or "@" not in candidate:
+        raise ProviderProvisioningError("Notification email is required.")
+    return candidate
+
+
+def _normalize_registration_identifier(raw_value: str | None) -> str | None:
+    value = _clean_text(raw_value)
+    if not value:
+        return None
+    if "ein" in value.lower():
+        return "EIN"
+    return value
+
+
+def _normalize_business_registration_number(identifier: str | None, raw_value: str | None) -> str | None:
+    value = _clean_text(raw_value)
+    if not value:
+        return None
+    if identifier == "EIN":
+        digits = re.sub(r"\D+", "", value)
+        if len(digits) != 9:
+            raise ProviderProvisioningError("Enter a valid EIN using 9 digits.")
+        return f"{digits[:2]}-{digits[2:]}"
+    return value
+
+
+def _twilio_business_registration_number(identifier: str | None, raw_value: str | None) -> str | None:
+    if not raw_value:
+        return None
+    return raw_value
+
+
+def _require_address(
+    *,
+    country: str | None,
+    line1: str | None,
+    city: str | None,
+    region: str | None,
+    postal_code: str | None,
+) -> tuple[str, str, str, str, str]:
+    if not country:
+        raise ProviderProvisioningError("Business country is required.")
+    if not line1:
+        raise ProviderProvisioningError("Address line 1 is required.")
+    if not city:
+        raise ProviderProvisioningError("Business city is required.")
+    if not region:
+        raise ProviderProvisioningError("Business state or province is required.")
+    if not postal_code:
+        raise ProviderProvisioningError("Business postal code is required.")
+    return country, line1, city, region, postal_code
 
 
 def _normalize_business_type_key(raw_value: str | None) -> str | None:
@@ -247,20 +448,7 @@ def _normalize_business_type(registration_path: str, raw_value: str | None) -> s
 
 
 def _business_identity(registration_path: str) -> str:
-    if registration_path == "government":
-        return "government"
-    if registration_path == "nonprofit":
-        return "non_profit"
     return "direct_customer"
-
-
-def _business_industry(registration_path: str) -> str:
-    if registration_path == "government":
-        return "GOVERNMENT"
-    if registration_path == "nonprofit":
-        return "NOT_FOR_PROFIT"
-    return "OTHER"
-
 
 def _messaging_profile_company_type(registration_path: str) -> str:
     if registration_path == "government":
@@ -329,17 +517,20 @@ def _friendly_provider_error_message(raw_message: str) -> str:
     return message
 
 
-def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2PFormData:
+def _build_form_data(payload: dict[str, Any], organization: Organization, *, require_declaration: bool) -> A2PFormData:
     registration_path = (payload.get("registration_path") or "standard").strip().lower()
-    number_strategy = (payload.get("number_strategy") or "auto_buy").strip().lower()
+    number_strategy = (payload.get("number_strategy") or "platform_assign").strip().lower()
     if registration_path not in A2P_REGISTRATION_PATH_VALUES:
         raise ProviderProvisioningError("Choose a valid Twilio A2P registration path.")
     if number_strategy not in A2P_NUMBER_STRATEGY_VALUES:
         raise ProviderProvisioningError("Choose a valid Twilio A2P number strategy.")
     business_name = _clean_text(payload.get("business_name")) or organization.name or ""
     email = _clean_text(payload.get("email"), lowercase=True) or ""
+    notification_email = _normalize_notification_email(payload.get("notification_email"), fallback=email)
     first_name = _clean_text(payload.get("first_name")) or ""
     last_name = _clean_text(payload.get("last_name")) or ""
+    job_position = _normalize_job_position(payload.get("job_position"))
+    business_title = _normalize_business_title(payload.get("business_title"), fallback=job_position)
     campaign_description = _clean_text(payload.get("campaign_description")) or ""
     message_flow = _clean_text(payload.get("message_flow")) or ""
     if not business_name:
@@ -348,6 +539,8 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         raise ProviderProvisioningError("Business email is required for A2P onboarding.")
     if not first_name or not last_name:
         raise ProviderProvisioningError("Authorized representative first and last name are required.")
+    if not _clean_text(payload.get("website_url")):
+        raise ProviderProvisioningError("Business website is required for A2P onboarding.")
     if not campaign_description:
         raise ProviderProvisioningError("Campaign description is required.")
     if not message_flow:
@@ -365,29 +558,58 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         _normalized_multiline_list(payload.get("message_samples")),
     )
     business_type = _normalize_business_type(registration_path, payload.get("business_type"))
+    business_industry = _normalize_business_industry(payload.get("business_industry"))
+    business_regions = _normalize_business_regions(payload.get("business_regions"))
+    address_country = _country_code(payload.get("address_country"))
+    address_line1 = _normalize_address_value(payload.get("address_line1"))
+    address_line2 = _normalize_address_value(payload.get("address_line2"))
+    address_city = _normalize_address_value(payload.get("address_city"))
+    address_region = _normalize_address_value(payload.get("address_region"))
+    address_postal_code = _normalize_address_value(payload.get("address_postal_code"))
+    _require_address(
+        country=address_country,
+        line1=address_line1,
+        city=address_city,
+        region=address_region,
+        postal_code=address_postal_code,
+    )
     business_registration_identifier, business_registration_number = _validate_business_registration_details(
         registration_path,
-        _clean_text(payload.get("business_registration_identifier")),
-        _clean_text(payload.get("business_registration_number")),
+        _normalize_registration_identifier(payload.get("business_registration_identifier")),
+        _normalize_business_registration_number(
+            _normalize_registration_identifier(payload.get("business_registration_identifier")),
+            payload.get("business_registration_number"),
+        ),
     )
+    declaration_accepted = _coerce_bool(payload.get("declaration_accepted"))
+    if require_declaration and not declaration_accepted:
+        raise ProviderProvisioningError("You must confirm the business declaration before submitting A2P onboarding.")
 
     return A2PFormData(
         registration_path=registration_path,
         number_strategy=number_strategy,
         business_name=business_name,
         business_type=business_type,
+        business_industry=business_industry,
+        business_regions=business_regions,
         website_url=_clean_text(payload.get("website_url")),
         social_profile_url=_clean_text(payload.get("social_profile_url")),
         email=email,
+        notification_email=notification_email,
         phone_number=_clean_text(payload.get("phone_number")),
         mobile_number=mobile_number,
         first_name=first_name,
         last_name=last_name,
-        job_position=_clean_text(payload.get("job_position")),
+        business_title=business_title,
+        job_position=job_position,
         business_registration_identifier=business_registration_identifier,
         business_registration_number=business_registration_number,
-        address_sid=_clean_text(payload.get("address_sid")),
-        supporting_document_sid=_clean_text(payload.get("supporting_document_sid")),
+        address_country=address_country,
+        address_line1=address_line1,
+        address_line2=address_line2,
+        address_city=address_city,
+        address_region=address_region,
+        address_postal_code=address_postal_code,
         campaign_use_case=campaign_use_case,
         campaign_description=campaign_description,
         message_flow=message_flow,
@@ -403,6 +625,7 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         desired_phone_number=_clean_text(payload.get("desired_phone_number")),
         desired_phone_number_sid=desired_phone_number_sid,
         campaign_verify_token=_clean_text(payload.get("campaign_verify_token")),
+        declaration_accepted=declaration_accepted,
     )
 
 
@@ -410,28 +633,38 @@ def _save_form_data(
     onboarding: OrganizationA2POnboarding,
     profile: OrganizationMessagingProfile,
     form_data: A2PFormData,
+    *,
+    queue_submission: bool,
 ) -> None:
     onboarding.registration_path = form_data.registration_path
     onboarding.number_strategy = form_data.number_strategy
     onboarding.business_name = form_data.business_name
     onboarding.business_type = form_data.business_type
     onboarding.business_identity = _business_identity(form_data.registration_path)
+    onboarding.business_industry = form_data.business_industry
     onboarding.business_registration_identifier = form_data.business_registration_identifier
     onboarding.business_registration_number_encrypted = (
         encrypt_provider_secret(form_data.business_registration_number)
         if form_data.business_registration_number
         else None
     )
+    onboarding.business_regions_json = json.dumps(form_data.business_regions)
     onboarding.website_url = form_data.website_url
     onboarding.social_profile_url = form_data.social_profile_url
     onboarding.email = form_data.email
+    onboarding.notification_email = form_data.notification_email
     onboarding.phone_number = form_data.phone_number
     onboarding.mobile_number = form_data.mobile_number
     onboarding.first_name = form_data.first_name
     onboarding.last_name = form_data.last_name
+    onboarding.business_title = form_data.business_title
     onboarding.job_position = form_data.job_position
-    onboarding.address_sid = form_data.address_sid
-    onboarding.supporting_document_sid = form_data.supporting_document_sid
+    onboarding.address_country = form_data.address_country
+    onboarding.address_line1 = form_data.address_line1
+    onboarding.address_line2 = form_data.address_line2
+    onboarding.address_city = form_data.address_city
+    onboarding.address_region = form_data.address_region
+    onboarding.address_postal_code = form_data.address_postal_code
     onboarding.campaign_use_case = form_data.campaign_use_case
     onboarding.campaign_description = form_data.campaign_description
     onboarding.message_flow = form_data.message_flow
@@ -449,15 +682,7 @@ def _save_form_data(
     )
     onboarding.desired_phone_number = form_data.desired_phone_number
     onboarding.desired_phone_number_sid = form_data.desired_phone_number_sid
-    onboarding.onboarding_status = "queued"
-    onboarding.brand_status = None
-    onboarding.campaign_status = None
-    onboarding.verification_status = None
-    onboarding.submitted_at = utc_now()
-    onboarding.canceled_at = None
-    onboarding.approved_at = None
-    onboarding.last_error = None
-    onboarding.failure_code = None
+    onboarding.declaration_accepted_at = utc_now() if form_data.declaration_accepted else onboarding.declaration_accepted_at
     onboarding.raw_submission_json = json.dumps(
         {
             "has_embedded_links": form_data.has_embedded_links,
@@ -465,14 +690,27 @@ def _save_form_data(
             "opt_in_keywords": form_data.opt_in_keywords,
             "opt_out_keywords": form_data.opt_out_keywords,
             "help_keywords": form_data.help_keywords,
+            "business_regions": form_data.business_regions,
         },
         sort_keys=True,
     )
     profile.business_type = form_data.business_type
     profile.use_case = form_data.campaign_description[:120]
-    profile.last_provision_error = None
-    if profile.provider_status != "suspended":
-        profile.set_provider_status("pending")
+    if queue_submission:
+        onboarding.onboarding_status = "queued"
+        onboarding.brand_status = None
+        onboarding.campaign_status = None
+        onboarding.verification_status = None
+        onboarding.submitted_at = utc_now()
+        onboarding.canceled_at = None
+        onboarding.approved_at = None
+        onboarding.last_error = None
+        onboarding.failure_code = None
+        profile.last_provision_error = None
+        if profile.provider_status != "suspended":
+            profile.set_provider_status("pending")
+    elif onboarding.onboarding_status not in {"pending", "processing", "queued", "approved"}:
+        onboarding.onboarding_status = "draft"
 
 
 def _queue_job(job_name: str, organization_id: int, actor_user_id: int | None = None):
@@ -529,8 +767,8 @@ def submit_a2p_onboarding(
 
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
     onboarding = ensure_a2p_onboarding(organization)
-    form_data = _build_form_data(payload, organization)
-    _save_form_data(onboarding, profile, form_data)
+    form_data = _build_form_data(payload, organization, require_declaration=False)
+    _save_form_data(onboarding, profile, form_data, queue_submission=True)
     db.session.commit()
     _record_provider_audit(
         organization.id,
@@ -553,6 +791,34 @@ def submit_a2p_onboarding(
             exc,
         )
         _mark_queue_failure(onboarding, profile, organization.id, actor_user_id=actor_user_id)
+    return onboarding
+
+
+def save_a2p_onboarding_draft(
+    organization_id: int,
+    payload: dict[str, Any],
+    *,
+    actor_user_id: int | None = None,
+) -> OrganizationA2POnboarding:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    onboarding = ensure_a2p_onboarding(organization)
+    form_data = _build_form_data(payload, organization, require_declaration=False)
+    _save_form_data(onboarding, profile, form_data, queue_submission=False)
+    _record_provider_audit(
+        organization.id,
+        "a2p_save_draft",
+        actor_user_id=actor_user_id,
+        message="Saved Twilio A2P onboarding draft.",
+        metadata={
+            "registration_path": onboarding.registration_path,
+            "number_strategy": onboarding.number_strategy,
+        },
+    )
+    db.session.commit()
     return onboarding
 
 
@@ -665,6 +931,51 @@ def _resolved_campaign_status(onboarding: OrganizationA2POnboarding, campaign_st
     return "pending" if onboarding.campaign_sid else None
 
 
+def _trusthub_status_callback_url() -> str:
+    base_url = (current_app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    if not base_url:
+        raise ProviderProvisioningError("SAAS_BASE_URL must be configured to receive Twilio Trust Hub status callbacks.")
+    return f"{base_url}/webhooks/twilio/trusthub-status"
+
+
+def _business_regions_value(onboarding: OrganizationA2POnboarding) -> str:
+    raw_value = (onboarding.business_regions_json or "").strip()
+    if not raw_value:
+        return "USA_AND_CANADA"
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        normalized = [str(item).strip() for item in parsed if str(item).strip()]
+        return ",".join(normalized) or "USA_AND_CANADA"
+    return raw_value
+
+
+def _ensure_trusthub_address(onboarding: OrganizationA2POnboarding, client) -> str | None:
+    if onboarding.address_sid:
+        return onboarding.address_sid
+    country, line1, city, region, postal_code = _require_address(
+        country=onboarding.address_country,
+        line1=onboarding.address_line1,
+        city=onboarding.address_city,
+        region=onboarding.address_region,
+        postal_code=onboarding.address_postal_code,
+    )
+    address = client.addresses.v1.create(
+        customer_name=onboarding.business_name,
+        friendly_name=f"{onboarding.business_name[:48]} business address",
+        street=line1,
+        street_secondary=onboarding.address_line2 or None,
+        city=city,
+        region=region,
+        postal_code=postal_code,
+        iso_country=country,
+    )
+    onboarding.address_sid = address.sid
+    return address.sid
+
+
 def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> None:
     client = _build_subaccount_client(profile)
     status_payload = _load_status_payload(onboarding)
@@ -679,13 +990,17 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
         _clean_text(onboarding.business_registration_identifier),
         _clean_text(business_registration_number),
     )
+    trusthub_status_callback = _trusthub_status_callback_url()
+    notification_email = _normalize_notification_email(onboarding.notification_email, fallback=onboarding.email)
+    address_sid = _ensure_trusthub_address(onboarding, client)
 
     customer_profile_policy_sid, trust_product_policy_sid = _policy_sids(onboarding.registration_path)
     if not onboarding.customer_profile_sid:
         customer_profile = client.trusthub.v1.customer_profiles.create(
             policy_sid=customer_profile_policy_sid,
             friendly_name=f"{onboarding.business_name} Customer Profile",
-            email=onboarding.email,
+            email=notification_email,
+            status_callback=trusthub_status_callback,
         )
         onboarding.customer_profile_sid = customer_profile.sid
 
@@ -700,8 +1015,8 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "last_name": onboarding.last_name,
                     "email": onboarding.email,
                     "phone_number": onboarding.mobile_number or onboarding.phone_number,
-                    "business_title": onboarding.job_position or "Owner",
-                    "job_position": onboarding.job_position or "Owner",
+                    "business_title": onboarding.business_title or "Owner",
+                    "job_position": onboarding.job_position or "Other",
                 },
             )
             status_payload["sole_proprietor_end_user_sid"] = sole_prop.sid
@@ -715,12 +1030,15 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "business_name": onboarding.business_name,
                     "social_media_profile_urls": onboarding.social_profile_url or "",
                     "website_url": onboarding.website_url or "",
-                    "business_regions_of_operation": "USA_AND_CANADA",
+                    "business_regions_of_operation": _business_regions_value(onboarding),
                     "business_type": _normalize_business_type(onboarding.registration_path, onboarding.business_type) or "",
                     "business_registration_identifier": business_registration_identifier or "EIN",
                     "business_identity": onboarding.business_identity or "direct_customer",
-                    "business_industry": _business_industry(onboarding.registration_path),
-                    "business_registration_number": business_registration_number,
+                    "business_industry": _normalize_business_industry(onboarding.business_industry),
+                    "business_registration_number": _twilio_business_registration_number(
+                        business_registration_identifier,
+                        business_registration_number,
+                    ),
                 },
             )
             status_payload["business_information_end_user_sid"] = business_info.sid
@@ -734,16 +1052,16 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "last_name": onboarding.last_name,
                     "email": onboarding.email,
                     "phone_number": onboarding.mobile_number or onboarding.phone_number,
-                    "business_title": onboarding.job_position or "Owner",
-                    "job_position": onboarding.job_position or "Owner",
+                    "business_title": onboarding.business_title or "Owner",
+                    "job_position": onboarding.job_position or "Other",
                 },
             )
             status_payload["authorized_representative_sid"] = authorized_rep.sid
-        if onboarding.address_sid and not status_payload.get("supporting_document_sid"):
+        if address_sid and not status_payload.get("supporting_document_sid"):
             supporting_document = client.trusthub.v1.supporting_documents.create(
                 friendly_name=onboarding.business_name[:64],
                 type="customer_profile_address",
-                attributes={"address_sids": onboarding.address_sid},
+                attributes={"address_sids": address_sid},
             )
             status_payload["supporting_document_sid"] = supporting_document.sid
             onboarding.supporting_document_sid = supporting_document.sid
@@ -752,7 +1070,8 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
         trust_product = client.trusthub.v1.trust_products.create(
             friendly_name=f"{onboarding.business_name} A2P Trust Product",
             policy_sid=trust_product_policy_sid,
-            email=onboarding.email,
+            email=notification_email,
+            status_callback=trusthub_status_callback,
         )
         onboarding.trust_product_sid = trust_product.sid
 
@@ -953,6 +1272,8 @@ def _sync_remote_status(onboarding: OrganizationA2POnboarding, profile: Organiza
 def _complete_number_setup(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile, actor_user_id: int | None) -> None:
     if profile.from_number and profile.phone_number_sid:
         return
+    if onboarding.number_strategy == "platform_assign":
+        return
 
     if onboarding.number_strategy == "auto_buy":
         phone_number_sid, from_number = _buy_phone_number(onboarding, profile)
@@ -1019,15 +1340,28 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
                 error_message=_status_failure_reason(onboarding) or "Twilio rejected the A2P registration.",
             )
         elif brand_ready_for_campaign and normalized_campaign_status in {"approved", "active"}:
-            _complete_number_setup(onboarding, profile, actor_user_id)
-            onboarding.onboarding_status = "approved"
             onboarding.approved_at = utc_now()
             onboarding.last_synced_at = utc_now()
-            profile.sender_review_status = "approved"
-            profile.consent_acknowledged_at = profile.consent_acknowledged_at or utc_now()
-            if profile.provider_status != "suspended":
-                profile.set_provider_status("active")
-            profile.last_provision_error = None
+            if onboarding.number_strategy == "platform_assign":
+                _set_status(
+                    onboarding,
+                    profile,
+                    onboarding_status="approved",
+                    brand_status=normalized_brand_status,
+                    campaign_status=normalized_campaign_status,
+                )
+                profile.sender_review_status = "pending"
+                profile.last_provision_error = None
+                if profile.provider_status != "suspended":
+                    profile.set_provider_status("pending")
+            else:
+                _complete_number_setup(onboarding, profile, actor_user_id)
+                onboarding.onboarding_status = "approved"
+                profile.sender_review_status = "approved"
+                profile.consent_acknowledged_at = profile.consent_acknowledged_at or utc_now()
+                if profile.provider_status != "suspended":
+                    profile.set_provider_status("active")
+                profile.last_provision_error = None
         else:
             _set_status(
                 onboarding,

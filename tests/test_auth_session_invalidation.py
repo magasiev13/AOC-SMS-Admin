@@ -99,7 +99,7 @@ class TestAuthSessionInvalidation(unittest.TestCase):
 
         old_login = self._login_target("Target-pass1!")
         self.assertEqual(old_login.status_code, 200)
-        self.assertIn(b"Invalid username or password.", old_login.data)
+        self.assertIn(b"Invalid email, username, or password.", old_login.data)
 
         new_login = self._login_target("Fresh-Newpass1!")
         self.assertEqual(new_login.status_code, 302)
