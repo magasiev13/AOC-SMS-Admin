@@ -50,13 +50,16 @@
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit">
+                    {% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'standard') %}
+                    {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') %}
+                    {% set selected_business_type = request.form.get('business_type', (onboarding.business_type if onboarding else '') or ('Non-profit Corporation' if selected_registration_path in ('nonprofit', 'government') else ('Sole Proprietor' if selected_registration_path == 'sole_proprietor' else ''))) %}
+                    {% set selected_business_registration_identifier = request.form.get('business_registration_identifier', (onboarding.business_registration_identifier if onboarding else '') or ('EIN' if selected_registration_path != 'sole_proprietor' else '')) %}
 
                     <div class="platform-shell__eyebrow mb-2">Registration settings</div>
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="registration_path">Registration Path</label>
                             <select class="form-select" id="registration_path" name="registration_path">
-                                {% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'standard') %}
                                 {% for value, label in registration_path_choices %}
                                 <option value="{{ value }}" {% if selected_registration_path == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
@@ -65,7 +68,6 @@
                         <div class="col-md-6">
                             <label class="form-label" for="number_strategy">Number Strategy</label>
                             <select class="form-select" id="number_strategy" name="number_strategy">
-                                {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') %}
                                 {% for value, label in number_strategy_choices %}
                                 <option value="{{ value }}" {% if selected_number_strategy == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
@@ -83,8 +85,13 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="business_type">Business Type</label>
-                            <input class="form-control" id="business_type" name="business_type" placeholder="Nonprofit, LLC, Sole Proprietor" value="{{ request.form.get('business_type', (onboarding.business_type if onboarding else '') or '') }}">
-                            <div class="form-text">Required for standard and low-volume registrations. Nonprofit and government paths are filled automatically.</div>
+                            <select class="form-select" id="business_type" name="business_type" {% if selected_registration_path in ('standard', 'low_volume_standard') %}required{% endif %}>
+                                <option value="">Select a legal structure</option>
+                                {% for value, label in business_type_choices %}
+                                <option value="{{ value }}" {% if selected_business_type == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Standard and low-volume registrations must use a Twilio-approved legal structure. Nonprofit, government, and sole proprietor paths are set automatically.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="email">Business Email</label>
@@ -120,11 +127,13 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="business_registration_identifier">Registration Identifier</label>
-                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" value="{{ request.form.get('business_registration_identifier', (onboarding.business_registration_identifier if onboarding else '') or '') }}">
+                            <input class="form-control" id="business_registration_identifier" name="business_registration_identifier" placeholder="EIN, Tax ID" {% if selected_registration_path != 'sole_proprietor' %}required{% endif %} value="{{ selected_business_registration_identifier }}">
+                            <div class="form-text">Required for standard, low-volume, nonprofit, and government registrations. Use EIN for U.S. businesses.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="business_registration_number">Registration Number</label>
-                            <input class="form-control" id="business_registration_number" name="business_registration_number" placeholder="Stored encrypted once submitted" value="{{ request.form.get('business_registration_number', '') }}">
+                            <input class="form-control" id="business_registration_number" name="business_registration_number" placeholder="Stored encrypted once submitted" {% if selected_registration_path != 'sole_proprietor' %}required{% endif %} value="{{ request.form.get('business_registration_number', '') }}">
+                            <div class="form-text">Required for every non-sole-proprietor submission. This value is encrypted after save.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="campaign_verify_token">Campaign Verify Token</label>
@@ -261,4 +270,50 @@
     </aside>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    (() => {
+        const registrationPathInput = document.getElementById('registration_path');
+        const businessTypeInput = document.getElementById('business_type');
+        const registrationIdentifierInput = document.getElementById('business_registration_identifier');
+        const registrationNumberInput = document.getElementById('business_registration_number');
+        if (!registrationPathInput || !businessTypeInput || !registrationIdentifierInput || !registrationNumberInput) {
+            return;
+        }
+
+        const forcedBusinessTypeByPath = {
+            nonprofit: 'Non-profit Corporation',
+            government: 'Non-profit Corporation',
+            sole_proprietor: 'Sole Proprietor',
+        };
+
+        const syncRegistrationRequirements = () => {
+            const path = registrationPathInput.value;
+            const forcedBusinessType = forcedBusinessTypeByPath[path] || '';
+            const usesSelectableBusinessType = path === 'standard' || path === 'low_volume_standard';
+            const requiresRegistrationDetails = path !== 'sole_proprietor';
+
+            if (forcedBusinessType) {
+                businessTypeInput.value = forcedBusinessType;
+            } else if (!usesSelectableBusinessType) {
+                businessTypeInput.value = '';
+            }
+
+            businessTypeInput.disabled = !usesSelectableBusinessType;
+            businessTypeInput.required = usesSelectableBusinessType;
+            registrationIdentifierInput.required = requiresRegistrationDetails;
+            registrationNumberInput.required = requiresRegistrationDetails;
+
+            if (requiresRegistrationDetails && !registrationIdentifierInput.value.trim()) {
+                registrationIdentifierInput.value = 'EIN';
+            }
+        };
+
+        registrationPathInput.addEventListener('change', syncRegistrationRequirements);
+        syncRegistrationRequirements();
+    })();
+</script>
 {% endblock %}

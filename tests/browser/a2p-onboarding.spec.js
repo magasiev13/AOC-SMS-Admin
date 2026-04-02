@@ -9,9 +9,19 @@ async function login(page, username, password) {
 
 async function openMessagingForOrg(page, orgName) {
   await page.goto('/platform/organizations');
-  const orgRow = page.locator('tr').filter({ hasText: orgName });
-  await expect(orgRow).toBeVisible();
-  await orgRow.getByRole('link', { name: /Manage provider|Set up provider/ }).click();
+  const orgCard = page.locator('article').filter({ hasText: orgName }).first();
+  await expect(orgCard).toBeVisible();
+  const providerLink = orgCard.getByRole('link', { name: /Manage provider|Set up provider/ });
+  if (await providerLink.count()) {
+    await providerLink.click();
+    return;
+  }
+
+  const accessHref = await orgCard.getByRole('link', { name: 'Manage Access' }).getAttribute('href');
+  expect(accessHref).not.toBeNull();
+  const match = accessHref.match(/\/platform\/organizations\/(\d+)\/access$/);
+  expect(match).not.toBeNull();
+  await page.goto(`/platform/organizations/${match[1]}/messaging`);
 }
 
 test('platform admin can navigate onboarding from messaging and submit deterministic local validation', async ({ page }) => {
@@ -31,6 +41,7 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.getByLabel('Legal Business Name')).toHaveValue('Onboarding Bakery');
   await expect(page.getByLabel('Business Type')).toHaveValue('');
+  await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
   await expect(page.getByLabel('Business Email')).toBeVisible();
   await expect(page.getByLabel('Rep First Name')).toBeVisible();
   await expect(page.getByLabel('Rep Last Name')).toBeVisible();
@@ -39,9 +50,23 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Message Samples')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
-  await expect(page.getByText('Messaging service: not provisioned yet')).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Messaging service' })).toContainText('not provisioned yet');
 
-  await page.getByLabel('Business Type').fill('LLC');
+  expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(true);
+  expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(true);
+
+  await page.getByLabel('Registration Path').selectOption('sole_proprietor');
+  await expect(page.getByLabel('Business Type')).toBeDisabled();
+  await expect(page.getByLabel('Business Type')).toHaveValue('Sole Proprietor');
+  expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(false);
+  expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(false);
+
+  await page.getByLabel('Registration Path').selectOption('low_volume_standard');
+  await expect(page.getByLabel('Business Type')).toBeEnabled();
+  await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
+  expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(true);
+  expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(true);
+  await page.getByLabel('Business Type').selectOption('Limited Liability Corporation');
   await page.getByLabel('Business Email').fill('ops@onboarding.test');
   await page.getByLabel('Rep First Name').fill('Olivia');
   await page.getByLabel('Rep Last Name').fill('Owner');
@@ -50,8 +75,15 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
+  await expect(page).toHaveURL(/\/platform\/organizations\/1\/messaging\/onboarding$/);
+  expect(await page.getByLabel('Registration Number').evaluate((el) => el.validationMessage)).not.toBe('');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('draft');
+
+  await page.getByLabel('Registration Number').fill('12-3456789');
+  await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
+
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('queued');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 
@@ -65,49 +97,49 @@ test('platform admin sees each seeded onboarding state and action availability',
 
   await openMessagingForOrg(page, 'Pending Review Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('pending');
-  await expect(page.getByText('Brand: pending-review')).toBeVisible();
-  await expect(page.getByText('Campaign: pending')).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('pending');
+  await expect(page.locator('li').filter({ hasText: 'Brand' })).toContainText('pending-review');
+  await expect(page.locator('li').filter({ hasText: 'Campaign' })).toContainText('pending');
   await expect(page.getByLabel('Messages include links')).toBeChecked();
   await expect(page.getByLabel('Messages include phone numbers')).toBeChecked();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 
   await openMessagingForOrg(page, 'Approved Bakery');
-  await expect(page.locator('li').filter({ hasText: 'Live sending:' })).toContainText('enabled');
+  await expect(page.locator('li').filter({ hasText: 'Live sending' })).toContainText('enabled');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('approved');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('approved');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 
   await openMessagingForOrg(page, 'Rejected Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('rejected');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('rejected');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
   await expect(page.getByText('Twilio rejected the registration because the campaign description was too vague.')).toBeVisible();
 
   await openMessagingForOrg(page, 'Error Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('error');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('error');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
   await expect(page.getByText('Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.')).toBeVisible();
 
   await openMessagingForOrg(page, 'Queued Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('queued');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
   await page.getByRole('button', { name: 'Refresh Status' }).click();
   await expect(page.getByText('Twilio A2P onboarding refresh queued.')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByText('Twilio A2P onboarding canceled.')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('canceled');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('canceled');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 
   await openMessagingForOrg(page, 'Canceled Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding:' })).toContainText('canceled');
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('canceled');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 });

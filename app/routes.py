@@ -89,6 +89,7 @@ from app.services.recipient_service import (
 )
 from app.services.twilio_service import validate_inbound_signature_detailed
 from app.services.twilio_a2p_service import (
+    a2p_business_type_choices,
     a2p_campaign_use_case_choices,
     a2p_number_strategy_choices,
     a2p_registration_path_choices,
@@ -2960,6 +2961,7 @@ def platform_organizations_messaging_onboarding(organization_id):
                 messaging_profile=messaging_profile,
                 onboarding=onboarding,
                 a2p_form_defaults=_a2p_form_defaults(onboarding),
+                business_type_choices=a2p_business_type_choices(),
                 registration_path_choices=a2p_registration_path_choices(),
                 number_strategy_choices=a2p_number_strategy_choices(),
                 campaign_use_case_choices=a2p_campaign_use_case_choices(),
@@ -2972,6 +2974,7 @@ def platform_organizations_messaging_onboarding(organization_id):
         messaging_profile=messaging_profile,
         onboarding=onboarding,
         a2p_form_defaults=_a2p_form_defaults(onboarding),
+        business_type_choices=a2p_business_type_choices(),
         registration_path_choices=a2p_registration_path_choices(),
         number_strategy_choices=a2p_number_strategy_choices(),
         campaign_use_case_choices=a2p_campaign_use_case_choices(),

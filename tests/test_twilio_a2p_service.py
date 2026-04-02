@@ -34,6 +34,7 @@ class TestTwilioA2PService(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import Organization, OrganizationA2POnboarding, OrganizationMessagingProfile
+        from app.services.provider_secret_service import encrypt_provider_secret
         from app.services.twilio_a2p_service import (
             _upsert_a2p_resources,
             ensure_a2p_onboarding,
@@ -47,6 +48,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
         self.ProviderProvisioningError = ProviderProvisioningError
+        self.encrypt_provider_secret = encrypt_provider_secret
         self._upsert_a2p_resources = _upsert_a2p_resources
         self.ensure_a2p_onboarding = ensure_a2p_onboarding
         self.process_a2p_onboarding = process_a2p_onboarding
@@ -90,6 +92,8 @@ class TestTwilioA2PService(unittest.TestCase):
                 "number_strategy": "auto_buy",
                 "business_name": "Acme Nonprofit",
                 "business_type": "Nonprofit",
+                "business_registration_identifier": "EIN",
+                "business_registration_number": "12-3456789",
                 "email": "ops@acme.test",
                 "phone_number": "+15550000001",
                 "mobile_number": "+15550000002",
@@ -166,6 +170,46 @@ class TestTwilioA2PService(unittest.TestCase):
                 actor_user_id=7,
             )
 
+    def test_submit_a2p_onboarding_requires_registration_identifier_for_non_sole_paths(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "registration identifier is required"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                {
+                    "registration_path": "low_volume_standard",
+                    "number_strategy": "auto_buy",
+                    "business_name": "Acme",
+                    "business_type": "LLC",
+                    "business_registration_number": "12-3456789",
+                    "email": "ops@acme.test",
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "campaign_description": "Community updates",
+                    "message_flow": "Users opt in.",
+                    "message_samples": "Sample message",
+                },
+                actor_user_id=7,
+            )
+
+    def test_submit_a2p_onboarding_requires_registration_number_for_non_sole_paths(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "registration number is required"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                {
+                    "registration_path": "low_volume_standard",
+                    "number_strategy": "auto_buy",
+                    "business_name": "Acme",
+                    "business_type": "LLC",
+                    "business_registration_identifier": "EIN",
+                    "email": "ops@acme.test",
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "campaign_description": "Community updates",
+                    "message_flow": "Users opt in.",
+                    "message_samples": "Sample message",
+                },
+                actor_user_id=7,
+            )
+
     def test_submit_a2p_onboarding_treats_none_literal_as_missing_business_type(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Business type is required"):
             self.submit_a2p_onboarding(
@@ -196,6 +240,8 @@ class TestTwilioA2PService(unittest.TestCase):
                 "registration_path": "nonprofit",
                 "number_strategy": "auto_buy",
                 "business_name": "Acme Nonprofit",
+                "business_registration_identifier": "EIN",
+                "business_registration_number": "12-3456789",
                 "email": "ops@acme.test",
                 "first_name": "Jane",
                 "last_name": "Doe",
@@ -206,8 +252,62 @@ class TestTwilioA2PService(unittest.TestCase):
             actor_user_id=11,
         )
 
-        self.assertEqual(onboarding.business_type, "Nonprofit")
+        self.assertEqual(onboarding.business_type, "Non-profit Corporation")
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 11)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_normalizes_llc_business_type_aliases(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            {
+                "registration_path": "low_volume_standard",
+                "number_strategy": "auto_buy",
+                "business_name": "Acme",
+                "business_type": "Limited Liability Company",
+                "business_registration_identifier": "EIN",
+                "business_registration_number": "12-3456789",
+                "email": "ops@acme.test",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "campaign_description": "Community updates",
+                "message_flow": "Users opt in.",
+                "message_samples": "Sample message",
+            },
+            actor_user_id=12,
+        )
+
+        self.assertEqual(onboarding.business_type, "Limited Liability Corporation")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 12)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_allows_blank_registration_details_for_sole_proprietor(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            {
+                "registration_path": "sole_proprietor",
+                "number_strategy": "auto_buy",
+                "business_name": "Jane Doe",
+                "email": "ops@acme.test",
+                "mobile_number": "+15550000002",
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "campaign_description": "Community updates",
+                "message_flow": "Users opt in.",
+                "message_samples": "Sample message",
+            },
+            actor_user_id=13,
+        )
+
+        self.assertEqual(onboarding.business_type, "Sole Proprietor")
+        self.assertIsNone(onboarding.business_registration_identifier)
+        self.assertIsNone(onboarding.business_registration_number_encrypted)
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 13)
 
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_marks_record_error_when_queueing_fails(self, mock_get_queue) -> None:
@@ -223,6 +323,8 @@ class TestTwilioA2PService(unittest.TestCase):
                     "number_strategy": "auto_buy",
                     "business_name": "Acme",
                     "business_type": "LLC",
+                    "business_registration_identifier": "EIN",
+                    "business_registration_number": "12-3456789",
                     "email": "ops@acme.test",
                     "first_name": "Jane",
                     "last_name": "Doe",
@@ -264,6 +366,8 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.number_strategy = "auto_buy"
         onboarding.business_name = "Acme"
         onboarding.business_type = "LLC"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.business_registration_number_encrypted = self.encrypt_provider_secret("12-3456789")
         onboarding.email = "ops@acme.test"
         onboarding.first_name = "Jane"
         onboarding.last_name = "Doe"
@@ -286,10 +390,41 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertIn(((), {"object_sid": "BUcustomer123"}), trust_assignment_calls)
         mock_client.trusthub.v1.customer_profiles.return_value.update.assert_called_once_with(status="pending-review")
         mock_client.trusthub.v1.trust_products.return_value.update.assert_called_once_with(status="pending-review")
+        first_end_user_call = mock_client.trusthub.v1.end_users.create.call_args_list[0]
+        self.assertEqual(
+            first_end_user_call.kwargs["attributes"]["business_type"],
+            "Limited Liability Corporation",
+        )
+        self.assertEqual(first_end_user_call.kwargs["attributes"]["business_registration_identifier"], "EIN")
+        self.assertEqual(first_end_user_call.kwargs["attributes"]["business_registration_number"], "12-3456789")
         self.assertEqual(onboarding.customer_profile_sid, "BUcustomer123")
         self.assertEqual(onboarding.trust_product_sid, "BUtrust123")
         self.assertEqual(onboarding.brand_registration_sid, "BNbrand123")
         self.assertEqual(onboarding.campaign_sid, "QEcampaign123")
+
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_upsert_a2p_resources_rejects_missing_registration_number_before_twilio_calls(self, mock_build_subaccount_client) -> None:
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.number_strategy = "auto_buy"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "LLC"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample"]'
+        onboarding.raw_submission_json = "{}"
+
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "registration number is required"):
+            self._upsert_a2p_resources(onboarding, self.messaging_profile)
+
+        mock_client.trusthub.v1.end_users.create.assert_not_called()
 
     @patch("app.services.twilio_a2p_service._complete_number_setup")
     @patch("app.services.twilio_a2p_service._sync_remote_status", return_value=("approved", "approved"))

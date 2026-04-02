@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,6 +49,15 @@ A2P_NUMBER_STRATEGIES = (
     ("transfer_parent_number", "Transfer an existing parent-account number"),
 )
 
+A2P_BUSINESS_TYPE_CHOICES = (
+    ("Co-operative", "Co-operative"),
+    ("Corporation", "Corporation"),
+    ("Limited Liability Corporation", "Limited Liability Corporation"),
+    ("Non-profit Corporation", "Non-profit Corporation"),
+    ("Partnership", "Partnership"),
+    ("Sole Proprietor", "Sole Proprietor"),
+)
+
 A2P_CAMPAIGN_USE_CASES = (
     ("MIXED", "Mixed"),
     ("ACCOUNT_NOTIFICATION", "Account Notification"),
@@ -61,6 +71,26 @@ DEFAULT_OPT_OUT_KEYWORDS = ["STOP", "UNSUBSCRIBE", "END"]
 DEFAULT_HELP_KEYWORDS = ["HELP", "INFO"]
 A2P_REGISTRATION_PATH_VALUES = {value for value, _ in A2P_REGISTRATION_PATHS}
 A2P_NUMBER_STRATEGY_VALUES = {value for value, _ in A2P_NUMBER_STRATEGIES}
+A2P_ALLOWED_BUSINESS_TYPES = {value for value, _ in A2P_BUSINESS_TYPE_CHOICES}
+A2P_BUSINESS_TYPE_ALIASES = {
+    "co operative": "Co-operative",
+    "co operative society": "Co-operative",
+    "co operative corporation": "Co-operative",
+    "co operative company": "Co-operative",
+    "cooperative": "Co-operative",
+    "cooperative society": "Co-operative",
+    "corporation": "Corporation",
+    "corp": "Corporation",
+    "limited liability company": "Limited Liability Corporation",
+    "limited liability corporation": "Limited Liability Corporation",
+    "llc": "Limited Liability Corporation",
+    "non profit": "Non-profit Corporation",
+    "non profit corporation": "Non-profit Corporation",
+    "nonprofit": "Non-profit Corporation",
+    "nonprofit corporation": "Non-profit Corporation",
+    "partnership": "Partnership",
+    "sole proprietor": "Sole Proprietor",
+}
 
 
 @dataclass(frozen=True)
@@ -131,6 +161,10 @@ def a2p_number_strategy_choices() -> tuple[tuple[str, str], ...]:
     return A2P_NUMBER_STRATEGIES
 
 
+def a2p_business_type_choices() -> tuple[tuple[str, str], ...]:
+    return A2P_BUSINESS_TYPE_CHOICES
+
+
 def a2p_campaign_use_case_choices() -> tuple[tuple[str, str], ...]:
     return A2P_CAMPAIGN_USE_CASES
 
@@ -162,6 +196,20 @@ def _coerce_bool(raw_value: Any) -> bool:
     return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_business_type_key(raw_value: str | None) -> str | None:
+    candidate = _clean_text(raw_value, lowercase=True)
+    if not candidate:
+        return None
+    return re.sub(r"[^a-z0-9]+", " ", candidate).strip() or None
+
+
+def _canonical_business_type(raw_value: str | None) -> str | None:
+    key = _normalize_business_type_key(raw_value)
+    if not key:
+        return None
+    return A2P_BUSINESS_TYPE_ALIASES.get(key)
+
+
 def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
     candidate = (raw_value or "").strip().upper() or "MIXED"
     allowed = {value for value, _ in A2P_CAMPAIGN_USE_CASES}
@@ -175,15 +223,19 @@ def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
 
 
 def _normalize_business_type(registration_path: str, raw_value: str | None) -> str | None:
-    candidate = _clean_text(raw_value)
     if registration_path == "sole_proprietor":
-        return candidate or "Sole Proprietor"
-    if candidate:
-        return candidate
+        return "Sole Proprietor"
     if registration_path == "nonprofit":
-        return "Nonprofit"
+        return "Non-profit Corporation"
     if registration_path == "government":
-        return "Government"
+        return "Non-profit Corporation"
+    candidate = _canonical_business_type(raw_value)
+    if candidate == "Sole Proprietor":
+        raise ProviderProvisioningError("Sole proprietor business type is only valid for sole proprietor A2P onboarding.")
+    if candidate in A2P_ALLOWED_BUSINESS_TYPES:
+        return candidate
+    if _clean_text(raw_value):
+        raise ProviderProvisioningError("Choose a valid Twilio legal business type for A2P onboarding.")
     raise ProviderProvisioningError("Business type is required for standard or low-volume A2P onboarding.")
 
 
@@ -193,6 +245,44 @@ def _business_identity(registration_path: str) -> str:
     if registration_path == "nonprofit":
         return "non_profit"
     return "direct_customer"
+
+
+def _business_industry(registration_path: str) -> str:
+    if registration_path == "government":
+        return "GOVERNMENT"
+    if registration_path == "nonprofit":
+        return "NOT_FOR_PROFIT"
+    return "OTHER"
+
+
+def _messaging_profile_company_type(registration_path: str) -> str:
+    if registration_path == "government":
+        return "government"
+    if registration_path == "nonprofit":
+        return "non_profit"
+    return "private"
+
+
+def _requires_business_registration_details(registration_path: str) -> bool:
+    return registration_path != "sole_proprietor"
+
+
+def _validate_business_registration_details(
+    registration_path: str,
+    identifier: str | None,
+    number: str | None,
+) -> tuple[str | None, str | None]:
+    if not _requires_business_registration_details(registration_path):
+        return identifier, number
+    if not identifier:
+        raise ProviderProvisioningError(
+            "Business registration identifier is required for non-sole-proprietor A2P onboarding."
+        )
+    if not number:
+        raise ProviderProvisioningError(
+            "Business registration number is required for non-sole-proprietor A2P onboarding."
+        )
+    return identifier, number
 
 
 def _policy_sids(registration_path: str) -> tuple[str, str]:
@@ -266,12 +356,18 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         raise ProviderProvisioningError("A mobile number is required for sole proprietor onboarding.")
     if number_strategy in {"existing_subaccount_number", "transfer_parent_number"} and not desired_phone_number_sid:
         raise ProviderProvisioningError("A Twilio phone number SID is required for the selected number strategy.")
+    business_type = _normalize_business_type(registration_path, payload.get("business_type"))
+    business_registration_identifier, business_registration_number = _validate_business_registration_details(
+        registration_path,
+        _clean_text(payload.get("business_registration_identifier")),
+        _clean_text(payload.get("business_registration_number")),
+    )
 
     return A2PFormData(
         registration_path=registration_path,
         number_strategy=number_strategy,
         business_name=business_name,
-        business_type=_normalize_business_type(registration_path, payload.get("business_type")),
+        business_type=business_type,
         website_url=_clean_text(payload.get("website_url")),
         social_profile_url=_clean_text(payload.get("social_profile_url")),
         email=email,
@@ -280,8 +376,8 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         first_name=first_name,
         last_name=last_name,
         job_position=_clean_text(payload.get("job_position")),
-        business_registration_identifier=_clean_text(payload.get("business_registration_identifier")),
-        business_registration_number=_clean_text(payload.get("business_registration_number")),
+        business_registration_identifier=business_registration_identifier,
+        business_registration_number=business_registration_number,
         address_sid=_clean_text(payload.get("address_sid")),
         supporting_document_sid=_clean_text(payload.get("supporting_document_sid")),
         campaign_use_case=_normalize_use_case(registration_path, payload.get("campaign_use_case")),
@@ -551,6 +647,16 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
     client = _build_subaccount_client(profile)
     status_payload = _load_status_payload(onboarding)
     primary_customer_profile_sid = (current_app.config.get("TWILIO_PRIMARY_CUSTOMER_PROFILE_SID") or "").strip()
+    business_registration_number = (
+        decrypt_provider_secret(onboarding.business_registration_number_encrypted)
+        if onboarding.business_registration_number_encrypted
+        else None
+    )
+    business_registration_identifier, business_registration_number = _validate_business_registration_details(
+        onboarding.registration_path,
+        _clean_text(onboarding.business_registration_identifier),
+        _clean_text(business_registration_number),
+    )
 
     customer_profile_policy_sid, trust_product_policy_sid = _policy_sids(onboarding.registration_path)
     if not onboarding.customer_profile_sid:
@@ -589,12 +695,10 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "website_url": onboarding.website_url or "",
                     "business_regions_of_operation": "USA_AND_CANADA",
                     "business_type": _normalize_business_type(onboarding.registration_path, onboarding.business_type) or "",
-                    "business_registration_identifier": onboarding.business_registration_identifier or "EIN",
+                    "business_registration_identifier": business_registration_identifier or "EIN",
                     "business_identity": onboarding.business_identity or "direct_customer",
-                    "business_industry": "OTHER",
-                    "business_registration_number": decrypt_provider_secret(onboarding.business_registration_number_encrypted)
-                    if onboarding.business_registration_number_encrypted
-                    else "",
+                    "business_industry": _business_industry(onboarding.registration_path),
+                    "business_registration_number": business_registration_number,
                 },
             )
             status_payload["business_information_end_user_sid"] = business_info.sid
@@ -667,7 +771,7 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
             client,
             friendly_name=f"{onboarding.business_name} Messaging Profile",
             type_name="us_a2p_messaging_profile_information",
-            attributes={"company_type": "private"},
+            attributes={"company_type": _messaging_profile_company_type(onboarding.registration_path)},
         )
         status_payload["messaging_profile_end_user_sid"] = messaging_profile.sid
 
