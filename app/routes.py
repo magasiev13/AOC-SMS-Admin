@@ -41,6 +41,7 @@ from app.models import (
     KeywordAutomationRule,
     MessageLog,
     Organization,
+    OrganizationA2POnboarding,
     OrganizationInvitation,
     OrganizationMembership,
     OrganizationMessagingProfile,
@@ -68,6 +69,7 @@ from app.services.billing_service import (
     subscription_status_allows_sending,
     sync_checkout_session_by_id,
 )
+from app.services.provider_secret_service import decrypt_provider_secret
 from app.services.inbox_service import (
     delete_survey_flow_with_dependencies,
     delete_messages_in_thread,
@@ -89,13 +91,18 @@ from app.services.recipient_service import (
 )
 from app.services.twilio_service import validate_inbound_signature_detailed
 from app.services.twilio_a2p_service import (
+    a2p_business_industry_choices,
+    a2p_business_region_choices,
     a2p_business_type_choices,
     a2p_campaign_use_case_choices,
+    a2p_job_position_choices,
     a2p_number_strategy_choices,
     a2p_registration_path_choices,
+    a2p_registration_identifier_choices,
     cancel_a2p_onboarding,
     ensure_a2p_onboarding,
     refresh_a2p_onboarding,
+    save_a2p_onboarding_draft,
     submit_a2p_onboarding,
 )
 from app.services.twilio_service import (
@@ -182,6 +189,7 @@ def _a2p_form_defaults(onboarding) -> dict[str, str]:
         "opt_in_keywords": _json_text(getattr(onboarding, "opt_in_keywords_json", None), separator=","),
         "opt_out_keywords": _json_text(getattr(onboarding, "opt_out_keywords_json", None), separator=","),
         "help_keywords": _json_text(getattr(onboarding, "help_keywords_json", None), separator=","),
+        "business_regions": _json_text(getattr(onboarding, "business_regions_json", None), separator=","),
         "has_embedded_links": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_links"),
         "has_embedded_phone": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_phone"),
     }
@@ -371,6 +379,194 @@ def _current_organization() -> Organization | None:
 def _current_subscription() -> OrganizationSubscription | None:
     organization = _current_organization()
     return organization.subscription if organization is not None else None
+
+
+def _organization_setup_complete(organization: Organization | None) -> bool:
+    return organization_can_send(organization) and _organization_has_active_messaging(organization)
+
+
+def _a2p_profile_ready(onboarding: OrganizationA2POnboarding | None) -> bool:
+    if onboarding is None:
+        return False
+    required_values = (
+        onboarding.business_name,
+        onboarding.email,
+        onboarding.notification_email,
+        onboarding.website_url,
+        onboarding.first_name,
+        onboarding.last_name,
+        onboarding.business_title,
+        onboarding.job_position,
+        onboarding.business_type,
+        onboarding.business_industry,
+        onboarding.business_registration_identifier,
+        onboarding.business_regions_json,
+        onboarding.address_country,
+        onboarding.address_line1,
+        onboarding.address_city,
+        onboarding.address_region,
+        onboarding.address_postal_code,
+        onboarding.campaign_description,
+        onboarding.message_flow,
+        onboarding.message_samples_json,
+    )
+    return all(bool(value) for value in required_values) and bool(onboarding.business_registration_number_encrypted)
+
+
+def _setup_current_step(organization: Organization) -> str:
+    subscription_view = _subscription_view(organization.subscription)
+    onboarding = organization.a2p_onboarding
+    if _organization_setup_complete(organization):
+        return "launch"
+    if not subscription_view["can_send"]:
+        return "billing"
+    if onboarding is None or onboarding.onboarding_status in {"draft", "rejected", "error", "canceled"}:
+        return "compliance" if not _a2p_profile_ready(onboarding) else "review"
+    if onboarding.onboarding_status in {"queued", "processing", "pending", "approved"}:
+        return "launch"
+    return "compliance"
+
+
+def _setup_steps_view(organization: Organization) -> list[dict]:
+    onboarding = organization.a2p_onboarding
+    subscription_view = _subscription_view(organization.subscription)
+    messaging_profile = organization.messaging_profile
+    current_step = _setup_current_step(organization)
+    launch_label = "Live in workspace" if messaging_profile and messaging_profile.can_send else "Await number assignment"
+    step_rows = [
+        {
+            "key": "account",
+            "label": "Workspace account",
+            "detail": "Your owner workspace is active and ready to finish setup.",
+            "complete": True,
+        },
+        {
+            "key": "billing",
+            "label": "Billing activation",
+            "detail": subscription_view["title"],
+            "complete": subscription_view["can_send"],
+        },
+        {
+            "key": "compliance",
+            "label": "Business profile",
+            "detail": "Complete the Twilio compliance profile once.",
+            "complete": _a2p_profile_ready(onboarding),
+        },
+        {
+            "key": "review",
+            "label": "Review and submit",
+            "detail": onboarding.onboarding_status if onboarding else "draft",
+            "complete": onboarding is not None and onboarding.submitted_at is not None,
+        },
+        {
+            "key": "launch",
+            "label": launch_label,
+            "detail": (
+                messaging_profile.from_number
+                if messaging_profile and messaging_profile.from_number
+                else "Platform support will finish number assignment after approval."
+            ),
+            "complete": messaging_profile is not None and messaging_profile.can_send,
+        },
+    ]
+    for step in step_rows:
+        step["current"] = step["key"] == current_step
+    return step_rows
+
+
+def _setup_status_payload(organization: Organization) -> dict:
+    onboarding = organization.a2p_onboarding
+    messaging_profile = organization.messaging_profile
+    subscription_view = _subscription_view(organization.subscription)
+    return {
+        "current_step": _setup_current_step(organization),
+        "setup_complete": _organization_setup_complete(organization),
+        "subscription": {
+            "status": subscription_view["status"],
+            "title": subscription_view["title"],
+            "can_send": subscription_view["can_send"],
+        },
+        "onboarding": {
+            "status": onboarding.onboarding_status if onboarding else "draft",
+            "brand_status": onboarding.brand_status if onboarding else None,
+            "campaign_status": onboarding.campaign_status if onboarding else None,
+            "last_error": onboarding.last_error if onboarding else None,
+            "submitted_at": onboarding.submitted_at.isoformat() if onboarding and onboarding.submitted_at else None,
+        },
+        "messaging": {
+            "provider_status": messaging_profile.provider_status if messaging_profile else "pending",
+            "sender_review_status": messaging_profile.sender_review_status if messaging_profile else "pending",
+            "from_number": messaging_profile.from_number if messaging_profile else None,
+            "messaging_service_sid": messaging_profile.messaging_service_sid if messaging_profile else None,
+            "can_send": messaging_profile.can_send if messaging_profile else False,
+        },
+    }
+
+
+def _should_reconcile_subscription(organization: Organization | None, session_id: str = "") -> bool:
+    if organization is None:
+        return False
+    if (session_id or "").strip():
+        return True
+    subscription = organization.subscription
+    if subscription is None:
+        return False
+    return bool(subscription.stripe_customer_id or subscription.stripe_subscription_id)
+
+
+def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding) -> dict[str, str]:
+    defaults = _a2p_form_defaults(onboarding)
+    business_registration_number = (
+        decrypt_provider_secret(onboarding.business_registration_number_encrypted)
+        if onboarding.business_registration_number_encrypted
+        else ""
+    )
+    campaign_verify_token = (
+        decrypt_provider_secret(onboarding.campaign_verify_token_encrypted)
+        if onboarding.campaign_verify_token_encrypted
+        else ""
+    )
+    return {
+        "registration_path": onboarding.registration_path or "standard",
+        "number_strategy": onboarding.number_strategy or "platform_assign",
+        "business_name": onboarding.business_name or "",
+        "business_type": onboarding.business_type or "",
+        "business_industry": onboarding.business_industry or "",
+        "business_registration_identifier": onboarding.business_registration_identifier or "",
+        "business_registration_number": business_registration_number,
+        "business_regions": defaults["business_regions"] or "USA_AND_CANADA",
+        "website_url": onboarding.website_url or "",
+        "social_profile_url": onboarding.social_profile_url or "",
+        "email": onboarding.email or "",
+        "notification_email": onboarding.notification_email or onboarding.email or "",
+        "phone_number": onboarding.phone_number or "",
+        "mobile_number": onboarding.mobile_number or "",
+        "first_name": onboarding.first_name or "",
+        "last_name": onboarding.last_name or "",
+        "business_title": onboarding.business_title or "",
+        "job_position": onboarding.job_position or "",
+        "address_country": onboarding.address_country or "US",
+        "address_line1": onboarding.address_line1 or "",
+        "address_line2": onboarding.address_line2 or "",
+        "address_city": onboarding.address_city or "",
+        "address_region": onboarding.address_region or "",
+        "address_postal_code": onboarding.address_postal_code or "",
+        "campaign_use_case": onboarding.campaign_use_case or "MIXED",
+        "campaign_description": onboarding.campaign_description or "",
+        "message_flow": onboarding.message_flow or "",
+        "message_samples": defaults["message_samples"] or "",
+        "opt_in_message": onboarding.opt_in_message or "",
+        "opt_out_message": onboarding.opt_out_message or "",
+        "help_message": onboarding.help_message or "",
+        "opt_in_keywords": defaults["opt_in_keywords"] or "",
+        "opt_out_keywords": defaults["opt_out_keywords"] or "",
+        "help_keywords": defaults["help_keywords"] or "",
+        "has_embedded_links": "on" if defaults["has_embedded_links"] else "",
+        "has_embedded_phone": "on" if defaults["has_embedded_phone"] else "",
+        "desired_phone_number": onboarding.desired_phone_number or "",
+        "desired_phone_number_sid": onboarding.desired_phone_number_sid or "",
+        "campaign_verify_token": campaign_verify_token,
+    }
 
 
 def _tenant_get_or_404(model, entity_id: int):
@@ -954,10 +1150,10 @@ def _organization_can_transmit_messages(organization: Organization | None) -> bo
 
 def _send_access_denied_response(organization: Organization | None):
     if not organization_can_send(organization):
-        flash('Billing must be trialing or active before messages can be sent.', 'error')
-        return redirect(url_for('main.billing_overview'))
-    flash('Messaging is not provisioned for this organization yet. Contact your platform admin.', 'error')
-    return redirect(url_for('main.billing_overview'))
+        flash('Finish workspace setup before sending messages.', 'error')
+        return redirect(url_for('main.setup'))
+    flash('Messaging is not provisioned for this organization yet. Return to setup to finish activation.', 'error')
+    return redirect(url_for('main.setup'))
 
 
 def _require_active_subscription():
@@ -2937,9 +3133,11 @@ def platform_organizations_messaging_onboarding(organization_id):
         action = (request.form.get('action') or 'submit').strip().lower()
         try:
             if action == 'submit':
+                payload = request.form.to_dict(flat=True)
+                payload['business_regions'] = request.form.getlist('business_regions')
                 submit_a2p_onboarding(
                     organization.id,
-                    request.form.to_dict(flat=True),
+                    payload,
                     actor_user_id=current_user.id,
                 )
                 flash('Twilio A2P onboarding queued for processing.', 'success')
@@ -2961,8 +3159,12 @@ def platform_organizations_messaging_onboarding(organization_id):
                 messaging_profile=messaging_profile,
                 onboarding=onboarding,
                 a2p_form_defaults=_a2p_form_defaults(onboarding),
+                business_industry_choices=a2p_business_industry_choices(),
+                business_region_choices=a2p_business_region_choices(),
                 business_type_choices=a2p_business_type_choices(),
+                job_position_choices=a2p_job_position_choices(),
                 registration_path_choices=a2p_registration_path_choices(),
+                registration_identifier_choices=a2p_registration_identifier_choices(),
                 number_strategy_choices=a2p_number_strategy_choices(),
                 campaign_use_case_choices=a2p_campaign_use_case_choices(),
             )
@@ -2974,8 +3176,12 @@ def platform_organizations_messaging_onboarding(organization_id):
         messaging_profile=messaging_profile,
         onboarding=onboarding,
         a2p_form_defaults=_a2p_form_defaults(onboarding),
+        business_industry_choices=a2p_business_industry_choices(),
+        business_region_choices=a2p_business_region_choices(),
         business_type_choices=a2p_business_type_choices(),
+        job_position_choices=a2p_job_position_choices(),
         registration_path_choices=a2p_registration_path_choices(),
+        registration_identifier_choices=a2p_registration_identifier_choices(),
         number_strategy_choices=a2p_number_strategy_choices(),
         campaign_use_case_choices=a2p_campaign_use_case_choices(),
     )
@@ -3104,11 +3310,161 @@ def invitation_accept(token):
         session.clear()
         login_user(user)
         if invitation.role == 'owner':
-            return redirect(url_for('main.billing_overview'))
+            return redirect(url_for('main.setup'))
         flash('Invitation accepted.', 'success')
         return redirect(url_for('main.dashboard'))
 
     return render_template('auth/accept_invitation.html', invitation=invitation)
+
+
+@bp.route('/setup', methods=['GET', 'POST'])
+@login_required
+def setup():
+    if _can_manage_platform():
+        return redirect(url_for('main.platform_home'))
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    if getattr(current_user, 'organization_role', None) != 'owner':
+        return redirect(url_for('main.setup_pending'))
+
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    messaging_profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    if organization.a2p_onboarding is None or organization.messaging_profile is None:
+        db.session.commit()
+
+    session_id = request.args.get('session_id', '').strip()
+    try:
+        if session_id:
+            sync_checkout_session_by_id(session_id, organization)
+        elif not organization_can_send(organization) and _should_reconcile_subscription(organization, session_id):
+            refresh_subscription_from_stripe(organization, current_user.email or '')
+    except Exception:
+        current_app.logger.exception('Failed to reconcile setup billing state for organization %s.', organization.id)
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or '').strip().lower()
+        try:
+            if action == 'save_compliance':
+                payload = request.form.to_dict(flat=True)
+                payload['business_regions'] = request.form.getlist('business_regions')
+                save_a2p_onboarding_draft(
+                    organization.id,
+                    payload,
+                    actor_user_id=current_user.id,
+                )
+                flash('Business profile saved.', 'success')
+                return redirect(url_for('main.setup', step='review'))
+            if action == 'submit_onboarding':
+                if request.form.get("declaration_accepted") != "on":
+                    raise ProviderProvisioningError(
+                        "You must confirm the business declaration before submitting A2P onboarding."
+                    )
+                payload = _setup_submit_payload_from_onboarding(onboarding)
+                payload["declaration_accepted"] = request.form.get("declaration_accepted", "")
+                submit_a2p_onboarding(
+                    organization.id,
+                    payload,
+                    actor_user_id=current_user.id,
+                )
+                flash('Twilio A2P onboarding queued for review.', 'success')
+                return redirect(url_for('main.setup', step='launch'))
+            if action == 'refresh_onboarding':
+                refresh_a2p_onboarding(organization.id, actor_user_id=current_user.id)
+                flash('Twilio A2P onboarding refresh queued.', 'success')
+                return redirect(url_for('main.setup', step='launch'))
+            if action == 'cancel_onboarding':
+                cancel_a2p_onboarding(organization.id, actor_user_id=current_user.id)
+                flash('Twilio A2P onboarding canceled.', 'success')
+                return redirect(url_for('main.setup', step='review'))
+        except ProviderProvisioningError as exc:
+            flash(str(exc), 'error')
+
+    requested_step = (request.args.get('step') or '').strip().lower()
+    available_steps = {'account', 'billing', 'compliance', 'review', 'launch'}
+    current_step = requested_step if requested_step in available_steps else _setup_current_step(organization)
+
+    return render_template(
+        'setup/index.html',
+        organization=organization,
+        messaging_profile=messaging_profile,
+        onboarding=onboarding,
+        current_step=current_step,
+        setup_steps=_setup_steps_view(organization),
+        setup_status=_setup_status_payload(organization),
+        subscription=organization.subscription,
+        subscription_view=_subscription_view(organization.subscription),
+        a2p_form_defaults=_a2p_form_defaults(onboarding),
+        business_type_choices=a2p_business_type_choices(),
+        business_industry_choices=a2p_business_industry_choices(),
+        business_region_choices=a2p_business_region_choices(),
+        job_position_choices=a2p_job_position_choices(),
+        registration_identifier_choices=a2p_registration_identifier_choices(),
+        registration_path_choices=a2p_registration_path_choices(),
+        campaign_use_case_choices=a2p_campaign_use_case_choices(),
+    )
+
+
+@bp.route('/setup/pending')
+@login_required
+def setup_pending():
+    if _can_manage_platform():
+        return redirect(url_for('main.platform_home'))
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    if getattr(current_user, 'organization_role', None) == 'owner':
+        return redirect(url_for('main.setup'))
+
+    return render_template(
+        'setup/pending.html',
+        organization=organization,
+        setup_steps=_setup_steps_view(organization),
+        setup_status=_setup_status_payload(organization),
+    )
+
+
+@bp.route('/setup/status')
+@login_required
+def setup_status():
+    if _can_manage_platform():
+        abort(403)
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    return jsonify(_setup_status_payload(organization))
+
+
+@bp.route('/setup/billing/checkout', methods=['POST'])
+@login_required
+def setup_billing_checkout():
+    if _can_manage_platform():
+        abort(403)
+    if getattr(current_user, 'organization_role', None) != 'owner':
+        abort(403)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    if organization_can_send(organization):
+        return redirect(url_for('main.setup'))
+
+    success_url = f"{_absolute_url('main.setup')}?step=billing&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{_absolute_url('main.setup')}?step=billing"
+    try:
+        checkout_session = create_checkout_session(
+            organization,
+            current_user.email or '',
+            success_url,
+            cancel_url,
+        )
+    except Exception as exc:
+        current_app.logger.exception('Failed to create setup Stripe checkout session.')
+        flash(str(exc), 'error')
+        return redirect(url_for('main.setup', step='billing'))
+    return redirect(checkout_session.url, code=303)
 
 
 @bp.route('/billing')
@@ -3121,7 +3477,7 @@ def billing_overview():
         try:
             if session_id:
                 sync_checkout_session_by_id(session_id, organization)
-            elif not organization_can_send(organization):
+            elif not organization_can_send(organization) and _should_reconcile_subscription(organization, session_id):
                 refresh_subscription_from_stripe(organization, current_user.email or '')
         except Exception:
             current_app.logger.exception('Failed to reconcile Stripe subscription state for organization %s.', organization.id)
@@ -3149,8 +3505,8 @@ def billing_checkout():
     if request.method != 'POST':
         return redirect(url_for('main.billing_overview'))
 
-    success_url = f"{_absolute_url('main.billing_overview')}?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = _absolute_url('main.billing_overview')
+    success_url = f"{_absolute_url('main.setup')}?step=billing&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{_absolute_url('main.setup')}?step=billing"
     try:
         checkout_session = create_checkout_session(
             organization,
@@ -3216,6 +3572,51 @@ def stripe_webhook():
         return 'Webhook processing failed', 500
 
     return '', 200
+
+
+@bp.route('/webhooks/twilio/trusthub-status', methods=['POST'])
+@csrf.exempt
+def twilio_trusthub_status_webhook():
+    validation = validate_inbound_signature_detailed(
+        _absolute_url('main.twilio_trusthub_status_webhook'),
+        request.form.to_dict(flat=True),
+        request.headers.get('X-Twilio-Signature'),
+    )
+    if not validation.is_valid:
+        current_app.logger.warning(
+            'Rejected Trust Hub webhook due to Twilio signature validation failure. reason=%s',
+            validation.reason,
+        )
+        return '', 403
+
+    sid_candidates = {
+        value.strip()
+        for value in request.form.values()
+        if re.match(r'^(AC|BN|BU|EL|IT|MG|PN|RN)[A-Za-z0-9]+$', value.strip())
+    }
+    onboarding = None
+    if sid_candidates:
+        onboarding = (
+            OrganizationA2POnboarding.query.filter(
+                db.or_(
+                    OrganizationA2POnboarding.customer_profile_sid.in_(sid_candidates),
+                    OrganizationA2POnboarding.trust_product_sid.in_(sid_candidates),
+                    OrganizationA2POnboarding.brand_registration_sid.in_(sid_candidates),
+                    OrganizationA2POnboarding.vetting_sid.in_(sid_candidates),
+                    OrganizationA2POnboarding.campaign_sid.in_(sid_candidates),
+                )
+            ).first()
+        )
+    if onboarding is not None:
+        try:
+            refresh_a2p_onboarding(onboarding.organization_id)
+        except ProviderProvisioningError:
+            current_app.logger.info(
+                'Ignoring Trust Hub callback refresh for organization_id=%s in status=%s.',
+                onboarding.organization_id,
+                onboarding.onboarding_status,
+            )
+    return '', 204
 
 
 # Community Members Management

@@ -69,7 +69,7 @@ class TestLoginLockout(unittest.TestCase):
         for _ in range(3):
             failed = self._post_login("lockuser", "wrong-password", "10.1.1.1")
             self.assertEqual(failed.status_code, 200)
-            self.assertIn(b"Invalid username or password.", failed.data)
+            self.assertIn(b"Invalid email, username, or password.", failed.data)
 
         blocked = self._post_login("lockuser", "Lock-user1!", "10.1.1.2")
         self.assertEqual(blocked.status_code, 200)
@@ -113,7 +113,7 @@ class TestLoginLockout(unittest.TestCase):
 
         failed = self._post_login("caseuser", "wrong-password", "10.2.2.2")
         self.assertEqual(failed.status_code, 200)
-        self.assertIn(b"Invalid username or password.", failed.data)
+        self.assertIn(b"Invalid email, username, or password.", failed.data)
 
         account_scope_before_success = self.LoginAttempt.query.filter_by(
             client_ip="__account__",
@@ -124,7 +124,7 @@ class TestLoginLockout(unittest.TestCase):
 
         successful = self._post_login("caseuser", "Case-user1!", "10.2.2.2")
         self.assertEqual(successful.status_code, 200)
-        self.assertNotIn(b"Invalid username or password.", successful.data)
+        self.assertNotIn(b"Invalid email, username, or password.", successful.data)
 
         account_scope_after_success = self.LoginAttempt.query.filter_by(
             client_ip="__account__",

@@ -19,7 +19,7 @@
                 <p class="text-muted mb-4">
                     This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.
                     {% if invitation.role == 'owner' %}
-                    After you join, you will review billing before sending messages.
+                    After you join, you will go straight into workspace setup for billing and compliance.
                     {% else %}
                     After you join, you will go straight to the dashboard.
                     {% endif %}

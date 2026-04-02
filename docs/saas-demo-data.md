@@ -103,7 +103,7 @@ Notes:
    - `/inbox`, `/community`, `/events`, `/logs`, and `/scheduled` are populated
 3. Log in as `owner@northstar.demo.test` and confirm that org data is different from AOC SMS Internal.
 4. Log in as `staff@aocinternal.demo.test` and confirm `/billing` returns `403`.
-5. Open the Harbor owner invite URL from the seed output and test the onboarding flow.
+5. Open the Harbor owner invite URL from the seed output and confirm the owner lands on `/setup` for billing + compliance.
 6. Log in as `owner@sunset.demo.test` and confirm billing restrictions are visible for a `past_due` org.
 
 ## Recommended Fake Business Stories

@@ -1,0 +1,50 @@
+{% extends "auth/base.html" %}
+
+{% block title %}Workspace Setup Pending - SMS Admin{% endblock %}
+{% block page_title %}Workspace Setup Pending{% endblock %}
+{% block breadcrumbs %}<span>Setup</span>{% endblock %}
+{% block page_actions %}
+<form method="POST" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-outline-secondary btn-sm">Logout</button></form>
+{% endblock %}
+
+{% block content %}
+<section class="setup-shell">
+    <div class="setup-hero">
+        <div class="setup-hero__copy">
+            <div class="login-kicker">Workspace access</div>
+            <h1 class="setup-hero__title">{{ organization.name }}</h1>
+            <p class="setup-hero__text">The owner is still finishing billing or compliance. You will get the full workspace once setup is complete.</p>
+        </div>
+    </div>
+    <div class="setup-layout">
+        <aside class="setup-sidebar">
+            <ol class="setup-steps" aria-label="Workspace setup steps">
+                {% for step in setup_steps %}
+                <li class="setup-step {% if step.current %}is-current{% elif step.complete %}is-complete{% endif %}">
+                    <span class="setup-step__link">
+                        <span class="setup-step__dot">{{ loop.index }}</span>
+                        <span class="setup-step__body">
+                            <strong>{{ step.label }}</strong>
+                            <span>{{ step.detail }}</span>
+                        </span>
+                    </span>
+                </li>
+                {% endfor %}
+            </ol>
+        </aside>
+        <section class="app-card setup-panel">
+            <div class="setup-panel__header">
+                <div>
+                    <div class="setup-panel__kicker">Waiting on owner setup</div>
+                    <h2>We’ll unlock the workspace automatically.</h2>
+                </div>
+            </div>
+            <p class="setup-panel__copy">
+                Billing status: <strong>{{ setup_status.subscription.title }}</strong><br>
+                A2P status: <strong>{{ setup_status.onboarding.status }}</strong>
+            </p>
+            <p class="text-muted mb-0">Once the owner finishes setup, sign back in and you will land in the workspace automatically.</p>
+        </section>
+    </div>
+</section>
+{% endblock %}

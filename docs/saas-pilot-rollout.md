@@ -98,19 +98,20 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
    - `Open invite` to launch it
    - `Copy link` if you want to open it in a private window
 4. Accept the owner invite with a non-platform-admin email.
-5. Complete Stripe test checkout.
-6. Return to `/platform/organizations/<id>/messaging`.
-7. Click `Provision Provider` and confirm the org gets a Twilio subaccount plus Messaging Service.
-8. Enter:
+5. Confirm the owner lands on `/setup` instead of the legacy direct billing flow.
+6. Complete Stripe test checkout from `/setup`.
+7. Return to `/setup` and complete the business profile / A2P submission flow.
+8. From `/platform/organizations/<id>/messaging`, click `Provision Provider` and confirm the org gets a Twilio subaccount plus Messaging Service.
+9. Enter:
    - the approved Twilio sender number
    - the phone number SID for that number
    - `approved` sender review status
    - compliance acknowledgement
-9. Confirm the provider status becomes `active`.
-10. Open `/users` and create a staff invitation from the owner account.
-11. Use the visible staff invite link from the pending invitation table.
-12. Accept the staff invite in a separate browser session.
-13. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
+10. Confirm the provider status becomes `active`.
+11. Open `/users` and create a staff invitation from the owner account.
+12. Use the visible staff invite link from the pending invitation table.
+13. Accept the staff invite in a separate browser session.
+14. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
 
 ### Verify message behavior locally
 
@@ -126,6 +127,7 @@ This branch adds a separate SaaS pilot deployment line. Do not deploy it over th
 - No DB inspection or shell token lookup is needed for normal onboarding.
 - The Organizations page shows onboarding progress, billing state, messaging state, and owner invite access.
 - The Organizations page allows the platform admin to provision, suspend, resume, and review provider readiness per organization.
+- The owner setup runway lives at `/setup` and owns checkout return plus A2P submission.
 - The Users page shows pending invitation links for local owner/staff testing.
 - The Billing page explains the current state, the next step, and whether sending is enabled.
 - Staff users cannot access billing or platform admin surfaces.

@@ -5,13 +5,22 @@ from flask_login import LoginManager, current_user, login_required, login_user, 
 from sqlalchemy import func
 
 from app import db
-from app.models import AppUser
+from app.models import (
+    AppUser,
+    Organization,
+    OrganizationA2POnboarding,
+    OrganizationMembership,
+    OrganizationMessagingProfile,
+    OrganizationSubscription,
+    slugify_organization_name,
+)
 from app.tenant import clear_current_organization_id, set_current_organization_id
-from app.utils import is_safe_url
+from app.utils import is_safe_url, normalize_phone, validate_phone
 from app.services.auth_security_service import (
     check_login_limited,
     clear_failed_logins,
     normalize_login_username,
+    password_policy_errors,
     record_auth_event,
     record_failed_login,
 )
@@ -29,6 +38,7 @@ SUSPENDED_ORGANIZATION_MESSAGE = "Your organization is currently suspended. Cont
 
 TENANT_ENDPOINT_PREFIXES = (
     "main.dashboard",
+    "main.setup",
     "main.billing_",
     "main.community_",
     "main.events_",
@@ -43,15 +53,40 @@ TENANT_ENDPOINT_PREFIXES = (
     "main.team_",
 )
 
+OWNER_SETUP_ALLOWED_ENDPOINTS = {
+    "auth.login",
+    "auth.platform_login",
+    "auth.logout",
+    "main.change_password",
+    "main.security_contact",
+    "main.setup",
+    "main.setup_status",
+    "main.setup_billing_checkout",
+    "main.billing_overview",
+    "main.billing_checkout",
+    "main.billing_portal",
+}
+
+STAFF_SETUP_ALLOWED_ENDPOINTS = {
+    "auth.login",
+    "auth.platform_login",
+    "auth.logout",
+    "main.change_password",
+    "main.security_contact",
+    "main.setup_pending",
+    "main.setup_status",
+    "main.billing_overview",
+}
+
 
 def _get_client_ip() -> str:
     return request.remote_addr or "unknown"
 
 
 def home_endpoint_for_user(user) -> str:
-    if current_app.config.get("SAAS_MODE") and getattr(user, "is_platform_admin", False):
-        return "main.platform_home"
-    return "main.dashboard"
+    if not current_app.config.get("SAAS_MODE"):
+        return "main.dashboard"
+    return _setup_endpoint_for_user(user)
 
 
 def _is_platform_admin_tenant_endpoint(endpoint: str | None) -> bool:
@@ -68,12 +103,65 @@ def _organization_status_for_user(user) -> str | None:
     return normalized or None
 
 
+def _organization_setup_complete(user) -> bool:
+    organization = getattr(user, "organization", None)
+    if organization is None:
+        return False
+    subscription = getattr(organization, "subscription", None)
+    messaging_profile = getattr(organization, "messaging_profile", None)
+    subscription_status = (getattr(subscription, "status", None) or "").strip().lower()
+    return subscription_status in {"trialing", "active"} and bool(
+        messaging_profile is not None and messaging_profile.can_send
+    )
+
+
+def _setup_endpoint_for_user(user) -> str:
+    if not current_app.config.get("SAAS_MODE"):
+        return "main.dashboard"
+    if getattr(user, "is_platform_admin", False):
+        return "main.platform_home"
+    if getattr(user, "organization_id", None) is None:
+        return "main.dashboard"
+    if _organization_setup_complete(user):
+        return "main.dashboard"
+    if getattr(user, "organization_role", None) == "owner":
+        return "main.setup"
+    return "main.setup_pending"
+
+
+def _is_owner_setup_allowed_endpoint(endpoint: str | None) -> bool:
+    return bool(endpoint) and endpoint in OWNER_SETUP_ALLOWED_ENDPOINTS
+
+
+def _is_staff_setup_allowed_endpoint(endpoint: str | None) -> bool:
+    return bool(endpoint) and endpoint in STAFF_SETUP_ALLOWED_ENDPOINTS
+
+
+def _unique_org_slug(name: str) -> str:
+    base_slug = slugify_organization_name(name)
+    candidate = base_slug
+    counter = 2
+    while Organization.query.filter_by(slug=candidate).first() is not None:
+        suffix = f"-{counter}"
+        candidate = f"{base_slug[: max(1, 64 - len(suffix))]}{suffix}"
+        counter += 1
+    return candidate
+
+
 def _deny_suspended_organization_access():
     logout_user()
     session.clear()
     clear_current_organization_id()
     flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
     return redirect(url_for("auth.login"))
+
+
+@login_manager.unauthorized_handler
+def _handle_unauthorized():
+    next_url = request.full_path if request.query_string else request.path
+    if request.path.startswith("/platform"):
+        return redirect(url_for("auth.platform_login", next=next_url))
+    return redirect(url_for("auth.login", next=next_url))
 
 
 def require_roles(*roles):
@@ -181,8 +269,47 @@ def load_user(user_id):
     return user
 
 
-@bp.route("/login", methods=["GET", "POST"])
-def login():
+def _render_login(surface: str):
+    return render_template("auth/login.html", auth_surface=surface)
+
+
+def _lookup_login_user(username_input: str, normalized_username: str):
+    user = AppUser.query.filter(func.lower(AppUser.email) == normalized_username).first()
+    if not user:
+        user = AppUser.query.filter_by(username=username_input).first()
+    if not user and normalized_username:
+        user = (
+            AppUser.query
+            .filter(func.lower(AppUser.username) == normalized_username)
+            .order_by(AppUser.id.asc())
+            .first()
+        )
+    return user
+
+
+def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
+    session.clear()
+    login_user(user, remember=remember)
+    clear_failed_logins(client_ip, normalize_login_username(user.username))
+    record_auth_event(
+        "login_success",
+        outcome="success",
+        user=user,
+        username=user.username,
+        client_ip=client_ip,
+        metadata={"remember": remember},
+    )
+
+    if user.must_change_password:
+        return redirect(url_for("main.change_password"))
+
+    next_page = request.args.get("next")
+    if next_page and is_safe_url(next_page, request.host_url):
+        return redirect(next_page)
+    return redirect(url_for(home_endpoint_for_user(user)))
+
+
+def _handle_login(surface: str):
     if request.method == "POST":
         username_input = request.form.get("username", "").strip()
         normalized_username = normalize_login_username(username_input)
@@ -204,20 +331,14 @@ def login():
                 },
             )
             flash(f"Too many failed attempts. Try again in {minutes} minute(s).", "error")
-            return render_template("auth/login.html")
+            return _render_login(surface)
 
-        user = AppUser.query.filter(func.lower(AppUser.email) == normalized_username).first()
-        if not user:
-            user = AppUser.query.filter_by(username=username_input).first()
-        if not user and normalized_username:
-            user = (
-                AppUser.query
-                .filter(func.lower(AppUser.username) == normalized_username)
-                .order_by(AppUser.id.asc())
-                .first()
-            )
+        user = _lookup_login_user(username_input, normalized_username)
 
         if user and user.check_password(password):
+            if surface == "platform" and not getattr(user, "is_platform_admin", False):
+                flash("Use the workspace login to access your organization account.", "error")
+                return _render_login(surface)
             if current_app.config.get("SAAS_MODE") and not getattr(user, "is_platform_admin", False):
                 if _organization_status_for_user(user) == "suspended":
                     record_auth_event(
@@ -229,28 +350,8 @@ def login():
                         metadata={"reason": "organization_suspended"},
                     )
                     flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
-                    return render_template("auth/login.html")
-
-            # Clear existing client session before issuing a new authenticated session.
-            session.clear()
-            login_user(user, remember=remember)
-            clear_failed_logins(client_ip, normalize_login_username(user.username))
-            record_auth_event(
-                "login_success",
-                outcome="success",
-                user=user,
-                username=user.username,
-                client_ip=client_ip,
-                metadata={"remember": remember},
-            )
-
-            if user.must_change_password:
-                return redirect(url_for("main.change_password"))
-
-            next_page = request.args.get("next")
-            if next_page and is_safe_url(next_page, request.host_url):
-                return redirect(next_page)
-            return redirect(url_for(home_endpoint_for_user(user)))
+                    return _render_login(surface)
+            return _complete_login(user, remember=remember, client_ip=client_ip)
 
         lock_result = record_failed_login(client_ip, normalized_username)
         record_auth_event(
@@ -277,9 +378,106 @@ def login():
                     },
                 )
 
-        flash("Invalid username or password.", "error")
+        flash("Invalid email, username, or password.", "error")
 
-    return render_template("auth/login.html")
+    return _render_login(surface)
+
+
+@bp.route("/login", methods=["GET", "POST"])
+def login():
+    return _handle_login("tenant")
+
+
+@bp.route("/platform/login", methods=["GET", "POST"])
+def platform_login():
+    return _handle_login("platform")
+
+
+@bp.route("/signup", methods=["GET", "POST"])
+def signup():
+    if not current_app.config.get("SAAS_MODE"):
+        abort(404)
+    if request.method == "POST":
+        organization_name = request.form.get("organization_name", "").strip()
+        full_name = request.form.get("full_name", "").strip() or None
+        email = request.form.get("email", "").strip().lower()
+        username = request.form.get("username", "").strip()
+        phone_input = request.form.get("phone", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not organization_name:
+            flash("Business name is required.", "error")
+            return render_template("auth/signup.html")
+        if not email:
+            flash("Business email is required.", "error")
+            return render_template("auth/signup.html")
+        if not username:
+            flash("Username is required.", "error")
+            return render_template("auth/signup.html")
+        if not phone_input:
+            flash("Phone number is required.", "error")
+            return render_template("auth/signup.html")
+        if password != confirm_password:
+            flash("Password confirmation does not match.", "error")
+            return render_template("auth/signup.html")
+        policy_errors = password_policy_errors(password, username=username)
+        if policy_errors:
+            for error in policy_errors:
+                flash(error, "error")
+            return render_template("auth/signup.html")
+
+        normalized_phone = normalize_phone(phone_input)
+        if not validate_phone(normalized_phone):
+            flash("Phone number must be a valid E.164 number.", "error")
+            return render_template("auth/signup.html")
+        if AppUser.query.filter(func.lower(AppUser.email) == email).first():
+            flash("That email is already in use.", "error")
+            return render_template("auth/signup.html")
+        if (
+            AppUser.query.filter(func.lower(AppUser.username) == normalize_login_username(username)).first()
+            or AppUser.query.filter_by(username=username).first()
+        ):
+            flash("That username is already taken.", "error")
+            return render_template("auth/signup.html")
+
+        organization = Organization(name=organization_name, slug=_unique_org_slug(organization_name), status="active")
+        user = AppUser(
+            username=username,
+            email=email,
+            full_name=full_name,
+            phone=normalized_phone,
+            role="admin",
+            must_change_password=False,
+        )
+        user.set_password(password)
+        membership = OrganizationMembership(organization=organization, user=user, role="owner")
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id=current_app.config.get("STRIPE_PRICE_ID"),
+            status="incomplete",
+        )
+        messaging_profile = OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            status="pending",
+            provider_status="pending",
+            sender_review_status="pending",
+        )
+        onboarding = OrganizationA2POnboarding(
+            organization=organization,
+            business_name=organization_name,
+            email=email,
+            notification_email=email,
+            number_strategy="platform_assign",
+            onboarding_status="draft",
+            business_regions_json='["USA_AND_CANADA"]',
+        )
+        db.session.add_all([organization, user, membership, subscription, messaging_profile, onboarding])
+        db.session.commit()
+        return _complete_login(user, remember=True, client_ip=_get_client_ip())
+
+    return render_template("auth/signup.html")
 
 
 @bp.route("/logout", methods=["POST"])
