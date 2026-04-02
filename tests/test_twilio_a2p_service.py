@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 
 class TestTwilioA2PService(unittest.TestCase):
+    MIXED_MESSAGE_SAMPLES = "Sample message 1\nSample message 2"
+
     def setUp(self) -> None:
         self._original_env = os.environ.copy()
         self._temp_dir = tempfile.TemporaryDirectory()
@@ -129,7 +131,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -147,7 +149,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -165,7 +167,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -185,7 +187,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -205,7 +207,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -224,7 +226,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=7,
             )
@@ -247,7 +249,7 @@ class TestTwilioA2PService(unittest.TestCase):
                 "last_name": "Doe",
                 "campaign_description": "Community updates",
                 "message_flow": "Users opt in.",
-                "message_samples": "Sample message",
+                "message_samples": self.MIXED_MESSAGE_SAMPLES,
             },
             actor_user_id=11,
         )
@@ -274,7 +276,7 @@ class TestTwilioA2PService(unittest.TestCase):
                 "last_name": "Doe",
                 "campaign_description": "Community updates",
                 "message_flow": "Users opt in.",
-                "message_samples": "Sample message",
+                "message_samples": self.MIXED_MESSAGE_SAMPLES,
             },
             actor_user_id=12,
         )
@@ -309,6 +311,28 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertIsNone(onboarding.business_registration_number_encrypted)
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 13)
 
+    def test_submit_a2p_onboarding_requires_two_message_samples_for_mixed_use_case(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                {
+                    "registration_path": "standard",
+                    "number_strategy": "auto_buy",
+                    "business_name": "Acme",
+                    "business_type": "LLC",
+                    "business_registration_identifier": "EIN",
+                    "business_registration_number": "12-3456789",
+                    "email": "ops@acme.test",
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "campaign_description": "Community updates",
+                    "message_flow": "Users opt in.",
+                    "message_samples": "Only one sample",
+                    "campaign_use_case": "MIXED",
+                },
+                actor_user_id=14,
+            )
+
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_marks_record_error_when_queueing_fails(self, mock_get_queue) -> None:
         queue = MagicMock()
@@ -330,7 +354,7 @@ class TestTwilioA2PService(unittest.TestCase):
                     "last_name": "Doe",
                     "campaign_description": "Community updates",
                     "message_flow": "Users opt in.",
-                    "message_samples": "Sample message",
+                    "message_samples": self.MIXED_MESSAGE_SAMPLES,
                 },
                 actor_user_id=21,
             )
@@ -373,7 +397,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.last_name = "Doe"
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
-        onboarding.message_samples_json = '["Sample"]'
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.raw_submission_json = "{}"
 
         self._upsert_a2p_resources(onboarding, self.messaging_profile)
@@ -418,13 +442,39 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.last_name = "Doe"
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
-        onboarding.message_samples_json = '["Sample"]'
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.raw_submission_json = "{}"
 
         with self.assertRaisesRegex(self.ProviderProvisioningError, "registration number is required"):
             self._upsert_a2p_resources(onboarding, self.messaging_profile)
 
         mock_client.trusthub.v1.end_users.create.assert_not_called()
+
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_upsert_a2p_resources_rejects_single_message_sample_for_mixed_campaign(self, mock_build_subaccount_client) -> None:
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.number_strategy = "auto_buy"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "LLC"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.business_registration_number_encrypted = self.encrypt_provider_secret("12-3456789")
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.campaign_use_case = "MIXED"
+        onboarding.message_samples_json = '["Sample"]'
+        onboarding.raw_submission_json = "{}"
+
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
+            self._upsert_a2p_resources(onboarding, self.messaging_profile)
+
+        mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_not_called()
 
     @patch("app.services.twilio_a2p_service._complete_number_setup")
     @patch("app.services.twilio_a2p_service._sync_remote_status", return_value=("approved", "approved"))
@@ -444,7 +494,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.last_name = "Doe"
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
-        onboarding.message_samples_json = '["Sample"]'
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.onboarding_status = "queued"
         self.db.session.commit()
 
@@ -475,7 +525,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.last_name = "Doe"
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
-        onboarding.message_samples_json = '["Sample"]'
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
         onboarding.onboarding_status = "queued"
         self.db.session.commit()
 

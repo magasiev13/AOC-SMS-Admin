@@ -173,7 +173,7 @@
                         <div class="col-12">
                             <label class="form-label" for="message_samples">Message Samples</label>
                             <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
-                            <div class="form-text">One message sample per line.</div>
+                            <div class="form-text">One message sample per line. Mixed campaigns require at least two samples.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_in_message">Opt-in Message</label>
@@ -278,9 +278,11 @@
     (() => {
         const registrationPathInput = document.getElementById('registration_path');
         const businessTypeInput = document.getElementById('business_type');
+        const campaignUseCaseInput = document.getElementById('campaign_use_case');
         const registrationIdentifierInput = document.getElementById('business_registration_identifier');
         const registrationNumberInput = document.getElementById('business_registration_number');
-        if (!registrationPathInput || !businessTypeInput || !registrationIdentifierInput || !registrationNumberInput) {
+        const messageSamplesInput = document.getElementById('message_samples');
+        if (!registrationPathInput || !businessTypeInput || !campaignUseCaseInput || !registrationIdentifierInput || !registrationNumberInput || !messageSamplesInput) {
             return;
         }
 
@@ -312,8 +314,27 @@
             }
         };
 
+        const syncMessageSampleValidation = () => {
+            const useCase = campaignUseCaseInput.value;
+            const count = messageSamplesInput.value
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .length;
+            const needsTwoSamples = useCase === 'MIXED';
+
+            messageSamplesInput.setCustomValidity(
+                needsTwoSamples && count < 2
+                    ? 'Mixed campaigns require at least two message samples.'
+                    : ''
+            );
+        };
+
         registrationPathInput.addEventListener('change', syncRegistrationRequirements);
+        campaignUseCaseInput.addEventListener('change', syncMessageSampleValidation);
+        messageSamplesInput.addEventListener('input', syncMessageSampleValidation);
         syncRegistrationRequirements();
+        syncMessageSampleValidation();
     })();
 </script>
 {% endblock %}

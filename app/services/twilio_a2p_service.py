@@ -222,6 +222,14 @@ def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
     return candidate
 
 
+def _validate_message_samples(campaign_use_case: str, message_samples: list[str]) -> list[str]:
+    if not message_samples:
+        raise ProviderProvisioningError("At least one message sample is required.")
+    if campaign_use_case == "MIXED" and len(message_samples) < 2:
+        raise ProviderProvisioningError("Mixed-use campaigns require at least two message samples.")
+    return message_samples
+
+
 def _normalize_business_type(registration_path: str, raw_value: str | None) -> str | None:
     if registration_path == "sole_proprietor":
         return "Sole Proprietor"
@@ -346,16 +354,17 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
     if not message_flow:
         raise ProviderProvisioningError("Message flow is required.")
 
-    message_samples = _normalized_multiline_list(payload.get("message_samples"))
-    if not message_samples:
-        raise ProviderProvisioningError("At least one message sample is required.")
-
     mobile_number = _clean_text(payload.get("mobile_number"))
     desired_phone_number_sid = _clean_text(payload.get("desired_phone_number_sid"))
     if registration_path == "sole_proprietor" and not mobile_number:
         raise ProviderProvisioningError("A mobile number is required for sole proprietor onboarding.")
     if number_strategy in {"existing_subaccount_number", "transfer_parent_number"} and not desired_phone_number_sid:
         raise ProviderProvisioningError("A Twilio phone number SID is required for the selected number strategy.")
+    campaign_use_case = _normalize_use_case(registration_path, payload.get("campaign_use_case"))
+    message_samples = _validate_message_samples(
+        campaign_use_case,
+        _normalized_multiline_list(payload.get("message_samples")),
+    )
     business_type = _normalize_business_type(registration_path, payload.get("business_type"))
     business_registration_identifier, business_registration_number = _validate_business_registration_details(
         registration_path,
@@ -380,7 +389,7 @@ def _build_form_data(payload: dict[str, Any], organization: Organization) -> A2P
         business_registration_number=business_registration_number,
         address_sid=_clean_text(payload.get("address_sid")),
         supporting_document_sid=_clean_text(payload.get("supporting_document_sid")),
-        campaign_use_case=_normalize_use_case(registration_path, payload.get("campaign_use_case")),
+        campaign_use_case=campaign_use_case,
         campaign_description=campaign_description,
         message_flow=message_flow,
         message_samples=message_samples,
@@ -818,12 +827,17 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
 
     if not onboarding.campaign_sid:
         submission_payload = json.loads(onboarding.raw_submission_json or "{}")
+        campaign_use_case = _normalize_use_case(onboarding.registration_path, onboarding.campaign_use_case)
+        message_samples = _validate_message_samples(
+            campaign_use_case,
+            _json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
+        )
         campaign = _build_subaccount_client(profile).messaging.v1.services(profile.messaging_service_sid).us_app_to_person.create(
             brand_registration_sid=onboarding.brand_registration_sid,
             description=onboarding.campaign_description or onboarding.business_name,
             message_flow=onboarding.message_flow or onboarding.campaign_description or onboarding.business_name,
-            message_samples=_json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
-            us_app_to_person_usecase=onboarding.campaign_use_case,
+            message_samples=message_samples,
+            us_app_to_person_usecase=campaign_use_case,
             has_embedded_links=bool(submission_payload.get("has_embedded_links")),
             has_embedded_phone=bool(submission_payload.get("has_embedded_phone")),
             opt_in_message=onboarding.opt_in_message or None,

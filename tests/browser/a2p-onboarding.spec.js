@@ -81,6 +81,13 @@ test('platform admin can navigate onboarding from messaging and submit determini
 
   await page.getByLabel('Registration Number').fill('12-3456789');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
+  expect(await page.getByLabel('Message Samples').evaluate((el) => el.validationMessage)).toBe(
+    'Mixed campaigns require at least two message samples.'
+  );
+  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('draft');
+
+  await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder 1\nOnboarding Bakery reminder 2');
+  await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
