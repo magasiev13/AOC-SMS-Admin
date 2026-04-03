@@ -962,7 +962,7 @@ def _ensure_trusthub_address(onboarding: OrganizationA2POnboarding, client) -> s
         region=onboarding.address_region,
         postal_code=onboarding.address_postal_code,
     )
-    address = client.addresses.v1.create(
+    address = client.addresses.create(
         customer_name=onboarding.business_name,
         friendly_name=f"{onboarding.business_name[:48]} business address",
         street=line1,
