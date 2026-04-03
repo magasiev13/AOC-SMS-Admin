@@ -319,7 +319,7 @@ class TestTwilioA2PService(unittest.TestCase):
         mock_build_subaccount_client.return_value = mock_client
         mock_client.trusthub.v1.customer_profiles.create.return_value.sid = "BUcustomer123"
         mock_client.trusthub.v1.trust_products.create.return_value.sid = "BUtrust123"
-        mock_client.trusthub.v1.addresses.create.return_value.sid = "ADaddress123"
+        mock_client.addresses.create.return_value.sid = "ADaddress123"
         mock_client.trusthub.v1.supporting_documents.create.return_value.sid = "RDsupport123"
         mock_client.trusthub.v1.end_users.create.side_effect = [
             MagicMock(sid="ITbusiness123"),
@@ -376,6 +376,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.trust_product_sid, "BUtrust123")
         self.assertEqual(onboarding.brand_registration_sid, "BNbrand123")
         self.assertIsNone(onboarding.campaign_sid)
+        mock_client.addresses.create.assert_called_once()
         mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_not_called()
 
     @patch("app.services.twilio_a2p_service._build_subaccount_client")
