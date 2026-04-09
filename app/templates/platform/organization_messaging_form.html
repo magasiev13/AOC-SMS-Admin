@@ -53,12 +53,21 @@
                         <div>
                             <div class="platform-note__title">A2P onboarding</div>
                             <div class="platform-note__copy">
-                                Status: <strong>{{ onboarding.onboarding_status if onboarding else 'draft' }}</strong>
-                                {% if onboarding and (onboarding.brand_status or onboarding.campaign_status) %}
-                                · Brand: {{ onboarding.brand_status or 'pending' }}
-                                · Campaign: {{ onboarding.campaign_status or 'pending' }}
+                                Status: <strong>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</strong>
+                                {% if a2p_status %}
+                                · Brand: {{ a2p_status.brand_status }}
+                                · Campaign: {{ a2p_status.campaign_status }}
                                 {% endif %}
                             </div>
+                            {% if a2p_status %}
+                            <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
+                            <div class="small text-muted mt-1">
+                                {{ a2p_status.eta }}
+                                {% if a2p_status.last_checked_display %}
+                                · Last checked {{ a2p_status.last_checked_display }}
+                                {% endif %}
+                            </div>
+                            {% endif %}
                         </div>
                         <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
                             Manage A2P Onboarding
@@ -74,6 +83,12 @@
                     </div>
                 </div>
                 {% endif %}
+                <div class="platform-note mb-4" role="note">
+                    <div class="platform-note__title">Need to send before approval?</div>
+                    <div class="platform-note__copy">
+                        Keep the default path on U.S. 10DLC. If a customer truly needs faster pre-approval sending, escalate for toll-free or short code suitability instead of widening the 10DLC use case.
+                    </div>
+                </div>
 
                 {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
                 <div class="platform-note platform-note--danger mb-4" role="alert">

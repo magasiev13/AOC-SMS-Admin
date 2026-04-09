@@ -40,7 +40,9 @@ class TestTwilioA2PService(unittest.TestCase):
         from app.services.twilio_a2p_service import (
             _create_a2p_campaign,
             _upsert_a2p_resources,
+            describe_a2p_onboarding,
             ensure_a2p_onboarding,
+            ingest_a2p_event_stream_payload,
             process_a2p_onboarding,
             ProviderProvisioningError,
             submit_a2p_onboarding,
@@ -54,15 +56,19 @@ class TestTwilioA2PService(unittest.TestCase):
         self.encrypt_provider_secret = encrypt_provider_secret
         self._create_a2p_campaign = _create_a2p_campaign
         self._upsert_a2p_resources = _upsert_a2p_resources
+        self.describe_a2p_onboarding = describe_a2p_onboarding
         self.ensure_a2p_onboarding = ensure_a2p_onboarding
+        self.ingest_a2p_event_stream_payload = ingest_a2p_event_stream_payload
         self.process_a2p_onboarding = process_a2p_onboarding
         self.submit_a2p_onboarding = submit_a2p_onboarding
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config["TESTING"] = True
+        self.app.config["WTF_CSRF_ENABLED"] = False
         self._ctx = self.app.app_context()
         self._ctx.push()
         self.db.create_all()
+        self.client = self.app.test_client()
 
         self.organization = self.Organization(name="Acme", slug="acme", status="active")
         self.messaging_profile = self.OrganizationMessagingProfile(
@@ -143,6 +149,8 @@ class TestTwilioA2PService(unittest.TestCase):
                 registration_path="nonprofit",
                 business_name="Acme Nonprofit",
                 business_type="Nonprofit",
+                business_registration_identifier="EIN",
+                business_registration_number="12-3456789",
                 message_samples="Acme reminder 1\nAcme reminder 2",
                 has_embedded_links="on",
                 has_embedded_phone="on",
@@ -236,6 +244,8 @@ class TestTwilioA2PService(unittest.TestCase):
                 registration_path="nonprofit",
                 business_name="Acme Nonprofit",
                 business_type=None,
+                business_registration_identifier="EIN",
+                business_registration_number="12-3456789",
             ),
             actor_user_id=11,
         )
@@ -283,15 +293,48 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertIsNone(onboarding.business_registration_number_encrypted)
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 13)
 
-    def test_submit_a2p_onboarding_requires_two_message_samples_for_mixed_use_case(self) -> None:
-        with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_defaults_account_notification_use_case(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            self._valid_submission_payload(
+                registration_path="standard",
+                business_type="LLC",
+                campaign_use_case="",
+                campaign_description="Account reminders",
+                message_samples="Sample message one\nSample message two",
+            ),
+            actor_user_id=18,
+        )
+
+        self.assertEqual(onboarding.campaign_use_case, "ACCOUNT_NOTIFICATION")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 18)
+
+    def test_submit_a2p_onboarding_requires_two_message_samples(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "at least two real message samples"):
             self.submit_a2p_onboarding(
                 self.organization.id,
                 self._valid_submission_payload(
                     message_samples="Only one sample",
-                    campaign_use_case="MIXED",
                 ),
-                actor_user_id=14,
+                actor_user_id=19,
+            )
+
+    def test_submit_a2p_onboarding_requires_nonprofit_online_presence(self) -> None:
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "website URL or social profile URL"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                self._valid_submission_payload(
+                    registration_path="nonprofit",
+                    business_name="Acme Nonprofit",
+                    business_type=None,
+                    website_url=None,
+                    social_profile_url=None,
+                ),
+                actor_user_id=22,
             )
 
     @patch("app.services.twilio_a2p_service.get_queue")
@@ -427,7 +470,7 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.raw_submission_json = "{}"
         self._populate_onboarding_profile(onboarding)
 
-        with self.assertRaisesRegex(self.ProviderProvisioningError, "Mixed-use campaigns require at least two message samples."):
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "at least two real message samples"):
             self._create_a2p_campaign(onboarding, self.messaging_profile)
 
         mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_not_called()
@@ -498,7 +541,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.db.session.refresh(self.messaging_profile)
         self.assertEqual(result.onboarding_status, "pending")
         self.assertEqual(result.brand_status, "pending-review")
-        self.assertIsNone(result.campaign_status)
+        self.assertEqual(result.campaign_status, "pending")
         self.assertEqual(result.brand_registration_sid, "BNbrand123")
         self.assertEqual(self.messaging_profile.provider_status, "pending")
         self.assertIsNone(self.messaging_profile.last_provision_error)
@@ -580,6 +623,112 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.onboarding_status, "error")
         self.assertIn("ISV Reseller or Partner", onboarding.last_error or "")
         self.assertEqual(self.messaging_profile.provider_status, "error")
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_ingest_a2p_event_stream_payload_updates_status_and_dedupes(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = "QEcampaign123"
+        self.db.session.commit()
+
+        event = {
+            "id": "evt-brand-1",
+            "type": "com.twilio.messaging.a2p.brand-registration.brand-verified",
+            "data": {
+                "brandsid": "BNbrand123",
+                "brandstatus": "VERIFIED",
+                "updateddate": 200,
+            },
+        }
+
+        summary = self.ingest_a2p_event_stream_payload(event)
+        duplicate_summary = self.ingest_a2p_event_stream_payload(event)
+        stale_summary = self.ingest_a2p_event_stream_payload(
+            {
+                "id": "evt-brand-2",
+                "type": "com.twilio.messaging.a2p.brand-registration.brand-unverified",
+                "data": {
+                    "brandsid": "BNbrand123",
+                    "brandstatus": "UNVERIFIED",
+                    "updateddate": 100,
+                },
+            }
+        )
+
+        self.db.session.commit()
+        self.db.session.refresh(onboarding)
+        self.assertEqual(summary["events_applied"], 1)
+        self.assertEqual(duplicate_summary["events_duplicate"], 1)
+        self.assertEqual(stale_summary["events_out_of_order"], 1)
+        self.assertEqual(onboarding.brand_status, "verified")
+        queue.enqueue.assert_not_called()
+
+    def test_ingest_a2p_event_stream_payload_marks_rejected_on_campaign_failure(self) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = "QEcampaign123"
+        self.db.session.commit()
+
+        summary = self.ingest_a2p_event_stream_payload(
+            {
+                "id": "evt-campaign-1",
+                "type": "com.twilio.messaging.a2p.campaign-registration.campaign-failure",
+                "data": {
+                    "campaignsid": "QEcampaign123",
+                    "campaignregistrationstatus": "FAILED",
+                    "campaignregistrationerrors": [
+                        {
+                            "registrationerrorcode": "3001",
+                            "registrationerrordescription": "Campaign description is too vague.",
+                        }
+                    ],
+                    "updateddate": 300,
+                },
+            }
+        )
+
+        self.db.session.commit()
+        self.db.session.refresh(onboarding)
+        self.assertEqual(summary["events_applied"], 1)
+        self.assertEqual(onboarding.onboarding_status, "rejected")
+        self.assertIn("Campaign description is too vague.", onboarding.last_error or "")
+        self.assertEqual(self.messaging_profile.provider_status, "error")
+
+    @patch("app.routes.ingest_a2p_event_stream_payload", return_value={"events_seen": 1, "events_applied": 1, "events_ignored": 0, "events_duplicate": 0, "events_out_of_order": 0})
+    def test_a2p_event_stream_webhook_requires_bearer_token(self, mock_ingest) -> None:
+        self.app.config["TWILIO_A2P_EVENT_STREAMS_ENABLED"] = True
+        self.app.config["TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN"] = "secret-token"
+
+        forbidden = self.client.post(
+            "/webhooks/twilio/a2p-events",
+            json={"id": "evt-1", "type": "com.twilio.messaging.a2p.brand-registration.brand-verified", "data": {}},
+        )
+        allowed = self.client.post(
+            "/webhooks/twilio/a2p-events",
+            json={"id": "evt-2", "type": "com.twilio.messaging.a2p.brand-registration.brand-verified", "data": {}},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        mock_ingest.assert_called_once()
+
+    def test_describe_a2p_onboarding_surfaces_reviewing_wait_state(self) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.brand_status = "pending-review"
+        onboarding.campaign_status = "submitted"
+
+        view = self.describe_a2p_onboarding(onboarding, self.messaging_profile)
+
+        self.assertEqual(view["stage"], "reviewing")
+        self.assertTrue(view["show_wait_state"])
+        self.assertIn("carrier", view["summary"].lower())
 
 
 if __name__ == "__main__":

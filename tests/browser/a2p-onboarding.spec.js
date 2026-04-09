@@ -31,7 +31,7 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
   await expect(page.getByText('A2P onboarding', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Manage A2P Onboarding' })).toBeVisible();
-  await expect(page.getByText('Status:')).toContainText('draft');
+  await expect(page.getByText('Status:')).toContainText('Not submitted yet');
   await expect(page.getByText('Twilio subaccount not provisioned yet')).toBeVisible();
 
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
@@ -87,34 +87,32 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await page.getByLabel('Postal Code').fill('80202');
   await page.getByLabel('USA and Canada').check();
   await page.getByLabel('Campaign Description').fill('Community updates');
-  await page.getByLabel('Opt-in / Message Flow').fill('Users opt in from the website.');
+  await page.getByLabel('Opt-in / Message Flow').fill('Users opt in from the website and reply STOP to unsubscribe.');
   await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page).toHaveURL(/\/platform\/organizations\/1\/messaging\/onboarding$/);
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.validationMessage)).not.toBe('');
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('draft');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Not submitted yet');
 
   await page.getByLabel('Registration Number').fill('12-3456789');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
   expect(await page.getByLabel('Message Samples').evaluate((el) => el.validationMessage)).toBe(
-    'Mixed campaigns require at least two message samples.'
+    'Provide at least two real message samples.'
   );
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('draft');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Not submitted yet');
 
   await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder 1\nOnboarding Bakery reminder 2');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();
-  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Submitted to Twilio');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 
   await page.getByRole('link', { name: 'Back to Messaging' }).click();
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
-  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
-  await expect(page.getByText('Status:')).toContainText('queued');
+  await expect(page.getByText('Status:')).toContainText('Submitted to Twilio');
 });
 
 test('platform admin sees each seeded onboarding state and action availability', async ({ page }) => {
@@ -122,10 +120,9 @@ test('platform admin sees each seeded onboarding state and action availability',
 
   await openMessagingForOrg(page, 'Pending Review Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('pending');
-  await expect(page.locator('li').filter({ hasText: 'Brand' })).toContainText('pending-review');
-  await expect(page.locator('li').filter({ hasText: 'Campaign' })).toContainText('pending');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Carrier review in progress');
+  await expect(page.getByText('Brand: pending review')).toBeVisible();
+  await expect(page.getByText('Campaign: pending')).toBeVisible();
   await expect(page.getByLabel('Messages include links')).toBeChecked();
   await expect(page.getByLabel('Messages include phone numbers')).toBeChecked();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
@@ -134,39 +131,38 @@ test('platform admin sees each seeded onboarding state and action availability',
   await openMessagingForOrg(page, 'Approved Bakery');
   await expect(page.locator('li').filter({ hasText: 'Live sending' })).toContainText('enabled');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('approved');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Live SMS approved');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 
   await openMessagingForOrg(page, 'Rejected Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('rejected');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Needs action');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
   await expect(page.getByText('Twilio rejected the registration because the campaign description was too vague.')).toBeVisible();
 
   await openMessagingForOrg(page, 'Error Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('error');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Needs action');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
   await expect(page.getByText('Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.')).toBeVisible();
 
   await openMessagingForOrg(page, 'Queued Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.getByText('Automatic refresh is on')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('queued');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Submitted to Twilio');
   await page.getByRole('button', { name: 'Refresh Status' }).click();
   await expect(page.getByText('Twilio A2P onboarding refresh queued.')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByText('Twilio A2P onboarding canceled.')).toBeVisible();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('canceled');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Canceled');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 
   await openMessagingForOrg(page, 'Canceled Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Onboarding' })).toContainText('canceled');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Canceled');
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
 });

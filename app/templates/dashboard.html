@@ -37,6 +37,76 @@
         </section>
         {% endif %}
 
+        {% if config.SAAS_MODE and current_organization and a2p_status_view and a2p_status_view.show_wait_state %}
+        <section class="mb-4">
+            <div class="card app-card">
+                <div class="card-body">
+                    <div class="d-flex flex-column flex-xl-row justify-content-between gap-3">
+                        <div>
+                            <div class="text-muted small text-uppercase mb-1">SMS approval</div>
+                            <h5 class="mb-1">{{ a2p_status_view.title }}</h5>
+                            <p class="mb-2">{{ a2p_status_view.summary }}</p>
+                            <div class="small text-muted">{{ a2p_status_view.next_step }}</div>
+                            <div class="small text-muted mt-1">
+                                ETA: {{ a2p_status_view.eta }}
+                                {% if a2p_status_view.last_checked_display %}
+                                · Last checked {{ a2p_status_view.last_checked_display }}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-start">
+                            <span class="badge bg-{{ a2p_status_view.badge }}">{{ a2p_status_view.stage.replace('_', ' ') }}</span>
+                            <span class="badge bg-light text-dark">Brand {{ a2p_status_view.brand_status }}</span>
+                            <span class="badge bg-light text-dark">Campaign {{ a2p_status_view.campaign_status }}</span>
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mt-1">
+                        <div class="col-lg-7">
+                            <div class="list-group list-group-flush">
+                                {% for task in workspace_activation_tasks %}
+                                <div class="list-group-item px-0">
+                                    <div class="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                            <div class="fw-semibold">
+                                                {% if task.complete %}
+                                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                                {% else %}
+                                                <i class="bi bi-circle text-muted me-2"></i>
+                                                {% endif %}
+                                                {{ task.label }}
+                                            </div>
+                                            <div class="small text-muted mt-1">{{ task.detail }}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div class="border rounded-3 p-3 h-100">
+                                <div class="fw-semibold mb-2">While approval is pending</div>
+                                <p class="small text-muted mb-3">
+                                    Keep moving on billing, team setup, recipients, and inbound automation. Live SMS stays paused until the sender is fully approved.
+                                </p>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-sm btn-outline-secondary">Billing</a>
+                                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary">Community</a>
+                                    <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-sm btn-outline-secondary">Keywords</a>
+                                    <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-sm btn-outline-secondary">Surveys</a>
+                                    <a href="{{ url_for('main.events_list') }}" class="btn btn-sm btn-outline-secondary">Events</a>
+                                    {% if current_user.is_admin and not current_user.is_platform_admin %}
+                                    <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-secondary">Invite Team</a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        {% endif %}
+
         <!-- Send SMS Section -->
         <section class="mb-4 dashboard-section dashboard-section-send">
             <div class="send-card">
@@ -44,6 +114,11 @@
                     <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
                 </div>
                 <div class="send-card__body">
+                    {% if config.SAAS_MODE and current_organization and not can_send_messages %}
+                    <div class="alert alert-warning" role="alert">
+                        <strong>Live SMS is paused.</strong> {{ send_disabled_reason }}
+                    </div>
+                    {% endif %}
                     <form method="POST" id="sendForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
@@ -156,9 +231,12 @@
                         </details>
 
                         <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg" id="sendBtn">
-                                <i class="bi bi-send-fill me-2"></i>Send Now
+                            <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
+                                <i class="bi bi-send-fill me-2"></i>{{ 'SMS Pending Approval' if config.SAAS_MODE and current_organization and not can_send_messages else 'Send Now' }}
                             </button>
+                            {% if config.SAAS_MODE and current_organization and not can_send_messages %}
+                            <div class="form-text text-center">The compose form stays available so you can prepare the first blast, but sending unlocks only after billing and A2P approval are complete.</div>
+                            {% endif %}
                         </div>
                     </form>
                 </div>

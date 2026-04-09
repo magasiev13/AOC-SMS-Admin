@@ -401,7 +401,42 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Trial active", response.data)
         self.assertIn(b"Sending enabled", response.data)
         self.assertIn(b"Ready for owner testing", response.data)
-        self.assertIn(b"Messaging configured", response.data)
+        self.assertIn(b"Live SMS approved", response.data)
+
+    def test_owner_dashboard_shows_pending_a2p_launchpad_when_messaging_is_not_live(self) -> None:
+        self.subscription.status = "trialing"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            registration_path="standard",
+            number_strategy="auto_buy",
+            onboarding_status="pending",
+            business_name="Acme",
+            business_type="LLC",
+            email="ops@acme.test",
+            first_name="Jamie",
+            last_name="Owner",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+            campaign_description="Account reminders",
+            message_flow="Users opt in on the website and reply STOP to unsubscribe.",
+            message_samples_json='["Reminder one", "Reminder two"]',
+            brand_status="pending-review",
+            campaign_status="submitted",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Carrier review in progress", response.data)
+        self.assertIn(b"Live SMS is paused.", response.data)
+        self.assertIn(b"Configure keyword automation", response.data)
+        self.assertIn(b"SMS Pending Approval", response.data)
 
     def test_staff_cannot_access_billing_routes(self) -> None:
         staff_user = self.AppUser(
@@ -1214,6 +1249,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"A2P Onboarding", response.data)
         self.assertIn(b"Legal Business Name", response.data)
+        self.assertRegex(response.data, rb'<option value="ACCOUNT_NOTIFICATION" selected>')
         self.assertNotIn(b'value="None"', response.data)
 
     def test_platform_admin_sees_manage_a2p_onboarding_link_on_messaging_page_before_onboarding_exists(self) -> None:
@@ -1223,7 +1259,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Manage A2P Onboarding", response.data)
-        self.assertIn(b"Status: <strong>draft</strong>", response.data)
+        self.assertIn(b"Status: <strong>Not submitted yet</strong>", response.data)
 
     def test_platform_admin_messaging_page_does_not_render_none_field_values(self) -> None:
         self.messaging_profile.from_number = None

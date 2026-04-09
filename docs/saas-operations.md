@@ -40,6 +40,8 @@ TWILIO_API_KEY_SID=...
 TWILIO_API_KEY_SECRET=...
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=...
 TWILIO_A2P_ONBOARDING_ENABLED=0
+TWILIO_A2P_EVENT_STREAMS_ENABLED=0
+TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN=
 TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=
 SECRET_KEY=...
 PLATFORM_SERVICE_RESTART_ENABLED=0
@@ -60,6 +62,8 @@ Additional platform admins can be created from `/users` while signed into the pl
 Platform-admin accounts are control-plane only. Use a separate email for each organization owner or staff user.
 
 If you change Twilio or other runtime values in `/opt/sms-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
+
+If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, point the Twilio Event Streams webhook sink at `/webhooks/twilio/a2p-events` and set `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` so the webhook can be authenticated with a bearer token.
 
 ## SaaS DB Commands
 

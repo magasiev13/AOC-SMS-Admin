@@ -100,7 +100,9 @@ from app.services.twilio_a2p_service import (
     a2p_registration_path_choices,
     a2p_registration_identifier_choices,
     cancel_a2p_onboarding,
+    describe_a2p_onboarding,
     ensure_a2p_onboarding,
+    ingest_a2p_event_stream_payload,
     refresh_a2p_onboarding,
     save_a2p_onboarding_draft,
     submit_a2p_onboarding,
@@ -363,6 +365,67 @@ def _format_datetime_display(value):
     if normalized is None:
         return None
     return normalized.strftime('%b %d, %Y %I:%M %p UTC')
+
+
+def _a2p_status_view(
+    onboarding,
+    messaging_profile: OrganizationMessagingProfile | None,
+) -> dict:
+    view = describe_a2p_onboarding(onboarding, messaging_profile)
+    view['last_checked_display'] = _format_datetime_display(view.get('last_checked_at'))
+    return view
+
+
+def _workspace_activation_tasks(
+    *,
+    subscription_view: dict,
+    team_ready: bool,
+    total_recipients: int,
+    keyword_rule_count: int,
+    survey_flow_count: int,
+    event_count: int,
+) -> list[dict]:
+    intake_ready = survey_flow_count > 0 or event_count > 0
+    intake_detail = (
+        f'{survey_flow_count} survey flow(s) and {event_count} event(s) ready.'
+        if intake_ready
+        else 'Create a survey flow or event intake before live SMS approval lands.'
+    )
+    return [
+        {
+            'label': 'Billing active',
+            'detail': subscription_view['title'],
+            'complete': subscription_view['can_send'],
+        },
+        {
+            'label': 'Invite the first staff member',
+            'detail': 'Optional for owner-only testing. Add staff before team launch.' if not team_ready else 'Team access is already in place.',
+            'complete': team_ready,
+        },
+        {
+            'label': 'Prepare the audience',
+            'detail': (
+                f'{total_recipients} recipient(s) already loaded.'
+                if total_recipients > 0
+                else 'Import already-consented contacts or collect event registrations now.'
+            ),
+            'complete': total_recipients > 0,
+        },
+        {
+            'label': 'Configure keyword automation',
+            'detail': (
+                f'{keyword_rule_count} keyword rule(s) ready.'
+                if keyword_rule_count > 0
+                else 'Add keyword replies so inbound opt-in and help traffic is ready on day one.'
+            ),
+            'complete': keyword_rule_count > 0,
+        },
+        {
+            'label': 'Set up survey or event intake',
+            'detail': intake_detail,
+            'complete': intake_ready,
+        },
+    ]
 
 
 def _current_organization_id() -> int | None:
@@ -752,6 +815,8 @@ def _organization_onboarding_view(organization: Organization) -> dict:
     messaging_profile = organization.messaging_profile
     messaging_ready = bool(messaging_profile is not None and messaging_profile.can_send)
     team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
+    a2p_status = _a2p_status_view(organization.a2p_onboarding, messaging_profile)
+    a2p_packet_submitted = a2p_status['has_submission'] or messaging_ready
 
     steps = [
         {
@@ -787,15 +852,21 @@ def _organization_onboarding_view(organization: Organization) -> dict:
             'optional': False,
         },
         {
-            'label': 'Messaging configured',
+            'label': 'A2P packet submitted',
+            'detail': (
+                a2p_status['summary']
+                if a2p_status['has_submission']
+                else ('Live sender is already configured for this workspace.' if messaging_ready else 'Submit the A2P onboarding packet to start carrier review.')
+            ),
+            'complete': a2p_packet_submitted,
+            'optional': False,
+        },
+        {
+            'label': 'Live SMS approved',
             'detail': (
                 messaging_profile.from_number
-                if messaging_profile and messaging_profile.from_number
-                else (
-                    messaging_profile.messaging_service_sid
-                    if messaging_profile and messaging_profile.messaging_service_sid
-                    else 'Provision the Twilio provider and assign a reviewed sender before enabling live SMS.'
-                )
+                if messaging_ready and messaging_profile and messaging_profile.from_number
+                else a2p_status['next_step']
             ),
             'complete': messaging_ready,
             'optional': False,
@@ -814,6 +885,8 @@ def _organization_onboarding_view(organization: Organization) -> dict:
         headline = 'Ready for owner + staff testing'
     elif completed_required == len(required_steps):
         headline = 'Ready for owner testing'
+    elif all(step['complete'] for step in required_steps[:-1]) and not required_steps[-1]['complete']:
+        headline = 'Workspace ready while SMS approval is pending'
     else:
         headline = f'{completed_required}/{len(required_steps)} core steps complete'
 
@@ -826,11 +899,13 @@ def _organization_onboarding_view(organization: Organization) -> dict:
         'owner_invitation_url': _invitation_absolute_url(invitation) if invitation and invitation.status == 'pending' else None,
         'owner_joined': owner_membership is not None,
         'team_ready': team_ready,
+        'a2p_status': a2p_status,
     }
 
 
 def _organization_messaging_view(organization: Organization) -> dict:
     profile = organization.messaging_profile
+    a2p_status = _a2p_status_view(organization.a2p_onboarding, profile)
     if profile is None:
         return {
             'badge': 'warning text-dark',
@@ -861,11 +936,11 @@ def _organization_messaging_view(organization: Organization) -> dict:
             'badge': 'danger',
             'title': 'Error',
             'summary': profile.messaging_service_sid or 'Provisioning error',
-            'detail': 'Review the provider setup before enabling live SMS.',
+            'detail': profile.last_provision_error or a2p_status['summary'] or 'Review the provider setup before enabling live SMS.',
         }
 
     if normalized_status == 'provisioning':
-        detail = (
+        detail = a2p_status['next_step'] if a2p_status['has_submission'] else (
             'Assign a reviewed sender to finish provisioning.'
             if profile.twilio_subaccount_sid
             else 'Twilio subaccount not provisioned yet.'
@@ -873,15 +948,15 @@ def _organization_messaging_view(organization: Organization) -> dict:
         return {
             'badge': 'warning text-dark',
             'title': 'Provisioning',
-            'summary': profile.messaging_service_sid or 'Provisioning still needed',
+            'summary': a2p_status['title'] if a2p_status['has_submission'] else (profile.messaging_service_sid or 'Provisioning still needed'),
             'detail': detail,
         }
 
     return {
         'badge': 'warning text-dark',
         'title': 'Pending',
-        'summary': profile.messaging_service_sid or 'Provisioning still needed',
-        'detail': 'Twilio subaccount not provisioned yet.',
+        'summary': a2p_status['title'] if a2p_status['has_submission'] else (profile.messaging_service_sid or 'Provisioning still needed'),
+        'detail': a2p_status['next_step'] if a2p_status['has_submission'] else 'Twilio subaccount not provisioned yet.',
     }
 
 
@@ -1136,6 +1211,7 @@ def _billing_context(organization: Organization | None) -> dict:
     return {
         'subscription_view': _subscription_view(subscription),
         'onboarding_view': onboarding,
+        'a2p_status_view': onboarding['a2p_status'] if onboarding is not None else None,
     }
 
 
@@ -1956,8 +2032,14 @@ def dashboard():
     def build_dashboard_context():
         organization = _current_organization()
         subscription = _current_subscription()
+        subscription_view = _subscription_view(subscription)
+        messaging_profile = organization.messaging_profile if organization is not None else None
+        a2p_status_view = _a2p_status_view(organization.a2p_onboarding if organization is not None else None, messaging_profile)
         community_count = CommunityMember.query.count()
         event_registration_count = EventRegistration.query.count()
+        keyword_rule_count = KeywordAutomationRule.query.count()
+        survey_flow_count = SurveyFlow.query.count()
+        event_count = len(events)
         total_recipients = community_count + event_registration_count
         unsubscribed_count = UnsubscribedContact.query.count()
         inbound_count_7d = 0
@@ -2007,6 +2089,36 @@ def dashboard():
             failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
 
         chart_data = build_chart_data()
+        staff_membership_count = 0
+        pending_staff_invitation_count = 0
+        if organization is not None:
+            staff_membership_count = (
+                OrganizationMembership.query
+                .filter_by(organization_id=organization.id, role='staff')
+                .count()
+            )
+            pending_staff_invitation_count = (
+                OrganizationInvitation.query
+                .filter_by(organization_id=organization.id, role='staff', status='pending')
+                .count()
+            )
+        team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
+        workspace_activation_tasks = _workspace_activation_tasks(
+            subscription_view=subscription_view,
+            team_ready=team_ready,
+            total_recipients=total_recipients,
+            keyword_rule_count=keyword_rule_count,
+            survey_flow_count=survey_flow_count,
+            event_count=event_count,
+        )
+        can_send_messages = _organization_can_transmit_messages(organization) if saas_mode_enabled() else True
+        send_disabled_reason = None
+        if saas_mode_enabled() and organization is not None and not can_send_messages:
+            send_disabled_reason = (
+                subscription_view['next_step']
+                if not subscription_view['can_send']
+                else a2p_status_view['next_step']
+            )
 
         return {
             'community_count': community_count,
@@ -2025,8 +2137,11 @@ def dashboard():
             'top_keywords': top_keywords,
             'current_organization': organization,
             'current_subscription': subscription,
-            'current_subscription_view': _subscription_view(subscription),
-            'can_send_messages': _organization_can_transmit_messages(organization) if saas_mode_enabled() else True,
+            'current_subscription_view': subscription_view,
+            'a2p_status_view': a2p_status_view,
+            'workspace_activation_tasks': workspace_activation_tasks,
+            'can_send_messages': can_send_messages,
+            'send_disabled_reason': send_disabled_reason,
             'dashboard_is_empty': (
                 total_recipients == 0
                 and latest_log is None
@@ -3032,6 +3147,8 @@ def platform_organizations_messaging_edit(organization_id):
                 'platform/organization_messaging_form.html',
                 organization=organization,
                 messaging_profile=messaging_profile,
+                onboarding=organization.a2p_onboarding,
+                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
             )
 
         messaging_error, normalized_sender, _ = _validate_org_messaging_profile_input(
@@ -3045,6 +3162,8 @@ def platform_organizations_messaging_edit(organization_id):
                 'platform/organization_messaging_form.html',
                 organization=organization,
                 messaging_profile=messaging_profile,
+                onboarding=organization.a2p_onboarding,
+                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
             )
 
         if phone_number_sid and not normalized_sender:
@@ -3053,6 +3172,8 @@ def platform_organizations_messaging_edit(organization_id):
                 'platform/organization_messaging_form.html',
                 organization=organization,
                 messaging_profile=messaging_profile,
+                onboarding=organization.a2p_onboarding,
+                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
             )
 
         if normalized_sender and not phone_number_sid:
@@ -3061,6 +3182,8 @@ def platform_organizations_messaging_edit(organization_id):
                 'platform/organization_messaging_form.html',
                 organization=organization,
                 messaging_profile=messaging_profile,
+                onboarding=organization.a2p_onboarding,
+                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
             )
 
         messaging_profile.from_number = normalized_sender
@@ -3097,6 +3220,8 @@ def platform_organizations_messaging_edit(organization_id):
                 'platform/organization_messaging_form.html',
                 organization=organization,
                 messaging_profile=messaging_profile,
+                onboarding=organization.a2p_onboarding,
+                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
             )
 
         if normalized_sender and phone_number_sid:
@@ -3114,6 +3239,7 @@ def platform_organizations_messaging_edit(organization_id):
         organization=organization,
         messaging_profile=messaging_profile,
         onboarding=organization.a2p_onboarding,
+        a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
     )
 
 
@@ -3158,6 +3284,7 @@ def platform_organizations_messaging_onboarding(organization_id):
                 organization=organization,
                 messaging_profile=messaging_profile,
                 onboarding=onboarding,
+                a2p_status=_a2p_status_view(onboarding, messaging_profile),
                 a2p_form_defaults=_a2p_form_defaults(onboarding),
                 business_industry_choices=a2p_business_industry_choices(),
                 business_region_choices=a2p_business_region_choices(),
@@ -3175,6 +3302,7 @@ def platform_organizations_messaging_onboarding(organization_id):
         organization=organization,
         messaging_profile=messaging_profile,
         onboarding=onboarding,
+        a2p_status=_a2p_status_view(onboarding, messaging_profile),
         a2p_form_defaults=_a2p_form_defaults(onboarding),
         business_industry_choices=a2p_business_industry_choices(),
         business_region_choices=a2p_business_region_choices(),
@@ -4925,6 +5053,40 @@ def twilio_inbound_webhook():
     response = make_response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', 200)
     response.headers['Content-Type'] = 'text/xml'
     return response
+
+
+@bp.route('/webhooks/twilio/a2p-events', methods=['POST'])
+@csrf.exempt
+def twilio_a2p_event_stream_webhook():
+    if not current_app.config.get('TWILIO_A2P_EVENT_STREAMS_ENABLED'):
+        abort(404)
+
+    expected_token = (current_app.config.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN') or '').strip()
+    if expected_token:
+        authorization = request.headers.get('Authorization', '')
+        if authorization != f'Bearer {expected_token}':
+            current_app.logger.warning(
+                'Rejected Twilio A2P Event Streams webhook due to auth mismatch remote_addr=%s',
+                request.remote_addr,
+            )
+            return 'Forbidden', 403
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return jsonify({'error': 'Expected JSON payload.'}), 400
+
+    try:
+        summary = ingest_a2p_event_stream_payload(payload)
+        db.session.commit()
+    except ProviderProvisioningError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Failed to process Twilio A2P Event Streams payload')
+        return jsonify({'error': 'Internal Server Error'}), 500
+
+    return jsonify(summary), 200
 
 
 @bp.route('/inbox')

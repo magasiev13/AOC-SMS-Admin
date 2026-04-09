@@ -20,6 +20,15 @@ cp .env.example .env
 | `TWILIO_AUTH_TOKEN` | Twilio Auth Token for the same parent/master account | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
 | `TWILIO_FROM_NUMBER` | Twilio phone number (E.164). Required for the legacy single-tenant runtime; optional in SaaS platform-managed mode. | `+18005551234` |
 
+### Twilio A2P Automation
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enables the platform-managed A2P onboarding flow. |
+| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables the optional Twilio Event Streams webhook at `/webhooks/twilio/a2p-events` for push-based A2P status updates. |
+| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the Twilio Event Streams webhook when the webhook is enabled. |
+| `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | unset | Primary Twilio Trust Hub customer profile SID used when linking secondary A2P onboarding bundles. |
+
 ### Flask Security
 
 | Variable | Description | Example |
