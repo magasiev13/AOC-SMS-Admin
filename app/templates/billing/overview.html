@@ -55,6 +55,17 @@
                 <h5 class="mb-1">{{ onboarding_view.headline if onboarding_view else 'No onboarding state yet' }}</h5>
                 {% if onboarding_view %}
                 <p class="text-muted mb-3">{{ onboarding_view.completed_required }}/{{ onboarding_view.required_total }} required setup steps are complete.</p>
+                {% if onboarding_view.a2p_status %}
+                <div class="billing-summary-note mb-3">
+                    <strong>{{ onboarding_view.a2p_status.title }}</strong> · {{ onboarding_view.a2p_status.summary }}
+                </div>
+                <div class="small text-muted mb-3">
+                    {{ onboarding_view.a2p_status.next_step }}
+                    {% if onboarding_view.a2p_status.last_checked_display %}
+                    · Last checked {{ onboarding_view.a2p_status.last_checked_display }}
+                    {% endif %}
+                </div>
+                {% endif %}
                 <div class="list-group list-group-flush">
                     {% for step in onboarding_view.steps %}
                     <div class="list-group-item px-0">

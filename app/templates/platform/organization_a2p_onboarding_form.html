@@ -47,6 +47,19 @@
                 </div>
                 {% endif %}
 
+                {% if a2p_status %}
+                <div class="platform-note mb-4" role="note">
+                    <div class="platform-note__title">{{ a2p_status.title }}</div>
+                    <div class="platform-note__copy">{{ a2p_status.summary }}</div>
+                    <div class="small text-muted mt-1">
+                        {{ a2p_status.next_step }}
+                        {% if a2p_status.last_checked_display %}
+                        · Last checked {{ a2p_status.last_checked_display }}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit">
@@ -147,11 +160,12 @@
                         <div class="col-md-6">
                             <label class="form-label" for="campaign_use_case">Campaign Use Case</label>
                             <select class="form-select" id="campaign_use_case" name="campaign_use_case">
-                                {% set selected_campaign_use_case = request.form.get('campaign_use_case', onboarding.campaign_use_case if onboarding else 'MIXED') %}
+                                {% set selected_campaign_use_case = request.form.get('campaign_use_case', onboarding.campaign_use_case if onboarding and onboarding.onboarding_status != 'draft' else 'ACCOUNT_NOTIFICATION') %}
                                 {% for value, label in campaign_use_case_choices %}
                                 <option value="{{ value }}" {% if selected_campaign_use_case == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
+                            <div class="form-text">Choose the narrowest use case that matches the real traffic. Avoid <code>MIXED</code> unless the program truly blends multiple types.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="campaign_description">Campaign Description</label>
@@ -164,7 +178,7 @@
                         <div class="col-12">
                             <label class="form-label" for="message_samples">Message Samples</label>
                             <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
-                            <div class="form-text">One message sample per line.</div>
+                            <div class="form-text">Provide at least two real examples, one per line.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_in_message">Opt-in Message</label>
@@ -227,10 +241,10 @@
                 <div class="card-body">
                     <div class="platform-shell__eyebrow mb-2">Current Status</div>
                     <ul class="platform-status-list">
-                        <li><strong>Onboarding</strong><span>{{ onboarding.onboarding_status if onboarding else 'draft' }}</span></li>
-                        <li><strong>Brand</strong><span>{{ onboarding.brand_status or 'not submitted' }}</span></li>
-                        <li><strong>Campaign</strong><span>{{ onboarding.campaign_status or 'not submitted' }}</span></li>
-                        <li><strong>Verification</strong><span>{{ onboarding.verification_status or 'n/a' }}</span></li>
+                        <li><strong>Stage</strong><span>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</span></li>
+                        <li><strong>Brand</strong><span>{{ a2p_status.brand_status if a2p_status else (onboarding.brand_status or 'not submitted') }}</span></li>
+                        <li><strong>Campaign</strong><span>{{ a2p_status.campaign_status if a2p_status else (onboarding.campaign_status or 'not submitted') }}</span></li>
+                        <li><strong>Number</strong><span>{{ a2p_status.number_status if a2p_status else (onboarding.verification_status or 'n/a') }}</span></li>
                         <li><strong>Messaging service</strong><span>{{ messaging_profile.messaging_service_sid or 'not provisioned yet' }}</span></li>
                     </ul>
                 </div>
@@ -238,6 +252,17 @@
 
             <div class="card app-card platform-side-card">
                 <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-2">Guidance</div>
+                    <p class="small text-muted mb-3">
+                        Promotional consent cannot be created from a phone number alone. Use a hosted web or QR opt-in with clear disclosures, then mirror existing consent into Twilio later if needed.
+                    </p>
+                    <p class="small text-muted mb-3">
+                        {% if a2p_status and a2p_status.event_streams_enabled %}
+                        Event Streams can update this page automatically as Twilio emits brand, campaign, and number events.
+                        {% else %}
+                        Use Refresh Status when Event Streams are not configured yet. The background reconcile job will keep polling Twilio.
+                        {% endif %}
+                    </p>
                     <div class="platform-shell__eyebrow mb-3">Actions</div>
                     <div class="platform-form-actions">
                         <form method="POST">
