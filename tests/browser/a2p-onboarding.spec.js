@@ -121,8 +121,8 @@ test('platform admin sees each seeded onboarding state and action availability',
   await openMessagingForOrg(page, 'Pending Review Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Carrier review in progress');
-  await expect(page.getByText('Brand: pending review')).toBeVisible();
-  await expect(page.getByText('Campaign: pending')).toBeVisible();
+  await expect(page.locator('li').filter({ hasText: 'Brand' })).toContainText('pending review');
+  await expect(page.locator('li').filter({ hasText: 'Campaign' })).toContainText('pending');
   await expect(page.getByLabel('Messages include links')).toBeChecked();
   await expect(page.getByLabel('Messages include phone numbers')).toBeChecked();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
@@ -140,14 +140,14 @@ test('platform admin sees each seeded onboarding state and action availability',
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Needs action');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
-  await expect(page.getByText('Twilio rejected the registration because the campaign description was too vague.')).toBeVisible();
+  await expect(page.getByText('Twilio rejected the registration because the campaign description was too vague.').first()).toBeVisible();
 
   await openMessagingForOrg(page, 'Error Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Needs action');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
-  await expect(page.getByText('Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.')).toBeVisible();
+  await expect(page.getByText('Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.').first()).toBeVisible();
 
   await openMessagingForOrg(page, 'Queued Bakery');
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
