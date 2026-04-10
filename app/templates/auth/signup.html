@@ -1,66 +1,139 @@
 {% extends "auth/base.html" %}
 
-{% block title %}Create Workspace - SMS Admin{% endblock %}
+{% block title %}Create Workspace - {{ product_name }}{% endblock %}
 
 {% block page_title %}Create Workspace{% endblock %}
 {% block auth_main_class %}auth-login-main{% endblock %}
 {% block auth_header %}{% endblock %}
 
 {% block content %}
-<section class="login-shell">
-    <div class="login-layout">
+{% set signup_current_step = 2 if request.method == 'POST' and (request.form.get('username') or request.form.get('password') or request.form.get('confirm_password')) else 1 %}
+<section class="auth-surface auth-surface--split auth-surface--signup">
+    <div class="auth-story">
+        <a class="auth-brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+            <span class="brand-icon">
+                <span class="brand-icon__pulse"></span>
+                <i class="bi bi-send-fill"></i>
+            </span>
+            <span class="brand-lockup">
+                <span class="brand-text">{{ product_name }}</span>
+                <span class="brand-caption">{{ product_descriptor }}</span>
+            </span>
+        </a>
         <div class="login-intro">
-            <div class="login-kicker">Workspace signup</div>
-            <h1 class="login-title">Create your messaging workspace.</h1>
+            <div class="login-kicker">Create workspace</div>
+            <h1 class="login-title">Start a messaging workspace with one owner account.</h1>
             <p class="login-copy">
-                Start the business account, activate billing, complete Twilio compliance once, and move into live messaging without platform-admin handoffs.
+                Open the workspace, set up billing, finish Twilio compliance, and move directly into live messaging without a separate platform handoff.
             </p>
-            <div class="login-copy">
-                Already have a workspace? <a href="{{ url_for('auth.login') }}">Sign in here</a>.
+        </div>
+        <div class="auth-diagram auth-diagram--stacked" aria-hidden="true">
+            <div class="auth-diagram__rail">
+                <span class="auth-diagram__eyebrow">Runway</span>
+                <div class="auth-diagram__track auth-diagram__track--stacked">
+                    <span class="auth-diagram__node">Workspace</span>
+                    <span class="auth-diagram__node">Billing</span>
+                    <span class="auth-diagram__node">Compliance</span>
+                    <span class="auth-diagram__node">Launch</span>
+                </div>
             </div>
         </div>
-        <div class="card app-card login-card login-card--wide">
-            <div class="card-body p-4 p-lg-5">
-                <div class="mb-4">
-                    <h2 class="login-card__title">Create your owner account</h2>
-                    <p class="text-muted mb-0">This creates the workspace, owner login, billing record, and draft messaging profile in one step.</p>
+        <ul class="auth-story-list" aria-label="Workspace setup steps">
+            <li><strong>Business profile</strong><span>Create the workspace and owner account.</span></li>
+            <li><strong>Access details</strong><span>Set the login that will manage setup and launch.</span></li>
+            <li><strong>Live handoff</strong><span>Move straight into the guided setup runway.</span></li>
+        </ul>
+    </div>
+
+    <div class="auth-panel auth-panel--wide">
+        <div class="auth-panel__header">
+            <a class="auth-brand auth-panel__brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+                <span class="brand-icon">
+                    <span class="brand-icon__pulse"></span>
+                    <i class="bi bi-send-fill"></i>
+                </span>
+                <span class="brand-lockup">
+                    <span class="brand-text">{{ product_name }}</span>
+                    <span class="brand-caption">{{ product_descriptor }}</span>
+                </span>
+            </a>
+            <div class="auth-panel__eyebrow">Owner account</div>
+            <h2 class="auth-panel__title">Create your {{ product_name }} workspace</h2>
+            <p class="auth-panel__copy">Create the workspace first. Billing and provider setup continue in the guided runway right after account creation.</p>
+        </div>
+
+        <div class="signup-progress" data-signup-progress aria-label="Signup progress">
+            <div class="signup-progress__step {% if signup_current_step == 1 %}is-current{% else %}is-complete{% endif %}" data-signup-indicator="1">
+                <span class="signup-progress__index">1</span>
+                <span class="signup-progress__copy">
+                    <strong>Workspace details</strong>
+                    <span>Business and owner profile</span>
+                </span>
+            </div>
+            <div class="signup-progress__step {% if signup_current_step == 2 %}is-current{% endif %}" data-signup-indicator="2">
+                <span class="signup-progress__index">2</span>
+                <span class="signup-progress__copy">
+                    <strong>Access details</strong>
+                    <span>Login and password</span>
+                </span>
+            </div>
+        </div>
+
+        <form method="POST" class="auth-form signup-form" data-signup-form data-current-step="{{ signup_current_step }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <section class="signup-step-panel" data-signup-step="1">
+                <div class="auth-form__field">
+                    <label class="form-label" for="organization_name">Business name</label>
+                    <input class="form-control" id="organization_name" name="organization_name" required autocomplete="organization" value="{{ request.form.get('organization_name', '') }}">
                 </div>
-                <form method="POST" class="setup-form-grid">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="setup-field setup-field--full">
-                        <label class="form-label" for="organization_name">Business name</label>
-                        <input class="form-control" id="organization_name" name="organization_name" required autocomplete="organization">
-                    </div>
-                    <div class="setup-field setup-field--full">
-                        <label class="form-label" for="full_name">Full name</label>
-                        <input class="form-control" id="full_name" name="full_name" autocomplete="name">
-                    </div>
-                    <div class="setup-field setup-field--full">
-                        <label class="form-label" for="email">Business email</label>
-                        <input class="form-control" id="email" name="email" type="email" required autocomplete="email">
-                    </div>
-                    <div class="setup-field">
+                <div class="auth-form__field">
+                    <label class="form-label" for="full_name">Full name</label>
+                    <input class="form-control" id="full_name" name="full_name" autocomplete="name" value="{{ request.form.get('full_name', '') }}">
+                </div>
+                <div class="auth-form__field">
+                    <label class="form-label" for="email">Business email</label>
+                    <input class="form-control" id="email" name="email" type="email" required autocomplete="email" value="{{ request.form.get('email', '') }}">
+                </div>
+                <div class="auth-form__field">
+                    <label class="form-label" for="phone">Mobile phone</label>
+                    <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567" value="{{ request.form.get('phone', '') }}">
+                </div>
+                <div class="signup-step-actions signup-step-actions--progressive">
+                    <button type="button" class="btn btn-primary w-100" data-signup-next>Continue</button>
+                </div>
+            </section>
+
+            <section class="signup-step-panel" data-signup-step="2">
+                <div class="auth-form__row">
+                    <div class="auth-form__field">
                         <label class="form-label" for="username">Username</label>
-                        <input class="form-control" id="username" name="username" required autocomplete="username">
+                        <input class="form-control" id="username" name="username" required autocomplete="username" value="{{ request.form.get('username', '') }}">
                     </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="phone">Mobile phone</label>
-                        <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567">
-                    </div>
-                    <div class="setup-field">
+                    <div class="auth-form__field">
                         <label class="form-label" for="password">Password</label>
                         <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
                     </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="confirm_password">Confirm password</label>
-                        <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
-                    </div>
-                    <div class="setup-field setup-field--full">
-                        <button type="submit" class="btn btn-primary w-100">Create workspace</button>
-                    </div>
-                </form>
+                </div>
+                <div class="auth-form__field">
+                    <label class="form-label" for="confirm_password">Confirm password</label>
+                    <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
+                    <div class="form-text">Use at least {{ password_min_length }} characters with uppercase, lowercase, a number, and a symbol.</div>
+                </div>
+                <div class="signup-step-actions signup-step-actions--progressive signup-step-actions--dual">
+                    <button type="button" class="btn btn-outline-secondary" data-signup-back>Back</button>
+                    <button type="submit" class="btn btn-primary">Create workspace</button>
+                </div>
+            </section>
+
+            <div class="signup-step-actions signup-step-actions--submit">
+                <button type="submit" class="btn btn-primary w-100">Create workspace</button>
             </div>
-        </div>
+        </form>
+
+        <p class="auth-panel__footnote">
+            Already have a workspace? <a href="{{ url_for('auth.login') }}">Sign in</a>.
+        </p>
     </div>
 </section>
 {% endblock %}

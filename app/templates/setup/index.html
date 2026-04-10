@@ -1,7 +1,8 @@
 {% extends "auth/base.html" %}
 
-{% block title %}Workspace Setup - SMS Admin{% endblock %}
+{% block title %}Workspace Setup - {{ product_name }}{% endblock %}
 {% block page_title %}Workspace Setup{% endblock %}
+{% block auth_main_class %}auth-setup-main{% endblock %}
 {% block breadcrumbs %}<span>Setup</span>{% endblock %}
 {% block page_actions %}
 <form method="POST" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-outline-secondary btn-sm">Logout</button></form>
@@ -20,7 +21,7 @@
             <div class="login-kicker">Owner setup</div>
             <h1 class="setup-hero__title">{{ organization.name }}</h1>
             <p class="setup-hero__text">
-                Finish billing and Twilio compliance in one clean runway. Once approval lands, platform support assigns the first sender and unlocks live messaging.
+                Finish billing and Twilio compliance in one guided runway. Once approval lands, platform support assigns the first sender and unlocks live messaging inside {{ product_name }}.
             </p>
         </div>
         <div class="setup-hero__meta">

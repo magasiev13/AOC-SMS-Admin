@@ -145,7 +145,7 @@ test('blocked states and tenant isolation hold across seeded organizations', asy
   await page.goto('/login');
   await page.getByLabel('Email or username').fill('suspended-owner@browser.test');
   await page.getByLabel('Password').fill('Suspended-pass1!');
-  await page.getByRole('button', { name: 'Sign In' }).click();
+  await page.getByRole('button', { name: /Sign in to/i }).click();
   await expect(page.getByText('Your organization is currently suspended. Contact your platform admin.')).toBeVisible();
 
   await login(page, 'isolation-owner@browser.test', 'Isolation-pass1!');

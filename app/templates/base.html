@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}SMS Admin{% endblock %}</title>
+    <title>{% block title %}{{ product_name }}{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=app_version) }}">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
@@ -21,12 +21,15 @@
     {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.dashboard') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
-            <a class="app-sidebar-brand" href="{{ home_url }}">
+            <a class="app-sidebar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                 <span class="brand-icon">
                     <span class="brand-icon__pulse"></span>
                     <i class="bi bi-send-fill" aria-hidden="true"></i>
                 </span>
-                <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
+                <span class="brand-lockup">
+                    <span class="brand-text">{{ product_name }}</span>
+                    <span class="brand-caption">{{ product_descriptor }}</span>
+                </span>
             </a>
             {% if platform_user %}
             <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform Control</div>
@@ -114,12 +117,15 @@
         <div class="app-main">
             <nav class="app-topbar navbar navbar-light d-lg-none">
                 <div class="container-fluid">
-                    <a class="navbar-brand" href="{{ home_url }}">
+                    <a class="navbar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                         <span class="brand-icon brand-icon--sm">
                             <span class="brand-icon__pulse"></span>
                             <i class="bi bi-send-fill" aria-hidden="true"></i>
                         </span>
-                        <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
+                        <span class="brand-lockup brand-lockup--inline">
+                            <span class="brand-text">{{ product_name }}</span>
+                            <span class="brand-caption">{{ product_descriptor }}</span>
+                        </span>
                     </a>
                     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#appMobileNav" aria-controls="appMobileNav" aria-expanded="false" aria-label="Toggle navigation">
                         <span class="navbar-toggler-icon"></span>
@@ -203,14 +209,14 @@
                 </div>
             </nav>
 
-            <main id="main-content" class="app-content container">
+            <main id="main-content" class="app-content app-content--workspace">
                 <header class="app-page-header">
                     <div>
                         <div class="app-breadcrumbs">
                             {% block breadcrumbs %}{% endblock %}
                         </div>
                         <h1 class="app-page-title">
-                            {% block page_title %}SMS Admin{% endblock %}
+                            {% block page_title %}{{ product_name }}{% endblock %}
                         </h1>
                     </div>
                     <div class="app-page-actions" data-page-actions>
@@ -255,7 +261,7 @@
             </main>
 
             <footer class="app-footer text-center text-muted">
-                <small>AOC SMS &copy; 2025–{{ current_year }} All rights reserved</small>
+                <small>{{ product_name }} &copy; 2025–{{ current_year }}</small>
             </footer>
         </div>
     </div>

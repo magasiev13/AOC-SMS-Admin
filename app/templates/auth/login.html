@@ -1,82 +1,102 @@
 {% extends "auth/base.html" %}
 
 {% set is_platform = auth_surface == 'platform' %}
-{% block title %}{{ 'Platform Login' if is_platform else 'Workspace Login' }} - SMS Admin{% endblock %}
+{% block title %}{{ 'Platform Login' if is_platform else 'Workspace Login' }} - {{ product_name }}{% endblock %}
 
 {% block page_title %}Sign In{% endblock %}
 {% block auth_main_class %}auth-login-main{% endblock %}
 {% block auth_header %}{% endblock %}
 
 {% block content %}
-<section class="login-shell">
-    <div class="login-layout">
+<section class="auth-surface auth-surface--split">
+    <div class="auth-story">
+        <a class="auth-brand" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}" aria-label="{{ product_name }}">
+            <span class="brand-icon">
+                <span class="brand-icon__pulse"></span>
+                <i class="bi bi-send-fill"></i>
+            </span>
+            <span class="brand-lockup">
+                <span class="brand-text">{{ product_name }}</span>
+                <span class="brand-caption">{{ product_descriptor }}</span>
+            </span>
+        </a>
         <div class="login-intro">
-            <div class="login-kicker">{{ 'Platform control' if is_platform else 'Workspace access' }}</div>
+            <div class="login-kicker">{{ 'Platform access' if is_platform else 'Workspace access' }}</div>
             <h1 class="login-title">
-                {{ 'Sign in to the control plane.' if is_platform else 'Sign in to your business workspace.' }}
+                {{ 'Keep every customer workspace moving.' if is_platform else 'Run messaging from one calm workspace.' }}
             </h1>
             <p class="login-copy">
                 {% if is_platform %}
-                Platform admins manage organizations, onboarding recovery, and sender assignment from a separate control surface.
+                Review onboarding, workspace access, and sender readiness without stepping into customer delivery screens.
                 {% else %}
-                Owners activate billing, complete compliance, and launch messaging here. Staff join after setup is complete.
+                Send updates, review replies, and finish setup from one focused workspace built for operational clarity.
                 {% endif %}
             </p>
-            {% if not is_platform %}
-            <div class="login-copy">
-                Need a new workspace? <a href="{{ url_for('auth.signup') }}">Create one here</a>.
-            </div>
-            {% else %}
-            <div class="login-copy">
-                Need your customer workspace instead? <a href="{{ url_for('auth.login') }}">Use the workspace login</a>.
-            </div>
-            {% endif %}
         </div>
-        <div class="card app-card login-card">
-            <div class="card-body p-4 p-lg-5">
-                <div class="text-center mb-4">
-                    <div class="d-flex justify-content-center mb-3">
-                        <a class="app-sidebar-brand app-sidebar-brand--light" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}">
-                            <span class="brand-icon">
-                                <span class="brand-icon__pulse"></span>
-                                <i class="bi bi-send-fill"></i>
-                            </span>
-                            <span class="brand-text">SMS<span class="brand-text__accent">Admin</span></span>
-                        </a>
-                    </div>
-                    <h2 class="login-card__title">{{ 'Platform admin login' if is_platform else 'Welcome back' }}</h2>
-                    <p class="text-muted mb-0">{{ 'Use your platform admin credentials.' if is_platform else 'Use your email or username to continue.' }}</p>
+        <div class="auth-diagram" aria-hidden="true">
+            <div class="auth-diagram__rail auth-diagram__rail--accent">
+                <span class="auth-diagram__eyebrow">{{ 'Control surface' if is_platform else 'Workspace flow' }}</span>
+                <div class="auth-diagram__track">
+                    <span class="auth-diagram__node">{{ 'Access' if is_platform else 'Compose' }}</span>
+                    <span class="auth-diagram__node">{{ 'Onboarding' if is_platform else 'Route' }}</span>
+                    <span class="auth-diagram__node">{{ 'Providers' if is_platform else 'Launch' }}</span>
                 </div>
-
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label for="username" class="form-label">Email or username</label>
-                        <div class="input-group">
-                            <span class="input-group-text"><i class="bi bi-person"></i></span>
-                            <input type="text" class="form-control" id="username" name="username" required autofocus autocomplete="username" placeholder="Email or username">
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="password" class="form-label">Password</label>
-                        <div class="input-group">
-                            <span class="input-group-text"><i class="bi bi-lock"></i></span>
-                            <input type="password" class="form-control" id="password" name="password" required autocomplete="current-password">
-                        </div>
-                    </div>
-
-                    <div class="mb-4 form-check">
-                        <input type="checkbox" class="form-check-input" id="remember" name="remember">
-                        <label class="form-check-label" for="remember">Remember me</label>
-                    </div>
-
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
-                    </button>
-                </form>
+            </div>
+            <div class="auth-diagram__signal">
+                <span></span>
+                <span></span>
+                <span></span>
             </div>
         </div>
+        <ul class="auth-story-list" aria-label="{{ 'Platform capabilities' if is_platform else 'Workspace capabilities' }}">
+            {% if is_platform %}
+            <li><strong>Organizations</strong><span>See what is blocked and what is ready.</span></li>
+            <li><strong>Access</strong><span>Separate platform and customer surfaces cleanly.</span></li>
+            <li><strong>Messaging</strong><span>Track sender assignment and provider readiness.</span></li>
+            {% else %}
+            <li><strong>Broadcasts</strong><span>Prepare and send scheduled or live updates.</span></li>
+            <li><strong>Replies</strong><span>Keep inbound conversations in the same workspace.</span></li>
+            <li><strong>Setup</strong><span>Finish billing and compliance without handoffs.</span></li>
+            {% endif %}
+        </ul>
+    </div>
+
+    <div class="auth-panel auth-panel--login">
+        <div class="auth-panel__header">
+            <div class="auth-panel__eyebrow">{{ 'Platform login' if is_platform else 'Workspace login' }}</div>
+            <h2 class="auth-panel__title">Sign in to {{ product_name }}</h2>
+            <p class="auth-panel__copy">{{ 'Use your platform admin credentials to continue.' if is_platform else 'Use your email or username to continue.' }}</p>
+        </div>
+
+        <form method="POST" class="auth-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="auth-form__field">
+                <label for="username" class="form-label">Email or username</label>
+                <input type="text" class="form-control" id="username" name="username" required autofocus autocomplete="username" placeholder="you@example.com">
+            </div>
+
+            <div class="auth-form__field">
+                <label for="password" class="form-label">Password</label>
+                <input type="password" class="form-control" id="password" name="password" required autocomplete="current-password">
+            </div>
+
+            <div class="form-check auth-remember">
+                <input type="checkbox" class="form-check-input" id="remember" name="remember">
+                <label class="form-check-label" for="remember">Remember me on this device</label>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 auth-submit">
+                Sign in to {{ product_name }}
+            </button>
+        </form>
+
+        <p class="auth-panel__footnote">
+            {% if is_platform %}
+            Need the customer workspace instead? <a href="{{ url_for('auth.login') }}">Open workspace login</a>.
+            {% else %}
+            Need a new workspace? <a href="{{ url_for('auth.signup') }}">Create a workspace</a>.
+            {% endif %}
+        </p>
     </div>
 </section>
 {% endblock %}

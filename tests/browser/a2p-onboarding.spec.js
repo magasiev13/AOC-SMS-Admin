@@ -4,7 +4,7 @@ async function login(page, username, password) {
   await page.goto('/login');
   await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign In' }).click();
+  await page.getByRole('button', { name: /Sign in to/i }).click();
 }
 
 async function openMessagingForOrg(page, orgName) {

@@ -5,7 +5,7 @@
 {% set response_value = form_data.response_body if form_data else (rule.response_body if rule else '') %}
 {% set active_value = form_data.is_active if form_data else (rule.is_active if rule else True) %}
 
-{% block title %}{{ 'Edit' if is_edit else 'Add' }} Keyword Rule - SMS Admin{% endblock %}
+{% block title %}{{ 'Edit' if is_edit else 'Add' }} Keyword Rule - {{ product_name }}{% endblock %}
 
 {% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Keyword Rule{% endblock %}
 

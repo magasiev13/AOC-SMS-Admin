@@ -1,56 +1,70 @@
-{% extends "base.html" %}
+{% extends "auth/base.html" %}
 
-{% block title %}Accept Invitation - SMS Admin{% endblock %}
+{% block title %}Accept Invitation - {{ product_name }}{% endblock %}
 
 {% block page_title %}Accept Invitation{% endblock %}
-
-{% block breadcrumbs %}
-<span>Invitation</span>
-{% endblock %}
+{% block auth_main_class %}auth-utility-main{% endblock %}
+{% block auth_header %}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-header">
-                <h5 class="mb-0">Join {{ invitation.organization.name }}</h5>
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-4">
-                    This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.
-                    {% if invitation.role == 'owner' %}
-                    After you join, you will go straight into workspace setup for billing and compliance.
-                    {% else %}
-                    After you join, you will go straight to the dashboard.
-                    {% endif %}
-                </p>
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label class="form-label" for="full_name">Full Name</label>
-                        <input class="form-control" id="full_name" name="full_name" autocomplete="name">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="username">Username</label>
-                        <input class="form-control" id="username" name="username" required autocomplete="username">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="phone">Phone</label>
-                        <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label" for="password">Password</label>
-                        <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
-                        <div class="form-text">Use a strong password you can remember for future logins.</div>
-                    </div>
-                    <div class="mb-4">
-                        <label class="form-label" for="confirm_password">Confirm Password</label>
-                        <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
-                    </div>
-                    <button type="submit" class="btn btn-primary">Accept Invitation</button>
-                </form>
-            </div>
+<section class="auth-surface auth-surface--utility">
+    <div class="auth-story auth-story--compact">
+        <a class="auth-brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+            <span class="brand-icon">
+                <span class="brand-icon__pulse"></span>
+                <i class="bi bi-send-fill"></i>
+            </span>
+            <span class="brand-lockup">
+                <span class="brand-text">{{ product_name }}</span>
+                <span class="brand-caption">{{ product_descriptor }}</span>
+            </span>
+        </a>
+        <div class="login-intro">
+            <div class="login-kicker">Invitation</div>
+            <h1 class="login-title">Join {{ invitation.organization.name }} in {{ product_name }}.</h1>
+            <p class="login-copy">
+                This invitation is for <strong>{{ invitation.email }}</strong> as {{ 'Owner' if invitation.role == 'owner' else 'Staff' }}.
+                {% if invitation.role == 'owner' %}
+                After you join, you will move directly into workspace setup for billing and compliance.
+                {% else %}
+                After you join, you will land in the workspace dashboard.
+                {% endif %}
+            </p>
         </div>
     </div>
-</div>
+
+    <div class="auth-panel auth-panel--utility">
+        <div class="auth-panel__header">
+            <div class="auth-panel__eyebrow">Accept invitation</div>
+            <h2 class="auth-panel__title">Finish your account</h2>
+            <p class="auth-panel__copy">Set the details you will use every time you sign in to {{ product_name }}.</p>
+        </div>
+
+        <form method="POST" class="auth-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="auth-form__field">
+                <label class="form-label" for="full_name">Full Name</label>
+                <input class="form-control" id="full_name" name="full_name" autocomplete="name">
+            </div>
+            <div class="auth-form__field">
+                <label class="form-label" for="username">Username</label>
+                <input class="form-control" id="username" name="username" required autocomplete="username">
+            </div>
+            <div class="auth-form__field">
+                <label class="form-label" for="phone">Phone</label>
+                <input class="form-control" id="phone" name="phone" required autocomplete="tel" placeholder="+15551234567">
+            </div>
+            <div class="auth-form__field">
+                <label class="form-label" for="password">Password</label>
+                <input class="form-control" id="password" name="password" type="password" required autocomplete="new-password">
+                <div class="form-text">Use at least {{ password_min_length }} characters with uppercase, lowercase, a number, and a symbol.</div>
+            </div>
+            <div class="auth-form__field">
+                <label class="form-label" for="confirm_password">Confirm Password</label>
+                <input class="form-control" id="confirm_password" name="confirm_password" type="password" required autocomplete="new-password">
+            </div>
+            <button type="submit" class="btn btn-primary">Accept invitation</button>
+        </form>
+    </div>
+</section>
 {% endblock %}

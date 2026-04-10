@@ -68,7 +68,7 @@ async function login(page, username, password, path = '/login') {
   await page.goto(path);
   await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Sign In' }).click();
+  await page.getByRole('button', { name: /Sign in to/i }).click();
 }
 
 function organizationRow(page, organizationName) {
@@ -127,7 +127,7 @@ async function acceptInvitation(
   await page.getByLabel('Phone').fill(phone);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByLabel('Confirm Password').fill(password);
-  await page.getByRole('button', { name: 'Accept Invitation' }).click();
+  await page.getByRole('button', { name: /Accept invitation/i }).click();
   if (expectedUrl) {
     await expect(page).toHaveURL(expectedUrl);
   }

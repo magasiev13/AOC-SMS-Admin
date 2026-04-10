@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }} - SMS Admin{% endblock %}
+{% block title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }} - {{ product_name }}{% endblock %}
 
 {% block page_title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }}{% endblock %}
 

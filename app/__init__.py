@@ -229,6 +229,9 @@ def _build_app() -> Flask:
         return {
             "app_version": os.environ.get("APP_VERSION", "dev"),
             "current_year": datetime.now(timezone.utc).year,
+            "product_name": "Relayn",
+            "product_descriptor": "Messaging Workspace",
+            "password_min_length": int(app.config.get("AUTH_PASSWORD_MIN_LENGTH", 12)),
         }
 
     @app.template_filter("localtime")
