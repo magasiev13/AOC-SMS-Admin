@@ -20,7 +20,8 @@ from app.services.twilio_service import previous_billing_period_window, reconcil
 from app.utils import as_utc_datetime
 
 
-ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active"}
+COMPLIMENTARY_SUBSCRIPTION_STATUS = "complimentary"
+ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active", COMPLIMENTARY_SUBSCRIPTION_STATUS}
 RELEVANT_STRIPE_EVENT_TYPES = {
     "checkout.session.completed",
     "customer.subscription.created",
@@ -46,6 +47,10 @@ def subscription_status_allows_sending(status: str | None) -> bool:
     return (status or "").strip().lower() in ACTIVE_SUBSCRIPTION_STATUSES
 
 
+def subscription_status_is_complimentary(status: str | None) -> bool:
+    return (status or "").strip().lower() == COMPLIMENTARY_SUBSCRIPTION_STATUS
+
+
 def organization_can_send(organization: Organization | None) -> bool:
     if organization is None:
         return False
@@ -65,6 +70,28 @@ def ensure_subscription_record(organization: Organization) -> OrganizationSubscr
     )
     db.session.add(subscription)
     db.session.flush()
+    return subscription
+
+
+def mark_subscription_complimentary(organization: Organization) -> OrganizationSubscription:
+    subscription = ensure_subscription_record(organization)
+    subscription.status = COMPLIMENTARY_SUBSCRIPTION_STATUS
+    subscription.current_period_end = None
+    subscription.cancel_at_period_end = False
+    if not subscription.stripe_price_id:
+        subscription.stripe_price_id = current_app.config.get("STRIPE_PRICE_ID")
+    db.session.commit()
+    return subscription
+
+
+def clear_complimentary_subscription(organization: Organization) -> OrganizationSubscription:
+    subscription = ensure_subscription_record(organization)
+    if not subscription_status_is_complimentary(subscription.status):
+        return subscription
+    subscription.status = "incomplete"
+    subscription.current_period_end = None
+    subscription.cancel_at_period_end = False
+    db.session.commit()
     return subscription
 
 
@@ -326,6 +353,10 @@ def _find_matching_checkout_session(
 
 
 def create_checkout_session(organization: Organization, user_email: str, success_url: str, cancel_url: str):
+    subscription = ensure_subscription_record(organization)
+    if subscription_status_is_complimentary(subscription.status):
+        raise RuntimeError("Complimentary billing is already active for this organization.")
+
     if fake_checkout_enabled():
         session_id = _fake_checkout_session_id(organization)
         return SimpleNamespace(
@@ -339,7 +370,6 @@ def create_checkout_session(organization: Organization, user_email: str, success
         )
 
     stripe = _stripe_module()
-    subscription = ensure_subscription_record(organization)
     price_id = current_app.config.get("STRIPE_PRICE_ID")
     if not price_id:
         raise RuntimeError("STRIPE_PRICE_ID is not configured.")
@@ -371,11 +401,13 @@ def create_checkout_session(organization: Organization, user_email: str, success
 
 
 def create_billing_portal_session(organization: Organization, return_url: str):
-    stripe = _stripe_module()
     subscription = ensure_subscription_record(organization)
+    if subscription_status_is_complimentary(subscription.status):
+        raise RuntimeError("Complimentary organizations do not use the Stripe billing portal.")
     if not subscription.stripe_customer_id:
         raise RuntimeError("Organization does not have a Stripe customer yet.")
 
+    stripe = _stripe_module()
     return stripe.billing_portal.Session.create(
         customer=subscription.stripe_customer_id,
         return_url=return_url,
@@ -402,6 +434,9 @@ def sync_subscription_from_event(event_type: str, data_object: dict) -> Organiza
             subscription = query.filter_by(stripe_customer_id=stripe_customer_id).first()
         if subscription is None:
             return None
+
+    if subscription_status_is_complimentary(subscription.status):
+        return subscription
 
     stripe_customer_id = data_object.get("customer")
     stripe_subscription_id = _stripe_subscription_id_from_data_object(event_type, data_object)
@@ -645,8 +680,11 @@ def refresh_subscription_from_stripe(
     organization: Organization,
     user_email: str = "",
 ) -> OrganizationSubscription | None:
-    stripe = _stripe_module()
     subscription = ensure_subscription_record(organization)
+    if subscription_status_is_complimentary(subscription.status):
+        return subscription
+
+    stripe = _stripe_module()
 
     if subscription.stripe_subscription_id:
         stripe_subscription = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
@@ -780,6 +818,8 @@ def reconcile_billing_subscriptions() -> dict[str, int]:
 
     subscriptions = OrganizationSubscription.query.all()
     for subscription in subscriptions:
+        if subscription_status_is_complimentary(subscription.status):
+            continue
         needs_reconcile = (
             not subscription.stripe_customer_id
             or not subscription.stripe_subscription_id

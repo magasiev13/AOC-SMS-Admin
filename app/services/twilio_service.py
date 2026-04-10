@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from typing import Optional
 
 from flask import current_app
@@ -29,6 +30,8 @@ from app.utils import normalize_phone, render_message_template
 
 
 TERMINAL_MESSAGE_STATUSES = {"delivered", "sent", "undelivered", "failed"}
+CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "active", "verified"}
+CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 
 
 class TwilioTransientError(Exception):
@@ -50,6 +53,20 @@ class InboundSignatureValidationResult:
 
     is_valid: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class CustomerManagedValidationResult:
+    """Resolved provider metadata for a validated customer-managed Twilio profile."""
+
+    account_sid: str
+    phone_number_sid: str
+    from_number: str
+    messaging_service_sid: str | None
+    campaign_sid: str | None
+    campaign_status: str | None
+    brand_registration_sid: str | None
+    brand_status: str | None
 
 
 def _decimal_value(value: object, default: str = "0") -> Decimal:
@@ -79,6 +96,15 @@ def _included_outbound_segments() -> int:
         return max(0, int(current_app.config.get("BILLING_INCLUDED_OUTBOUND_SEGMENTS") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _organization_has_complimentary_billing(organization_id: int | None) -> bool:
+    if not organization_id:
+        return False
+    organization = db.session.get(Organization, organization_id)
+    if organization is None or organization.subscription is None:
+        return False
+    return (organization.subscription.status or "").strip().lower() == "complimentary"
 
 
 def _period_window(value: datetime | None) -> tuple[datetime, datetime]:
@@ -183,17 +209,50 @@ def _build_subaccount_client(profile: OrganizationMessagingProfile) -> Client:
     return Client(username, password, profile.twilio_subaccount_sid)
 
 
+def _build_customer_managed_client(
+    *,
+    account_sid: str,
+    auth_token: str,
+) -> Client:
+    normalized_account_sid = (account_sid or "").strip().upper()
+    normalized_auth_token = (auth_token or "").strip()
+    if not normalized_account_sid or not normalized_account_sid.startswith("AC"):
+        raise ValueError("Customer-managed Twilio account SID must start with AC.")
+    if not normalized_auth_token:
+        raise ValueError("Customer-managed Twilio auth token is required.")
+    return Client(normalized_account_sid, normalized_auth_token)
+
+
+def _client_for_profile(profile: OrganizationMessagingProfile) -> Client:
+    if profile.provider_mode == "platform_managed":
+        return _build_subaccount_client(profile)
+
+    if profile.provider_mode == "customer_managed":
+        auth_token = decrypt_provider_secret(profile.twilio_auth_token_encrypted)
+        if not auth_token:
+            raise ValueError("Stored customer-managed auth token is empty.")
+        return _build_customer_managed_client(
+            account_sid=profile.twilio_account_sid or "",
+            auth_token=auth_token,
+        )
+
+    raise ValueError(f"Unsupported provider mode {profile.provider_mode!r}.")
+
+
 def _client_for_usage_reconciliation(organization_id: int | None) -> Client:
     profile = _messaging_profile_for_org(organization_id)
-    if profile is not None and profile.provider_mode == "platform_managed" and profile.twilio_subaccount_sid:
-        return _build_subaccount_client(profile)
+    if profile is not None and profile.provider_status != "error":
+        if profile.provider_mode == "platform_managed" and profile.twilio_subaccount_sid:
+            return _build_subaccount_client(profile)
+        if profile.provider_mode == "customer_managed" and profile.twilio_account_sid:
+            return _client_for_profile(profile)
     return _master_client()
 
 
 def _service_context(profile: OrganizationMessagingProfile, client: Client | None = None):
     if not profile.messaging_service_sid:
         raise ProviderProvisioningError("Messaging service is not provisioned for this organization.")
-    provider_client = client or _build_subaccount_client(profile)
+    provider_client = client or _client_for_profile(profile)
     return provider_client.messaging.v1.services(profile.messaging_service_sid)
 
 
@@ -204,6 +263,71 @@ def _configure_service_webhooks(profile: OrganizationMessagingProfile, *, client
         inbound_method="POST",
         use_inbound_webhook_on_number=False,
     )
+
+
+def _configure_phone_number_webhook(
+    client: Client,
+    phone_number_sid: str,
+) -> None:
+    if not phone_number_sid:
+        raise ProviderProvisioningError("A phone number SID is required to bind the inbound webhook.")
+    client.incoming_phone_numbers(phone_number_sid).update(
+        sms_url=_twilio_inbound_webhook_url(),
+        sms_method="POST",
+    )
+
+
+def _normalized_twilio_status(value: object) -> str | None:
+    normalized = (str(value or "")).strip().lower()
+    return normalized or None
+
+
+def _resolve_customer_managed_phone_number(
+    client: Client,
+    from_number: str,
+) -> SimpleNamespace:
+    matches = client.incoming_phone_numbers.list(phone_number=from_number, limit=20)
+    for match in matches:
+        if normalize_phone(getattr(match, "phone_number", None)) == from_number:
+            return SimpleNamespace(
+                sid=getattr(match, "sid", None),
+                phone_number=normalize_phone(getattr(match, "phone_number", None)),
+            )
+    raise ProviderProvisioningError(
+        f"Twilio account does not contain the sender number {from_number}."
+    )
+
+
+def _resolve_customer_managed_campaign(service_context) -> tuple[str | None, str | None, str | None]:
+    campaigns = service_context.us_app_to_person.list(limit=20)
+    if not campaigns:
+        return None, None, None
+
+    preferred = None
+    for campaign in campaigns:
+        status = _normalized_twilio_status(getattr(campaign, "status", None))
+        if status in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES:
+            preferred = campaign
+            break
+    campaign = preferred or campaigns[0]
+    return (
+        getattr(campaign, "sid", None),
+        _normalized_twilio_status(getattr(campaign, "status", None)),
+        getattr(campaign, "brand_registration_sid", None),
+    )
+
+
+def _fetch_customer_managed_brand_status(
+    client: Client,
+    brand_registration_sid: str | None,
+) -> str | None:
+    if not brand_registration_sid:
+        return None
+    try:
+        brand = client.messaging.v1.brand_registrations(brand_registration_sid).fetch()
+    except TwilioRestException:
+        return None
+    return _normalized_twilio_status(getattr(brand, "status", None))
 
 
 def _sender_sync_error_message(exc: Exception, profile: OrganizationMessagingProfile) -> str:
@@ -225,6 +349,8 @@ def _sender_sync_error_message(exc: Exception, profile: OrganizationMessagingPro
 
 
 def _sync_service_sender(profile: OrganizationMessagingProfile, *, actor_user_id: int | None = None) -> None:
+    if profile.provider_mode != "platform_managed":
+        raise ProviderProvisioningError("Sender sync is only available for platform-managed providers.")
     if not profile.from_number or not profile.phone_number_sid:
         raise ProviderProvisioningError("Both sender number and phone number SID are required.")
 
@@ -262,6 +388,8 @@ def _sync_service_sender(profile: OrganizationMessagingProfile, *, actor_user_id
 
 
 def _detach_service_senders(profile: OrganizationMessagingProfile, *, actor_user_id: int | None = None) -> None:
+    if profile.provider_mode != "platform_managed":
+        raise ProviderProvisioningError("Sender detach is only available for platform-managed providers.")
     if not profile.twilio_subaccount_sid or not profile.messaging_service_sid:
         return
 
@@ -307,6 +435,11 @@ class TwilioService:
                 raise ValueError("Messaging provider is not ready for this organization.")
             if self.profile.provider_mode == "platform_managed" and self.profile.twilio_subaccount_sid:
                 self.client = _build_subaccount_client(self.profile)
+                self.account_sid = self.profile.twilio_subaccount_sid
+            elif self.profile.provider_mode == "customer_managed" and self.profile.twilio_account_sid:
+                self.client = _client_for_profile(self.profile)
+                self.account_sid = self.profile.twilio_account_sid
+                self.auth_token = decrypt_provider_secret(self.profile.twilio_auth_token_encrypted) or self.auth_token
             else:
                 self.client = Client(self.account_sid, self.auth_token)
             self.from_number = self.profile.from_number or self.from_number
@@ -438,6 +571,154 @@ def ensure_messaging_profile(organization: Organization) -> OrganizationMessagin
     db.session.add(profile)
     db.session.flush()
     return profile
+
+
+def save_customer_managed_profile(
+    organization_id: int,
+    *,
+    twilio_account_sid: str,
+    twilio_auth_token: str,
+    from_number: str,
+    messaging_service_sid: str | None = None,
+    business_type: str | None = None,
+    use_case: str | None = None,
+    actor_user_id: int | None = None,
+) -> tuple[OrganizationMessagingProfile, CustomerManagedValidationResult]:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = ensure_messaging_profile(organization)
+    normalized_account_sid = (twilio_account_sid or "").strip().upper()
+    normalized_auth_token = (twilio_auth_token or "").strip()
+    normalized_from_number = normalize_phone(from_number)
+    normalized_service_sid = (messaging_service_sid or "").strip().upper() or None
+
+    if not normalized_account_sid.startswith("AC"):
+        raise ProviderProvisioningError("Customer-managed Twilio account SID must start with AC.")
+    if not normalized_auth_token:
+        raise ProviderProvisioningError("Customer-managed Twilio auth token is required.")
+    if not normalized_from_number:
+        raise ProviderProvisioningError("A valid E.164 sender number is required.")
+    if normalized_service_sid and not normalized_service_sid.startswith("MG"):
+        raise ProviderProvisioningError("Twilio Messaging Service SID must start with MG.")
+
+    profile.set_provider_status("provisioning")
+    profile.last_provision_error = None
+    profile.provider_last_checked_at = utc_now()
+    db.session.commit()
+
+    try:
+        customer_client = _build_customer_managed_client(
+            account_sid=normalized_account_sid,
+            auth_token=normalized_auth_token,
+        )
+        customer_client.api.v2010.accounts(normalized_account_sid).fetch()
+
+        resolved_number = _resolve_customer_managed_phone_number(
+            customer_client,
+            normalized_from_number,
+        )
+        if not resolved_number.sid:
+            raise ProviderProvisioningError(
+                f"Twilio could not resolve a phone number SID for {normalized_from_number}."
+            )
+
+        campaign_sid = None
+        campaign_status = None
+        brand_registration_sid = None
+        brand_status = None
+        if normalized_service_sid:
+            service_context = customer_client.messaging.v1.services(normalized_service_sid)
+            service_context.fetch()
+            campaign_sid, campaign_status, brand_registration_sid = _resolve_customer_managed_campaign(
+                service_context
+            )
+            if not campaign_sid:
+                raise ProviderProvisioningError(
+                    "The customer-managed Messaging Service does not have an attached A2P campaign."
+                )
+            if campaign_status not in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES:
+                raise ProviderProvisioningError(
+                    "The customer-managed Messaging Service campaign is not approved for live sending yet."
+                )
+            brand_status = _fetch_customer_managed_brand_status(customer_client, brand_registration_sid)
+            if brand_status is not None and brand_status not in CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES:
+                raise ProviderProvisioningError(
+                    "The customer-managed Twilio brand is not approved for live sending yet."
+                )
+            service_context.update(use_inbound_webhook_on_number=True)
+
+        _configure_phone_number_webhook(customer_client, resolved_number.sid)
+
+        profile.provider_mode = "customer_managed"
+        profile.twilio_account_sid = normalized_account_sid
+        profile.twilio_subaccount_sid = None
+        profile.twilio_auth_token_encrypted = encrypt_provider_secret(normalized_auth_token)
+        profile.messaging_service_sid = normalized_service_sid
+        profile.from_number = resolved_number.phone_number or normalized_from_number
+        profile.phone_number_sid = resolved_number.sid
+        profile.inbound_identity = resolved_number.phone_number or normalized_from_number
+        profile.business_type = business_type
+        profile.use_case = use_case
+        profile.sender_review_status = "approved"
+        profile.consent_acknowledged_at = utc_now()
+        profile.provisioned_at = profile.provisioned_at or utc_now()
+        profile.provider_last_checked_at = utc_now()
+        profile.last_provision_error = None
+        profile.set_provider_status("active")
+        _record_provider_audit(
+            organization.id,
+            "customer_managed_validate",
+            actor_user_id=actor_user_id,
+            message="Validated customer-managed Twilio configuration and bound inbound webhook.",
+            metadata={
+                "twilio_account_sid": normalized_account_sid,
+                "messaging_service_sid": normalized_service_sid,
+                "from_number": profile.from_number,
+                "phone_number_sid": profile.phone_number_sid,
+                "campaign_sid": campaign_sid,
+                "campaign_status": campaign_status,
+                "brand_registration_sid": brand_registration_sid,
+                "brand_status": brand_status,
+            },
+        )
+        db.session.commit()
+        return profile, CustomerManagedValidationResult(
+            account_sid=normalized_account_sid,
+            phone_number_sid=profile.phone_number_sid,
+            from_number=profile.from_number,
+            messaging_service_sid=normalized_service_sid,
+            campaign_sid=campaign_sid,
+            campaign_status=campaign_status,
+            brand_registration_sid=brand_registration_sid,
+            brand_status=brand_status,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        profile = ensure_messaging_profile(organization)
+        profile.provider_mode = "customer_managed"
+        profile.twilio_account_sid = normalized_account_sid or profile.twilio_account_sid
+        profile.provider_last_checked_at = utc_now()
+        profile.last_provision_error = str(exc)
+        profile.set_provider_status("error")
+        _record_provider_audit(
+            organization.id,
+            "customer_managed_validate",
+            actor_user_id=actor_user_id,
+            status="error",
+            message=str(exc),
+            metadata={
+                "twilio_account_sid": normalized_account_sid,
+                "messaging_service_sid": normalized_service_sid,
+                "from_number": normalized_from_number,
+            },
+        )
+        db.session.commit()
+        raise ProviderProvisioningError(str(exc)) from exc
 
 
 def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> OrganizationMessagingProfile:
@@ -801,10 +1082,13 @@ def reconcile_messaging_usage() -> dict[str, int]:
             if billable_units == 0 and provider_cost > 0:
                 billable_units = 1
             billable = provider_cost > 0 or (status in {"sent", "delivered"} and billable_units > 0)
+            complimentary_billing = _organization_has_complimentary_billing(record.organization_id)
 
             sell_rate = _currency_rate()
             sell_amount = Decimal("0")
-            if billable and billable_units > 0:
+            if complimentary_billing:
+                sell_rate = Decimal("0")
+            elif billable and billable_units > 0:
                 sell_amount = Decimal(billable_units) * sell_rate
 
             period_start, period_end = _period_window(date_created)
@@ -861,8 +1145,12 @@ def upsert_closed_usage_billing_periods() -> int:
             .scalar()
         ) or 0
         included_units = _included_outbound_segments()
+        complimentary_billing = _organization_has_complimentary_billing(organization_id)
         overage_units = max(0, int(used_units) - included_units)
         sell_amount = Decimal(overage_units) * _currency_rate()
+        if complimentary_billing:
+            overage_units = 0
+            sell_amount = Decimal("0")
         period = OrganizationUsageBillingPeriod.query.filter_by(
             organization_id=organization_id,
             period_start=period_start,

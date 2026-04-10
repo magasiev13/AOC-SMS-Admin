@@ -120,6 +120,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             Organization,
             OrganizationMessagingProfile,
             OrganizationProviderAuditLog,
+            OrganizationSubscription,
             OrganizationUsageBillingPeriod,
         )
 
@@ -127,6 +128,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.Organization = Organization
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
         self.OrganizationProviderAuditLog = OrganizationProviderAuditLog
+        self.OrganizationSubscription = OrganizationSubscription
         self.MessagingUsageRecord = MessagingUsageRecord
         self.OrganizationUsageBillingPeriod = OrganizationUsageBillingPeriod
 
@@ -153,8 +155,13 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._original_env)
 
-    def _create_org_with_profile(self, **profile_overrides):
+    def _create_org_with_profile(self, *, subscription_status="incomplete", **profile_overrides):
         organization = self.Organization(name="Acme", slug="acme", status="active")
+        subscription = self.OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status=subscription_status,
+        )
         profile_kwargs = {
             "organization": organization,
             "provider_mode": "platform_managed",
@@ -163,7 +170,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         }
         profile_kwargs.update(profile_overrides)
         profile = self.OrganizationMessagingProfile(**profile_kwargs)
-        self.db.session.add_all([organization, profile])
+        self.db.session.add_all([organization, subscription, profile])
         self.db.session.commit()
         return organization, profile
 
@@ -186,6 +193,106 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         self.assertTrue(result.is_valid)
         mock_validator.assert_called_once_with("subaccount-token")
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_save_customer_managed_profile_validates_external_account_and_sender(self, mock_build_customer_client) -> None:
+        from app.services.provider_secret_service import decrypt_provider_secret
+        from app.services.twilio_service import save_customer_managed_profile
+
+        organization, _ = self._create_org_with_profile()
+        customer_client = mock_build_customer_client.return_value
+        customer_client.incoming_phone_numbers.list.return_value = [
+            SimpleNamespace(sid="PNcust0001", phone_number="+15550001111")
+        ]
+        customer_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = [
+            SimpleNamespace(
+                sid="QEcust0001",
+                status="VERIFIED",
+                brand_registration_sid="BNcust0001",
+            )
+        ]
+        customer_client.messaging.v1.brand_registrations.return_value.fetch.return_value = SimpleNamespace(
+            status="VERIFIED"
+        )
+
+        profile, validation = save_customer_managed_profile(
+            organization.id,
+            twilio_account_sid="ACcust0001",
+            twilio_auth_token="customer-token",
+            from_number="+15550001111",
+            messaging_service_sid="MGcust0001",
+            business_type="Nonprofit",
+            use_case="Announcements",
+            actor_user_id=42,
+        )
+
+        self.assertEqual(profile.provider_mode, "customer_managed")
+        self.assertEqual(profile.provider_status, "active")
+        self.assertEqual(profile.twilio_account_sid, "ACCUST0001")
+        self.assertIsNone(profile.twilio_subaccount_sid)
+        self.assertEqual(profile.phone_number_sid, "PNcust0001")
+        self.assertEqual(profile.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(profile.from_number, "+15550001111")
+        self.assertEqual(profile.sender_review_status, "approved")
+        self.assertIsNotNone(profile.consent_acknowledged_at)
+        self.assertEqual(decrypt_provider_secret(profile.twilio_auth_token_encrypted), "customer-token")
+        self.assertEqual(validation.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(validation.campaign_status, "verified")
+        customer_client.messaging.v1.services.return_value.update.assert_called_once_with(
+            use_inbound_webhook_on_number=True
+        )
+        customer_client.incoming_phone_numbers.assert_called_once_with("PNcust0001")
+        customer_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
+            sms_url="https://beta.example.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_save_customer_managed_profile_fails_when_sender_number_missing_from_external_account(
+        self,
+        mock_build_customer_client,
+    ) -> None:
+        from app.services.twilio_service import ProviderProvisioningError, save_customer_managed_profile
+
+        organization, _ = self._create_org_with_profile()
+        mock_build_customer_client.return_value.incoming_phone_numbers.list.return_value = []
+
+        with self.assertRaises(ProviderProvisioningError) as ctx:
+            save_customer_managed_profile(
+                organization.id,
+                twilio_account_sid="ACcust0001",
+                twilio_auth_token="customer-token",
+                from_number="+15550001111",
+                messaging_service_sid="MGcust0001",
+            )
+
+        self.assertIn("does not contain the sender number", str(ctx.exception))
+        self.db.session.expire_all()
+        profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization.id).one()
+        self.assertEqual(profile.provider_mode, "customer_managed")
+        self.assertEqual(profile.provider_status, "error")
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_twilio_service_uses_customer_managed_account_credentials(self, mock_build_customer_client) -> None:
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import TwilioService
+
+        _, profile = self._create_org_with_profile(
+            provider_mode="customer_managed",
+            twilio_account_sid="ACcust0001",
+            twilio_auth_token_encrypted=encrypt_provider_secret("customer-token"),
+            messaging_service_sid="MGcust0001",
+            from_number="+15550001111",
+            phone_number_sid="PNcust0001",
+            provider_status="active",
+            status="active",
+        )
+
+        service = TwilioService(organization_id=profile.organization_id)
+
+        self.assertIs(service.client, mock_build_customer_client.return_value)
+        self.assertEqual(service.account_sid, "ACCUST0001")
+        self.assertEqual(service.auth_token, "customer-token")
 
     @patch("app.services.twilio_service._configure_service_webhooks")
     @patch("app.services.twilio_service._build_subaccount_client")
@@ -393,6 +500,47 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(record.billable_units, 2)
         self.assertEqual(record.twilio_subaccount_sid, "ACsub0003")
 
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_reconcile_messaging_usage_zeroes_sell_amount_for_complimentary_org(self, mock_build_subaccount_client) -> None:
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import reconcile_messaging_usage
+
+        organization, _ = self._create_org_with_profile(
+            subscription_status="complimentary",
+            twilio_subaccount_sid="ACsub0004",
+            twilio_auth_token_encrypted=encrypt_provider_secret("subaccount-token-4"),
+            provider_status="active",
+            status="active",
+        )
+        self.db.session.add(
+            self.MessagingUsageRecord(
+                organization_id=organization.id,
+                message_sid="SMusage-comped",
+                source="blast",
+                reconciliation_status="pending",
+            )
+        )
+        self.db.session.commit()
+
+        mock_client = mock_build_subaccount_client.return_value
+        mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            status="delivered",
+            num_segments="2",
+            price="-0.0400",
+            price_unit="usd",
+            date_created=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            account_sid="ACsub0004",
+        )
+
+        summary = reconcile_messaging_usage()
+
+        self.db.session.expire_all()
+        record = self.MessagingUsageRecord.query.filter_by(message_sid="SMusage-comped").one()
+        self.assertEqual(summary["records_finalized"], 1)
+        self.assertEqual(record.sell_rate, Decimal("0"))
+        self.assertEqual(record.sell_amount, Decimal("0"))
+        self.assertEqual(record.margin, Decimal("-0.0400"))
+
     def test_upsert_closed_usage_billing_periods_summarizes_overage(self) -> None:
         from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods
 
@@ -431,3 +579,41 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(period.overage_units, 1)
         self.assertEqual(period.status, "pending")
         self.assertEqual(period.sell_amount, Decimal("0.0300"))
+
+    def test_upsert_closed_usage_billing_periods_marks_complimentary_org_as_included(self) -> None:
+        from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods
+
+        organization, _ = self._create_org_with_profile(subscription_status="complimentary")
+        period_start, period_end = previous_billing_period_window()
+        self.db.session.add_all(
+            [
+                self.MessagingUsageRecord(
+                    organization_id=organization.id,
+                    message_sid="SM-comp-1",
+                    billable_units=1,
+                    billable=True,
+                    reconciliation_status="finalized",
+                    billing_period_start=period_start,
+                    billing_period_end=period_end,
+                ),
+                self.MessagingUsageRecord(
+                    organization_id=organization.id,
+                    message_sid="SM-comp-2",
+                    billable_units=2,
+                    billable=True,
+                    reconciliation_status="finalized",
+                    billing_period_start=period_start,
+                    billing_period_end=period_end,
+                ),
+            ]
+        )
+        self.db.session.commit()
+
+        updated = upsert_closed_usage_billing_periods()
+
+        self.assertEqual(updated, 1)
+        period = self.OrganizationUsageBillingPeriod.query.filter_by(organization_id=organization.id).one()
+        self.assertEqual(period.used_units, 3)
+        self.assertEqual(period.overage_units, 0)
+        self.assertEqual(period.sell_amount, Decimal("0"))
+        self.assertEqual(period.status, "included")

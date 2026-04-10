@@ -27,22 +27,29 @@
                 <div class="billing-summary-card__body">
                     <p class="mb-2">{{ subscription_view.summary }}</p>
                     <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
+                    {% if subscription_view.is_complimentary %}
+                    <div class="form-text mt-3">Stripe is not used for this workspace. Twilio charges stay on the customer-managed account.</div>
+                    {% endif %}
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-4">
+                    {% if subscription_view.show_portal %}
                     <form method="POST" action="{{ url_for('main.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-secondary" {% if not subscription or not subscription.stripe_customer_id %}disabled{% endif %}>
+                        <button type="submit" class="btn btn-outline-secondary">
                             Open Billing Portal
                         </button>
                     </form>
+                    {% endif %}
+                    {% if subscription_view.show_checkout %}
                     <form method="POST" action="{{ url_for('main.billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-primary">
                             {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
                         </button>
                     </form>
+                    {% endif %}
                 </div>
-                {% if not subscription or not subscription.stripe_customer_id %}
+                {% if subscription_view.show_portal and (not subscription or not subscription.stripe_customer_id) %}
                 <div class="form-text mt-2">The billing portal becomes available after Stripe creates the customer record.</div>
                 {% endif %}
             </div>

@@ -138,7 +138,7 @@ A2P_CAMPAIGN_FAILURE_STATUSES = {"failed", "rejected", "deleted"}
 A2P_NUMBER_FAILURE_STATUSES = {"failed", "rejected", "registration_failed"}
 A2P_BRAND_APPROVED_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES = set(A2P_BRAND_APPROVED_STATUSES)
-A2P_CAMPAIGN_APPROVED_STATUSES = {"approved", "active"}
+A2P_CAMPAIGN_APPROVED_STATUSES = {"approved", "active", "verified"}
 A2P_REVIEWING_STATUSES = {"pending", "pending-review", "processing", "queued", "registered", "submitted", "unverified"}
 A2P_EVENT_STREAM_RECENT_EVENT_LIMIT = 20
 
@@ -1672,6 +1672,76 @@ def describe_a2p_onboarding(
     onboarding: OrganizationA2POnboarding | None,
     profile: OrganizationMessagingProfile | None = None,
 ) -> dict[str, Any]:
+    if profile is not None and profile.provider_mode == "customer_managed":
+        status_payload = _load_status_payload(onboarding) if onboarding is not None else {}
+        brand_status = _status_value(
+            status_payload.get("brand_status") if status_payload else (onboarding.brand_status if onboarding else None)
+        )
+        campaign_status = _status_value(
+            status_payload.get("campaign_status") if status_payload else (onboarding.campaign_status if onboarding else None)
+        )
+        can_send = bool(profile.can_send)
+        campaign_sid = (
+            status_payload.get("campaign_sid")
+            if status_payload.get("campaign_sid")
+            else (onboarding.campaign_sid if onboarding is not None else None)
+        )
+        messaging_service_sid = (
+            status_payload.get("messaging_service_sid")
+            if status_payload.get("messaging_service_sid")
+            else profile.messaging_service_sid
+        )
+        phone_number_sid = (
+            status_payload.get("phone_number_sid")
+            if status_payload.get("phone_number_sid")
+            else profile.phone_number_sid
+        )
+        if can_send or (
+            brand_status in A2P_BRAND_APPROVED_STATUSES
+            and campaign_status in A2P_CAMPAIGN_APPROVED_STATUSES
+        ):
+            stage = "approved"
+            badge = "success"
+            title = "External A2P approved"
+            summary = "This workspace uses a customer-managed Twilio account with an approved external brand and campaign."
+            next_step = "Keep A2P and messaging compliance managed in the customer Twilio account."
+            eta = "Ready immediately."
+        else:
+            stage = "external"
+            badge = "info"
+            title = "External A2P managed"
+            summary = "A2P registration is owned in the customer Twilio account instead of the platform."
+            next_step = (
+                "Confirm the external brand, campaign, messaging service, and sender remain approved in Twilio."
+            )
+            eta = "Status depends on the customer-managed Twilio account."
+        return {
+            "stage": stage,
+            "badge": badge,
+            "title": title,
+            "summary": summary,
+            "next_step": next_step,
+            "eta": eta,
+            "failure_reason": None,
+            "brand_status": _humanize_status(brand_status, fallback="externally managed"),
+            "campaign_status": _humanize_status(campaign_status, fallback="externally managed"),
+            "number_status": "configured" if profile.from_number else "pending",
+            "last_checked_at": onboarding.last_synced_at if onboarding is not None else profile.provider_last_checked_at,
+            "has_submission": bool(campaign_sid or messaging_service_sid or phone_number_sid),
+            "is_waiting": False,
+            "show_wait_state": False,
+            "event_streams_enabled": False,
+            "external_managed": True,
+            "campaign_sid": campaign_sid,
+            "brand_registration_sid": (
+                status_payload.get("brand_registration_sid")
+                if status_payload.get("brand_registration_sid")
+                else (onboarding.brand_registration_sid if onboarding is not None else None)
+            ),
+            "messaging_service_sid": messaging_service_sid,
+            "phone_number_sid": phone_number_sid,
+        }
+
     if onboarding is None or onboarding.onboarding_status == "draft":
         return {
             "stage": "draft",
@@ -1689,6 +1759,7 @@ def describe_a2p_onboarding(
             "is_waiting": False,
             "show_wait_state": False,
             "event_streams_enabled": bool(current_app.config.get("TWILIO_A2P_EVENT_STREAMS_ENABLED")),
+            "external_managed": False,
         }
 
     brand_status = _status_value(onboarding.brand_status)
@@ -1764,6 +1835,7 @@ def describe_a2p_onboarding(
         "is_waiting": stage in {"submitted", "reviewing"},
         "show_wait_state": stage in {"submitted", "reviewing", "needs_action"} and not can_send,
         "event_streams_enabled": bool(current_app.config.get("TWILIO_A2P_EVENT_STREAMS_ENABLED")),
+        "external_managed": False,
     }
 
 

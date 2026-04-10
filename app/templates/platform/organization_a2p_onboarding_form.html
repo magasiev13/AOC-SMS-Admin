@@ -19,7 +19,11 @@
                 <div class="platform-shell__eyebrow">A2P onboarding</div>
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
                 <p class="platform-shell__summary-copy">
+                    {% if customer_managed_a2p %}
+                    This workspace keeps A2P registration in the customer's Twilio account. Review the external brand, campaign, and sender state here without submitting a platform-managed packet.
+                    {% else %}
                     Submit and monitor the registration package here. Keep messaging setup separate, then return once carrier review is complete.
+                    {% endif %}
                 </p>
             </div>
         </div>
@@ -69,6 +73,45 @@
                 </div>
                 {% endif %}
 
+                {% if customer_managed_a2p %}
+                <div class="platform-note mb-4" role="note">
+                    <div class="platform-note__title">Customer-managed A2P</div>
+                    <div class="platform-note__copy">
+                        Twilio Trust Hub, brand registration, and campaign approval are owned in the customer's external account. Use the messaging setup page to re-validate the connection after any external Twilio changes.
+                    </div>
+                </div>
+
+                <div class="platform-key-grid mb-4">
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Twilio account</div>
+                        <div class="platform-key-value"><code>{{ messaging_profile.twilio_account_sid or 'Not configured yet' }}</code></div>
+                    </div>
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Messaging Service</div>
+                        <div class="platform-key-value"><code>{{ a2p_status.messaging_service_sid or messaging_profile.messaging_service_sid or 'Not configured yet' }}</code></div>
+                    </div>
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Campaign SID</div>
+                        <div class="platform-key-value"><code>{{ a2p_status.campaign_sid or onboarding.campaign_sid or 'Not synced yet' }}</code></div>
+                    </div>
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Brand SID</div>
+                        <div class="platform-key-value"><code>{{ a2p_status.brand_registration_sid or onboarding.brand_registration_sid or 'Not synced yet' }}</code></div>
+                    </div>
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Sender number</div>
+                        <div class="platform-key-value">{{ messaging_profile.from_number or 'Not configured yet' }}</div>
+                    </div>
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Phone number SID</div>
+                        <div class="platform-key-value"><code>{{ a2p_status.phone_number_sid or messaging_profile.phone_number_sid or 'Not configured yet' }}</code></div>
+                    </div>
+                </div>
+
+                <div class="platform-form-actions mt-4">
+                    <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-primary">Back to Messaging Setup</a>
+                </div>
+                {% else %}
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit">
@@ -308,6 +351,7 @@
                         <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-outline-secondary">Back to Messaging</a>
                     </div>
                 </form>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -334,7 +378,9 @@
                         Promotional consent cannot be created from a phone number alone. Use a hosted web or QR opt-in with clear disclosures, then mirror existing consent into Twilio later if needed.
                     </p>
                     <p class="small text-muted mb-3">
-                        {% if a2p_status and a2p_status.event_streams_enabled %}
+                        {% if customer_managed_a2p %}
+                        This workspace inherits its approved brand and campaign from the customer Twilio account. Keep webhook, Messaging Service, and number changes aligned there first.
+                        {% elif a2p_status and a2p_status.event_streams_enabled %}
                         Event Streams can update this page automatically as Twilio emits brand, campaign, and number events.
                         {% else %}
                         Use Refresh Status when Event Streams are not configured yet. The background reconcile job will keep polling Twilio.
@@ -345,14 +391,14 @@
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="action" value="refresh">
-                            <button type="submit" class="btn btn-outline-primary" {% if not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>
+                            <button type="submit" class="btn btn-outline-primary" {% if customer_managed_a2p or not onboarding or onboarding.onboarding_status in ('draft', 'canceled') %}disabled{% endif %}>
                                 Refresh Status
                             </button>
                         </form>
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="action" value="cancel">
-                            <button type="submit" class="btn btn-outline-danger" {% if not onboarding or onboarding.onboarding_status in ('draft', 'approved', 'canceled') %}disabled{% endif %}>
+                            <button type="submit" class="btn btn-outline-danger" {% if customer_managed_a2p or not onboarding or onboarding.onboarding_status in ('draft', 'approved', 'canceled') %}disabled{% endif %}>
                                 Cancel
                             </button>
                         </form>
@@ -368,6 +414,7 @@
 {% block scripts %}
 {{ super() }}
 <script>
+    {% if not customer_managed_a2p %}
     (() => {
         const registrationPathInput = document.getElementById('registration_path');
         const businessTypeInput = document.getElementById('business_type');
@@ -442,5 +489,6 @@
             window.location.reload();
         }, 15000);
     })();
+    {% endif %}
 </script>
 {% endblock %}

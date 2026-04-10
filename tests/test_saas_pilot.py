@@ -407,6 +407,19 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Ready for owner testing", response.data)
         self.assertIn(b"Live SMS approved", response.data)
 
+    def test_billing_overview_hides_stripe_actions_for_complimentary_workspace(self) -> None:
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/billing")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Complimentary billing", response.data)
+        self.assertIn(b"Twilio charges stay on the customer-managed account.", response.data)
+        self.assertNotIn(b"Start Subscription", response.data)
+        self.assertNotIn(b"Open Billing Portal", response.data)
+
     def test_owner_dashboard_shows_pending_a2p_launchpad_when_messaging_is_not_live(self) -> None:
         self.subscription.status = "trialing"
         self.messaging_profile.provider_status = "pending"
@@ -499,6 +512,16 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(args[1], "owner@acme.test")
         self.assertIn("session_id={CHECKOUT_SESSION_ID}", args[2])
         self.assertTrue(args[3].endswith("/setup?step=billing"))
+
+    def test_billing_checkout_post_redirects_complimentary_workspace_to_dashboard(self) -> None:
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post("/billing/checkout", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/dashboard", response.headers.get("Location", ""))
 
     def test_fake_checkout_route_is_disabled_by_default(self) -> None:
         self._login_owner()
@@ -1270,6 +1293,60 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(self.messaging_profile.provider_status, "pending")
         self.assertEqual(self.messaging_profile.from_number, "+15550009999")
 
+    def test_platform_admin_can_grant_complimentary_billing(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/billing",
+            data={"action": "grant_complimentary"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(self.subscription)
+        self.assertEqual(self.subscription.status, "complimentary")
+
+    @patch("app.routes._sync_customer_managed_onboarding_state")
+    @patch("app.routes.save_customer_managed_profile")
+    def test_platform_organizations_messaging_edit_can_save_customer_managed_provider(
+        self,
+        mock_save_customer_managed_profile,
+        mock_sync_customer_managed_onboarding_state,
+    ) -> None:
+        self._login_platform_admin()
+        validation_result = SimpleNamespace(
+            account_sid="ACcust0001",
+            phone_number_sid="PNcust0001",
+            from_number="+15550001111",
+            messaging_service_sid="MGcust0001",
+            campaign_sid="QEcust0001",
+            campaign_status="verified",
+            brand_registration_sid="BNcust0001",
+            brand_status="verified",
+        )
+        mock_save_customer_managed_profile.return_value = (self.messaging_profile, validation_result)
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "save",
+                "provider_mode": "customer_managed",
+                "twilio_account_sid": "ACcust0001",
+                "twilio_auth_token": "customer-token",
+                "sender_number": "+15550001111",
+                "messaging_service_sid": "MGcust0001",
+                "business_type": "Nonprofit",
+                "use_case": "Announcements",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_save_customer_managed_profile.assert_called_once()
+        self.assertEqual(mock_save_customer_managed_profile.call_args.kwargs["twilio_account_sid"], "ACcust0001")
+        self.assertEqual(mock_save_customer_managed_profile.call_args.kwargs["from_number"], "+15550001111")
+        mock_sync_customer_managed_onboarding_state.assert_called_once()
+
     @patch("app.routes.sync_sender_assignment")
     @patch("app.routes.release_sender")
     def test_platform_organizations_messaging_edit_can_release_and_activate_sender(self, mock_release_sender, mock_sync_sender_assignment) -> None:
@@ -1357,6 +1434,34 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Legal Business Name", response.data)
         self.assertRegex(response.data, rb'<option value="ACCOUNT_NOTIFICATION" selected>')
         self.assertNotIn(b'value="None"', response.data)
+
+    def test_platform_admin_a2p_onboarding_is_read_only_for_customer_managed_org(self) -> None:
+        self.messaging_profile.provider_mode = "customer_managed"
+        self.messaging_profile.twilio_account_sid = "ACcust0001"
+        self.messaging_profile.messaging_service_sid = "MGcust0001"
+        self.messaging_profile.phone_number_sid = "PNcust0001"
+        self.messaging_profile.from_number = "+15550001111"
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            brand_status="verified",
+            campaign_status="verified",
+            brand_registration_sid="BNcust0001",
+            campaign_sid="QEcust0001",
+            raw_status_json='{"external_managed": true, "brand_status": "verified", "campaign_status": "verified", "messaging_service_sid": "MGcust0001", "phone_number_sid": "PNcust0001"}',
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        self._login_platform_admin()
+
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Customer-managed A2P", response.data)
+        self.assertIn(b"External A2P approved", response.data)
+        self.assertIn(b"Back to Messaging Setup", response.data)
+        self.assertNotIn(b"Legal Business Name", response.data)
+        self.assertNotIn(b"Submit A2P Onboarding", response.data)
 
     def test_platform_admin_sees_manage_a2p_onboarding_link_on_messaging_page_before_onboarding_exists(self) -> None:
         self._login_platform_admin()

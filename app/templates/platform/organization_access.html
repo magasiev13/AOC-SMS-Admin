@@ -41,6 +41,16 @@
 
     <div class="platform-shell__body">
     <div class="platform-main">
+        {% if members_missing_email %}
+        <div class="platform-note mb-4" role="alert">
+            <div class="platform-note__title">Imported users need email cleanup</div>
+            <div class="platform-note__copy">
+                {{ members_missing_email|length }} joined member{{ '' if members_missing_email|length == 1 else 's' }} {{ 'is' if members_missing_email|length == 1 else 'are' }} missing an email address.
+                Sign-in can continue, but invite recovery and password reset hygiene stay limited until those emails are backfilled.
+            </div>
+        </div>
+        {% endif %}
+
         <div class="card app-card mb-4 platform-table-card">
             <div class="card-header">Joined Members</div>
             <div class="card-body p-0">
@@ -137,6 +147,26 @@
 
     <aside class="platform-shell__side">
         <div class="platform-shell__sticky">
+            <div class="card app-card mb-4 platform-side-card">
+                <div class="card-body">
+                    <div class="platform-shell__eyebrow mb-2">Billing State</div>
+                    <p class="text-muted small">
+                        {{ billing.summary }}
+                    </p>
+                    <div class="platform-note mb-3">
+                        <div class="platform-note__title">{{ billing.title }}</div>
+                        <div class="platform-note__copy">{{ billing.next_step }}</div>
+                    </div>
+                    <form method="POST" action="{{ url_for('main.platform_organizations_update_billing', organization_id=organization.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="{{ 'clear_complimentary' if billing.is_complimentary else 'grant_complimentary' }}">
+                        <button type="submit" class="btn {{ 'btn-outline-danger' if billing.is_complimentary else 'btn-outline-primary' }}">
+                            {{ 'Clear Complimentary Billing' if billing.is_complimentary else 'Grant Complimentary Billing' }}
+                        </button>
+                    </form>
+                </div>
+            </div>
+
             <div class="card app-card mb-4 platform-side-card">
                 <div class="card-body">
                     <div class="platform-shell__eyebrow mb-2">Invite Staff Member</div>

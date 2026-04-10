@@ -28,6 +28,13 @@
 {% endblock %}
 
 {% block content %}
+{% if users_missing_email %}
+<div class="alert alert-warning" role="alert">
+    <strong>Email cleanup needed.</strong>
+    {{ users_missing_email|length }} user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
+    Those accounts can still sign in, but invite recovery and password reset hygiene remain incomplete until email is backfilled.
+</div>
+{% endif %}
 <div class="card app-card">
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover mb-0" data-sortable="client">

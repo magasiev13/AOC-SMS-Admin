@@ -11,7 +11,15 @@
 {% endblock %}
 
 {% block content %}
-{% set provider_configured = messaging_profile and messaging_profile.twilio_subaccount_sid and messaging_profile.messaging_service_sid %}
+{% set selected_provider_mode = request.form.get('provider_mode', messaging_profile.provider_mode if messaging_profile else 'platform_managed') or 'platform_managed' %}
+{% set provider_is_customer_managed = selected_provider_mode == 'customer_managed' %}
+{% set provider_configured = (
+    messaging_profile and messaging_profile.twilio_account_sid and messaging_profile.from_number
+) if provider_is_customer_managed else (
+    messaging_profile and messaging_profile.twilio_subaccount_sid and messaging_profile.messaging_service_sid
+) %}
+{% set customer_service_sid = request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') or '' %}
+{% set current_account_sid = request.form.get('twilio_account_sid', messaging_profile.twilio_account_sid if messaging_profile else '') or '' %}
 <div class="platform-shell">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
@@ -19,7 +27,11 @@
                 <div class="platform-shell__eyebrow">Messaging setup</div>
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
                 <p class="platform-shell__summary-copy">
-                    Provision the provider first, then attach an approved sender and confirm compliance before live sending is enabled.
+                    {% if provider_is_customer_managed %}
+                    Validate the customer-owned Twilio account, sender, and Messaging Service exactly as they exist today.
+                    {% else %}
+                    Provision the platform-managed Twilio account first, then attach an approved sender and confirm compliance before live sending is enabled.
+                    {% endif %}
                 </p>
             </div>
         </div>
@@ -38,242 +50,357 @@
     </section>
 
     <div class="platform-shell__body">
-    <div class="platform-main">
-        <div class="card app-card platform-section-card">
-            <div class="card-body">
-                <div class="platform-note mb-4" role="note">
-                    <div class="platform-note__title">Platform-managed Twilio</div>
-                    <div class="platform-note__copy">
-                        This workspace gets its own Twilio subaccount and messaging service. Provision first, then assign an approved sender number.
-                    </div>
-                </div>
-
-                <div class="platform-note mb-4" role="note">
-                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div>
-                            <div class="platform-note__title">A2P onboarding</div>
-                            <div class="platform-note__copy">
-                                Status: <strong>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</strong>
-                                {% if a2p_status %}
-                                · Brand: {{ a2p_status.brand_status }}
-                                · Campaign: {{ a2p_status.campaign_status }}
-                                {% endif %}
-                            </div>
-                            {% if a2p_status %}
-                            <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
-                            <div class="small text-muted mt-1">
-                                {{ a2p_status.eta }}
-                                {% if a2p_status.last_checked_display %}
-                                · Last checked {{ a2p_status.last_checked_display }}
-                                {% endif %}
-                            </div>
+        <div class="platform-main">
+            <div class="card app-card platform-section-card">
+                <div class="card-body">
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">
+                            {{ 'Customer-managed Twilio' if provider_is_customer_managed else 'Platform-managed Twilio' }}
+                        </div>
+                        <div class="platform-note__copy">
+                            {% if provider_is_customer_managed %}
+                            This workspace keeps its own Twilio account. The platform validates the customer account, sender number, Messaging Service, and inbound webhook without creating a subaccount or new A2P packet.
+                            {% else %}
+                            This workspace gets its own Twilio subaccount and Messaging Service. Provision first, then assign an approved sender number inside that organization account.
                             {% endif %}
                         </div>
-                        <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
-                            Manage A2P Onboarding
-                        </a>
                     </div>
-                </div>
 
-                {% if onboarding and onboarding.is_pending_review %}
-                <div class="platform-note mb-4" role="status">
-                    <div class="platform-note__title">Automatic refresh is on</div>
-                    <div class="platform-note__copy">
-                        This page checks for new A2P status updates automatically about every 15 seconds while carrier review is in progress.
+                    <div class="platform-note mb-4" role="note">
+                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <div>
+                                <div class="platform-note__title">A2P onboarding</div>
+                                <div class="platform-note__copy">
+                                    Status: <strong>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</strong>
+                                    {% if a2p_status %}
+                                    · Brand: {{ a2p_status.brand_status }}
+                                    · Campaign: {{ a2p_status.campaign_status }}
+                                    {% endif %}
+                                </div>
+                                {% if a2p_status %}
+                                <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
+                                <div class="small text-muted mt-1">
+                                    {{ a2p_status.eta }}
+                                    {% if a2p_status.last_checked_display %}
+                                    · Last checked {{ a2p_status.last_checked_display }}
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </div>
+                            <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                                {{ 'View External A2P Status' if provider_is_customer_managed else 'Manage A2P Onboarding' }}
+                            </a>
+                        </div>
                     </div>
-                </div>
-                {% endif %}
-                <div class="platform-note mb-4" role="note">
-                    <div class="platform-note__title">Need to send before approval?</div>
-                    <div class="platform-note__copy">
-                        Keep the default path on U.S. 10DLC. If a customer truly needs faster pre-approval sending, escalate for toll-free or short code suitability instead of widening the 10DLC use case.
-                    </div>
-                </div>
 
-                {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
-                <div class="platform-note platform-note--danger mb-4" role="alert">
-                    <div class="platform-note__title">Provider sync error</div>
-                    <div class="platform-note__copy">{{ messaging_profile.last_provision_error }}</div>
-                </div>
-                {% endif %}
+                    {% if onboarding and onboarding.is_pending_review and not provider_is_customer_managed %}
+                    <div class="platform-note mb-4" role="status">
+                        <div class="platform-note__title">Automatic refresh is on</div>
+                        <div class="platform-note__copy">
+                            This page checks for new A2P status updates automatically about every 15 seconds while carrier review is in progress.
+                        </div>
+                    </div>
+                    {% endif %}
 
-                <div class="platform-key-grid mb-4">
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Provider mode</div>
-                        <div class="platform-key-value">{{ messaging_profile.provider_mode if messaging_profile else 'platform_managed' }}</div>
+                    {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
+                    <div class="platform-note platform-note--danger mb-4" role="alert">
+                        <div class="platform-note__title">Provider sync error</div>
+                        <div class="platform-note__copy">{{ messaging_profile.last_provision_error }}</div>
                     </div>
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Sender review</div>
-                        <div class="platform-key-value">{{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}</div>
-                    </div>
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Twilio subaccount</div>
-                        <div class="platform-key-value"><code>{{ messaging_profile.twilio_subaccount_sid or 'Not provisioned yet' }}</code></div>
-                    </div>
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Messaging Service</div>
-                        <div class="platform-key-value"><code>{{ messaging_profile.messaging_service_sid or 'Not provisioned yet' }}</code></div>
-                    </div>
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Sender number</div>
-                        <div class="platform-key-value">{{ messaging_profile.from_number or 'Not assigned yet' }}</div>
-                    </div>
-                    <div class="platform-key-item">
-                        <div class="platform-key-label">Phone number SID</div>
-                        <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
-                    </div>
-                </div>
+                    {% endif %}
 
-                <div class="platform-form-actions mb-4">
+                    <div class="platform-key-grid mb-4">
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Provider mode</div>
+                            <div class="platform-key-value">{{ messaging_profile.provider_mode if messaging_profile else selected_provider_mode }}</div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Sender review</div>
+                            <div class="platform-key-value">{{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}</div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">{{ 'Twilio account' if provider_is_customer_managed else 'Twilio subaccount' }}</div>
+                            <div class="platform-key-value">
+                                <code>
+                                    {% if provider_is_customer_managed %}
+                                    {{ messaging_profile.twilio_account_sid or 'Not configured yet' }}
+                                    {% else %}
+                                    {{ messaging_profile.twilio_subaccount_sid or 'Not provisioned yet' }}
+                                    {% endif %}
+                                </code>
+                            </div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Messaging Service</div>
+                            <div class="platform-key-value"><code>{{ messaging_profile.messaging_service_sid or 'Not configured yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Sender number</div>
+                            <div class="platform-key-value">{{ messaging_profile.from_number or 'Not assigned yet' }}</div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Phone number SID</div>
+                            <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
+                        </div>
+                    </div>
+
+                    <div class="platform-form-actions mb-4">
+                        {% if not provider_is_customer_managed %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="provision">
+                            <button type="submit" class="btn {{ 'btn-outline-secondary' if provider_configured else 'btn-primary' }}" {% if provider_configured %}disabled{% endif %}>
+                                Provision Provider
+                            </button>
+                        </form>
+                        {% endif %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="provider_mode" value="{{ selected_provider_mode }}">
+                            <input type="hidden" name="action" value="{{ 'resume' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'suspend' }}">
+                            <button
+                                type="submit"
+                                class="btn btn-outline-secondary"
+                                {% if provider_is_customer_managed and not messaging_profile.twilio_account_sid %}
+                                disabled
+                                {% elif not provider_is_customer_managed and not messaging_profile.twilio_subaccount_sid %}
+                                disabled
+                                {% endif %}
+                            >
+                                {{ 'Resume Provider' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'Suspend Provider' }}
+                            </button>
+                        </form>
+                        {% if not provider_is_customer_managed %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="release_sender">
+                            <button type="submit" class="btn btn-outline-danger" {% if not messaging_profile or not messaging_profile.from_number %}disabled{% endif %}>
+                                Release Sender
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="provision">
-                        <button type="submit" class="btn {{ 'btn-outline-secondary' if provider_configured else 'btn-primary' }}" {% if provider_configured %}disabled{% endif %}>
-                            Provision Provider
-                        </button>
-                    </form>
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="{{ 'resume' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'suspend' }}">
-                        <button type="submit" class="btn btn-outline-secondary" {% if not messaging_profile or not messaging_profile.twilio_subaccount_sid %}disabled{% endif %}>
-                            {{ 'Resume Provider' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'Suspend Provider' }}
-                        </button>
-                    </form>
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="release_sender">
-                        <button type="submit" class="btn btn-outline-danger" {% if not messaging_profile or not messaging_profile.from_number %}disabled{% endif %}>
-                            Release Sender
-                        </button>
-                    </form>
-                </div>
+                        <input type="hidden" name="action" value="save">
 
-                <form method="POST">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="action" value="save">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label" for="provider_mode">Provider Mode</label>
+                                <select class="form-select" id="provider_mode" name="provider_mode">
+                                    <option value="platform_managed" {% if selected_provider_mode == 'platform_managed' %}selected{% endif %}>platform_managed</option>
+                                    <option value="customer_managed" {% if selected_provider_mode == 'customer_managed' %}selected{% endif %}>customer_managed</option>
+                                </select>
+                                <div class="form-text">
+                                    Use customer-managed when the tenant keeps its own Twilio account, sender, and A2P registration.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="business_type">Business Type</label>
+                                <input
+                                    class="form-control"
+                                    id="business_type"
+                                    name="business_type"
+                                    placeholder="Real estate, nonprofit, church"
+                                    value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="use_case">Use Case</label>
+                                <input
+                                    class="form-control"
+                                    id="use_case"
+                                    name="use_case"
+                                    placeholder="Announcements, reminders, campaigns"
+                                    value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                        </div>
 
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label" for="sender_number">Approved Sender Number</label>
-                            <input
-                                class="form-control"
+                        <div class="row g-3 mt-1" data-platform-managed-fields {% if provider_is_customer_managed %}hidden{% endif %}>
+                            <div class="col-md-6">
+                                <label class="form-label" for="sender_number">Approved Sender Number</label>
+                                <input
+                                    class="form-control"
                                 id="sender_number"
                                 name="sender_number"
                                 placeholder="+15551234567"
+                                {% if provider_is_customer_managed %}disabled{% endif %}
                                 value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
                             >
-                            <div class="form-text">
-                                Enter the live sender number after you assign it inside the organization subaccount.
+                                <div class="form-text">
+                                    Enter the live sender number after you assign it inside the organization subaccount.
+                                </div>
                             </div>
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="phone_number_sid">Phone Number SID</label>
-                            <input
-                                class="form-control"
+                            <div class="col-md-6">
+                                <label class="form-label" for="phone_number_sid">Phone Number SID</label>
+                                <input
+                                    class="form-control"
                                 id="phone_number_sid"
                                 name="phone_number_sid"
                                 placeholder="PNxxxxxxxx"
+                                {% if provider_is_customer_managed %}disabled{% endif %}
                                 value="{{ request.form.get('phone_number_sid', messaging_profile.phone_number_sid if messaging_profile else '') or '' }}"
                             >
-                            <div class="form-text">
-                                This PN SID must already belong to the organization's Twilio subaccount. A master-account PN SID will fail to attach.
+                                <div class="form-text">
+                                    This PN SID must already belong to the organization's Twilio subaccount.
+                                </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <div class="row g-3 mt-1">
-                        <div class="col-md-6">
-                            <label class="form-label" for="business_type">Business Type</label>
-                            <input
-                                class="form-control"
-                                id="business_type"
-                                name="business_type"
-                                placeholder="Real estate, nonprofit, church"
-                                value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') or '' }}"
-                            >
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="use_case">Use Case</label>
-                            <input
-                                class="form-control"
-                                id="use_case"
-                                name="use_case"
-                                placeholder="Announcements, reminders, campaigns"
-                                value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') or '' }}"
-                            >
-                        </div>
-                    </div>
-
-                    <div class="row g-3 mt-1">
-                        <div class="col-md-6">
-                            <label class="form-label" for="sender_review_status">Sender Review Status</label>
-                            <select class="form-select" id="sender_review_status" name="sender_review_status">
+                            <div class="col-md-6">
+                                <label class="form-label" for="sender_review_status">Sender Review Status</label>
                                 {% set selected_sender_review_status = request.form.get('sender_review_status', messaging_profile.sender_review_status if messaging_profile else 'pending') or 'pending' %}
-                                <option value="pending" {% if selected_sender_review_status == 'pending' %}selected{% endif %}>pending</option>
-                                <option value="approved" {% if selected_sender_review_status == 'approved' %}selected{% endif %}>approved</option>
-                                <option value="rejected" {% if selected_sender_review_status == 'rejected' %}selected{% endif %}>rejected</option>
-                            </select>
-                        </div>
-                        <div class="col-md-6 d-flex align-items-end">
-                            <div class="form-check">
-                                <input
-                                    class="form-check-input"
-                                    type="checkbox"
-                                    id="consent_acknowledged"
-                                    name="consent_acknowledged"
-                                    {% if request.form.get('consent_acknowledged') == 'on' or (request.method != 'POST' and messaging_profile and messaging_profile.consent_acknowledged_at) %}checked{% endif %}
-                                >
-                                <label class="form-check-label" for="consent_acknowledged">
-                                    Consent and compliance review completed
-                                </label>
+                                <select class="form-select" id="sender_review_status" name="sender_review_status" {% if provider_is_customer_managed %}disabled{% endif %}>
+                                    <option value="pending" {% if selected_sender_review_status == 'pending' %}selected{% endif %}>pending</option>
+                                    <option value="approved" {% if selected_sender_review_status == 'approved' %}selected{% endif %}>approved</option>
+                                    <option value="rejected" {% if selected_sender_review_status == 'rejected' %}selected{% endif %}>rejected</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="form-check">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="consent_acknowledged"
+                                        name="consent_acknowledged"
+                                        {% if provider_is_customer_managed %}disabled{% endif %}
+                                        {% if request.form.get('consent_acknowledged') == 'on' or (request.method != 'POST' and messaging_profile and messaging_profile.consent_acknowledged_at) %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label" for="consent_acknowledged">
+                                        Consent and compliance review completed
+                                    </label>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div class="platform-form-actions mt-4">
-                        <button type="submit" class="btn {{ 'btn-primary' if provider_configured else 'btn-outline-secondary' }}">Save Provider Settings</button>
-                        <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
+                        <div class="row g-3 mt-1" data-customer-managed-fields {% if not provider_is_customer_managed %}hidden{% endif %}>
+                            <div class="col-md-6">
+                                <label class="form-label" for="twilio_account_sid">Twilio Account SID</label>
+                                <input
+                                    class="form-control"
+                                    id="twilio_account_sid"
+                                    name="twilio_account_sid"
+                                    placeholder="ACxxxxxxxx"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ current_account_sid }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="twilio_auth_token">Twilio Auth Token</label>
+                                <input
+                                    class="form-control"
+                                    id="twilio_auth_token"
+                                    name="twilio_auth_token"
+                                    type="password"
+                                    autocomplete="new-password"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    placeholder="{{ 'Leave blank to keep the stored token' if messaging_profile and messaging_profile.twilio_account_sid else 'Enter Twilio auth token' }}"
+                                >
+                                <div class="form-text">
+                                    {% if messaging_profile and messaging_profile.twilio_account_sid %}
+                                    Leave blank to keep the currently stored token for the same account SID.
+                                    {% else %}
+                                    Required to validate the external Twilio account and bind the inbound webhook.
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="sender_number_customer">Sender Number</label>
+                                <input
+                                    class="form-control"
+                                    id="sender_number_customer"
+                                    name="sender_number"
+                                    placeholder="+15551234567"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
+                                >
+                                <div class="form-text">
+                                    Enter the customer-owned phone number already approved in the external Twilio account.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="messaging_service_sid">Messaging Service SID</label>
+                                <input
+                                    class="form-control"
+                                    id="messaging_service_sid"
+                                    name="messaging_service_sid"
+                                    placeholder="MGxxxxxxxx"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ customer_service_sid }}"
+                                >
+                                <div class="form-text">
+                                    Optional, but recommended when the customer already sends through a Messaging Service.
+                                </div>
+                            </div>
+                        </div>
 
-    <aside class="platform-shell__side">
-        <div class="platform-shell__sticky">
-            <div class="card app-card platform-side-card">
-                <div class="card-body">
-                    <div class="platform-shell__eyebrow mb-2">Readiness</div>
-                    {% set sender_assignment_state = 'ready' if messaging_profile and messaging_profile.from_number and messaging_profile.phone_number_sid and messaging_profile.provider_status != 'error' else ('error' if messaging_profile and messaging_profile.provider_status == 'error' and (messaging_profile.from_number or messaging_profile.phone_number_sid) else 'missing') %}
-                    <ul class="platform-status-list">
-                        <li><strong>Subaccount</strong><span>{{ 'ready' if messaging_profile and messaging_profile.twilio_subaccount_sid else 'missing' }}</span></li>
-                        <li><strong>Messaging service</strong><span>{{ 'ready' if messaging_profile and messaging_profile.messaging_service_sid else 'missing' }}</span></li>
-                        <li><strong>Sender assigned</strong><span>{{ sender_assignment_state }}</span></li>
-                        <li><strong>Compliance acknowledged</strong><span>{{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else 'missing' }}</span></li>
-                        <li><strong>Sender approved</strong><span>{{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else 'missing' }}</span></li>
-                        <li><strong>Live sending</strong><span>{{ 'enabled' if messaging_profile and messaging_profile.can_send else 'disabled' }}</span></li>
-                    </ul>
+                        <div class="platform-form-actions mt-4">
+                            <button type="submit" class="btn btn-primary">
+                                {{ 'Validate Customer-Managed Twilio' if provider_is_customer_managed else ('Save Provider Settings' if provider_configured else 'Save Draft Settings') }}
+                            </button>
+                            <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
+                        </div>
+                    </form>
                 </div>
             </div>
         </div>
-    </aside>
+
+        <aside class="platform-shell__side">
+            <div class="platform-shell__sticky">
+                <div class="card app-card platform-side-card">
+                    <div class="card-body">
+                        <div class="platform-shell__eyebrow mb-2">Readiness</div>
+                        {% set sender_assignment_state = 'ready' if messaging_profile and messaging_profile.from_number and messaging_profile.phone_number_sid and messaging_profile.provider_status != 'error' else ('error' if messaging_profile and messaging_profile.provider_status == 'error' and (messaging_profile.from_number or messaging_profile.phone_number_sid) else 'missing') %}
+                        <ul class="platform-status-list">
+                            <li>
+                                <strong>{{ 'External account' if provider_is_customer_managed else 'Subaccount' }}</strong>
+                                <span>
+                                    {% if provider_is_customer_managed %}
+                                    {{ 'ready' if messaging_profile and messaging_profile.twilio_account_sid else 'missing' }}
+                                    {% else %}
+                                    {{ 'ready' if messaging_profile and messaging_profile.twilio_subaccount_sid else 'missing' }}
+                                    {% endif %}
+                                </span>
+                            </li>
+                            <li><strong>Messaging service</strong><span>{{ 'ready' if messaging_profile and messaging_profile.messaging_service_sid else 'missing' }}</span></li>
+                            <li><strong>Sender assigned</strong><span>{{ sender_assignment_state }}</span></li>
+                            <li><strong>Compliance acknowledged</strong><span>{{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else ('external' if provider_is_customer_managed else 'missing') }}</span></li>
+                            <li><strong>Sender approved</strong><span>{{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else ('external' if provider_is_customer_managed else 'missing') }}</span></li>
+                            <li><strong>Live sending</strong><span>{{ 'enabled' if messaging_profile and messaging_profile.can_send else 'disabled' }}</span></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </aside>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 {{ super() }}
-{% if onboarding and onboarding.is_pending_review %}
 <script>
     (() => {
-        window.setInterval(() => {
-            const activeTag = document.activeElement?.tagName || '';
-            if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) {
-                return;
-            }
-            window.location.reload();
-        }, 15000);
+        const providerModeInput = document.getElementById('provider_mode');
+        const platformFields = document.querySelector('[data-platform-managed-fields]');
+        const customerFields = document.querySelector('[data-customer-managed-fields]');
+        if (!providerModeInput || !platformFields || !customerFields) {
+            return;
+        }
+
+        const syncProviderMode = () => {
+            const customerManaged = providerModeInput.value === 'customer_managed';
+            platformFields.hidden = customerManaged;
+            customerFields.hidden = !customerManaged;
+            platformFields.querySelectorAll('input, select, textarea').forEach((field) => {
+                field.disabled = customerManaged;
+            });
+            customerFields.querySelectorAll('input, select, textarea').forEach((field) => {
+                field.disabled = !customerManaged;
+            });
+        };
+
+        providerModeInput.addEventListener('change', syncProviderMode);
+        syncProviderMode();
     })();
 </script>
-{% endif %}
 {% endblock %}

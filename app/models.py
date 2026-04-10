@@ -341,6 +341,7 @@ class OrganizationMessagingProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
     provider_mode = db.Column(db.String(30), nullable=False, default='platform_managed')
+    twilio_account_sid = db.Column(db.String(64), nullable=True, index=True)
     twilio_subaccount_sid = db.Column(db.String(64), nullable=True, unique=True)
     twilio_auth_token_encrypted = db.Column(db.Text, nullable=True)
     credential_reference = db.Column(db.String(255), nullable=True)
@@ -369,6 +370,15 @@ class OrganizationMessagingProfile(db.Model):
         normalized = (value or "").strip().lower()
         if normalized not in {"platform_managed", "customer_managed"}:
             raise ValueError("Provider mode must be platform_managed or customer_managed.")
+        return normalized
+
+    @validates("twilio_account_sid")
+    def _normalize_twilio_account_sid(self, key, value):
+        normalized = (value or "").strip().upper()
+        if not normalized:
+            return None
+        if not normalized.startswith("AC"):
+            raise ValueError("Twilio account SID must start with AC.")
         return normalized
 
     @validates("status", "provider_status")

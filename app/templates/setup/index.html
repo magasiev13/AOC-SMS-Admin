@@ -68,16 +68,23 @@
                     {% if subscription_view.period_value %}
                     <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
                     {% endif %}
+                    {% if subscription_view.is_complimentary %}
+                    <div class="text-muted small">Stripe checkout is disabled because this workspace is comped and pays Twilio directly.</div>
+                    {% endif %}
                 </div>
                 <div class="setup-actions">
+                    {% if subscription_view.show_checkout %}
                     <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
                     </form>
+                    {% endif %}
+                    {% if subscription_view.show_portal %}
                     <form method="POST" action="{{ url_for('main.billing_portal') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-secondary" {% if not subscription or not subscription.stripe_customer_id %}disabled{% endif %}>Open billing portal</button>
+                        <button type="submit" class="btn btn-outline-secondary">Open billing portal</button>
                     </form>
+                    {% endif %}
                 </div>
             </section>
             {% elif current_step == 'compliance' %}

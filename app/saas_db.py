@@ -12,7 +12,10 @@ from werkzeug.security import generate_password_hash
 
 from app.config import Config
 from app.saas_migrations.runner import ensure_saas_schema_ready, inspect_saas_migrations, run_pending_saas_migrations
-from app.services.legacy_import_service import import_legacy_sqlite_snapshot
+from app.services.legacy_import_service import (
+    import_legacy_sqlite_snapshot,
+    import_legacy_sqlite_snapshot_into_new_org,
+)
 
 
 def _configure_logging() -> None:
@@ -194,8 +197,30 @@ def main() -> None:
         metavar="LEGACY_SQLITE_PATH",
         help="Import a legacy SQLite snapshot into the SaaS database.",
     )
+    action.add_argument(
+        "--import-legacy-into-org",
+        metavar="LEGACY_SQLITE_PATH",
+        help="Import a legacy SQLite snapshot into a newly created org inside an existing SaaS database.",
+    )
     parser.add_argument("--organization-name", default="Legacy Production", help="Default imported organization name.")
     parser.add_argument("--organization-slug", default="legacy-production", help="Default imported organization slug.")
+    parser.add_argument(
+        "--subscription-status",
+        default="incomplete",
+        help="Subscription status to apply when importing into a new org.",
+    )
+    parser.add_argument(
+        "--provider-mode",
+        default="platform_managed",
+        help="Messaging provider mode to apply when importing into a new org.",
+    )
+    parser.add_argument(
+        "--username-remap",
+        action="append",
+        default=[],
+        metavar="OLD=NEW",
+        help="Rename an imported legacy username to avoid conflicts. May be provided more than once.",
+    )
     args = parser.parse_args()
 
     _configure_logging()
@@ -223,6 +248,34 @@ def main() -> None:
                 legacy_db_path=args.import_legacy,
                 organization_name=args.organization_name,
                 organization_slug=args.organization_slug,
+                logger=logger,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True, default=str))
+
+        if args.import_legacy_into_org:
+            run_pending_saas_migrations(engine, logger)
+            ensure_saas_schema_ready(engine)
+            username_remaps: dict[str, str] = {}
+            for mapping in args.username_remap:
+                source, separator, target = (mapping or "").partition("=")
+                if not separator:
+                    raise RuntimeError(
+                        f"Invalid --username-remap value {mapping!r}. Use OLD=NEW."
+                    )
+                source = source.strip()
+                target = target.strip()
+                if not source or not target:
+                    raise RuntimeError(
+                        f"Invalid --username-remap value {mapping!r}. Use OLD=NEW."
+                    )
+                username_remaps[source] = target
+            summary = import_legacy_sqlite_snapshot_into_new_org(
+                legacy_db_path=args.import_legacy_into_org,
+                organization_name=args.organization_name,
+                organization_slug=args.organization_slug,
+                subscription_status=args.subscription_status,
+                provider_mode=args.provider_mode,
+                username_remaps=username_remaps,
                 logger=logger,
             )
             print(json.dumps(summary, indent=2, sort_keys=True, default=str))

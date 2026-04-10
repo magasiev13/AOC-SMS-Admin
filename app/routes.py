@@ -61,13 +61,16 @@ from app.services.auth_security_service import (
     store_password_history,
 )
 from app.services.billing_service import (
+    clear_complimentary_subscription,
     create_billing_portal_session,
     create_checkout_session,
     is_fake_checkout_session_id,
+    mark_subscription_complimentary,
     organization_can_send,
     process_stripe_webhook_event,
     refresh_subscription_from_stripe,
     subscription_status_allows_sending,
+    subscription_status_is_complimentary,
     sync_checkout_session_by_id,
 )
 from app.services.provider_secret_service import decrypt_provider_secret
@@ -115,6 +118,7 @@ from app.services.twilio_service import (
     release_sender,
     resolve_messaging_profile,
     resume_org,
+    save_customer_managed_profile,
     sync_sender_assignment,
     suspend_org,
 )
@@ -242,6 +246,68 @@ def _validate_org_messaging_profile_input(
             return 'That inbound messaging identity is already assigned to another organization.', None, None
 
     return None, normalized_sender, normalized_service_sid
+
+
+def _normalized_provider_mode(value: str | None, *, default: str = "platform_managed") -> str:
+    normalized = (value or default).strip().lower()
+    if normalized not in {"platform_managed", "customer_managed"}:
+        return default
+    return normalized
+
+
+def _customer_managed_auth_token_for_save(
+    messaging_profile: OrganizationMessagingProfile,
+    *,
+    requested_account_sid: str | None,
+    raw_auth_token: str | None,
+) -> str | None:
+    normalized_auth_token = (raw_auth_token or "").strip()
+    if normalized_auth_token:
+        return normalized_auth_token
+
+    existing_account_sid = (messaging_profile.twilio_account_sid or "").strip().upper()
+    requested = (requested_account_sid or "").strip().upper()
+    if requested and existing_account_sid and requested != existing_account_sid:
+        return None
+
+    return decrypt_provider_secret(messaging_profile.twilio_auth_token_encrypted)
+
+
+def _sync_customer_managed_onboarding_state(
+    organization: Organization,
+    validation_result,
+) -> None:
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    campaign_status = (validation_result.campaign_status or "").strip().lower() or None
+    brand_status = (validation_result.brand_status or "").strip().lower() or None
+
+    onboarding.raw_status_json = json.dumps(
+        {
+            "external_managed": True,
+            "provider_mode": "customer_managed",
+            "twilio_account_sid": validation_result.account_sid,
+            "messaging_service_sid": validation_result.messaging_service_sid,
+            "phone_number_sid": validation_result.phone_number_sid,
+            "from_number": validation_result.from_number,
+            "campaign_sid": validation_result.campaign_sid,
+            "campaign_status": validation_result.campaign_status,
+            "brand_registration_sid": validation_result.brand_registration_sid,
+            "brand_status": validation_result.brand_status,
+        },
+        sort_keys=True,
+    )
+    onboarding.campaign_sid = validation_result.campaign_sid or onboarding.campaign_sid
+    onboarding.brand_registration_sid = (
+        validation_result.brand_registration_sid or onboarding.brand_registration_sid
+    )
+    onboarding.campaign_status = campaign_status or onboarding.campaign_status or "approved"
+    onboarding.brand_status = brand_status or onboarding.brand_status or "approved"
+    onboarding.last_synced_at = utc_now()
+    if campaign_status in {"approved", "active", "verified"}:
+        onboarding.onboarding_status = "approved"
+        onboarding.approved_at = onboarding.approved_at or utc_now()
+    elif validation_result.messaging_service_sid:
+        onboarding.onboarding_status = "pending"
 
 
 def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
@@ -578,6 +644,8 @@ def _should_reconcile_subscription(organization: Organization | None, session_id
     subscription = organization.subscription
     if subscription is None:
         return False
+    if subscription_status_is_complimentary(subscription.status):
+        return False
     return bool(subscription.stripe_customer_id or subscription.stripe_subscription_id)
 
 
@@ -757,6 +825,9 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         'period_label': None,
         'period_value': None,
         'can_send': False,
+        'is_complimentary': False,
+        'show_checkout': True,
+        'show_portal': True,
     }
 
     if normalized_status == 'trialing':
@@ -774,6 +845,17 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             summary='Billing is active and your business can keep sending messages.',
             next_step='Use the billing portal anytime to update payment details.',
             can_send=True,
+        )
+    elif normalized_status == 'complimentary':
+        view.update(
+            badge='info',
+            title='Complimentary billing',
+            summary='Platform billing is covered for this workspace.',
+            next_step='No Stripe checkout is needed. Twilio billing stays on the customer-managed account.',
+            can_send=True,
+            is_complimentary=True,
+            show_checkout=False,
+            show_portal=False,
         )
     elif normalized_status in {'past_due', 'unpaid'}:
         view.update(
@@ -800,6 +882,9 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
     if subscription is not None and subscription.current_period_end:
         view['period_label'] = 'Trial ends' if normalized_status == 'trialing' else 'Current period ends'
         view['period_value'] = _format_datetime_display(subscription.current_period_end)
+
+    if not subscription or not subscription.stripe_customer_id:
+        view['show_portal'] = False
 
     return view
 
@@ -1082,6 +1167,11 @@ def _platform_organization_access_context(
     owner_reissue_email: str | None = None,
 ) -> dict:
     joined_memberships = _organization_joined_memberships(organization)
+    members_missing_email = [
+        membership
+        for membership in joined_memberships
+        if membership.user is not None and not (membership.user.email or '').strip()
+    ]
     pending_invitations = _organization_pending_invitations(organization)
     pending_invitation_rows = [
         {
@@ -1114,6 +1204,7 @@ def _platform_organization_access_context(
             if owner_reissue_email is not None
             else (pending_owner_invitation.email if pending_owner_invitation is not None else '')
         ),
+        'members_missing_email': members_missing_email,
         'onboarding': _organization_onboarding_view(organization),
         'billing': _subscription_view(organization.subscription),
     }
@@ -2103,6 +2194,7 @@ def dashboard():
         chart_data = build_chart_data()
         staff_membership_count = 0
         pending_staff_invitation_count = 0
+        users_missing_email = []
         if organization is not None:
             staff_membership_count = (
                 OrganizationMembership.query
@@ -2113,6 +2205,14 @@ def dashboard():
                 OrganizationInvitation.query
                 .filter_by(organization_id=organization.id, role='staff', status='pending')
                 .count()
+            )
+            users_missing_email = (
+                AppUser.query
+                .join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
+                .filter(OrganizationMembership.organization_id == organization.id)
+                .filter(db.or_(AppUser.email.is_(None), AppUser.email == ''))
+                .order_by(AppUser.username.asc())
+                .all()
             )
         team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
         workspace_activation_tasks = _workspace_activation_tasks(
@@ -2154,6 +2254,7 @@ def dashboard():
             'workspace_activation_tasks': workspace_activation_tasks,
             'can_send_messages': can_send_messages,
             'send_disabled_reason': send_disabled_reason,
+            'users_missing_email': users_missing_email,
             'dashboard_is_empty': (
                 total_recipients == 0
                 and latest_log is None
@@ -2355,6 +2456,7 @@ def dashboard():
 @require_roles('admin')
 def users_list():
     users = _organization_scoped_user_query().order_by(AppUser.username).all()
+    users_missing_email = [user for user in users if not (user.email or '').strip()]
     pending_invitations = []
     if saas_mode_enabled() and not current_user.is_platform_admin:
         invitations = (
@@ -2371,7 +2473,12 @@ def users_list():
             }
             for invitation in invitations
         ]
-    return render_template('users/list.html', users=users, pending_invitations=pending_invitations)
+    return render_template(
+        'users/list.html',
+        users=users,
+        pending_invitations=pending_invitations,
+        users_missing_email=users_missing_email,
+    )
 
 
 @bp.route('/users/add', methods=['GET', 'POST'])
@@ -3005,6 +3112,46 @@ def platform_organizations_invite_staff(organization_id):
     return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
 
 
+@bp.route('/platform/organizations/<int:organization_id>/access/billing', methods=['POST'])
+@login_required
+def platform_organizations_update_billing(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+
+    organization = db.get_or_404(Organization, organization_id)
+    action = (request.form.get('action') or '').strip().lower()
+    if action == 'grant_complimentary':
+        mark_subscription_complimentary(organization)
+        _record_platform_organization_access_event(
+            'platform_organization_billing_update',
+            organization=organization,
+            target_email=None,
+            outcome='success',
+            reason='grant_complimentary',
+        )
+        flash('Complimentary billing enabled for this organization.', 'success')
+    elif action == 'clear_complimentary':
+        clear_complimentary_subscription(organization)
+        _record_platform_organization_access_event(
+            'platform_organization_billing_update',
+            organization=organization,
+            target_email=None,
+            outcome='success',
+            reason='clear_complimentary',
+        )
+        flash('Complimentary billing cleared. Stripe-managed billing is required again.', 'success')
+    else:
+        _record_platform_organization_access_event(
+            'platform_organization_billing_update',
+            organization=organization,
+            target_email=None,
+            outcome='failed',
+            reason='unsupported_action',
+        )
+        flash('Unsupported billing action.', 'error')
+    return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
+
+
 @bp.route('/platform/organizations/<int:organization_id>/access/reissue-owner-invite', methods=['POST'])
 @login_required
 def platform_organizations_reissue_owner_invite(organization_id):
@@ -3124,10 +3271,23 @@ def platform_organizations_messaging_edit(organization_id):
     if organization.messaging_profile is None:
         db.session.commit()
 
+    def render_page():
+        return render_template(
+            'platform/organization_messaging_form.html',
+            organization=organization,
+            messaging_profile=organization.messaging_profile or messaging_profile,
+            onboarding=organization.a2p_onboarding,
+            a2p_status=_a2p_status_view(organization.a2p_onboarding, organization.messaging_profile or messaging_profile),
+        )
+
     if request.method == 'POST':
         action = (request.form.get('action') or 'save').strip().lower()
         try:
             if action == 'provision':
+                if messaging_profile.provider_mode == 'customer_managed':
+                    raise ProviderProvisioningError(
+                        'Customer-managed Twilio workspaces do not use platform provisioning.'
+                    )
                 provision_org(organization.id, actor_user_id=current_user.id)
                 flash('Twilio provider provisioned for this organization.', 'success')
                 return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
@@ -3140,6 +3300,10 @@ def platform_organizations_messaging_edit(organization_id):
                 flash('Twilio provider resumed for this organization.', 'success')
                 return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
             if action == 'release_sender':
+                if messaging_profile.provider_mode == 'customer_managed':
+                    raise ProviderProvisioningError(
+                        'Customer-managed sender state is updated from the external Twilio account configuration.'
+                    )
                 release_sender(organization.id, actor_user_id=current_user.id)
                 flash('Sender assignment released for this organization.', 'success')
                 return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
@@ -3147,22 +3311,61 @@ def platform_organizations_messaging_edit(organization_id):
             flash(str(exc), 'error')
             return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
 
+        provider_mode = _normalized_provider_mode(
+            request.form.get('provider_mode'),
+            default=messaging_profile.provider_mode or 'platform_managed',
+        )
         sender_number = request.form.get('sender_number', '').strip() or None
-        phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
         business_type = request.form.get('business_type', '').strip() or None
         use_case = request.form.get('use_case', '').strip() or None
+        if provider_mode == 'customer_managed':
+            twilio_account_sid = request.form.get('twilio_account_sid', '').strip() or None
+            twilio_auth_token = _customer_managed_auth_token_for_save(
+                messaging_profile,
+                requested_account_sid=twilio_account_sid,
+                raw_auth_token=request.form.get('twilio_auth_token', ''),
+            )
+            messaging_service_sid = request.form.get('messaging_service_sid', '').strip() or None
+            messaging_error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
+                sender_number,
+                messaging_service_sid,
+                organization_id=organization.id,
+            )
+            if messaging_error:
+                flash(messaging_error, 'error')
+                return render_page()
+            if not twilio_account_sid:
+                flash('Twilio account SID is required for customer-managed providers.', 'error')
+                return render_page()
+            if not twilio_auth_token:
+                flash('Twilio auth token is required to validate customer-managed providers.', 'error')
+                return render_page()
+            try:
+                messaging_profile, validation_result = save_customer_managed_profile(
+                    organization.id,
+                    twilio_account_sid=twilio_account_sid,
+                    twilio_auth_token=twilio_auth_token,
+                    from_number=normalized_sender or '',
+                    messaging_service_sid=normalized_service_sid,
+                    business_type=business_type,
+                    use_case=use_case,
+                    actor_user_id=current_user.id,
+                )
+                _sync_customer_managed_onboarding_state(organization, validation_result)
+                db.session.commit()
+            except ProviderProvisioningError as exc:
+                flash(str(exc), 'error')
+                return render_page()
+            flash('Customer-managed Twilio settings validated and activated.', 'success')
+            return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+
+        phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
         sender_review_status = (request.form.get('sender_review_status') or 'pending').strip().lower()
         consent_acknowledged = request.form.get('consent_acknowledged') == 'on'
 
         if not messaging_profile.messaging_service_sid:
             flash('Provision the Twilio provider before assigning a sender.', 'error')
-            return render_template(
-                'platform/organization_messaging_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=organization.a2p_onboarding,
-                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-            )
+            return render_page()
 
         messaging_error, normalized_sender, _ = _validate_org_messaging_profile_input(
             sender_number,
@@ -3171,34 +3374,20 @@ def platform_organizations_messaging_edit(organization_id):
         )
         if messaging_error:
             flash(messaging_error, 'error')
-            return render_template(
-                'platform/organization_messaging_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=organization.a2p_onboarding,
-                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-            )
+            return render_page()
 
         if phone_number_sid and not normalized_sender:
             flash('A sender number is required when a phone number SID is provided.', 'error')
-            return render_template(
-                'platform/organization_messaging_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=organization.a2p_onboarding,
-                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-            )
+            return render_page()
 
         if normalized_sender and not phone_number_sid:
             flash('A phone number SID is required when a sender number is provided.', 'error')
-            return render_template(
-                'platform/organization_messaging_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=organization.a2p_onboarding,
-                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-            )
+            return render_page()
 
+        messaging_profile.provider_mode = 'platform_managed'
+        messaging_profile.twilio_account_sid = None
+        if not messaging_profile.twilio_subaccount_sid:
+            messaging_profile.twilio_auth_token_encrypted = None
         messaging_profile.from_number = normalized_sender
         messaging_profile.phone_number_sid = phone_number_sid
         messaging_profile.business_type = business_type
@@ -3229,13 +3418,7 @@ def platform_organizations_messaging_edit(organization_id):
                 'error',
             )
             messaging_profile = organization.messaging_profile
-            return render_template(
-                'platform/organization_messaging_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=organization.a2p_onboarding,
-                a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-            )
+            return render_page()
 
         if normalized_sender and phone_number_sid:
             try:
@@ -3247,13 +3430,7 @@ def platform_organizations_messaging_edit(organization_id):
         flash('Messaging provider settings updated.', 'success')
         return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
 
-    return render_template(
-        'platform/organization_messaging_form.html',
-        organization=organization,
-        messaging_profile=messaging_profile,
-        onboarding=organization.a2p_onboarding,
-        a2p_status=_a2p_status_view(organization.a2p_onboarding, messaging_profile),
-    )
+    return render_page()
 
 
 @bp.route('/platform/organizations/<int:organization_id>/messaging/onboarding', methods=['GET', 'POST'])
@@ -3268,8 +3445,39 @@ def platform_organizations_messaging_onboarding(organization_id):
     if organization.messaging_profile is None or organization.a2p_onboarding is None:
         db.session.commit()
 
+    def render_page():
+        return render_template(
+            'platform/organization_a2p_onboarding_form.html',
+            organization=organization,
+            messaging_profile=messaging_profile,
+            onboarding=onboarding,
+            a2p_status=_a2p_status_view(onboarding, messaging_profile),
+            a2p_form_defaults=_a2p_form_defaults(onboarding),
+            business_industry_choices=a2p_business_industry_choices(),
+            business_region_choices=a2p_business_region_choices(),
+            business_type_choices=a2p_business_type_choices(),
+            job_position_choices=a2p_job_position_choices(),
+            registration_path_choices=a2p_registration_path_choices(),
+            registration_identifier_choices=a2p_registration_identifier_choices(),
+            number_strategy_choices=a2p_number_strategy_choices(),
+            campaign_use_case_choices=a2p_campaign_use_case_choices(),
+            customer_managed_a2p=messaging_profile.provider_mode == 'customer_managed',
+        )
+
     if request.method == 'POST':
         action = (request.form.get('action') or 'submit').strip().lower()
+        if messaging_profile.provider_mode == 'customer_managed':
+            if action == 'refresh':
+                flash(
+                    'A2P is externally managed for customer-managed Twilio workspaces. '
+                    'Refresh the external Twilio account directly, then re-save messaging settings if status changed.',
+                    'info',
+                )
+                return redirect(
+                    url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id)
+                )
+            flash('A2P is externally managed for customer-managed Twilio workspaces.', 'error')
+            return redirect(url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id))
         try:
             if action == 'submit':
                 payload = request.form.to_dict(flat=True)
@@ -3292,40 +3500,10 @@ def platform_organizations_messaging_onboarding(organization_id):
         except ProviderProvisioningError as exc:
             flash(str(exc), 'error')
             onboarding = organization.a2p_onboarding or onboarding
-            return render_template(
-                'platform/organization_a2p_onboarding_form.html',
-                organization=organization,
-                messaging_profile=messaging_profile,
-                onboarding=onboarding,
-                a2p_status=_a2p_status_view(onboarding, messaging_profile),
-                a2p_form_defaults=_a2p_form_defaults(onboarding),
-                business_industry_choices=a2p_business_industry_choices(),
-                business_region_choices=a2p_business_region_choices(),
-                business_type_choices=a2p_business_type_choices(),
-                job_position_choices=a2p_job_position_choices(),
-                registration_path_choices=a2p_registration_path_choices(),
-                registration_identifier_choices=a2p_registration_identifier_choices(),
-                number_strategy_choices=a2p_number_strategy_choices(),
-                campaign_use_case_choices=a2p_campaign_use_case_choices(),
-            )
+            return render_page()
         return redirect(url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id))
 
-    return render_template(
-        'platform/organization_a2p_onboarding_form.html',
-        organization=organization,
-        messaging_profile=messaging_profile,
-        onboarding=onboarding,
-        a2p_status=_a2p_status_view(onboarding, messaging_profile),
-        a2p_form_defaults=_a2p_form_defaults(onboarding),
-        business_industry_choices=a2p_business_industry_choices(),
-        business_region_choices=a2p_business_region_choices(),
-        business_type_choices=a2p_business_type_choices(),
-        job_position_choices=a2p_job_position_choices(),
-        registration_path_choices=a2p_registration_path_choices(),
-        registration_identifier_choices=a2p_registration_identifier_choices(),
-        number_strategy_choices=a2p_number_strategy_choices(),
-        campaign_use_case_choices=a2p_campaign_use_case_choices(),
-    )
+    return render_page()
 
 
 @bp.route('/platform/organizations/<int:organization_id>/toggle-status', methods=['POST'])
