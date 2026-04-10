@@ -14,7 +14,13 @@
         <div class="setup-hero__copy">
             <div class="login-kicker">Workspace access</div>
             <h1 class="setup-hero__title">{{ organization.name }}</h1>
-            <p class="setup-hero__text">The owner is still finishing billing or compliance. You will get the full {{ product_name }} workspace automatically as soon as setup is complete.</p>
+            <p class="setup-hero__text">
+                {% if setup_is_customer_managed %}
+                The owner and platform admin are still activating the customer-managed Twilio connection. You will get the full {{ product_name }} workspace automatically as soon as external messaging is ready.
+                {% else %}
+                The owner is still finishing billing or compliance. You will get the full {{ product_name }} workspace automatically as soon as setup is complete.
+                {% endif %}
+            </p>
         </div>
     </div>
     <div class="setup-layout">
@@ -42,9 +48,20 @@
             </div>
             <p class="setup-panel__copy">
                 Billing status: <strong>{{ setup_status.subscription.title }}</strong><br>
+                {% if setup_is_customer_managed %}
+                External messaging: <strong>{{ setup_status.messaging.provider_status }}</strong><br>
+                External A2P: <strong>{{ setup_status.onboarding.title }}</strong>
+                {% else %}
                 A2P status: <strong>{{ setup_status.onboarding.status }}</strong>
+                {% endif %}
             </p>
-            <p class="text-muted mb-0">Once the owner finishes setup, sign back in and you will land in the workspace automatically.</p>
+            <p class="text-muted mb-0">
+                {% if setup_is_customer_managed %}
+                Once external activation is complete, sign back in and you will land in the workspace automatically.
+                {% else %}
+                Once the owner finishes setup, sign back in and you will land in the workspace automatically.
+                {% endif %}
+            </p>
         </section>
     </div>
 </section>

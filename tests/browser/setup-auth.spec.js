@@ -65,6 +65,25 @@ test('owner with incomplete setup lands on the setup runway', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Activate billing' })).toBeVisible();
 });
 
+test('customer-managed owner with pending activation lands on the read-only setup runway', async ({ page }) => {
+  await login(page, 'customer-managed-owner@browser.test', 'CustomerManaged-pass1!');
+
+  await expect(page).toHaveURL(/\/setup$/);
+  await expect(page.getByText('Owner setup')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Customer Managed Bakery' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'External Twilio activation' })).toBeVisible();
+  await expect(page.getByText('Workspace owners are read-only here')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('Legal business name');
+  await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
+});
+
+test('customer-managed owner with active messaging lands in the workspace', async ({ page }) => {
+  await login(page, 'customer-managed-ready@browser.test', 'CustomerManagedReady-pass1!');
+
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+});
+
 test('self-serve signup creates a workspace and opens setup', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/signup');

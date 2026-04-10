@@ -15,19 +15,35 @@
 {% set selected_job_position = request.form.get('job_position', onboarding.job_position if onboarding and onboarding.job_position else '') %}
 {% set selected_registration_identifier = request.form.get('business_registration_identifier', onboarding.business_registration_identifier if onboarding and onboarding.business_registration_identifier else 'EIN') %}
 {% set selected_regions = request.form.getlist('business_regions') if request.form.getlist('business_regions') else (a2p_form_defaults.business_regions or 'USA_AND_CANADA').split(',') %}
-<section class="setup-shell" data-setup-shell data-current-step="{{ current_step }}" data-onboarding-status="{{ setup_status.onboarding.status }}">
+<section
+    class="setup-shell"
+    data-setup-shell
+    data-current-step="{{ current_step }}"
+    data-onboarding-status="{{ setup_status.onboarding.status }}"
+    data-provider-mode="{{ setup_status.messaging.provider_mode }}"
+    data-provider-status="{{ setup_status.messaging.provider_status }}"
+>
     <div class="setup-hero">
         <div class="setup-hero__copy">
             <div class="login-kicker">Owner setup</div>
             <h1 class="setup-hero__title">{{ organization.name }}</h1>
             <p class="setup-hero__text">
+                {% if setup_is_customer_managed %}
+                This workspace keeps its own Twilio account. Platform support validates the external sender and A2P approval here, while your team waits in a read-only activation runway.
+                {% else %}
                 Finish billing and Twilio compliance in one guided runway. Once approval lands, platform support assigns the first sender and unlocks live messaging inside {{ product_name }}.
+                {% endif %}
             </p>
         </div>
         <div class="setup-hero__meta">
             <span class="setup-pill">{{ subscription_view.title }}</span>
+            {% if setup_is_customer_managed %}
+            <span class="setup-pill setup-pill--muted">{{ setup_status.onboarding.title }}</span>
+            <span class="setup-pill setup-pill--muted">{{ 'Live' if setup_status.messaging.can_send else 'External activation in progress' }}</span>
+            {% else %}
             <span class="setup-pill setup-pill--muted">A2P {{ setup_status.onboarding.status }}</span>
             <span class="setup-pill setup-pill--muted">{{ 'Live' if setup_status.messaging.can_send else 'Setup in progress' }}</span>
+            {% endif %}
         </div>
     </div>
 
@@ -47,14 +63,175 @@
                 {% endfor %}
             </ol>
             <div class="app-card setup-status-card">
+                {% if setup_is_customer_managed %}
+                <div class="setup-status-card__row"><span>Provider</span><strong>{{ setup_status.messaging.provider_status }}</strong></div>
+                <div class="setup-status-card__row"><span>External A2P</span><strong>{{ setup_status.onboarding.title }}</strong></div>
+                <div class="setup-status-card__row"><span>Service</span><strong>{{ setup_status.messaging.messaging_service_sid or a2p_status.messaging_service_sid or 'pending validation' }}</strong></div>
+                <div class="setup-status-card__row"><span>Sender</span><strong>{{ setup_status.messaging.from_number or 'pending validation' }}</strong></div>
+                {% else %}
                 <div class="setup-status-card__row"><span>Brand</span><strong>{{ setup_status.onboarding.brand_status or 'not submitted' }}</strong></div>
                 <div class="setup-status-card__row"><span>Campaign</span><strong>{{ setup_status.onboarding.campaign_status or 'not submitted' }}</strong></div>
                 <div class="setup-status-card__row"><span>Sender</span><strong>{{ setup_status.messaging.from_number or 'pending assignment' }}</strong></div>
+                {% endif %}
             </div>
         </aside>
 
         <div class="setup-main">
+            {% if setup_is_customer_managed %}
             {% if current_step == 'billing' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 2</div>
+                        <h2>Activate billing</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
+                <div class="setup-callout">
+                    <div>{{ subscription_view.next_step }}</div>
+                    {% if subscription_view.period_value %}
+                    <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
+                    {% endif %}
+                    {% if subscription_view.is_complimentary %}
+                    <div class="text-muted small">Stripe checkout is disabled because this workspace is comped and pays Twilio directly.</div>
+                    {% endif %}
+                </div>
+                <div class="setup-actions">
+                    {% if subscription_view.show_checkout %}
+                    <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
+                    </form>
+                    {% endif %}
+                    {% if subscription_view.show_portal %}
+                    <form method="POST" action="{{ url_for('main.billing_portal') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-secondary">Open billing portal</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </section>
+            {% elif current_step == 'provider' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 3</div>
+                        <h2>External Twilio activation</h2>
+                    </div>
+                </div>
+                {% if setup_status.onboarding.last_error %}
+                <div class="platform-note platform-note--danger" role="alert">
+                    <div class="platform-note__title">Latest provider issue</div>
+                    <div class="platform-note__copy">{{ setup_status.onboarding.last_error }}</div>
+                </div>
+                {% endif %}
+                <p class="setup-panel__copy">
+                    {% if setup_status.messaging.can_send %}
+                    External Twilio is active and the workspace is ready.
+                    {% elif a2p_status.external_managed %}
+                    This workspace uses a customer-managed Twilio account. Platform support validates the external account, sender, Messaging Service, and A2P approval so nothing needs to be re-entered here.
+                    {% else %}
+                    Platform support still needs to validate the external Twilio account before live messaging unlocks in the workspace.
+                    {% endif %}
+                </p>
+                <div class="platform-note">
+                    <div class="platform-note__title">Workspace owners are read-only here</div>
+                    <div class="platform-note__copy">Only platform admins can edit the external Twilio connection. Once validation finishes, this setup runway unlocks the workspace automatically.</div>
+                </div>
+                <div class="setup-summary-grid">
+                    <div class="setup-summary-card">
+                        <span>Billing</span>
+                        <strong>{{ subscription_view.title }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Provider status</span>
+                        <strong>{{ setup_status.messaging.provider_status }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>External A2P</span>
+                        <strong>{{ setup_status.onboarding.title }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Messaging Service</span>
+                        <strong>{{ setup_status.messaging.messaging_service_sid or a2p_status.messaging_service_sid or 'pending validation' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Brand</span>
+                        <strong>{{ setup_status.onboarding.brand_status or 'externally managed' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Campaign</span>
+                        <strong>{{ setup_status.onboarding.campaign_status or 'externally managed' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Sender</span>
+                        <strong>{{ setup_status.messaging.from_number or 'pending validation' }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Next step</span>
+                        <strong>{{ a2p_status.next_step }}</strong>
+                    </div>
+                </div>
+                <div class="setup-actions">
+                    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">View billing</a>
+                </div>
+            </section>
+            {% elif current_step == 'launch' %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 4</div>
+                        <h2>{{ 'Workspace is live' if setup_status.messaging.can_send else 'Await external activation' }}</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">
+                    {% if setup_status.messaging.can_send %}
+                    Billing is active and the customer-managed sender is connected. You can move into the workspace now.
+                    {% else %}
+                    External Twilio activation is still in progress. Return to the provider step for the latest status.
+                    {% endif %}
+                </p>
+                <div class="setup-summary-grid">
+                    <div class="setup-summary-card">
+                        <span>Billing</span>
+                        <strong>{{ subscription_view.title }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Provider</span>
+                        <strong>{{ setup_status.messaging.provider_status }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>External A2P</span>
+                        <strong>{{ setup_status.onboarding.title }}</strong>
+                    </div>
+                    <div class="setup-summary-card">
+                        <span>Sender</span>
+                        <strong>{{ setup_status.messaging.from_number or 'pending validation' }}</strong>
+                    </div>
+                </div>
+                <div class="setup-actions">
+                    {% if setup_status.messaging.can_send %}
+                    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Open workspace</a>
+                    {% else %}
+                    <a href="{{ url_for('main.setup', step='provider') }}" class="btn btn-outline-primary">Back to external activation</a>
+                    {% endif %}
+                </div>
+            </section>
+            {% else %}
+            <section class="app-card setup-panel">
+                <div class="setup-panel__header">
+                    <div>
+                        <div class="setup-panel__kicker">Step 1</div>
+                        <h2>Workspace account ready</h2>
+                    </div>
+                </div>
+                <p class="setup-panel__copy">Your owner account is active. Continue into billing and external activation so platform support can finish validating the customer-managed Twilio setup.</p>
+                <a href="{{ url_for('main.setup', step='billing' if not subscription_view.can_send else 'provider') }}" class="btn btn-primary">
+                    {{ 'Continue to billing' if not subscription_view.can_send else 'Continue to external activation' }}
+                </a>
+            </section>
+            {% endif %}
+            {% elif current_step == 'billing' %}
             <section class="app-card setup-panel">
                 <div class="setup-panel__header">
                     <div>
@@ -430,12 +607,17 @@
     (() => {
         const shell = document.querySelector('[data-setup-shell]');
         if (!shell) return;
-        const shouldPoll = ['queued', 'processing', 'pending', 'approved'].includes(shell.dataset.onboardingStatus || '');
+        const providerMode = shell.dataset.providerMode || 'platform_managed';
+        const providerStatus = shell.dataset.providerStatus || '';
+        const shouldPoll = providerMode === 'customer_managed'
+            ? ['pending', 'provisioning'].includes(providerStatus)
+            : ['queued', 'processing', 'pending', 'approved'].includes(shell.dataset.onboardingStatus || '');
         if (!shouldPoll) return;
 
         let previous = JSON.stringify({
             currentStep: shell.dataset.currentStep,
             onboardingStatus: shell.dataset.onboardingStatus,
+            providerStatus,
         });
 
         window.setInterval(async () => {
@@ -449,6 +631,7 @@
                 const current = JSON.stringify({
                     currentStep: payload.current_step,
                     onboardingStatus: payload.onboarding.status,
+                    providerStatus: payload.messaging.provider_status || '',
                     messagingReady: payload.messaging.can_send,
                     lastError: payload.onboarding.last_error || '',
                 });

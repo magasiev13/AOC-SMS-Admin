@@ -202,6 +202,59 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.db.session.commit()
         return organization, invitation
 
+    def _create_customer_managed_workspace(
+        self,
+        *,
+        name: str = "Customer Managed Co",
+        slug: str = "customer-managed-co",
+        username: str = "customer-managed-owner",
+        email: str = "customer-managed-owner@acme.test",
+        password: str = "CustomerManaged-pass1!",
+        role: str = "owner",
+        subscription_status: str = "complimentary",
+        provider_status: str = "pending",
+        can_send: bool = False,
+    ):
+        organization = self.Organization(name=name, slug=slug, status="active")
+        subscription = self.OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status=subscription_status,
+        )
+        messaging_profile = self.OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="customer_managed",
+            twilio_account_sid="ACcust0001" if can_send else None,
+            messaging_service_sid="MGcust0001" if can_send else None,
+            phone_number_sid="PNcust0001" if can_send else None,
+            from_number="+15550001111" if can_send else None,
+            inbound_identity="+15550001111" if can_send else None,
+            status=provider_status,
+            provider_status=provider_status,
+            sender_review_status="approved" if can_send else "pending",
+            consent_acknowledged_at=datetime.utcnow() if can_send else None,
+        )
+        user = self.AppUser(
+            username=username,
+            email=email,
+            full_name="Customer Managed User",
+            phone="+15550001234",
+            role="admin",
+            must_change_password=False,
+        )
+        user.set_password(password)
+        self.db.session.add_all([organization, subscription, messaging_profile, user])
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=organization.id,
+                user_id=user.id,
+                role=role,
+            )
+        )
+        self.db.session.commit()
+        return organization, subscription, messaging_profile, user
+
     def test_dashboard_send_requires_active_subscription(self) -> None:
         self._login_owner()
 
@@ -227,6 +280,42 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self._login_owner()
 
         self.assertIn("/setup", response.headers.get("Location", ""))
+
+    def test_customer_managed_owner_login_redirects_to_dashboard_when_workspace_is_ready(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-ready",
+            username="customer-managed-ready",
+            email="customer-managed-ready@acme.test",
+            provider_status="active",
+            can_send=True,
+        )
+
+        response = self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+
+        self.assertIn("/dashboard", response.headers.get("Location", ""))
+
+    def test_customer_managed_owner_login_redirects_to_setup_when_provider_is_pending(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-pending",
+            username="customer-managed-pending",
+            email="customer-managed-pending@acme.test",
+        )
+
+        response = self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+
+        self.assertIn("/setup", response.headers.get("Location", ""))
+
+    def test_customer_managed_staff_login_redirects_to_setup_pending_when_provider_is_pending(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-staff",
+            username="customer-managed-staff",
+            email="customer-managed-staff@acme.test",
+            role="staff",
+        )
+
+        response = self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+
+        self.assertIn("/setup/pending", response.headers.get("Location", ""))
 
     def test_platform_login_rejects_workspace_owner_credentials(self) -> None:
         response = self.client.post(
@@ -263,6 +352,64 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(organization.messaging_profile.provider_mode, "platform_managed")
         self.assertIsNotNone(organization.a2p_onboarding)
         self.assertEqual(organization.a2p_onboarding.onboarding_status, "draft")
+
+    def test_customer_managed_owner_setup_is_read_only_and_does_not_create_a2p_draft(self) -> None:
+        organization, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-read-only",
+            username="customer-managed-read-only",
+            email="customer-managed-read-only@acme.test",
+        )
+        self.assertIsNone(
+            self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"External Twilio activation", response.data)
+        self.assertIn(b"Workspace owners are read-only here", response.data)
+        self.assertNotIn(b"Legal business name", response.data)
+        self.assertNotIn(b"Submit for Twilio review", response.data)
+        self.assertIsNone(
+            self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
+        )
+
+    def test_customer_managed_setup_rejects_platform_managed_a2p_submission_actions(self) -> None:
+        organization, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-guardrail",
+            username="customer-managed-guardrail",
+            email="customer-managed-guardrail@acme.test",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.post(
+            "/setup",
+            data={"action": "save_compliance"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Customer-managed Twilio activation is handled by your platform admin.", response.data)
+        self.assertIn(b"External Twilio activation", response.data)
+        self.assertIsNone(
+            self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
+        )
+
+    def test_customer_managed_staff_pending_setup_mentions_external_activation(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-pending-copy",
+            username="customer-managed-pending-copy",
+            email="customer-managed-pending-copy@acme.test",
+            role="staff",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup/pending")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"customer-managed Twilio connection", response.data)
+        self.assertIn(b"External messaging:", response.data)
 
     def test_suspended_organization_owner_cannot_log_in(self) -> None:
         self.organization.status = "suspended"

@@ -24,6 +24,7 @@ from app.services.auth_security_service import (
     record_auth_event,
     record_failed_login,
 )
+from app.services.billing_service import organization_can_send
 from app.services.security_alert_service import send_security_alert
 
 
@@ -107,10 +108,8 @@ def _organization_setup_complete(user) -> bool:
     organization = getattr(user, "organization", None)
     if organization is None:
         return False
-    subscription = getattr(organization, "subscription", None)
     messaging_profile = getattr(organization, "messaging_profile", None)
-    subscription_status = (getattr(subscription, "status", None) or "").strip().lower()
-    return subscription_status in {"trialing", "active"} and bool(
+    return organization_can_send(organization) and bool(
         messaging_profile is not None and messaging_profile.can_send
     )
 

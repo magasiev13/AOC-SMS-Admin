@@ -443,6 +443,16 @@ def _a2p_status_view(
     return view
 
 
+def _organization_provider_mode(organization: Organization | None) -> str:
+    profile = organization.messaging_profile if organization is not None else None
+    mode = (profile.provider_mode if profile is not None else "platform_managed") or "platform_managed"
+    return mode.strip().lower()
+
+
+def _organization_uses_customer_managed_messaging(organization: Organization | None) -> bool:
+    return _organization_provider_mode(organization) == "customer_managed"
+
+
 def _workspace_activation_tasks(
     *,
     subscription_view: dict,
@@ -545,11 +555,13 @@ def _a2p_profile_ready(onboarding: OrganizationA2POnboarding | None) -> bool:
 
 def _setup_current_step(organization: Organization) -> str:
     subscription_view = _subscription_view(organization.subscription)
-    onboarding = organization.a2p_onboarding
     if _organization_setup_complete(organization):
         return "launch"
     if not subscription_view["can_send"]:
         return "billing"
+    if _organization_uses_customer_managed_messaging(organization):
+        return "provider"
+    onboarding = organization.a2p_onboarding
     if onboarding is None or onboarding.onboarding_status in {"draft", "rejected", "error", "canceled"}:
         return "compliance" if not _a2p_profile_ready(onboarding) else "review"
     if onboarding.onboarding_status in {"queued", "processing", "pending", "approved"}:
@@ -562,6 +574,55 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
     subscription_view = _subscription_view(organization.subscription)
     messaging_profile = organization.messaging_profile
     current_step = _setup_current_step(organization)
+    if _organization_uses_customer_managed_messaging(organization):
+        a2p_status = _a2p_status_view(onboarding, messaging_profile)
+        provider_detail = (
+            messaging_profile.last_provision_error
+            if messaging_profile and messaging_profile.last_provision_error
+            else (
+                a2p_status["summary"]
+                if a2p_status.get("has_submission")
+                else "Platform support is validating the customer-managed Twilio account, sender, and external A2P status."
+            )
+        )
+        launch_label = "Live in workspace" if messaging_profile and messaging_profile.can_send else "Await external activation"
+        step_rows = [
+            {
+                "key": "account",
+                "label": "Workspace account",
+                "detail": "Your owner workspace is active and ready to finish setup.",
+                "complete": True,
+            },
+            {
+                "key": "billing",
+                "label": "Billing activation",
+                "detail": subscription_view["title"],
+                "complete": subscription_view["can_send"],
+            },
+            {
+                "key": "provider",
+                "label": "External Twilio activation",
+                "detail": provider_detail,
+                "complete": bool(
+                    (messaging_profile and messaging_profile.provider_status in {"provisioning", "active"})
+                    or a2p_status.get("has_submission")
+                ),
+            },
+            {
+                "key": "launch",
+                "label": launch_label,
+                "detail": (
+                    messaging_profile.from_number
+                    if messaging_profile and messaging_profile.from_number
+                    else "The workspace unlocks as soon as the customer-managed sender is active."
+                ),
+                "complete": messaging_profile is not None and messaging_profile.can_send,
+            },
+        ]
+        for step in step_rows:
+            step["current"] = step["key"] == current_step
+        return step_rows
+
     launch_label = "Live in workspace" if messaging_profile and messaging_profile.can_send else "Await number assignment"
     step_rows = [
         {
@@ -608,6 +669,12 @@ def _setup_status_payload(organization: Organization) -> dict:
     onboarding = organization.a2p_onboarding
     messaging_profile = organization.messaging_profile
     subscription_view = _subscription_view(organization.subscription)
+    a2p_status = _a2p_status_view(onboarding, messaging_profile)
+    onboarding_status = (
+        a2p_status["stage"]
+        if _organization_uses_customer_managed_messaging(organization)
+        else (onboarding.onboarding_status if onboarding else "draft")
+    )
     return {
         "current_step": _setup_current_step(organization),
         "setup_complete": _organization_setup_complete(organization),
@@ -617,13 +684,21 @@ def _setup_status_payload(organization: Organization) -> dict:
             "can_send": subscription_view["can_send"],
         },
         "onboarding": {
-            "status": onboarding.onboarding_status if onboarding else "draft",
-            "brand_status": onboarding.brand_status if onboarding else None,
-            "campaign_status": onboarding.campaign_status if onboarding else None,
-            "last_error": onboarding.last_error if onboarding else None,
+            "status": onboarding_status,
+            "title": a2p_status["title"],
+            "summary": a2p_status["summary"],
+            "brand_status": a2p_status.get("brand_status"),
+            "campaign_status": a2p_status.get("campaign_status"),
+            "last_error": (
+                onboarding.last_error
+                if onboarding and onboarding.last_error
+                else (messaging_profile.last_provision_error if messaging_profile else None)
+            ),
             "submitted_at": onboarding.submitted_at.isoformat() if onboarding and onboarding.submitted_at else None,
+            "external_managed": bool(a2p_status.get("external_managed")),
         },
         "messaging": {
+            "provider_mode": messaging_profile.provider_mode if messaging_profile else "platform_managed",
             "provider_status": messaging_profile.provider_status if messaging_profile else "pending",
             "sender_review_status": messaging_profile.sender_review_status if messaging_profile else "pending",
             "from_number": messaging_profile.from_number if messaging_profile else None,
@@ -3696,9 +3771,12 @@ def setup():
     if getattr(current_user, 'organization_role', None) != 'owner':
         return redirect(url_for('main.setup_pending'))
 
-    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
     messaging_profile = organization.messaging_profile or ensure_messaging_profile(organization)
-    if organization.a2p_onboarding is None or organization.messaging_profile is None:
+    setup_is_customer_managed = messaging_profile.provider_mode == 'customer_managed'
+    onboarding = organization.a2p_onboarding
+    if not setup_is_customer_managed and onboarding is None:
+        onboarding = ensure_a2p_onboarding(organization)
+    if organization.messaging_profile is None or (not setup_is_customer_managed and organization.a2p_onboarding is None):
         db.session.commit()
 
     session_id = request.args.get('session_id', '').strip()
@@ -3712,6 +3790,12 @@ def setup():
 
     if request.method == 'POST':
         action = (request.form.get('action') or '').strip().lower()
+        if setup_is_customer_managed and action in {'save_compliance', 'submit_onboarding', 'refresh_onboarding', 'cancel_onboarding'}:
+            flash(
+                'Customer-managed Twilio activation is handled by your platform admin. This workspace cannot edit external compliance here.',
+                'info',
+            )
+            return redirect(url_for('main.setup', step='provider'))
         try:
             if action == 'save_compliance':
                 payload = request.form.to_dict(flat=True)
@@ -3749,14 +3833,21 @@ def setup():
             flash(str(exc), 'error')
 
     requested_step = (request.args.get('step') or '').strip().lower()
-    available_steps = {'account', 'billing', 'compliance', 'review', 'launch'}
+    available_steps = {'account', 'billing', 'launch'}
+    if setup_is_customer_managed:
+        available_steps.add('provider')
+    else:
+        available_steps.update({'compliance', 'review'})
     current_step = requested_step if requested_step in available_steps else _setup_current_step(organization)
+    a2p_status = _a2p_status_view(onboarding, messaging_profile)
 
     return render_template(
         'setup/index.html',
         organization=organization,
         messaging_profile=messaging_profile,
         onboarding=onboarding,
+        a2p_status=a2p_status,
+        setup_is_customer_managed=setup_is_customer_managed,
         current_step=current_step,
         setup_steps=_setup_steps_view(organization),
         setup_status=_setup_status_payload(organization),
@@ -3784,10 +3875,16 @@ def setup_pending():
         abort(404)
     if getattr(current_user, 'organization_role', None) == 'owner':
         return redirect(url_for('main.setup'))
+    messaging_profile = organization.messaging_profile
+    onboarding = organization.a2p_onboarding
+    a2p_status = _a2p_status_view(onboarding, messaging_profile)
 
     return render_template(
         'setup/pending.html',
         organization=organization,
+        messaging_profile=messaging_profile,
+        a2p_status=a2p_status,
+        setup_is_customer_managed=_organization_uses_customer_managed_messaging(organization),
         setup_steps=_setup_steps_view(organization),
         setup_status=_setup_status_payload(organization),
     )

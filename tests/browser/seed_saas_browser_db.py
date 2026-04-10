@@ -133,6 +133,20 @@ def main() -> None:
             phone="+15550001008",
             password="Isolation-pass1!",
         )
+        customer_managed_owner = make_user(
+            username="customer-managed-owner-browser",
+            email="customer-managed-owner@browser.test",
+            full_name="Customer Managed Owner",
+            phone="+15550001009",
+            password="CustomerManaged-pass1!",
+        )
+        customer_managed_ready_owner = make_user(
+            username="customer-managed-ready-browser",
+            email="customer-managed-ready@browser.test",
+            full_name="Customer Managed Ready Owner",
+            phone="+15550001010",
+            password="CustomerManagedReady-pass1!",
+        )
 
         onboarding_org = Organization(name="Onboarding Bakery", slug="onboarding-bakery", status="active")
         onboarding_subscription = OrganizationSubscription(
@@ -164,6 +178,43 @@ def main() -> None:
             organization=setup_org,
             status="pending",
             provider_status="pending",
+        )
+
+        customer_managed_org = Organization(name="Customer Managed Bakery", slug="customer-managed-bakery", status="active")
+        customer_managed_subscription = OrganizationSubscription(
+            organization=customer_managed_org,
+            stripe_price_id="price_browser",
+            status="complimentary",
+        )
+        customer_managed_messaging = OrganizationMessagingProfile(
+            organization=customer_managed_org,
+            provider_mode="customer_managed",
+            status="pending",
+            provider_status="pending",
+        )
+
+        customer_managed_ready_org = Organization(
+            name="Customer Managed Ready Bakery",
+            slug="customer-managed-ready-bakery",
+            status="active",
+        )
+        customer_managed_ready_subscription = OrganizationSubscription(
+            organization=customer_managed_ready_org,
+            stripe_price_id="price_browser",
+            status="complimentary",
+        )
+        customer_managed_ready_messaging = OrganizationMessagingProfile(
+            organization=customer_managed_ready_org,
+            provider_mode="customer_managed",
+            twilio_account_sid="ACcustready0001",
+            messaging_service_sid="MGcustready0001",
+            phone_number_sid="PNcustready0001",
+            from_number="+15550006666",
+            inbound_identity="+15550006666",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+            consent_acknowledged_at=now,
         )
 
         active_org = Organization(name="Acme Bakery", slug="acme-bakery", status="active")
@@ -561,6 +612,8 @@ def main() -> None:
                 past_due_owner,
                 suspended_owner,
                 isolation_owner,
+                customer_managed_owner,
+                customer_managed_ready_owner,
                 onboarding_org,
                 onboarding_subscription,
                 onboarding_invite,
@@ -568,6 +621,12 @@ def main() -> None:
                 setup_org,
                 setup_subscription,
                 setup_messaging,
+                customer_managed_org,
+                customer_managed_subscription,
+                customer_managed_messaging,
+                customer_managed_ready_org,
+                customer_managed_ready_subscription,
+                customer_managed_ready_messaging,
                 active_org,
                 active_subscription,
                 active_messaging,
@@ -617,6 +676,12 @@ def main() -> None:
                 OrganizationMembership(organization_id=past_due_org.id, user_id=past_due_owner.id, role="owner"),
                 OrganizationMembership(organization_id=suspended_org.id, user_id=suspended_owner.id, role="owner"),
                 OrganizationMembership(organization_id=isolation_org.id, user_id=isolation_owner.id, role="owner"),
+                OrganizationMembership(organization_id=customer_managed_org.id, user_id=customer_managed_owner.id, role="owner"),
+                OrganizationMembership(
+                    organization_id=customer_managed_ready_org.id,
+                    user_id=customer_managed_ready_owner.id,
+                    role="owner",
+                ),
                 OrganizationInvitation(
                     organization_id=active_org.id,
                     email="pending-staff@browser.test",
