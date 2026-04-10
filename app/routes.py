@@ -63,6 +63,7 @@ from app.services.auth_security_service import (
 from app.services.billing_service import (
     create_billing_portal_session,
     create_checkout_session,
+    is_fake_checkout_session_id,
     organization_can_send,
     process_stripe_webhook_event,
     refresh_subscription_from_stripe,
@@ -569,8 +570,11 @@ def _setup_status_payload(organization: Organization) -> dict:
 def _should_reconcile_subscription(organization: Organization | None, session_id: str = "") -> bool:
     if organization is None:
         return False
-    if (session_id or "").strip():
+    normalized_session_id = (session_id or "").strip()
+    if normalized_session_id:
         return True
+    if current_app.config.get('STRIPE_FAKE_CHECKOUT_ENABLED'):
+        return False
     subscription = organization.subscription
     if subscription is None:
         return False
@@ -633,7 +637,15 @@ def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding)
 
 
 def _tenant_get_or_404(model, entity_id: int):
-    record = model.query.filter_by(id=entity_id).first()
+    query = model.query.filter_by(id=entity_id)
+    if (
+        saas_mode_enabled()
+        and not current_user.is_platform_admin
+        and hasattr(model, 'organization_id')
+        and _current_organization_id() is not None
+    ):
+        query = query.filter_by(organization_id=_current_organization_id())
+    record = query.first()
     if record is None:
         abort(404)
     return record
@@ -2639,9 +2651,10 @@ def team_invite():
     if not saas_mode_enabled() or current_user.is_platform_admin:
         abort(404)
 
-    subscription_gate = _require_active_subscription()
-    if subscription_gate is not None:
-        return subscription_gate
+    organization = _current_organization()
+    if not organization_can_send(organization):
+        flash('Activate billing before inviting staff members.', 'error')
+        return redirect(url_for('main.setup', step='billing'))
 
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
@@ -3443,6 +3456,54 @@ def invitation_accept(token):
         return redirect(url_for('main.dashboard'))
 
     return render_template('auth/accept_invitation.html', invitation=invitation)
+
+
+@bp.route('/_test/stripe/checkout/<session_id>', methods=['GET', 'POST'])
+@login_required
+def fake_stripe_checkout(session_id):
+    if not current_app.config.get('STRIPE_FAKE_CHECKOUT_ENABLED'):
+        abort(404)
+    if not is_fake_checkout_session_id(session_id):
+        abort(404)
+    if _can_manage_platform():
+        abort(403)
+    if getattr(current_user, 'organization_role', None) != 'owner':
+        abort(403)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    try:
+        requested_org_id = int((request.values.get('organization_id') or '').strip())
+    except ValueError:
+        abort(400)
+    if requested_org_id != organization.id:
+        abort(404)
+
+    success_url = (request.values.get('success_url') or '').strip()
+    cancel_url = (request.values.get('cancel_url') or '').strip()
+    resolved_success_url = success_url.replace('{CHECKOUT_SESSION_ID}', session_id)
+    if (
+        not success_url
+        or not cancel_url
+        or not is_safe_url(resolved_success_url, request.host_url)
+        or not is_safe_url(cancel_url, request.host_url)
+    ):
+        abort(400)
+
+    if request.method == 'POST':
+        action = (request.form.get('action') or 'complete').strip().lower()
+        target_url = cancel_url if action == 'cancel' else resolved_success_url
+        return redirect(target_url)
+
+    return render_template(
+        'testing/fake_checkout.html',
+        organization=organization,
+        session_id=session_id,
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
 
 
 @bp.route('/setup', methods=['GET', 'POST'])

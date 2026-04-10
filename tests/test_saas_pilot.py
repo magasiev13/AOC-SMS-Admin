@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             "FLASK_DEBUG": os.environ.get("FLASK_DEBUG"),
             "DATABASE_URL": os.environ.get("DATABASE_URL"),
             "SAAS_MODE": os.environ.get("SAAS_MODE"),
+            "STRIPE_FAKE_CHECKOUT_ENABLED": os.environ.get("STRIPE_FAKE_CHECKOUT_ENABLED"),
             "TWILIO_CREDENTIAL_ENCRYPTION_KEY": os.environ.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
         }
         os.environ["FLASK_DEBUG"] = "1"
@@ -29,6 +31,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             AppUser,
             AuthEvent,
             CommunityMember,
+            Event,
             InboxThread,
             KeywordAutomationRule,
             MessageLog,
@@ -47,6 +50,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.AppUser = AppUser
         self.AuthEvent = AuthEvent
         self.CommunityMember = CommunityMember
+        self.Event = Event
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
         self.MessageLog = MessageLog
@@ -496,6 +500,94 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn("session_id={CHECKOUT_SESSION_ID}", args[2])
         self.assertTrue(args[3].endswith("/setup?step=billing"))
 
+    def test_fake_checkout_route_is_disabled_by_default(self) -> None:
+        self._login_owner()
+
+        response = self.client.get(
+            f"/_test/stripe/checkout/cs_fake_org_{self.organization.id}?organization_id={self.organization.id}",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_setup_checkout_uses_fake_checkout_route_when_enabled(self) -> None:
+        self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+        self._login_owner()
+
+        response = self.client.post("/setup/billing/checkout", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertIn(f"/_test/stripe/checkout/cs_fake_org_{self.organization.id}", response.headers.get("Location", ""))
+        self.assertIn(f"organization_id={self.organization.id}", response.headers.get("Location", ""))
+
+    def test_fake_checkout_completion_marks_subscription_trialing(self) -> None:
+        self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+        self._login_owner()
+
+        response = self.client.post(
+            f"/_test/stripe/checkout/cs_fake_org_{self.organization.id}",
+            data={
+                "organization_id": str(self.organization.id),
+                "success_url": "http://localhost/setup?step=billing&session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": "http://localhost/setup?step=billing",
+                "action": "complete",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Trial active", response.data)
+        self.assertEqual(self.organization.subscription.status, "trialing")
+        self.assertIsNotNone(self.organization.subscription.current_period_end)
+
+    def test_cross_tenant_event_detail_is_not_accessible(self) -> None:
+        second_org = self.Organization(name="Second Org", slug="second-org", status="active")
+        second_subscription = self.OrganizationSubscription(
+            organization=second_org,
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        second_messaging = self.OrganizationMessagingProfile(
+            organization=second_org,
+            provider_mode="platform_managed",
+            from_number="+15550000123",
+            inbound_identity="+15550000123",
+            messaging_service_sid="MGsecond0001",
+            phone_number_sid="PNsecond0001",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+        )
+        second_owner = self.AppUser(
+            username="second-owner",
+            email="second-owner@acme.test",
+            full_name="Second Owner",
+            phone="+15550000022",
+            role="admin",
+            must_change_password=False,
+        )
+        second_owner.set_password("SecondOwner-pass1!")
+        second_event = self.Event(
+            organization=second_org,
+            title="Second Org Event",
+            date=datetime(2026, 4, 10).date(),
+        )
+        self.db.session.add_all([second_org, second_subscription, second_messaging, second_owner, second_event])
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=second_org.id,
+                user_id=second_owner.id,
+                role="owner",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get(f"/events/{second_event.id}", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 404)
+
     def test_staff_does_not_see_restart_control(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
         staff_user = self.AppUser(
@@ -592,6 +684,20 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNone(subscription.stripe_customer_id)
         self.assertIsNone(subscription.stripe_subscription_id)
         mock_stripe.Subscription.retrieve.assert_not_called()
+
+    @patch("app.routes.refresh_subscription_from_stripe")
+    def test_billing_overview_skips_live_stripe_refresh_in_fake_checkout_mode(self, mock_refresh) -> None:
+        self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+        self.subscription.status = "past_due"
+        self.subscription.stripe_customer_id = "cus_test_123"
+        self.subscription.stripe_subscription_id = "sub_test_123"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/billing", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        mock_refresh.assert_not_called()
 
     def test_users_list_is_scoped_to_current_organization(self) -> None:
         other_org = self.Organization(name="Other Co", slug="other-co", status="active")
@@ -1604,6 +1710,28 @@ class TestSaasPilotFoundation(unittest.TestCase):
         invite = self.OrganizationInvitation.query.filter_by(email="new-staff@acme.test").first()
         self.assertIsNotNone(invite)
         self.assertEqual(invite.role, "staff")
+
+    def test_team_invite_is_available_while_a2p_review_is_pending(self) -> None:
+        self.subscription.status = "trialing"
+        self.messaging_profile.status = "pending"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.inbound_identity = None
+        self.messaging_profile.phone_number_sid = None
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/team/invite", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_team_invite_requires_billing_activation(self) -> None:
+        self._login_owner()
+        response = self.client.get("/team/invite", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup?step=billing", response.headers.get("Location", ""))
 
     def test_team_invite_rejects_platform_admin_email(self) -> None:
         self.subscription.status = "trialing"

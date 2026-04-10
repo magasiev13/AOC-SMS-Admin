@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Test Checkout - SMS Admin{% endblock %}
+
+{% block page_title %}Test Checkout{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.setup', step='billing') }}">Setup</a> / <span>Test Checkout</span>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="text-muted small text-uppercase mb-2">Browser-only Stripe stub</div>
+                <h4 class="mb-2">Confirm subscription activation for {{ organization.name }}</h4>
+                <p class="text-muted mb-4">
+                    This internal checkout page exists only for deterministic browser tests. Completing it returns through the normal success redirect with a fake Checkout Session ID.
+                </p>
+                <div class="border rounded-3 p-3 mb-4 bg-light">
+                    <div><strong>Session:</strong> {{ session_id }}</div>
+                    <div><strong>Workspace:</strong> {{ organization.slug }}</div>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="organization_id" value="{{ organization.id }}">
+                        <input type="hidden" name="success_url" value="{{ success_url }}">
+                        <input type="hidden" name="cancel_url" value="{{ cancel_url }}">
+                        <input type="hidden" name="action" value="complete">
+                        <button type="submit" class="btn btn-primary">Complete Test Checkout</button>
+                    </form>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="organization_id" value="{{ organization.id }}">
+                        <input type="hidden" name="success_url" value="{{ success_url }}">
+                        <input type="hidden" name="cancel_url" value="{{ cancel_url }}">
+                        <input type="hidden" name="action" value="cancel">
+                        <button type="submit" class="btn btn-outline-secondary">Cancel</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -17,6 +17,7 @@ This directory contains technical documentation for the SMS Admin application.
 - [Deployment Guide](deployment.md) - Production deployment instructions
 - [CLI Tools](cli.md) - Command-line utilities (dbdoctor)
 - [SaaS Operations](saas-operations.md) - Separate SaaS deployment, schema, import, and backup runbook
+- [Public Readiness Signoff](public-readiness-signoff.md) - Local + beta release gate, evidence collection, and launch blockers
 - [Ubuntu VPS SaaS Checklist](ubuntu-vps-saas-checklist.md) - Exact Ubuntu VPS bring-up steps from clone to first local run
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 

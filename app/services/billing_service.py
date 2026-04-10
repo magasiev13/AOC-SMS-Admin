@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 
-from flask import current_app
+from flask import current_app, url_for
 
 from app import db
 from app.models import (
@@ -38,6 +39,7 @@ RECONCILEABLE_SUBSCRIPTION_STATUSES = {
 }
 WEBHOOK_PROCESSING_STALE_AFTER = timedelta(minutes=5)
 CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE = timedelta(minutes=5)
+FAKE_CHECKOUT_SESSION_PREFIX = "cs_fake_org_"
 
 
 def subscription_status_allows_sending(status: str | None) -> bool:
@@ -63,6 +65,76 @@ def ensure_subscription_record(organization: Organization) -> OrganizationSubscr
     )
     db.session.add(subscription)
     db.session.flush()
+    return subscription
+
+
+def fake_checkout_enabled() -> bool:
+    return bool(current_app.config.get("STRIPE_FAKE_CHECKOUT_ENABLED"))
+
+
+def is_fake_checkout_session_id(session_id: str | None) -> bool:
+    normalized = (session_id or "").strip()
+    return fake_checkout_enabled() and normalized.startswith(FAKE_CHECKOUT_SESSION_PREFIX)
+
+
+def _fake_checkout_session_id(organization: Organization) -> str:
+    return f"{FAKE_CHECKOUT_SESSION_PREFIX}{organization.id}"
+
+
+def _fake_checkout_organization_id(session_id: str) -> int:
+    normalized = (session_id or "").strip()
+    if not normalized.startswith(FAKE_CHECKOUT_SESSION_PREFIX):
+        raise RuntimeError("Unsupported fake checkout session id.")
+    try:
+        return int(normalized[len(FAKE_CHECKOUT_SESSION_PREFIX):])
+    except ValueError as exc:
+        raise RuntimeError("Invalid fake checkout session id.") from exc
+
+
+def _fake_checkout_url(
+    organization: Organization,
+    *,
+    session_id: str,
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    return url_for(
+        "main.fake_stripe_checkout",
+        session_id=session_id,
+        organization_id=organization.id,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        _external=True,
+    )
+
+
+def _fake_checkout_period_end() -> datetime | None:
+    trial_days = int(current_app.config.get("BILLING_TRIAL_DAYS", 14) or 0)
+    if trial_days <= 0:
+        return None
+    return utc_now() + timedelta(days=trial_days)
+
+
+def _apply_fake_checkout_session(
+    session_id: str,
+    organization: Organization | None = None,
+) -> OrganizationSubscription:
+    fake_organization_id = _fake_checkout_organization_id(session_id)
+    target_organization = organization
+    if target_organization is None:
+        target_organization = db.session.get(Organization, fake_organization_id)
+    if target_organization is None:
+        raise RuntimeError("Fake checkout organization was not found.")
+    if target_organization.id != fake_organization_id:
+        raise RuntimeError("Fake checkout session does not belong to this organization.")
+
+    subscription = ensure_subscription_record(target_organization)
+    subscription.status = "trialing"
+    subscription.current_period_end = _fake_checkout_period_end()
+    subscription.cancel_at_period_end = False
+    if not subscription.stripe_price_id:
+        subscription.stripe_price_id = current_app.config.get("STRIPE_PRICE_ID")
+    db.session.commit()
     return subscription
 
 
@@ -254,6 +326,18 @@ def _find_matching_checkout_session(
 
 
 def create_checkout_session(organization: Organization, user_email: str, success_url: str, cancel_url: str):
+    if fake_checkout_enabled():
+        session_id = _fake_checkout_session_id(organization)
+        return SimpleNamespace(
+            id=session_id,
+            url=_fake_checkout_url(
+                organization,
+                session_id=session_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            ),
+        )
+
     stripe = _stripe_module()
     subscription = ensure_subscription_record(organization)
     price_id = current_app.config.get("STRIPE_PRICE_ID")
@@ -541,6 +625,9 @@ def sync_checkout_session_by_id(
     session_id: str,
     organization: Organization | None = None,
 ) -> OrganizationSubscription | None:
+    if is_fake_checkout_session_id(session_id):
+        return _apply_fake_checkout_session(session_id, organization)
+
     stripe = _stripe_module()
     session = stripe.checkout.Session.retrieve(session_id)
     data_object = _stripe_object_to_dict(session)

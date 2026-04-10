@@ -1,11 +1,19 @@
 const { test, expect } = require('@playwright/test');
+const {
+  attachFailureDiagnostics,
+  expectOrganizationRowState,
+  installFailureDiagnostics,
+  login,
+  organizationRow,
+} = require('./helpers');
 
-async function login(page, username, password) {
-  await page.goto('/login');
-  await page.getByLabel('Email or username').fill(username);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign In' }).click();
-}
+test.beforeEach(async ({ page }) => {
+  installFailureDiagnostics(page);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachFailureDiagnostics(page, testInfo);
+});
 
 test('platform admin can review onboarding progress and owner invite access', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
@@ -26,15 +34,15 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(organizationsNavLink).toBeVisible();
   await organizationsNavLink.click();
 
-  const onboardingRow = page.locator('.platform-directory__row').filter({ hasText: 'Onboarding Bakery' });
-  await expect(onboardingRow).toBeVisible();
-  await expect(onboardingRow.getByText(/core steps complete/).first()).toBeVisible();
-  await expect(onboardingRow.getByText(/Twilio subaccount not provisioned yet/)).toBeVisible();
+  const onboardingRow = organizationRow(page, 'Onboarding Bakery');
+  await expectOrganizationRowState(onboardingRow, {
+    headlinePattern: /core steps complete/,
+    billingTitle: 'Billing setup needed',
+    messagingTitle: 'Pending',
+    ownerInviteVisible: true,
+    ownerInviteToken: /browser-owner-invite-token/,
+  });
   await expect(onboardingRow.getByRole('link', { name: 'Manage provider' })).toBeVisible();
-  await expect(onboardingRow.getByRole('button', { name: 'More actions' })).toBeVisible();
-  const ownerInviteLink = onboardingRow.getByRole('link', { name: 'Open invite' });
-  await expect(ownerInviteLink).toBeVisible();
-  await expect(ownerInviteLink).toHaveAttribute('href', /browser-owner-invite-token/);
 
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();

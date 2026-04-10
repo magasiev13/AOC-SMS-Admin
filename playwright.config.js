@@ -2,6 +2,7 @@ const { defineConfig } = require('@playwright/test');
 
 const port = process.env.PLAYWRIGHT_PORT || '5010';
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${port}`;
+const artifactRoot = process.env.PLAYWRIGHT_ARTIFACT_DIR || 'output/playwright';
 
 module.exports = defineConfig({
   testDir: './tests/browser',
@@ -13,9 +14,9 @@ module.exports = defineConfig({
   workers: 1,
   reporter: [
     ['list'],
-    ['html', { open: 'never', outputFolder: 'output/playwright/report' }],
+    ['html', { open: 'never', outputFolder: `${artifactRoot}/report` }],
   ],
-  outputDir: 'output/playwright/test-results',
+  outputDir: `${artifactRoot}/test-results`,
   use: {
     baseURL,
     trace: 'retain-on-failure',

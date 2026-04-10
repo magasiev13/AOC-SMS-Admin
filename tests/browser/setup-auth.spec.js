@@ -1,11 +1,17 @@
 const { test, expect } = require('@playwright/test');
+const {
+  attachFailureDiagnostics,
+  installFailureDiagnostics,
+  login,
+} = require('./helpers');
 
-async function login(page, username, password, path = '/login') {
-  await page.goto(path);
-  await page.getByLabel('Email or username').fill(username);
-  await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Sign In' }).click();
-}
+test.beforeEach(async ({ page }) => {
+  installFailureDiagnostics(page);
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  await attachFailureDiagnostics(page, testInfo);
+});
 
 test('workspace and platform login surfaces are clearly separated', async ({ page }) => {
   await page.goto('/login');
@@ -24,7 +30,7 @@ test('owner with incomplete setup lands on the setup runway', async ({ page }) =
 
   await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByText('Owner setup')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Onboarding Bakery' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Setup Runway Bakery' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Activate billing' })).toBeVisible();
 });
 

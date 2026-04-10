@@ -9,6 +9,7 @@ PLAYWRIGHT_PORT="${PLAYWRIGHT_PORT:-5010}"
 PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:${PLAYWRIGHT_PORT}}"
 PLAYWRIGHT_DB_DIR="${REPO_ROOT}/.playwright"
 PLAYWRIGHT_DB_PATH="${PLAYWRIGHT_DB_PATH:-${PLAYWRIGHT_DB_DIR}/browser-tests.db}"
+PLAYWRIGHT_ARTIFACT_DIR="${PLAYWRIGHT_ARTIFACT_DIR:-${REPO_ROOT}/output/playwright}"
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   echo "ERROR: venv not found at ${PYTHON_BIN}." >&2
@@ -23,7 +24,7 @@ if [[ "${VENV_PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
   exit 1
 fi
 
-mkdir -p "${PLAYWRIGHT_DB_DIR}" "${REPO_ROOT}/output/playwright/report" "${REPO_ROOT}/output/playwright/test-results"
+mkdir -p "${PLAYWRIGHT_DB_DIR}" "${PLAYWRIGHT_ARTIFACT_DIR}/report" "${PLAYWRIGHT_ARTIFACT_DIR}/test-results"
 
 export DATABASE_URL="sqlite:///${PLAYWRIGHT_DB_PATH}"
 export FLASK_DEBUG=0
@@ -35,10 +36,12 @@ export PLATFORM_SERVICE_RESTART_ENABLED=1
 export STRIPE_SECRET_KEY="sk_test_browser"
 export STRIPE_WEBHOOK_SECRET="whsec_browser"
 export STRIPE_PRICE_ID="price_browser"
+export STRIPE_FAKE_CHECKOUT_ENABLED=1
 export TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
 export TWILIO_A2P_ONBOARDING_ENABLED=1
 export TWILIO_PRIMARY_CUSTOMER_PROFILE_SID="BUbrowserprimary123"
 export TWILIO_A2P_FAKE_QUEUE=1
+export PLAYWRIGHT_ARTIFACT_DIR
 export ADMIN_USERNAME="platform-admin"
 export ADMIN_EMAIL="platform@browser.test"
 export ADMIN_PASSWORD="Platform-pass1!"
