@@ -41,6 +41,19 @@ class TestNormalizePhone(unittest.TestCase):
     def test_numeric_input_is_supported(self) -> None:
         self.assertEqual(normalize_phone(17203832388), "+17203832388")
 
+    def test_float_numeric_input_does_not_gain_trailing_zero(self) -> None:
+        self.assertEqual(normalize_phone(17203832388.0), "+17203832388")
+
+    def test_stringified_integer_float_input_is_supported(self) -> None:
+        self.assertEqual(normalize_phone("17203832388.0"), "+17203832388")
+
+    def test_fractional_numeric_input_is_rejected(self) -> None:
+        self.assertEqual(normalize_phone(17203832388.5), "")
+        self.assertEqual(normalize_phone("17203832388.5"), "")
+
+    def test_scientific_notation_integer_input_is_supported(self) -> None:
+        self.assertEqual(normalize_phone("7.203832388E9"), "+17203832388")
+
     def test_non_ascii_digits_are_rejected(self) -> None:
         full_width_digits = "\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18\uff19\uff10"
         arabic_indic_digits = "\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u0660"

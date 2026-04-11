@@ -1,3 +1,4 @@
+from decimal import Decimal, InvalidOperation
 import re
 import csv
 import io
@@ -11,6 +12,7 @@ _TEMPLATE_TOKEN_RE = re.compile(
 )
 _TEMPLATE_TOKEN_SCAN_RE = re.compile(r"\{([^{}]+)\}")
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_NUMERIC_PHONE_LITERAL_RE = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
 
 
 def escape_like(value: str) -> str:
@@ -28,6 +30,20 @@ def normalize_keyword(value: str) -> str:
     return ' '.join((value or '').upper().strip().split())
 
 
+def _normalize_numeric_phone_literal(raw: str) -> str | None:
+    if not _NUMERIC_PHONE_LITERAL_RE.fullmatch(raw):
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation:
+        return ''
+
+    integral_value = value.to_integral_value()
+    if value != integral_value:
+        return ''
+    return format(integral_value, 'f')
+
+
 def normalize_phone(phone: object) -> str:
     """
     Normalize phone number to E.164-ish format.
@@ -39,6 +55,11 @@ def normalize_phone(phone: object) -> str:
     raw = str(phone).strip()
     if not raw:
         return ''
+    normalized_numeric_literal = _normalize_numeric_phone_literal(raw)
+    if normalized_numeric_literal is not None:
+        raw = normalized_numeric_literal
+        if not raw:
+            return ''
     # Reject alphabetic content (e.g. "ext", vanity numbers) so we do not
     # accidentally merge extensions/words into a valid SMS destination.
     if re.search(r'[A-Za-z]', raw):
