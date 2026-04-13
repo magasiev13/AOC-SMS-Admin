@@ -229,8 +229,9 @@ Type=oneshot
 User=smsadmin
 Group=smsadmin
 WorkingDirectory=/opt/sms-admin
-EnvironmentFile=/opt/sms-admin/.env
+EnvironmentFile=-/opt/sms-admin/.env
 ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
+ExecStartPre=/usr/local/bin/dbdoctor --apply
 ExecStart=/bin/bash /opt/sms-admin/deploy/run_scheduler_once.sh
 ```
 

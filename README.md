@@ -297,8 +297,8 @@ sudo chmod 660 /opt/sms-admin/instance/sms.db
 sudo chmod 660 /opt/sms-admin/instance/sms.db-wal 2>/dev/null || true
 sudo chmod 660 /opt/sms-admin/instance/sms.db-shm 2>/dev/null || true
 
-# Verify by running scheduler manually
-sudo -u smsadmin /opt/sms-admin/deploy/run_scheduler_once.sh
+# Verify by triggering the scheduler service manually
+sudo systemctl start sms-scheduler.service
 ```
 
 ### 11. Database Migration Checks

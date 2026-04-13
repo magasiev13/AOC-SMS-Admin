@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # run_scheduler_once.sh - Oneshot scheduler runner for systemd timer
-# Activates venv, loads environment, runs send_scheduled_messages() once, then exits.
+# Activates venv, loads environment, bootstraps the runtime app, runs
+# send_scheduled_messages() once, then exits.
 # Exit code: 0 on success, non-zero on failure (systemd will log the error).
 
 set -euo pipefail
@@ -36,10 +37,10 @@ logging.basicConfig(
 )
 
 try:
-    from app import create_app
+    from app import create_runtime_app
     from app.services.scheduler_service import send_scheduled_messages
 
-    app = create_app()
+    app = create_runtime_app()
     send_scheduled_messages(app)
     sys.exit(0)
 except Exception as e:
