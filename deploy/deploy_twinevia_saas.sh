@@ -116,6 +116,7 @@ render_template() {
   sed \
     -e "s|__APP_USER__|${APP_USER}|g" \
     -e "s|__APP_GROUP__|${APP_GROUP}|g" \
+    -e "s|__APP_ROOT__|${APP_ROOT}|g" \
     -e "s|__TWINEVIA_SAAS_DBDOCTOR_DEST__|${TWINEVIA_SAAS_DBDOCTOR_BIN}|g" \
     -e "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" \
     "${src}" > "${tmp_file}"

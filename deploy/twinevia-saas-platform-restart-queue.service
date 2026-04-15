@@ -6,14 +6,14 @@ After=network.target
 Type=oneshot
 User=__APP_USER__
 Group=__APP_GROUP__
-WorkingDirectory=/opt/twinevia-saas
-Environment="PATH=/opt/twinevia-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="APP_ROOT=/opt/twinevia-saas"
+WorkingDirectory=__APP_ROOT__
+Environment="PATH=__APP_ROOT__/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="APP_ROOT=__APP_ROOT__"
 Environment="SAAS_MODE=1"
-EnvironmentFile=-/opt/twinevia-saas/.env
-ExecStartPre=/opt/twinevia-saas/deploy/check_python_runtime.sh
+EnvironmentFile=-__APP_ROOT__/.env
+ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
-ExecStart=/bin/bash /opt/twinevia-saas/deploy/run_platform_restart_queue_once.sh
+ExecStart=/bin/bash __APP_ROOT__/deploy/run_platform_restart_queue_once.sh
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=twinevia-saas-platform-restart-queue

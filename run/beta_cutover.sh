@@ -18,6 +18,7 @@ ORG_SLUG=""
 FREEZE_NOTE=""
 RUN_LOCAL_GATE=1
 RUN_DEPLOY=0
+EMPTY_ARG_PLACEHOLDER="__TWINEVIA_EMPTY__"
 
 usage() {
   cat <<'EOF'
@@ -140,6 +141,9 @@ resolve_remote_unit_prefix() {
 APP_ROOT="$(resolve_remote_app_root)"
 UNIT_PREFIX="$(resolve_remote_unit_prefix)"
 
+APP_USER_ARG="${APP_USER:-${EMPTY_ARG_PLACEHOLDER}}"
+PROXY_CONFIG_ARG="${PROXY_CONFIG_PATH:-${EMPTY_ARG_PLACEHOLDER}}"
+
 run_and_capture() {
   local name="$1"
   shift
@@ -169,10 +173,10 @@ run_and_capture pre_snapshot "${REPO_ROOT}/run/public_readiness_beta_snapshot.sh
 
 REMOTE_BACKUP_DIR="$(ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- \
   "${APP_ROOT}" \
-  "${APP_USER}" \
+  "${APP_USER_ARG}" \
   "${UNIT_PREFIX}" \
   "/var/backups/twinevia-beta-cutover/${RUN_ID}" \
-  "${PROXY_CONFIG_PATH}" \
+  "${PROXY_CONFIG_ARG}" \
   "${DEPLOY_BRANCH}" \
   "${DEPLOY_TRACKING}" <<'REMOTE'
 set -euo pipefail
@@ -184,6 +188,13 @@ BACKUP_DIR="$4"
 PROXY_CONFIG_PATH="$5"
 DEPLOY_BRANCH="$6"
 DEPLOY_TRACKING="$7"
+
+if [[ "${APP_USER_OVERRIDE}" == "__TWINEVIA_EMPTY__" ]]; then
+  APP_USER_OVERRIDE=""
+fi
+if [[ "${PROXY_CONFIG_PATH}" == "__TWINEVIA_EMPTY__" ]]; then
+  PROXY_CONFIG_PATH=""
+fi
 
 resolve_app_user() {
   if [[ -n "${APP_USER_OVERRIDE}" ]]; then
@@ -234,7 +245,16 @@ sudo -u "${APP_USER}" env APP_ROOT="${APP_ROOT}" BACKUP_DIR="${BACKUP_DIR}" bash
   else
     /usr/local/bin/saas-dbdoctor --doctor > "${BACKUP_DIR}/saas_dbdoctor.txt"
   fi
-  pg_dump "$DATABASE_URL" > "${BACKUP_DIR}/postgres.sql"
+  PG_DUMP_URL="$("./venv/bin/python" - <<'"'"'PY'"'"'
+import os
+
+database_url = os.environ["DATABASE_URL"]
+if database_url.startswith("postgresql+psycopg://"):
+    database_url = "postgresql://" + database_url[len("postgresql+psycopg://"):]
+print(database_url)
+PY
+)"
+  pg_dump "$PG_DUMP_URL" > "${BACKUP_DIR}/postgres.sql"
   if command -v redis-cli >/dev/null 2>&1; then
     redis-cli -u "$REDIS_URL" --rdb "${BACKUP_DIR}/redis.rdb" >/dev/null
   elif [ -f /var/lib/redis/dump.rdb ]; then
@@ -291,7 +311,7 @@ fi
 if [[ "${RUN_DEPLOY}" -eq 1 ]]; then
   ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- \
     "${APP_ROOT}" \
-    "${APP_USER}" \
+    "${APP_USER_ARG}" \
     "${DEPLOY_BRANCH}" \
     "${DEPLOY_TRACKING}" <<'REMOTE'
 set -euo pipefail
@@ -300,6 +320,10 @@ APP_ROOT="$1"
 APP_USER_OVERRIDE="$2"
 DEPLOY_BRANCH="$3"
 DEPLOY_TRACKING="$4"
+
+if [[ "${APP_USER_OVERRIDE}" == "__TWINEVIA_EMPTY__" ]]; then
+  APP_USER_OVERRIDE=""
+fi
 
 resolve_app_user() {
   if [[ -n "${APP_USER_OVERRIDE}" ]]; then
@@ -323,6 +347,7 @@ TRACKING_BRANCH="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse --abbrev
 [ "${CURRENT_BRANCH}" = "${DEPLOY_BRANCH}" ] || { echo "branch mismatch: ${CURRENT_BRANCH} != ${DEPLOY_BRANCH}" >&2; exit 1; }
 [ "${TRACKING_BRANCH}" = "${DEPLOY_TRACKING}" ] || { echo "tracking mismatch: ${TRACKING_BRANCH:-<none>} != ${DEPLOY_TRACKING}" >&2; exit 1; }
 
+sudo -u "${APP_USER}" git -C "${APP_ROOT}" pull --ff-only
 sudo EXPECTED_GIT_BRANCH="${DEPLOY_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${DEPLOY_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" "${APP_ROOT}/deploy/deploy_twinevia_saas.sh"
 REMOTE
 
