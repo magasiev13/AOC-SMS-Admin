@@ -1,11 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TWINEVIA_SAAS_PYTHON="${TWINEVIA_SAAS_PYTHON:-/opt/twinevia-saas/venv/bin/python}"
+resolve_saas_app_root() {
+  if [[ -n "${TWINEVIA_SAAS_APP_ROOT:-}" ]]; then
+    printf '%s\n' "${TWINEVIA_SAAS_APP_ROOT}"
+    return
+  fi
+  if [[ -n "${APP_ROOT:-}" ]]; then
+    printf '%s\n' "${APP_ROOT}"
+    return
+  fi
+  if [[ -x "/opt/twinevia-saas/venv/bin/python" ]]; then
+    printf '/opt/twinevia-saas\n'
+    return
+  fi
+  if [[ -x "/opt/sms-saas/venv/bin/python" ]]; then
+    printf '/opt/sms-saas\n'
+    return
+  fi
+  printf '/opt/twinevia-saas\n'
+}
+
+DEFAULT_SAAS_APP_ROOT="$(resolve_saas_app_root)"
+TWINEVIA_SAAS_PYTHON="${TWINEVIA_SAAS_PYTHON:-${DEFAULT_SAAS_APP_ROOT}/venv/bin/python}"
 
 if [[ ! -x "${TWINEVIA_SAAS_PYTHON}" ]]; then
   echo "ERROR: Python interpreter not found at ${TWINEVIA_SAAS_PYTHON}." >&2
-  echo "Set TWINEVIA_SAAS_PYTHON to the SaaS venv python path, e.g. /opt/twinevia-saas/venv/bin/python." >&2
+  echo "Set TWINEVIA_SAAS_PYTHON or TWINEVIA_SAAS_APP_ROOT to the SaaS runtime path, e.g. /opt/twinevia-saas/venv/bin/python." >&2
   exit 1
 fi
 

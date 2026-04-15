@@ -157,7 +157,7 @@ health_code="$(curl -sS -D "${OUT_DIR}/health.headers" -o "${OUT_DIR}/health.bod
 printf '%s\n' "${health_code}" > "${OUT_DIR}/health.status"
 
 if ! capture_remote_file saas_dbdoctor.txt \
-  "sudo -u ${APP_USER} bash -lc 'cd ${APP_ROOT} && set -a && source .env && set +a && if [ -x /usr/local/bin/twinevia-saas-dbdoctor ]; then /usr/local/bin/twinevia-saas-dbdoctor --doctor; else /usr/local/bin/saas-dbdoctor --doctor; fi'"; then
+  "sudo -u ${APP_USER} bash -lc 'cd ${APP_ROOT} && set -a && source .env && set +a && if [ -x /usr/local/bin/twinevia-saas-dbdoctor ]; then TWINEVIA_SAAS_APP_ROOT=\"${APP_ROOT}\" TWINEVIA_SAAS_PYTHON=\"${APP_ROOT}/venv/bin/python\" /usr/local/bin/twinevia-saas-dbdoctor --doctor; else TWINEVIA_SAAS_APP_ROOT=\"${APP_ROOT}\" TWINEVIA_SAAS_PYTHON=\"${APP_ROOT}/venv/bin/python\" /usr/local/bin/saas-dbdoctor --doctor; fi'"; then
   command_failures=1
 fi
 
@@ -173,7 +173,7 @@ if [[ -z "${service_activity}" ]]; then
 fi
 
 if ! capture_remote_file worker.log.txt \
-  "sudo journalctl -u twinevia-saas-worker -n 120 --no-pager"; then
+  "sudo journalctl -u ${UNIT_PREFIX}-worker -n 120 --no-pager"; then
   command_failures=1
 fi
 

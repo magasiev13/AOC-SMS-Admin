@@ -241,9 +241,9 @@ sudo -u "${APP_USER}" env APP_ROOT="${APP_ROOT}" BACKUP_DIR="${BACKUP_DIR}" bash
   source .env
   set +a
   if [ -x /usr/local/bin/twinevia-saas-dbdoctor ]; then
-    /usr/local/bin/twinevia-saas-dbdoctor --doctor > "${BACKUP_DIR}/saas_dbdoctor.txt"
+    TWINEVIA_SAAS_APP_ROOT="${APP_ROOT}" TWINEVIA_SAAS_PYTHON="${APP_ROOT}/venv/bin/python" /usr/local/bin/twinevia-saas-dbdoctor --doctor > "${BACKUP_DIR}/saas_dbdoctor.txt"
   else
-    /usr/local/bin/saas-dbdoctor --doctor > "${BACKUP_DIR}/saas_dbdoctor.txt"
+    TWINEVIA_SAAS_APP_ROOT="${APP_ROOT}" TWINEVIA_SAAS_PYTHON="${APP_ROOT}/venv/bin/python" /usr/local/bin/saas-dbdoctor --doctor > "${BACKUP_DIR}/saas_dbdoctor.txt"
   fi
   PG_DUMP_URL="$("./venv/bin/python" - <<'"'"'PY'"'"'
 import os

@@ -467,6 +467,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("live_tracking_branch.txt", cutover_script)
         self.assertIn("resolve_remote_app_root", cutover_script)
         self.assertIn("resolve_remote_unit_prefix", cutover_script)
+        self.assertIn("TWINEVIA_SAAS_APP_ROOT", cutover_script)
+        self.assertIn("TWINEVIA_SAAS_PYTHON", cutover_script)
 
     def test_saas_unit_templates_use_rendered_user_group_and_canonical_dbdoctor(self) -> None:
         service_unit = self._read_repo_file("deploy", "twinevia-saas.service")
@@ -474,6 +476,15 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("User=__APP_USER__", service_unit)
         self.assertIn("Group=__APP_GROUP__", service_unit)
         self.assertIn("ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply", service_unit)
+
+    def test_saas_dbdoctor_wrappers_support_legacy_saas_root(self) -> None:
+        canonical_wrapper = self._read_repo_file("bin", "twinevia-saas-dbdoctor")
+        compatibility_wrapper = self._read_repo_file("bin", "saas-dbdoctor")
+
+        self.assertIn("TWINEVIA_SAAS_APP_ROOT", canonical_wrapper)
+        self.assertIn("/opt/sms-saas/venv/bin/python", canonical_wrapper)
+        self.assertIn("TWINEVIA_SAAS_APP_ROOT", compatibility_wrapper)
+        self.assertIn("/opt/sms-saas/venv/bin/python", compatibility_wrapper)
 
     def test_restart_helper_status_rejects_unsupported_unit_safely(self) -> None:
         helper_path = self.repo_root / "deploy" / "restart_twinevia_saas_services.sh"
