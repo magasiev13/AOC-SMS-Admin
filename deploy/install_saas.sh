@@ -200,13 +200,40 @@ current_env_value() {
   sudo grep -E "^${key}=" "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true
 }
 
-ensure_env_key "SAAS_MODE" "1"
-ensure_env_key "SCHEDULER_ENABLED" "0"
-ensure_env_key "RQ_QUEUE_NAME" "twinevia-saas"
-ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
-ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
-ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
-ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
+upsert_env_key() {
+  local key="$1"
+  local value="$2"
+  local tmp_file
+
+  tmp_file="$(mktemp)"
+  sudo awk -v key="${key}" -v value="${value}" '
+    BEGIN { updated = 0 }
+    $0 ~ ("^" key "=") {
+      if (updated == 0) {
+        print key "=" value
+        updated = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (updated == 0) {
+        print key "=" value
+      }
+    }
+  ' "${ENV_FILE}" > "${tmp_file}"
+  sudo install -o root -g "${APP_GROUP}" -m 0660 "${tmp_file}" "${ENV_FILE}"
+  rm -f "${tmp_file}"
+  echo "✓ Set ${key}"
+}
+
+upsert_env_key "SAAS_MODE" "1"
+upsert_env_key "SCHEDULER_ENABLED" "0"
+upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"
+upsert_env_key "REDIS_URL" "redis://localhost:6379/0"
+upsert_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
+upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
+upsert_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
 
 required_keys=(
   DATABASE_URL

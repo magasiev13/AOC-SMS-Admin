@@ -414,6 +414,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("resolve_app_group", install_script)
         self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", install_script)
         self.assertIn("/usr/local/bin/saas-dbdoctor", install_script)
+        self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', install_script)
+        self.assertIn('upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', install_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
 
     def test_deploy_script_syncs_restart_helper_and_restart_queue_timer(self) -> None:
@@ -433,6 +435,9 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("assert_git_source", deploy_script)
         self.assertIn("LEGACY_SAAS_RUNTIME_UNITS", deploy_script)
         self.assertIn("retire_legacy_saas_runtime", deploy_script)
+        self.assertIn("LOG_DIR", deploy_script)
+        self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', deploy_script)
+        self.assertIn('upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.service", deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)

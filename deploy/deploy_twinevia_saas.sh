@@ -16,6 +16,7 @@ RESTART_SUDOERS_SRC="${APP_ROOT}/deploy/twinevia-saas-restart.sudoers"
 RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/twinevia-saas-restart}"
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 VISUDO_BIN="${VISUDO_BIN:-/usr/sbin/visudo}"
+LOG_DIR="${LOG_DIR:-/var/log/twinevia-saas}"
 SAAS_SYSTEMD_UNITS=(
   "twinevia-saas.service"
   "twinevia-saas-worker.service"
@@ -137,6 +138,32 @@ resolve_health_host() {
   printf '127.0.0.1\n'
 }
 
+upsert_env_key() {
+  local key="$1"
+  local value="$2"
+  local tmp_file
+
+  tmp_file="$(mktemp)"
+  sudo awk -v key="${key}" -v value="${value}" '
+    BEGIN { updated = 0 }
+    $0 ~ ("^" key "=") {
+      if (updated == 0) {
+        print key "=" value
+        updated = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (updated == 0) {
+        print key "=" value
+      }
+    }
+  ' "${ENV_FILE}" > "${tmp_file}"
+  sudo install -o root -g "${APP_GROUP}" -m 0660 "${tmp_file}" "${ENV_FILE}"
+  rm -f "${tmp_file}"
+}
+
 sync_deploy_artifacts() {
   local unit
   local tmp_sudoers
@@ -153,6 +180,8 @@ sync_deploy_artifacts() {
     "${RESTART_SUDOERS_SRC}" > "${tmp_sudoers}"
   sudo install -o root -g root -m 0440 "${tmp_sudoers}" "${RESTART_SUDOERS_DEST}"
   sudo "${VISUDO_BIN}" -cf "${RESTART_SUDOERS_DEST}" >/dev/null
+  sudo mkdir -p "${LOG_DIR}"
+  sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
   for unit in "${SAAS_SYSTEMD_UNITS[@]}"; do
     render_template "${APP_ROOT}/deploy/${unit}" "${SYSTEMD_UNIT_DIR}/${unit}" 0644
   done
@@ -174,7 +203,11 @@ retire_legacy_saas_runtime() {
   fi
 
   echo "==> Retiring legacy sms-saas runtime units"
-  sudo systemctl disable --now "${legacy_units[@]}" || true
+  for unit in "${legacy_units[@]}"; do
+    sudo systemctl stop "${unit}" || true
+    sudo systemctl disable "${unit}" || true
+  done
+  sudo systemctl reset-failed "${legacy_units[@]}" || true
 }
 
 echo "==> Deploying Twinevia SaaS"
@@ -190,6 +223,12 @@ fi
 assert_git_source
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
 assert_git_source
+upsert_env_key "SAAS_MODE" "1"
+upsert_env_key "SCHEDULER_ENABLED" "0"
+upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"
+upsert_env_key "REDIS_URL" "redis://localhost:6379/0"
+upsert_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
+upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 sync_deploy_artifacts
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --doctor"
