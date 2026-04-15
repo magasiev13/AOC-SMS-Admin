@@ -1,15 +1,15 @@
-# Relayn Documentation
+# Twinevia Documentation
 
-This directory is the maintained documentation set for Relayn.
+This directory is the maintained documentation set for Twinevia.
 
 Documentation is SaaS-first:
 
 - canonical production target: `SAAS_MODE=1`
 - canonical database: PostgreSQL
-- canonical deploy root: `/opt/sms-saas`
-- canonical service family: `sms-saas*`
+- canonical deploy root: `/opt/twinevia-saas`
+- canonical service family: `twinevia-saas*`
 
-The legacy `SMS Admin` SQLite runtime remains documented only where required for compatibility or migration.
+The `Twinevia Legacy` single-tenant SQLite runtime remains documented only where required for compatibility or migration.
 
 ## Start Here
 
@@ -23,7 +23,7 @@ The legacy `SMS Admin` SQLite runtime remains documented only where required for
 - [API Reference](api.md): current route surface grouped by capability
 - [Database](database.md): model domains, tenant scoping, migration systems
 - [Services](services.md): business logic and background processing modules
-- [CLI Tools](cli.md): `dbdoctor`, `saas-dbdoctor`, local scripts, worker and scheduler entrypoints
+- [CLI Tools](cli.md): `dbdoctor`, `twinevia-saas-dbdoctor`, the `saas-dbdoctor` compatibility alias, local scripts, worker and scheduler entrypoints
 - [Troubleshooting](troubleshooting.md): current failure modes and recovery paths
 
 ## Release And Rollout

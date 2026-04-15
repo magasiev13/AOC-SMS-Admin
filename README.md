@@ -1,8 +1,8 @@
-# Relayn
+# Twinevia
 
-Relayn is a multi-tenant messaging workspace for organizations that need owner/staff access, billing, Twilio sender provisioning, A2P onboarding, inbox automation, scheduled messaging, and operational auditability.
+Twinevia is a multi-tenant messaging workspace for organizations that need owner/staff access, billing, Twilio sender provisioning, A2P onboarding, inbox automation, scheduled messaging, and operational auditability.
 
-This repository still contains the original single-tenant `SMS Admin` runtime, but the SaaS/PostgreSQL deployment line is the primary production path and the default perspective for this documentation set.
+This repository still contains the original single-tenant `Twinevia Legacy` runtime, but the SaaS/PostgreSQL deployment line is the primary production path and the default perspective for this documentation set.
 
 ## What This Repo Contains
 
@@ -15,16 +15,17 @@ This repository still contains the original single-tenant `SMS Admin` runtime, b
 
 ## Runtime Modes
 
-### Primary Production Runtime: Relayn SaaS
+### Primary Production Runtime: Twinevia
 
 - `SAAS_MODE=1`
 - PostgreSQL-backed application database
-- Redis queue name `sms-saas`
-- Explicit SaaS schema tooling via `./venv/bin/python -m app.saas_db` locally or `saas-dbdoctor` in production
-- SaaS deploy units under `deploy/sms-saas*`
-- Canonical production root: `/opt/sms-saas`
+- Redis queue name `twinevia-saas`
+- Explicit SaaS schema tooling via `./venv/bin/python -m app.saas_db` locally or `twinevia-saas-dbdoctor` in production
+- Compatibility alias: `saas-dbdoctor`
+- SaaS deploy units under `deploy/twinevia-saas*`
+- Canonical production root: `/opt/twinevia-saas`
 
-### Secondary Compatibility Runtime: Legacy SMS Admin
+### Secondary Compatibility Runtime: Twinevia Legacy
 
 - `SAAS_MODE=0`
 - SQLite-backed application database
@@ -40,7 +41,7 @@ The docs in `docs/` are SaaS-first. Legacy details remain documented only where 
 - `app/`: Flask app factory, models, routes, tenant scoping, services, templates, static assets
 - `app/migrations/`: legacy SQLite migration system
 - `app/saas_migrations/`: explicit SaaS schema migration system
-- `bin/`: installed CLI wrappers such as `dbdoctor` and `saas-dbdoctor`
+- `bin/`: installed CLI wrappers such as `dbdoctor`, `twinevia-saas-dbdoctor`, and the retained SaaS alias `saas-dbdoctor`
 - `deploy/`: systemd units, install scripts, restart helpers, and deploy wrappers
 - `docs/`: reference docs, runbooks, rollout guides, and signoff procedures
 - `run/`: local setup, local stack startup, test wrappers, demo seeding, and signoff scripts
@@ -64,7 +65,7 @@ At minimum, local SaaS work normally needs:
 - `SAAS_MODE=1`
 - `DATABASE_URL=...`
 - `REDIS_URL=redis://localhost:6379/0`
-- `RQ_QUEUE_NAME=sms-saas`
+- `RQ_QUEUE_NAME=twinevia-saas`
 - `SAAS_BASE_URL=http://127.0.0.1:5000`
 - `STRIPE_SECRET_KEY=...`
 - `STRIPE_WEBHOOK_SECRET=...`
@@ -134,10 +135,10 @@ Artifacts are written under `output/`.
 ### SaaS Production
 
 - install: `sudo ./deploy/install_saas.sh`
-- update: `sudo ./deploy/deploy_sms_saas.sh`
-- web service: `sms-saas.service`
-- worker: `sms-saas-worker.service`
-- timers: `sms-saas-scheduler.timer`, `sms-saas-billing-reconcile.timer`, `sms-saas-platform-restart-queue.timer`, `sms-saas-a2p-reconcile.timer`
+- update: `sudo ./deploy/deploy_twinevia_saas.sh`
+- web service: `twinevia-saas.service`
+- worker: `twinevia-saas-worker.service`
+- timers: `twinevia-saas-scheduler.timer`, `twinevia-saas-billing-reconcile.timer`, `twinevia-saas-platform-restart-queue.timer`, `twinevia-saas-a2p-reconcile.timer`
 - direct health target: `http://127.0.0.1:8100/health`
 
 ### Legacy Compatibility Deployment
@@ -167,4 +168,4 @@ See [docs/deployment.md](docs/deployment.md) for the SaaS production guide and l
 
 ## Naming Note
 
-User-facing docs refer to the product as `Relayn`. Operational identifiers such as repository paths, CLI names, service units, and deploy roots intentionally retain literal names like `AOC-SMS-saas`, `sms-saas.service`, `saas-dbdoctor`, `/opt/sms-saas`, and `/opt/sms-admin`.
+User-facing docs refer to the product as `Twinevia`. The primary SaaS runtime now uses the `twinevia-saas` family for service units, deploy roots, logs, queue names, restart helpers, Unix account defaults, and the canonical `twinevia-saas-dbdoctor` wrapper. The retained `saas-dbdoctor` alias and the legacy `/opt/sms-admin` runtime remain intentional compatibility surfaces. External repo/worktree naming is out of repo scope.

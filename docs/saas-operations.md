@@ -1,4 +1,4 @@
-# Relayn SaaS Operations
+# Twinevia SaaS Operations
 
 Day-2 operational runbook for the primary SaaS deployment line.
 
@@ -6,12 +6,14 @@ Day-2 operational runbook for the primary SaaS deployment line.
 
 Canonical SaaS deployment:
 
-- app root: `/opt/sms-saas`
-- app user: `smsadmin`
-- env file: `/opt/sms-saas/.env`
+- app root: `/opt/twinevia-saas`
+- app user: `twinevia`
+- env file: `/opt/twinevia-saas/.env`
 - web bind: `127.0.0.1:8100`
-- queue name: `sms-saas`
-- service family: `sms-saas*`
+- queue name: `twinevia-saas`
+- service family: `twinevia-saas*`
+
+Upgraded hosts may still use `smsadmin`; the SaaS install/deploy scripts support that when `APP_USER` and `APP_GROUP` are set explicitly.
 
 Keep this deployment isolated from the legacy line:
 
@@ -26,7 +28,7 @@ Minimum expected env:
 - `SAAS_MODE=1`
 - `DATABASE_URL=postgresql+psycopg://...`
 - `REDIS_URL=redis://localhost:6379/0`
-- `RQ_QUEUE_NAME=sms-saas`
+- `RQ_QUEUE_NAME=twinevia-saas`
 - `SAAS_BASE_URL=https://app.example.com`
 - `SECRET_KEY=...`
 - `STRIPE_SECRET_KEY=...`
@@ -57,18 +59,18 @@ Once the first platform admin exists, `ADMIN_PASSWORD` is no longer required for
 ### Schema and readiness
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --print'
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --ensure-platform-admin'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --print'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --apply'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --doctor'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --ensure-platform-admin'
 ```
 
 ### Service checks
 
 ```bash
-sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer --no-pager
-sudo systemctl status sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer --no-pager
+sudo systemctl status twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer --no-pager
+sudo systemctl status twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer --no-pager
 ```
 
 ### Health check
@@ -78,11 +80,12 @@ curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 ```
 
 After the first platform admin exists, `ADMIN_PASSWORD` is no longer required for deploys or runtime startup.
+The canonical installed schema wrapper is `twinevia-saas-dbdoctor`; `saas-dbdoctor` remains available as a compatibility alias on upgraded hosts.
 Additional platform admins can be created from `/users` while signed into the platform control plane.
 
 Platform-admin accounts are control-plane only. Use a separate email for each organization owner or staff user.
 
-If you change Twilio or other runtime values in `/opt/sms-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
+If you change Twilio or other runtime values in `/opt/twinevia-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
 
 If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, the app provisions org-specific Twilio Event Streams webhook destinations at `/webhooks/twilio/a2p-events?organization_id=<id>`. Twilio signature validation over the raw JSON body is the primary trust check. `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` is only an optional secondary bearer fallback.
 
@@ -127,8 +130,8 @@ If the campaign is approved but no sender is attached yet, the platform messagin
 Canonical update flow:
 
 ```bash
-cd /opt/sms-saas
-sudo ./deploy/deploy_sms_saas.sh
+cd /opt/twinevia-saas
+sudo ./deploy/deploy_twinevia_saas.sh
 ```
 
 What it refreshes:
@@ -141,30 +144,43 @@ What it refreshes:
 - systemd unit files
 - active SaaS services and timers
 
+### Beta cutover wrapper
+
+For the production-like beta host, use the repo wrapper from your operator machine instead of improvising the sequence by hand:
+
+```bash
+./run/beta_cutover.sh \
+  --org-slug public-readiness-control \
+  --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
+  --deploy
+```
+
+This wrapper preserves the current beta `DATABASE_URL`, `REDIS_URL`, and `/opt/twinevia-saas/.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy.
+
 ## Timers And Background Jobs
 
 ### Scheduler
 
-- timer: `sms-saas-scheduler.timer`
-- service: `sms-saas-scheduler.service`
+- timer: `twinevia-saas-scheduler.timer`
+- service: `twinevia-saas-scheduler.service`
 - role: due scheduled sends and retry processing
 
 ### Billing reconciliation
 
-- timer: `sms-saas-billing-reconcile.timer`
-- service: `sms-saas-billing-reconcile.service`
+- timer: `twinevia-saas-billing-reconcile.timer`
+- service: `twinevia-saas-billing-reconcile.service`
 - role: subscription/usage reconciliation and overage posting
 
 ### Platform restart queue
 
-- timer: `sms-saas-platform-restart-queue.timer`
-- service: `sms-saas-platform-restart-queue.service`
+- timer: `twinevia-saas-platform-restart-queue.timer`
+- service: `twinevia-saas-platform-restart-queue.service`
 - role: queued restart dispatch and status refresh
 
 ### A2P reconciliation
 
-- timer: `sms-saas-a2p-reconcile.timer`
-- service: `sms-saas-a2p-reconcile.service`
+- timer: `twinevia-saas-a2p-reconcile.timer`
+- service: `twinevia-saas-a2p-reconcile.service`
 - role: Twilio A2P state refresh and recovery
 
 ## Restart Helper Operations
@@ -172,13 +188,13 @@ What it refreshes:
 When platform restart control is enabled:
 
 - web requests only queue `PlatformServiceRestartRequest` rows
-- host restarts happen out-of-band through `restart-sms-saas-services`
-- the helper must be runnable by `smsadmin` via `sudo -n`
+- host restarts happen out-of-band through `restart-twinevia-saas-services`
+- the helper must be runnable by `twinevia` via `sudo -n`
 
 Validation command:
 
 ```bash
-sudo -u smsadmin sudo -n /usr/local/bin/restart-sms-saas-services --check
+sudo -u twinevia sudo -n /usr/local/bin/restart-twinevia-saas-services --check
 ```
 
 ## Backup And Restore
@@ -188,20 +204,20 @@ sudo -u smsadmin sudo -n /usr/local/bin/restart-sms-saas-services --check
 Backup:
 
 ```bash
-sudo -u smsadmin bash -lc '
-  cd /opt/sms-saas &&
+sudo -u twinevia bash -lc '
+  cd /opt/twinevia-saas &&
   set -a &&
   source .env &&
   set +a &&
-  pg_dump "$DATABASE_URL" > /var/backups/relayn-$(date +%Y%m%d-%H%M%S).sql
+  pg_dump "$DATABASE_URL" > /var/backups/twinevia-$(date +%Y%m%d-%H%M%S).sql
 '
 ```
 
 Restore into a fresh target:
 
 ```bash
-TARGET_DATABASE_URL='postgresql://user:password@127.0.0.1:5432/relayn_restore'
-psql "$TARGET_DATABASE_URL" < /var/backups/relayn-YYYYMMDD-HHMMSS.sql
+TARGET_DATABASE_URL='postgresql://user:password@127.0.0.1:5432/twinevia_restore'
+psql "$TARGET_DATABASE_URL" < /var/backups/twinevia-YYYYMMDD-HHMMSS.sql
 ```
 
 ### Redis
@@ -220,9 +236,11 @@ sudo systemctl start redis-server
 
 Also retain:
 
-- `/opt/sms-saas/.env`
+- `/opt/twinevia-saas/.env`
 - reverse-proxy config
 - any deploy-specific secrets or CI metadata outside the repo
+
+For beta cutovers, the automation stores off-host copies of the env snapshot and reverse-proxy evidence under `output/signoff/<run-id>/beta-cutover/` while leaving the full PostgreSQL and Redis backups on the beta host until signoff completes.
 
 ## Cutover From Legacy
 

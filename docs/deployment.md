@@ -1,16 +1,16 @@
-# Relayn Deployment Guide
+# Twinevia Deployment Guide
 
-This is the canonical production deployment guide for Relayn SaaS.
+This is the canonical production deployment guide for Twinevia.
 
 Primary target:
 
 - `SAAS_MODE=1`
 - PostgreSQL
 - Redis
-- `/opt/sms-saas`
-- `sms-saas*` systemd units
+- `/opt/twinevia-saas`
+- `twinevia-saas*` systemd units
 
-The legacy `SMS Admin` deployment line is still supported, but it is documented only in the appendix.
+The `Twinevia Legacy` deployment line is still supported, but it is documented only in the appendix.
 
 ## SaaS Production Prerequisites
 
@@ -24,20 +24,22 @@ The legacy `SMS Admin` deployment line is still supported, but it is documented 
 
 ## Recommended Layout
 
-- app root: `/opt/sms-saas`
-- app user/group: `smsadmin`
-- env file: `/opt/sms-saas/.env`
-- logs: `/var/log/sms-saas`
+- app root: `/opt/twinevia-saas`
+- app user/group: `twinevia`
+- env file: `/opt/twinevia-saas/.env`
+- logs: `/var/log/twinevia-saas`
 - gunicorn bind: `127.0.0.1:8100`
+
+For upgraded hosts that still run the SaaS checkout as `smsadmin`, the install and deploy scripts keep working when `APP_USER=smsadmin` and `APP_GROUP=smsadmin` are set explicitly.
 
 ## 1. Create The App User And Checkout
 
 ```bash
-sudo adduser --system --group --home /opt/sms-saas --shell /bin/bash smsadmin
-sudo install -d -o smsadmin -g smsadmin /opt/sms-saas
-sudo install -d -o smsadmin -g smsadmin /var/log/sms-saas
+sudo adduser --system --group --home /opt/twinevia-saas --shell /bin/bash twinevia
+sudo install -d -o twinevia -g twinevia /opt/twinevia-saas
+sudo install -d -o twinevia -g twinevia /var/log/twinevia-saas
 
-sudo -u smsadmin git clone <repo-url> /opt/sms-saas
+sudo -u twinevia git clone <repo-url> /opt/twinevia-saas
 ```
 
 ## 2. Prepare PostgreSQL And Redis
@@ -52,7 +54,7 @@ sudo systemctl enable --now postgresql redis-server
 
 The repo does not assume managed infrastructure here; local services on the VPS are fine as long as `DATABASE_URL` and `REDIS_URL` are correct.
 
-## 3. Create `/opt/sms-saas/.env`
+## 3. Create `/opt/twinevia-saas/.env`
 
 Minimum production shape:
 
@@ -62,9 +64,9 @@ TRUST_PROXY=1
 TRUSTED_HOSTS=app.example.com
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
-DATABASE_URL=postgresql+psycopg://user:password@127.0.0.1:5432/relayn
+DATABASE_URL=postgresql+psycopg://user:password@127.0.0.1:5432/twinevia
 REDIS_URL=redis://localhost:6379/0
-RQ_QUEUE_NAME=sms-saas
+RQ_QUEUE_NAME=twinevia-saas
 SAAS_BASE_URL=https://app.example.com
 SECRET_KEY=replace-me
 ADMIN_USERNAME=admin
@@ -87,29 +89,30 @@ Add these when applicable:
 File permissions should be:
 
 ```bash
-sudo chown root:smsadmin /opt/sms-saas/.env
-sudo chmod 660 /opt/sms-saas/.env
+sudo chown root:twinevia /opt/twinevia-saas/.env
+sudo chmod 660 /opt/twinevia-saas/.env
 ```
 
 ## 4. Run The SaaS Installer
 
 ```bash
-cd /opt/sms-saas
+cd /opt/twinevia-saas
 sudo ./deploy/install_saas.sh
 ```
 
 What `install_saas.sh` does:
 
 - ensures the Python 3.11 virtualenv exists
-- installs `saas-dbdoctor`
-- installs `restart-sms-saas-services`
+- installs `twinevia-saas-dbdoctor`
+- installs the `saas-dbdoctor` compatibility alias
+- installs `restart-twinevia-saas-services`
 - installs the matching sudoers rule
 - creates or normalizes the env file permissions
 - appends key SaaS defaults when missing
 - installs Python dependencies
 - applies SaaS schema migrations
 - ensures the first platform admin exists
-- installs and enables `sms-saas*` services and timers
+- installs and enables `twinevia-saas*` services and timers
 - validates restart-helper access
 - runs a local health check against `127.0.0.1:8100/health`
 
@@ -118,8 +121,8 @@ What `install_saas.sh` does:
 The deploy flow validates config before restarting:
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
 from app import create_app
 create_app(run_startup_tasks=False, start_scheduler=False)
 print("SaaS app config validation ok")
@@ -132,48 +135,48 @@ This is the same validation path used by the deploy scripts and is the right fir
 
 Installed runtime units:
 
-- `sms-saas.service`
-- `sms-saas-worker.service`
-- `sms-saas-scheduler.service`
-- `sms-saas-scheduler.timer`
-- `sms-saas-billing-reconcile.service`
-- `sms-saas-billing-reconcile.timer`
-- `sms-saas-platform-restart-queue.service`
-- `sms-saas-platform-restart-queue.timer`
-- `sms-saas-a2p-reconcile.service`
-- `sms-saas-a2p-reconcile.timer`
+- `twinevia-saas.service`
+- `twinevia-saas-worker.service`
+- `twinevia-saas-scheduler.service`
+- `twinevia-saas-scheduler.timer`
+- `twinevia-saas-billing-reconcile.service`
+- `twinevia-saas-billing-reconcile.timer`
+- `twinevia-saas-platform-restart-queue.service`
+- `twinevia-saas-platform-restart-queue.timer`
+- `twinevia-saas-a2p-reconcile.service`
+- `twinevia-saas-a2p-reconcile.timer`
 
 Enabled runtime set:
 
-- `sms-saas`
-- `sms-saas-worker`
-- `sms-saas-scheduler.timer`
-- `sms-saas-billing-reconcile.timer`
-- `sms-saas-platform-restart-queue.timer`
-- `sms-saas-a2p-reconcile.timer`
+- `twinevia-saas`
+- `twinevia-saas-worker`
+- `twinevia-saas-scheduler.timer`
+- `twinevia-saas-billing-reconcile.timer`
+- `twinevia-saas-platform-restart-queue.timer`
+- `twinevia-saas-a2p-reconcile.timer`
 
 ## 7. Health And Service Checks
 
 Basic checks:
 
 ```bash
-sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer
-sudo systemctl status sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer
+sudo systemctl status twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer
+sudo systemctl status twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
 curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --doctor'
 ```
 
 Important detail:
 
 - when `TRUSTED_HOSTS` is configured, local health checks must send an allowed `Host` header
-- direct `saas-dbdoctor` wrapper calls should run from `/opt/sms-saas` with `.env` sourced first
+- direct `twinevia-saas-dbdoctor` wrapper calls should run from `/opt/twinevia-saas` with `.env` sourced first
 
 ## 8. Deploy Updates
 
 Routine SaaS deploys should use:
 
 ```bash
-sudo ./deploy/deploy_sms_saas.sh
+sudo ./deploy/deploy_twinevia_saas.sh
 ```
 
 That script:
@@ -228,8 +231,8 @@ At minimum, back up:
 
 - PostgreSQL
 - Redis persistence files or managed Redis snapshots
-- `/opt/sms-saas/.env`
-- `/var/log/sms-saas` if your incident process relies on local log retention
+- `/opt/twinevia-saas/.env`
+- `/var/log/twinevia-saas` if your incident process relies on local log retention
 
 See [saas-operations.md](saas-operations.md) for day-2 backup and restore guidance.
 

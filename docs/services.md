@@ -1,4 +1,4 @@
-# Relayn Services
+# Twinevia Services
 
 The service layer is the main business-logic boundary of the app. Routes coordinate HTTP concerns, while service modules handle provider operations, billing, inbox automation, and background processing.
 

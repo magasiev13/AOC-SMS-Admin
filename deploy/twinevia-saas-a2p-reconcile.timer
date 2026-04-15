@@ -1,10 +1,10 @@
 [Unit]
-Description=SMS SaaS Pilot Scheduler Timer
+Description=Twinevia SaaS Twilio A2P Reconciliation Timer
 Documentation=man:systemd.timer(5)
 
 [Timer]
-OnBootSec=30
-OnUnitActiveSec=30
+OnBootSec=180
+OnUnitActiveSec=2m
 AccuracySec=1s
 RandomizedDelaySec=0
 Persistent=true

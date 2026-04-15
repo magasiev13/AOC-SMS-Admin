@@ -134,6 +134,40 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         self.assertIn("FLASK_ENV=development", content)
 
+    def test_saas_mode_defaults_to_twinevia_local_db_and_queue(self) -> None:
+        os.environ.pop("DATABASE_URL", None)
+        os.environ["SAAS_MODE"] = "1"
+
+        config_module = self._reload_config_module()
+        Config = config_module.Config
+
+        self.assertTrue(Config.SQLALCHEMY_DATABASE_URI.endswith("/instance/twinevia.db"))
+        self.assertEqual(Config.RQ_QUEUE_NAME, "twinevia-saas")
+
+    def test_legacy_mode_defaults_to_legacy_local_db_and_queue(self) -> None:
+        os.environ.pop("DATABASE_URL", None)
+        os.environ["SAAS_MODE"] = "0"
+
+        config_module = self._reload_config_module()
+        Config = config_module.Config
+
+        self.assertTrue(Config.SQLALCHEMY_DATABASE_URI.endswith("/instance/sms.db"))
+        self.assertEqual(Config.RQ_QUEUE_NAME, "sms")
+
+    def test_env_example_uses_twinevia_saas_defaults(self) -> None:
+        env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")
+        with open(env_example_path, "r", encoding="utf-8") as env_file:
+            content = env_file.read()
+
+        self.assertIn("# Twinevia SaaS: primary production runtime", content)
+        self.assertIn("DATABASE_URL=sqlite:///instance/twinevia.db", content)
+        self.assertIn("RQ_QUEUE_NAME=twinevia-saas", content)
+        self.assertIn("# TWILIO_PLATFORM_FRIENDLY_NAME=Twinevia", content)
+        self.assertIn(
+            "# PLATFORM_SERVICE_RESTART_SCRIPT=/usr/local/bin/restart-twinevia-saas-services",
+            content,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

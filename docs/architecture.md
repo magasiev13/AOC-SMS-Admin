@@ -1,9 +1,9 @@
-# Relayn Architecture
+# Twinevia Architecture
 
-Relayn is a Flask application with two supported runtime modes:
+Twinevia is a Flask application with two supported runtime modes:
 
 - primary: multi-tenant SaaS on PostgreSQL with explicit SaaS schema management
-- secondary: legacy single-tenant `SMS Admin` on SQLite with the older `dbdoctor` migration path
+- secondary: `Twinevia Legacy`, a single-tenant runtime on SQLite with the older `dbdoctor` migration path
 
 The production design is SaaS-first. Legacy behavior remains in the codebase for compatibility and migration support.
 
@@ -137,7 +137,7 @@ Typical SaaS onboarding path:
 
 1. platform admin queues restart from `/platform/operations/restart-services`
 2. request is stored in `PlatformServiceRestartRequest`
-3. `sms-saas-platform-restart-queue.timer` invokes the queue processor
+3. `twinevia-saas-platform-restart-queue.timer` invokes the queue processor
 4. helper script is executed via `sudo -n`
 5. final state is written back and recorded as an auth event
 
@@ -155,10 +155,10 @@ Typical SaaS onboarding path:
 
 SaaS production uses timer-driven oneshot jobs instead of long-lived background threads:
 
-- `sms-saas-scheduler.timer`: scheduled outbound sends
-- `sms-saas-billing-reconcile.timer`: billing reconciliation
-- `sms-saas-platform-restart-queue.timer`: queued restart dispatch/status refresh
-- `sms-saas-a2p-reconcile.timer`: Twilio A2P reconciliation
+- `twinevia-saas-scheduler.timer`: scheduled outbound sends
+- `twinevia-saas-billing-reconcile.timer`: billing reconciliation
+- `twinevia-saas-platform-restart-queue.timer`: queued restart dispatch/status refresh
+- `twinevia-saas-a2p-reconcile.timer`: Twilio A2P reconciliation
 
 The in-process APScheduler path exists only for development and only starts when explicitly requested.
 
@@ -166,9 +166,9 @@ The in-process APScheduler path exists only for development and only starts when
 
 ### Primary SaaS path
 
-- database: PostgreSQL via `DATABASE_URL`
+- database: PostgreSQL via `DATABASE_URL` in production, or local SQLite fallback at `instance/twinevia.db` when `DATABASE_URL` is unset
 - queue: Redis via `REDIS_URL`
-- schema CLI: `./venv/bin/python -m app.saas_db` locally / `saas-dbdoctor` in production
+- schema CLI: `./venv/bin/python -m app.saas_db` locally / `twinevia-saas-dbdoctor` in production
 
 ### Legacy compatibility path
 
@@ -180,10 +180,10 @@ The in-process APScheduler path exists only for development and only starts when
 
 ### SaaS family
 
-- root: `/opt/sms-saas`
+- root: `/opt/twinevia-saas`
 - gunicorn bind: `127.0.0.1:8100`
-- service units: `sms-saas*`
-- deploy helpers: `deploy/install_saas.sh`, `deploy/deploy_sms_saas.sh`
+- service units: `twinevia-saas*`
+- deploy helpers: `deploy/install_saas.sh`, `deploy/deploy_twinevia_saas.sh`
 
 ### Legacy family
 

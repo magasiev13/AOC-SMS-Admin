@@ -1,0 +1,22 @@
+[Unit]
+Description=Twinevia SaaS Gunicorn Service
+After=network.target
+
+[Service]
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=/opt/twinevia-saas
+Environment="PATH=/opt/twinevia-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="SCHEDULER_ENABLED=0"
+Environment="SAAS_MODE=1"
+Environment="APP_ROOT=/opt/twinevia-saas"
+EnvironmentFile=/opt/twinevia-saas/.env
+ExecStartPre=/opt/twinevia-saas/deploy/check_python_runtime.sh
+ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
+ExecStart=/opt/twinevia-saas/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8100 --access-logfile /var/log/twinevia-saas/access.log --error-logfile /var/log/twinevia-saas/error.log wsgi:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

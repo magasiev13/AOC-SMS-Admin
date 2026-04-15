@@ -97,6 +97,15 @@ class TestRuntimeBootstrap(unittest.TestCase):
             with self.assertRaises(IntegrityError):
                 self._ensure_bootstrap_admin_user(self.app)
 
+    def test_template_context_uses_twinevia_brand_defaults(self) -> None:
+        with self.app.test_request_context("/"):
+            context = {}
+            for processor in self.app.template_context_processors[None]:
+                context.update(processor())
+
+        self.assertEqual(context["product_name"], "Twinevia")
+        self.assertEqual(context["product_descriptor"], "Messaging Workspace")
+
 
 class TestSaasRuntimeBootstrap(unittest.TestCase):
     def setUp(self) -> None:

@@ -8,7 +8,7 @@ ENV_EXAMPLE="${REPO_ROOT}/.env.example"
 REQUIRED_PYTHON="3.11"
 PYTHON_CMD="${PYTHON_CMD:-python3.11}"
 
-echo "== SMS Admin local setup =="
+echo "== Twinevia local setup =="
 
 if ! command -v "${PYTHON_CMD}" >/dev/null 2>&1; then
   echo "ERROR: Python ${REQUIRED_PYTHON} is required but ${PYTHON_CMD} was not found in PATH." >&2

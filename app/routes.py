@@ -1914,7 +1914,11 @@ def _cleanup_bootstrap_admin_password_if_needed() -> None:
     if not admin_username or current_user.username != admin_username:
         return
 
-    env_path = os.environ.get("SMS_ADMIN_ENV_FILE", "/opt/sms-admin/.env")
+    env_path = (
+        os.environ.get("TWINEVIA_SAAS_ENV_FILE")
+        or os.environ.get("SMS_ADMIN_ENV_FILE")
+        or ("/opt/twinevia-saas/.env" if saas_mode_enabled() else "/opt/sms-admin/.env")
+    )
     removed = _remove_env_key_in_place(env_path, "ADMIN_PASSWORD")
     if removed is None:
         current_app.logger.warning(

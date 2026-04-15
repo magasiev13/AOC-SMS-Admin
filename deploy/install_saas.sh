@@ -2,21 +2,77 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_ROOT="${APP_ROOT:-/opt/sms-saas}"
-APP_USER="${APP_USER:-smsadmin}"
-APP_GROUP="${APP_GROUP:-smsadmin}"
+APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
+APP_USER="${APP_USER:-}"
+APP_GROUP="${APP_GROUP:-}"
 ENV_FILE="${APP_ROOT}/.env"
 VENV_BIN="${APP_ROOT}/venv/bin"
 PYTHON_BIN="${VENV_BIN}/python"
-SAAS_DBDOCTOR_SRC="${REPO_ROOT}/bin/saas-dbdoctor"
-SAAS_DBDOCTOR_DEST="${SAAS_DBDOCTOR_DEST:-/usr/local/bin/saas-dbdoctor}"
-RESTART_HELPER_SRC="${REPO_ROOT}/deploy/restart_sms_saas_services.sh"
-RESTART_HELPER_DEST="${RESTART_HELPER_DEST:-/usr/local/bin/restart-sms-saas-services}"
-RESTART_SUDOERS_SRC="${REPO_ROOT}/deploy/sms-saas-restart.sudoers"
-RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/sms-saas-restart}"
+TWINEVIA_SAAS_DBDOCTOR_SRC="${REPO_ROOT}/bin/twinevia-saas-dbdoctor"
+TWINEVIA_SAAS_DBDOCTOR_DEST="${TWINEVIA_SAAS_DBDOCTOR_DEST:-${SAAS_DBDOCTOR_DEST:-/usr/local/bin/twinevia-saas-dbdoctor}}"
+TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC="${REPO_ROOT}/bin/saas-dbdoctor"
+TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST="${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST:-${SAAS_DBDOCTOR_ALIAS_DEST:-/usr/local/bin/saas-dbdoctor}}"
+RESTART_HELPER_SRC="${REPO_ROOT}/deploy/restart_twinevia_saas_services.sh"
+RESTART_HELPER_DEST="${RESTART_HELPER_DEST:-/usr/local/bin/restart-twinevia-saas-services}"
+RESTART_SUDOERS_SRC="${REPO_ROOT}/deploy/twinevia-saas-restart.sudoers"
+RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/twinevia-saas-restart}"
 VISUDO_BIN="${VISUDO_BIN:-/usr/sbin/visudo}"
-LOG_DIR="${LOG_DIR:-/var/log/sms-saas}"
+LOG_DIR="${LOG_DIR:-/var/log/twinevia-saas}"
 REQUIRED_PYTHON="3.11"
+
+resolve_app_user() {
+  if [[ -n "${APP_USER}" ]]; then
+    printf '%s\n' "${APP_USER}"
+    return
+  fi
+  if id -u twinevia >/dev/null 2>&1; then
+    printf 'twinevia\n'
+    return
+  fi
+  if id -u smsadmin >/dev/null 2>&1; then
+    printf 'smsadmin\n'
+    return
+  fi
+  printf 'twinevia\n'
+}
+
+resolve_app_group() {
+  local resolved_user="$1"
+  if [[ -n "${APP_GROUP}" ]]; then
+    printf '%s\n' "${APP_GROUP}"
+    return
+  fi
+  if getent group "${resolved_user}" >/dev/null 2>&1; then
+    printf '%s\n' "${resolved_user}"
+    return
+  fi
+  if getent group twinevia >/dev/null 2>&1; then
+    printf 'twinevia\n'
+    return
+  fi
+  if getent group smsadmin >/dev/null 2>&1; then
+    printf 'smsadmin\n'
+    return
+  fi
+  printf '%s\n' "${resolved_user}"
+}
+
+render_template() {
+  local src="$1"
+  local dest="$2"
+  local mode="$3"
+  local tmp_file
+
+  tmp_file="$(mktemp)"
+  sed \
+    -e "s|__APP_USER__|${APP_USER}|g" \
+    -e "s|__APP_GROUP__|${APP_GROUP}|g" \
+    -e "s|__TWINEVIA_SAAS_DBDOCTOR_DEST__|${TWINEVIA_SAAS_DBDOCTOR_DEST}|g" \
+    -e "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" \
+    "${src}" > "${tmp_file}"
+  sudo install -m "${mode}" "${tmp_file}" "${dest}"
+  rm -f "${tmp_file}"
+}
 
 resolve_health_host() {
   local trusted_hosts
@@ -32,11 +88,30 @@ resolve_health_host() {
 }
 
 echo "============================================"
-echo "  SMS SaaS Install Script"
+echo "  Twinevia SaaS Install Script"
 echo "============================================"
 
-if [[ ! -f "${SAAS_DBDOCTOR_SRC}" ]]; then
-  echo "ERROR: ${SAAS_DBDOCTOR_SRC} not found." >&2
+APP_USER="$(resolve_app_user)"
+APP_GROUP="$(resolve_app_group "${APP_USER}")"
+
+if ! id -u "${APP_USER}" >/dev/null 2>&1; then
+  echo "ERROR: SaaS app user ${APP_USER} does not exist." >&2
+  echo "Create it first, for example: sudo adduser --system --group --home ${APP_ROOT} --shell /bin/bash ${APP_USER}" >&2
+  exit 1
+fi
+
+if ! getent group "${APP_GROUP}" >/dev/null 2>&1; then
+  echo "ERROR: SaaS app group ${APP_GROUP} does not exist." >&2
+  exit 1
+fi
+
+if [[ ! -f "${TWINEVIA_SAAS_DBDOCTOR_SRC}" ]]; then
+  echo "ERROR: ${TWINEVIA_SAAS_DBDOCTOR_SRC} not found." >&2
+  exit 1
+fi
+
+if [[ ! -f "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" ]]; then
+  echo "ERROR: ${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC} not found." >&2
   exit 1
 fi
 
@@ -64,13 +139,18 @@ if [[ "${PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
   exit 1
 fi
 
-sudo install -m 0755 "${SAAS_DBDOCTOR_SRC}" "${SAAS_DBDOCTOR_DEST}"
-echo "✓ Installed saas-dbdoctor to ${SAAS_DBDOCTOR_DEST}"
+sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_DEST}"
+sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
+echo "✓ Installed twinevia-saas-dbdoctor to ${TWINEVIA_SAAS_DBDOCTOR_DEST}"
+echo "✓ Installed saas-dbdoctor compatibility alias to ${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
 sudo install -o root -g root -m 0755 "${RESTART_HELPER_SRC}" "${RESTART_HELPER_DEST}"
 echo "✓ Installed SaaS restart helper to ${RESTART_HELPER_DEST}"
 tmp_sudoers="$(mktemp)"
 trap 'rm -f "${tmp_sudoers}"' EXIT
-sed "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" "${RESTART_SUDOERS_SRC}" > "${tmp_sudoers}"
+sed \
+  -e "s|__APP_USER__|${APP_USER}|g" \
+  -e "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" \
+  "${RESTART_SUDOERS_SRC}" > "${tmp_sudoers}"
 sudo install -o root -g root -m 0440 "${tmp_sudoers}" "${RESTART_SUDOERS_DEST}"
 sudo "${VISUDO_BIN}" -cf "${RESTART_SUDOERS_DEST}" >/dev/null
 echo "✓ Installed sudoers rule to ${RESTART_SUDOERS_DEST}"
@@ -95,7 +175,7 @@ current_env_value() {
 
 ensure_env_key "SAAS_MODE" "1"
 ensure_env_key "SCHEDULER_ENABLED" "0"
-ensure_env_key "RQ_QUEUE_NAME" "sms-saas"
+ensure_env_key "RQ_QUEUE_NAME" "twinevia-saas"
 ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
@@ -148,22 +228,22 @@ echo "==> Installing Python dependencies"
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 
 echo "==> Applying SaaS schema"
-sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${SAAS_DBDOCTOR_DEST}\" --apply && \"${SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${SAAS_DBDOCTOR_DEST}\" --doctor"
+sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --doctor"
 
 sudo mkdir -p "${LOG_DIR}"
 sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
 
 echo "==> Installing SaaS systemd units"
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas.service" /etc/systemd/system/sms-saas.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-worker.service" /etc/systemd/system/sms-saas-worker.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-scheduler.service" /etc/systemd/system/sms-saas-scheduler.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-scheduler.timer" /etc/systemd/system/sms-saas-scheduler.timer
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.service" /etc/systemd/system/sms-saas-billing-reconcile.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-billing-reconcile.timer" /etc/systemd/system/sms-saas-billing-reconcile.timer
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.service" /etc/systemd/system/sms-saas-platform-restart-queue.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-platform-restart-queue.timer" /etc/systemd/system/sms-saas-platform-restart-queue.timer
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-a2p-reconcile.service" /etc/systemd/system/sms-saas-a2p-reconcile.service
-sudo install -m 0644 "${REPO_ROOT}/deploy/sms-saas-a2p-reconcile.timer" /etc/systemd/system/sms-saas-a2p-reconcile.timer
+render_template "${REPO_ROOT}/deploy/twinevia-saas.service" /etc/systemd/system/twinevia-saas.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-worker.service" /etc/systemd/system/twinevia-saas-worker.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-scheduler.service" /etc/systemd/system/twinevia-saas-scheduler.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-scheduler.timer" /etc/systemd/system/twinevia-saas-scheduler.timer 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-billing-reconcile.service" /etc/systemd/system/twinevia-saas-billing-reconcile.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-billing-reconcile.timer" /etc/systemd/system/twinevia-saas-billing-reconcile.timer 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.service" /etc/systemd/system/twinevia-saas-platform-restart-queue.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.timer" /etc/systemd/system/twinevia-saas-platform-restart-queue.timer 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.service" /etc/systemd/system/twinevia-saas-a2p-reconcile.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.timer" /etc/systemd/system/twinevia-saas-a2p-reconcile.timer 0644
 sudo install -m 0755 "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
@@ -172,7 +252,7 @@ sudo install -m 0755 "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "$
 sudo install -m 0755 "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh"
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer
+sudo systemctl enable --now twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
 
 echo "==> Verifying SaaS restart helper"
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then
@@ -184,7 +264,7 @@ echo "==> Verifying SaaS health"
 HEALTH_HOST="$(resolve_health_host)"
 if ! curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
   echo "WARNING: SaaS health check failed on http://127.0.0.1:8100/health (Host=${HEALTH_HOST})" >&2
-  echo "Check: journalctl -u sms-saas -n 100 --no-pager" >&2
+  echo "Check: journalctl -u twinevia-saas -n 100 --no-pager" >&2
 fi
 
 echo "SaaS install completed."

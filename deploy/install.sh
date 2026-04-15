@@ -17,7 +17,7 @@ REQUIRED_PYTHON="3.11"
 APP_PYTHON_BIN="${APP_ROOT}/venv/bin/python"
 
 echo "============================================"
-echo "  SMS Admin Install Script"
+echo "  Twinevia Legacy Install Script"
 echo "============================================"
 
 if [[ ! -f "${DBDOCTOR_SRC}" ]]; then

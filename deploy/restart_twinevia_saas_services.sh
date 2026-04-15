@@ -2,12 +2,12 @@
 set -euo pipefail
 
 readonly UNITS=(
-  "sms-saas"
-  "sms-saas-worker"
-  "sms-saas-scheduler.timer"
-  "sms-saas-billing-reconcile.timer"
+  "twinevia-saas"
+  "twinevia-saas-worker"
+  "twinevia-saas-scheduler.timer"
+  "twinevia-saas-billing-reconcile.timer"
 )
-readonly TRANSIENT_UNIT_PATTERN='^sms-saas-manual-restart-[A-Za-z0-9_.:@-]+(\.service)?$'
+readonly TRANSIENT_UNIT_PATTERN='^twinevia-saas-manual-restart-[A-Za-z0-9_.:@-]+(\.service)?$'
 
 emit_json() {
   python3 - "$@" <<'PY'
@@ -40,20 +40,20 @@ queue_restart() {
 
   check_units
 
-  restart_unit="sms-saas-manual-restart-$(date +%s)-$$"
+  restart_unit="twinevia-saas-manual-restart-$(date +%s)-$$"
   read -r -d '' restart_command <<'EOF' || true
 sleep 2
-systemctl restart sms-saas sms-saas-worker sms-saas-scheduler.timer sms-saas-billing-reconcile.timer
-systemctl is-active --quiet sms-saas
-systemctl is-active --quiet sms-saas-worker
-systemctl is-active --quiet sms-saas-scheduler.timer
-systemctl is-active --quiet sms-saas-billing-reconcile.timer
+systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer
+systemctl is-active --quiet twinevia-saas
+systemctl is-active --quiet twinevia-saas-worker
+systemctl is-active --quiet twinevia-saas-scheduler.timer
+systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
 EOF
 
   if ! run_output="$(systemd-run \
     --quiet \
     --unit="${restart_unit}" \
-    --description="Queued SMS SaaS service restart" \
+    --description="Queued Twinevia SaaS service restart" \
     --property=Type=oneshot \
     /bin/bash -lc "${restart_command}" 2>&1)"; then
     detail="$(printf '%s' "${run_output}" | tail -n1 | tr -d '\r')"
@@ -163,7 +163,7 @@ main() {
         exit 64
       fi
       check_units
-      echo "restart-sms-saas-services helper is installed."
+      echo "restart-twinevia-saas-services helper is installed."
       ;;
     --status)
       if [[ $# -ne 2 ]]; then

@@ -1,4 +1,4 @@
-# Relayn Security Hardening Reference
+# Twinevia Security Hardening Reference
 
 This file is the current production security checklist for the app, not a historical branch summary.
 
@@ -25,7 +25,7 @@ When `FLASK_ENV=production`:
 - `TRUSTED_HOSTS` set to real public hostnames
 - `SAAS_MODE=1` for the primary runtime
 - `SCHEDULER_ENABLED=0` in production; use systemd timers
-- `RQ_QUEUE_NAME=sms-saas` for the SaaS runtime
+- `RQ_QUEUE_NAME=twinevia-saas` for the SaaS runtime
 
 ## Auth And Session Controls
 
@@ -101,8 +101,8 @@ If platform restart control is enabled:
 
 Before exposing the app publicly, confirm:
 
-- the sourced `saas-dbdoctor --doctor` check exits `0`
-- `sms-saas`, `sms-saas-worker`, and all required timers are active
+- the sourced `twinevia-saas-dbdoctor --doctor` check exits `0`
+- `twinevia-saas`, `twinevia-saas-worker`, and all required timers are active
 - health checks succeed with an allowed `Host` header
 - platform login and workspace login both work
 - invite acceptance, billing return, and workspace setup do not leak cross-tenant data

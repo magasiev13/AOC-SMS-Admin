@@ -1,4 +1,4 @@
-# Relayn SaaS Rollout And Local Acceptance
+# Twinevia SaaS Rollout And Local Acceptance
 
 This document covers the separate SaaS runtime, local acceptance flow, and rollout safety rules.
 
@@ -6,9 +6,9 @@ This document covers the separate SaaS runtime, local acceptance flow, and rollo
 
 Treat the SaaS deployment as distinct from the legacy `sms` line.
 
-- use `/opt/sms-saas`
-- use `sms-saas*` units
-- use queue `sms-saas`
+- use `/opt/twinevia-saas`
+- use `twinevia-saas*` units
+- use queue `twinevia-saas`
 - use a separate database
 - use separate Stripe and Twilio webhook endpoints
 
@@ -21,7 +21,7 @@ Minimum runtime values:
 - `SAAS_MODE=1`
 - `DATABASE_URL=postgresql+psycopg://...`
 - `REDIS_URL=redis://...`
-- `RQ_QUEUE_NAME=sms-saas`
+- `RQ_QUEUE_NAME=twinevia-saas`
 - `SAAS_BASE_URL=https://app.example.com`
 - `STRIPE_SECRET_KEY=...`
 - `STRIPE_WEBHOOK_SECRET=...`
@@ -170,3 +170,4 @@ For seeded users and tenants, see [saas-demo-data.md](saas-demo-data.md).
 - do not reuse queue `sms` for SaaS
 - do not point SaaS health checks at the legacy gunicorn port
 - do not treat Twilio ownership conflicts as a retryable “just try again” problem
+- for beta deploys, keep the existing PostgreSQL and Redis data plane and use `./run/beta_cutover.sh` so snapshots, backups, branch guards, and post-deploy parity checks happen in one sequence

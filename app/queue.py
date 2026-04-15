@@ -14,5 +14,6 @@ def get_queue(app=None):
     if app is None:
         from flask import current_app
         app = current_app
-    queue_name = app.config.get('RQ_QUEUE_NAME', 'sms')
+    default_queue = 'twinevia-saas' if app.config.get('SAAS_MODE') else 'sms'
+    queue_name = app.config.get('RQ_QUEUE_NAME', default_queue)
     return Queue(queue_name, connection=get_redis_connection(app))

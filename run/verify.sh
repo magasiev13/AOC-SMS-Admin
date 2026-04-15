@@ -27,3 +27,4 @@ unset PYTHONPATH
 cd "${REPO_ROOT}"
 
 "${PYTHON_BIN}" -m compileall -q app tests
+"${REPO_ROOT}/run/naming_audit.sh"

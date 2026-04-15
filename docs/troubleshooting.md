@@ -1,4 +1,4 @@
-# Relayn Troubleshooting
+# Twinevia Troubleshooting
 
 This guide is SaaS-first. Legacy SQLite-only problems are grouped near the end.
 
@@ -9,8 +9,8 @@ This guide is SaaS-first. Legacy SQLite-only problems are grouped near the end.
 Run the same config check the deploy scripts use:
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
 from app import create_app
 create_app(run_startup_tasks=False, start_scheduler=False)
 print("ok")
@@ -43,11 +43,11 @@ curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 Run:
 
 ```bash
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --apply'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --doctor'
 ```
 
-If you accidentally used `dbdoctor` against the SaaS database, switch back to `saas-dbdoctor` or `./venv/bin/python -m app.saas_db`.
+If you accidentally used `dbdoctor` against the SaaS database, switch back to `twinevia-saas-dbdoctor` or `./venv/bin/python -m app.saas_db`.
 
 ## Services And Timers
 
@@ -56,8 +56,8 @@ If you accidentally used `dbdoctor` against the SaaS database, switch back to `s
 Check:
 
 ```bash
-sudo systemctl status sms-saas --no-pager
-sudo journalctl -u sms-saas -n 200 --no-pager
+sudo systemctl status twinevia-saas --no-pager
+sudo journalctl -u twinevia-saas -n 200 --no-pager
 ```
 
 Common causes:
@@ -72,8 +72,8 @@ Common causes:
 Check:
 
 ```bash
-sudo systemctl status sms-saas-worker --no-pager
-sudo journalctl -u sms-saas-worker -n 200 --no-pager
+sudo systemctl status twinevia-saas-worker --no-pager
+sudo journalctl -u twinevia-saas-worker -n 200 --no-pager
 ```
 
 Common causes:
@@ -88,8 +88,8 @@ Common causes:
 Check the timer and oneshot logs:
 
 ```bash
-sudo systemctl status sms-saas-scheduler.timer --no-pager
-sudo journalctl -u sms-saas-scheduler.service -n 200 --no-pager
+sudo systemctl status twinevia-saas-scheduler.timer --no-pager
+sudo journalctl -u twinevia-saas-scheduler.service -n 200 --no-pager
 ```
 
 Also verify:
@@ -104,8 +104,8 @@ Also verify:
 Check:
 
 ```bash
-sudo systemctl status sms-saas-billing-reconcile.timer --no-pager
-sudo journalctl -u sms-saas-billing-reconcile.service -n 200 --no-pager
+sudo systemctl status twinevia-saas-billing-reconcile.timer --no-pager
+sudo journalctl -u twinevia-saas-billing-reconcile.service -n 200 --no-pager
 ```
 
 Common causes:
@@ -119,9 +119,9 @@ Common causes:
 Check:
 
 ```bash
-sudo systemctl status sms-saas-platform-restart-queue.timer --no-pager
-sudo journalctl -u sms-saas-platform-restart-queue.service -n 200 --no-pager
-sudo -u smsadmin sudo -n /usr/local/bin/restart-sms-saas-services --check
+sudo systemctl status twinevia-saas-platform-restart-queue.timer --no-pager
+sudo journalctl -u twinevia-saas-platform-restart-queue.service -n 200 --no-pager
+sudo -u twinevia sudo -n /usr/local/bin/restart-twinevia-saas-services --check
 ```
 
 Common causes:
@@ -136,8 +136,8 @@ Common causes:
 Check:
 
 ```bash
-sudo systemctl status sms-saas-a2p-reconcile.timer --no-pager
-sudo journalctl -u sms-saas-a2p-reconcile.service -n 200 --no-pager
+sudo systemctl status twinevia-saas-a2p-reconcile.timer --no-pager
+sudo journalctl -u twinevia-saas-a2p-reconcile.service -n 200 --no-pager
 ```
 
 Also verify:
@@ -158,7 +158,7 @@ Symptoms:
 Check:
 
 ```bash
-sudo journalctl -u sms-saas -n 200 --no-pager | rg Stripe
+sudo journalctl -u twinevia-saas -n 200 --no-pager | rg Stripe
 ```
 
 Common causes:
@@ -255,8 +255,8 @@ The lockout counters are DB-backed. Review:
 Use:
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --ensure-platform-admin'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --ensure-platform-admin'
 ```
 
 ## Local Tooling Issues

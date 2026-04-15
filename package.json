@@ -1,5 +1,5 @@
 {
-  "name": "aoc-sms-saas-browser-tests",
+  "name": "aoc-twinevia-saas-browser-tests",
   "private": true,
   "scripts": {
     "playwright:install": "playwright install chromium",

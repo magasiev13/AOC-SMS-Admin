@@ -29,7 +29,7 @@ Options:
   --no-seed                      Skip demo seeding entirely.
   --keep-data                    Seed without resetting the SQLite database first.
   --no-open                      Do not open the login page automatically.
-  --live-from-number NUMBER      Assign one live Twilio sender to AOC SMS Internal.
+  --live-from-number NUMBER      Assign one live Twilio sender to Twinevia Internal.
   --live-messaging-service-sid SID
                                  Assign the paired MG... Messaging Service SID.
   -h, --help                     Show this help.

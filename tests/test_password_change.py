@@ -7,6 +7,9 @@ class TestPasswordChangeFlow(unittest.TestCase):
     def setUp(self) -> None:
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
         self._original_flask_env = os.environ.get("FLASK_ENV")
+        self._original_saas_mode = os.environ.get("SAAS_MODE")
+        self._original_admin_password = os.environ.get("ADMIN_PASSWORD")
+        self._original_twinevia_saas_env_file = os.environ.get("TWINEVIA_SAAS_ENV_FILE")
         self._original_sms_admin_env_file = os.environ.get("SMS_ADMIN_ENV_FILE")
         os.environ["FLASK_DEBUG"] = "1"
         self._temp_dir = tempfile.TemporaryDirectory()
@@ -55,6 +58,18 @@ class TestPasswordChangeFlow(unittest.TestCase):
             os.environ.pop("FLASK_ENV", None)
         else:
             os.environ["FLASK_ENV"] = self._original_flask_env
+        if self._original_saas_mode is None:
+            os.environ.pop("SAAS_MODE", None)
+        else:
+            os.environ["SAAS_MODE"] = self._original_saas_mode
+        if self._original_admin_password is None:
+            os.environ.pop("ADMIN_PASSWORD", None)
+        else:
+            os.environ["ADMIN_PASSWORD"] = self._original_admin_password
+        if self._original_twinevia_saas_env_file is None:
+            os.environ.pop("TWINEVIA_SAAS_ENV_FILE", None)
+        else:
+            os.environ["TWINEVIA_SAAS_ENV_FILE"] = self._original_twinevia_saas_env_file
         if self._original_sms_admin_env_file is None:
             os.environ.pop("SMS_ADMIN_ENV_FILE", None)
         else:
@@ -122,7 +137,8 @@ class TestPasswordChangeFlow(unittest.TestCase):
             env_file.write("OTHER_KEY=keep\n")
 
         os.environ["FLASK_ENV"] = "production"
-        os.environ["SMS_ADMIN_ENV_FILE"] = env_path
+        os.environ["SAAS_MODE"] = "1"
+        os.environ["TWINEVIA_SAAS_ENV_FILE"] = env_path
         os.environ["ADMIN_PASSWORD"] = "bootstrap-secret"
         self.app.config["DEBUG"] = False
         self.app.config["ADMIN_USERNAME"] = "forced"
@@ -155,7 +171,8 @@ class TestPasswordChangeFlow(unittest.TestCase):
             env_file.write("OTHER_KEY=keep\n")
 
         os.environ["FLASK_ENV"] = "production"
-        os.environ["SMS_ADMIN_ENV_FILE"] = env_path
+        os.environ["SAAS_MODE"] = "1"
+        os.environ["TWINEVIA_SAAS_ENV_FILE"] = env_path
         os.environ["ADMIN_PASSWORD"] = "bootstrap-secret"
         self.app.config["DEBUG"] = False
         self.app.config["ADMIN_USERNAME"] = "forced"
@@ -179,6 +196,47 @@ class TestPasswordChangeFlow(unittest.TestCase):
         self.assertIn("OTHER_KEY=keep", env_contents)
         self.assertIsNone(os.environ.get("ADMIN_PASSWORD"))
         self.assertIsNone(self.app.config.get("ADMIN_PASSWORD"))
+
+    def test_production_change_prefers_twinevia_saas_env_file_over_legacy_env_var(self) -> None:
+        primary_env_path = os.path.join(self._temp_dir.name, "primary.env")
+        legacy_env_path = os.path.join(self._temp_dir.name, "legacy.env")
+        with open(primary_env_path, "w", encoding="utf-8") as env_file:
+            env_file.write("FLASK_ENV=production\n")
+            env_file.write("ADMIN_USERNAME=forced\n")
+            env_file.write("ADMIN_PASSWORD=bootstrap-secret\n")
+        with open(legacy_env_path, "w", encoding="utf-8") as env_file:
+            env_file.write("FLASK_ENV=production\n")
+            env_file.write("ADMIN_USERNAME=forced\n")
+            env_file.write("ADMIN_PASSWORD=legacy-secret\n")
+
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SAAS_MODE"] = "1"
+        os.environ["TWINEVIA_SAAS_ENV_FILE"] = primary_env_path
+        os.environ["SMS_ADMIN_ENV_FILE"] = legacy_env_path
+        os.environ["ADMIN_PASSWORD"] = "bootstrap-secret"
+        self.app.config["DEBUG"] = False
+        self.app.config["ADMIN_USERNAME"] = "forced"
+        self.app.config["ADMIN_PASSWORD"] = "bootstrap-secret"
+
+        self._login("old-password")
+        response = self.client.post(
+            "/account/password",
+            data={
+                "current_password": "old-password",
+                "new_password": "New-password123!",
+                "confirm_password": "New-password123!",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with open(primary_env_path, "r", encoding="utf-8") as env_file:
+            primary_contents = env_file.read()
+        with open(legacy_env_path, "r", encoding="utf-8") as env_file:
+            legacy_contents = env_file.read()
+
+        self.assertNotIn("ADMIN_PASSWORD=", primary_contents)
+        self.assertIn("ADMIN_PASSWORD=legacy-secret", legacy_contents)
 
 
 if __name__ == "__main__":

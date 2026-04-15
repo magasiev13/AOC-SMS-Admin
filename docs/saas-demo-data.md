@@ -1,4 +1,4 @@
-# Relayn SaaS Demo Data
+# Twinevia Demo Data
 
 Use the demo seed when you need a realistic local multi-tenant environment without hand-entering organizations, contacts, inbox threads, billing states, and scheduled sends.
 
@@ -25,15 +25,15 @@ Notes:
 ## Seeded Accounts
 
 - platform admin: `platform@demo.test` / `Platform-pass123!`
-- AOC SMS Internal owner: `owner@aocinternal.demo.test` / `Owner-pass123!`
-- AOC SMS Internal staff: `staff@aocinternal.demo.test` / `Staff-pass123!`
+- Twinevia Internal owner: `owner@twineviainternal.demo.test` / `Owner-pass123!`
+- Twinevia Internal staff: `staff@twineviainternal.demo.test` / `Staff-pass123!`
 - Northstar Fitness owner: `owner@northstar.demo.test` / `Owner-pass123!`
 - Northstar Fitness staff: `staff@northstar.demo.test` / `Staff-pass123!`
 - Sunset Realty Group owner: `owner@sunset.demo.test` / `Owner-pass123!`
 
 ## Seeded Organizations
 
-### `AOC SMS Internal`
+### `Twinevia Internal`
 
 - org status: `active`
 - billing: `trialing`
@@ -74,10 +74,10 @@ Notes:
 
 1. log in as `platform@demo.test`
 2. confirm `/platform` and `/platform/organizations` show varied tenant state
-3. log in as `owner@aocinternal.demo.test`
+3. log in as `owner@twineviainternal.demo.test`
 4. confirm `/dashboard`, `/billing`, `/users`, `/inbox`, `/community`, `/events`, `/logs`, and `/scheduled` are populated
 5. log in as `owner@northstar.demo.test` and confirm the org data is distinct
-6. log in as `staff@aocinternal.demo.test` and confirm `/billing` is denied
+6. log in as `staff@twineviainternal.demo.test` and confirm `/billing` is denied
 7. open the Harbor owner invite and confirm the owner lands on `/setup`
 8. log in as `owner@sunset.demo.test` and confirm suspended/past-due restrictions are visible
 

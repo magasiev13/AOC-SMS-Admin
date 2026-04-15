@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS SaaS Stripe Billing Reconciliation Timer
+Description=Twinevia SaaS Stripe Billing Reconciliation Timer
 Documentation=man:systemd.timer(5)
 
 [Timer]

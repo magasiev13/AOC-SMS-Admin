@@ -3797,7 +3797,7 @@ a:focus-visible,
 }
 
 /* ===========================================
-   RELAYN REFRESH
+   TWINEVIA REFRESH
    =========================================== */
 
 :root {
@@ -4578,9 +4578,18 @@ a:focus-visible,
     display: none;
   }
 
+  .auth-surface--signup .auth-panel {
+    gap: 1rem;
+    padding: 1rem;
+  }
+
   .auth-surface--signup .auth-panel__brand {
     display: inline-flex;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.1rem;
+  }
+
+  .auth-surface--signup .auth-panel__header {
+    gap: 0.35rem;
   }
 
   .auth-surface--signup .auth-panel__copy {

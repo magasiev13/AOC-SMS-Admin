@@ -135,7 +135,7 @@ class TestPlatformOperationsService(unittest.TestCase):
         self.assertEqual(duplicate_pending.id, pending_request.id)
 
         pending_request.status = "queued"
-        pending_request.transient_unit = "sms-saas-manual-restart-123"
+        pending_request.transient_unit = "twinevia-saas-manual-restart-123"
         pending_request.summary = "Restart queued. The SaaS services are restarting."
         self.db.session.commit()
 
@@ -154,8 +154,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "queued",
                     "summary": "Restart queued. The SaaS services will recycle shortly.",
-                    "detail": "Queued SaaS service restart using transient unit sms-saas-manual-restart-123.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Queued SaaS service restart using transient unit twinevia-saas-manual-restart-123.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -164,7 +164,7 @@ class TestPlatformOperationsService(unittest.TestCase):
         result = self.request_platform_service_restart()
 
         self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["transient_unit"], "sms-saas-manual-restart-123")
+        self.assertEqual(result["transient_unit"], "twinevia-saas-manual-restart-123")
         args, kwargs = mock_run.call_args
         self.assertEqual(args[0], ["sudo", "-n", self.helper_path])
         self.assertFalse(kwargs.get("shell", False))
@@ -177,20 +177,20 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "queued",
                     "summary": "Restart queued. The SaaS services are restarting.",
-                    "detail": "Transient unit sms-saas-manual-restart-123 is active/running.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Transient unit twinevia-saas-manual-restart-123 is active/running.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
         )
 
-        result = self.request_platform_service_restart_status("sms-saas-manual-restart-123")
+        result = self.request_platform_service_restart_status("twinevia-saas-manual-restart-123")
 
         self.assertEqual(result["status"], "queued")
         args, _kwargs = mock_run.call_args
         self.assertEqual(
             args[0],
-            ["sudo", "-n", self.helper_path, "--status", "sms-saas-manual-restart-123"],
+            ["sudo", "-n", self.helper_path, "--status", "twinevia-saas-manual-restart-123"],
         )
 
     def test_request_platform_service_restart_rejects_non_executable_script(self) -> None:
@@ -211,8 +211,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "queued",
                     "summary": "Restart queued. The SaaS services will recycle shortly.",
-                    "detail": "Queued SaaS service restart using transient unit sms-saas-manual-restart-123.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Queued SaaS service restart using transient unit twinevia-saas-manual-restart-123.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -222,7 +222,7 @@ class TestPlatformOperationsService(unittest.TestCase):
         updated = self.dispatch_platform_service_restart(request_row)
 
         self.assertEqual(updated.status, "queued")
-        self.assertEqual(updated.transient_unit, "sms-saas-manual-restart-123")
+        self.assertEqual(updated.transient_unit, "twinevia-saas-manual-restart-123")
         self.assertEqual(updated.attempt_count, 1)
         self.assertIsNotNone(updated.started_at)
         self.assertIsNotNone(updated.last_checked_at)
@@ -257,7 +257,7 @@ class TestPlatformOperationsService(unittest.TestCase):
     def test_refresh_platform_service_restart_status_success_moves_to_succeeded(self, mock_run) -> None:
         request_row = self._create_request(
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             summary="Restart queued. The SaaS services are restarting.",
             started_at=self.platform_admin.created_at,
         )
@@ -267,8 +267,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "succeeded",
                     "summary": "Restart completed successfully.",
-                    "detail": "Transient unit sms-saas-manual-restart-123 completed with result success.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Transient unit twinevia-saas-manual-restart-123 completed with result success.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -286,7 +286,7 @@ class TestPlatformOperationsService(unittest.TestCase):
     def test_refresh_platform_service_restart_status_failure_moves_to_failed(self, mock_run) -> None:
         request_row = self._create_request(
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             summary="Restart queued. The SaaS services are restarting.",
             started_at=self.platform_admin.created_at,
         )
@@ -296,8 +296,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "failed",
                     "summary": "Restart failed.",
-                    "detail": "Transient unit sms-saas-manual-restart-123 finished with result failed.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Transient unit twinevia-saas-manual-restart-123 finished with result failed.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -315,7 +315,7 @@ class TestPlatformOperationsService(unittest.TestCase):
         self.app.config["PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS"] = 1
         request_row = self._create_request(
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             started_at=self.platform_admin.created_at - timedelta(seconds=10),
         )
 
@@ -339,7 +339,7 @@ class TestPlatformOperationsService(unittest.TestCase):
     def test_refresh_platform_service_restart_status_timeout_marks_request_failed(self, mock_run) -> None:
         request_row = self._create_request(
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             started_at=self.platform_admin.created_at,
         )
         mock_run.side_effect = subprocess.TimeoutExpired(cmd=["sudo"], timeout=15)
@@ -357,8 +357,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "queued",
                     "summary": "Restart queued. The SaaS services will recycle shortly.",
-                    "detail": "Queued SaaS service restart using transient unit sms-saas-manual-restart-123.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Queued SaaS service restart using transient unit twinevia-saas-manual-restart-123.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -374,7 +374,7 @@ class TestPlatformOperationsService(unittest.TestCase):
     def test_process_platform_service_restart_queue_polls_queued_request(self, mock_run) -> None:
         self._create_request(
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             started_at=self.platform_admin.created_at,
         )
         mock_run.return_value = SimpleNamespace(
@@ -383,8 +383,8 @@ class TestPlatformOperationsService(unittest.TestCase):
                 {
                     "status": "succeeded",
                     "summary": "Restart completed successfully.",
-                    "detail": "Transient unit sms-saas-manual-restart-123 completed with result success.",
-                    "transient_unit": "sms-saas-manual-restart-123",
+                    "detail": "Transient unit twinevia-saas-manual-restart-123 completed with result success.",
+                    "transient_unit": "twinevia-saas-manual-restart-123",
                 }
             ),
             stderr="",
@@ -407,35 +407,68 @@ class TestRestartDeployArtifacts(unittest.TestCase):
     def test_install_script_installs_and_enables_restart_queue_timer(self) -> None:
         install_script = self._read_repo_file("deploy", "install_saas.sh")
 
-        self.assertIn("sms-saas-platform-restart-queue.service", install_script)
-        self.assertIn("sms-saas-platform-restart-queue.timer", install_script)
+        self.assertIn("twinevia-saas-platform-restart-queue.service", install_script)
+        self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script)
         self.assertIn("run_platform_restart_queue_once.sh", install_script)
-        self.assertIn("sms-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
+        self.assertIn("resolve_app_user", install_script)
+        self.assertIn("resolve_app_group", install_script)
+        self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", install_script)
+        self.assertIn("/usr/local/bin/saas-dbdoctor", install_script)
+        self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
 
     def test_deploy_script_syncs_restart_helper_and_restart_queue_timer(self) -> None:
-        deploy_script = self._read_repo_file("deploy", "deploy_sms_saas.sh")
+        deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
         runtime_units = deploy_script.split("SAAS_RUNTIME_UNITS=(", 1)[1].split(")", 1)[0]
 
-        self.assertIn("restart_sms_saas_services.sh", deploy_script)
-        self.assertIn("restart-sms-saas-services", deploy_script)
-        self.assertIn("sms-saas-restart.sudoers", deploy_script)
+        self.assertIn("restart_twinevia_saas_services.sh", deploy_script)
+        self.assertIn("restart-twinevia-saas-services", deploy_script)
+        self.assertIn("twinevia-saas-restart.sudoers", deploy_script)
         self.assertIn("RESTART_SUDOERS_DEST", deploy_script)
-        self.assertIn("sms-saas-platform-restart-queue.service", deploy_script)
-        self.assertIn("sms-saas-platform-restart-queue.timer", deploy_script)
+        self.assertIn("resolve_app_user", deploy_script)
+        self.assertIn("resolve_app_group", deploy_script)
+        self.assertIn("TWINEVIA_SAAS_DBDOCTOR_BIN", deploy_script)
+        self.assertIn("TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN", deploy_script)
+        self.assertIn("EXPECTED_GIT_BRANCH", deploy_script)
+        self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", deploy_script)
+        self.assertIn("assert_git_source", deploy_script)
+        self.assertIn("twinevia-saas-platform-restart-queue.service", deploy_script)
+        self.assertIn("twinevia-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)
         self.assertIn("visudo", deploy_script)
         self.assertIn('systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"', deploy_script)
         self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
-        self.assertIn('"sms-saas-platform-restart-queue.timer"', runtime_units)
+        self.assertIn('"twinevia-saas-platform-restart-queue.timer"', runtime_units)
 
     def test_deploy_workflow_asserts_restart_queue_timer_and_helper(self) -> None:
         workflow = self._read_repo_file(".github", "workflows", "deploy-saas-pilot.yml")
 
-        self.assertIn("sudo systemctl is-active --quiet sms-saas-platform-restart-queue.timer", workflow)
-        self.assertIn("restart-sms-saas-services --check", workflow)
+        self.assertIn("sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer", workflow)
+        self.assertIn("restart-twinevia-saas-services --check", workflow)
+        self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", workflow)
+        self.assertIn("deploy_branch:", workflow)
+        self.assertIn("deploy_tracking:", workflow)
+        self.assertIn("EXPECTED_GIT_BRANCH", workflow)
+        self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", workflow)
+
+    def test_beta_cutover_script_collects_backups_and_snapshots(self) -> None:
+        cutover_script = self._read_repo_file("run", "beta_cutover.sh")
+
+        self.assertIn("public_readiness_local.sh", cutover_script)
+        self.assertIn("public_readiness_beta_snapshot.sh", cutover_script)
+        self.assertIn("pg_dump", cutover_script)
+        self.assertIn("redis-cli", cutover_script)
+        self.assertIn("deploy_twinevia_saas.sh", cutover_script)
+        self.assertIn("live_tracking_branch.txt", cutover_script)
+
+    def test_saas_unit_templates_use_rendered_user_group_and_canonical_dbdoctor(self) -> None:
+        service_unit = self._read_repo_file("deploy", "twinevia-saas.service")
+
+        self.assertIn("User=__APP_USER__", service_unit)
+        self.assertIn("Group=__APP_GROUP__", service_unit)
+        self.assertIn("ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply", service_unit)
 
     def test_restart_helper_status_rejects_unsupported_unit_safely(self) -> None:
-        helper_path = self.repo_root / "deploy" / "restart_sms_saas_services.sh"
+        helper_path = self.repo_root / "deploy" / "restart_twinevia_saas_services.sh"
         completed = subprocess.run(
             ["bash", str(helper_path), "--status", "bad unit name"],
             capture_output=True,

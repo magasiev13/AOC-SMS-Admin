@@ -19,7 +19,7 @@ def _format_alert_message(event_type: str, username: str) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     event_text = _EVENT_LABELS.get(event_type, "A security event occurred on your account.")
     return (
-        f"AOC SMS security alert for {username}: {event_text} "
+        f"Twinevia security alert for {username}: {event_text} "
         f"Time: {stamp}. If this was not expected, contact an administrator immediately."
     )
 

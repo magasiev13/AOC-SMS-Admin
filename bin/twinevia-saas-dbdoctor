@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CANONICAL_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN:-${SCRIPT_DIR}/twinevia-saas-dbdoctor}"
-
-if [[ "$(basename "$0")" != "twinevia-saas-dbdoctor" && -x "${CANONICAL_BIN}" ]]; then
-  exec "${CANONICAL_BIN}" "$@"
-fi
-
 TWINEVIA_SAAS_PYTHON="${TWINEVIA_SAAS_PYTHON:-/opt/twinevia-saas/venv/bin/python}"
 
 if [[ ! -x "${TWINEVIA_SAAS_PYTHON}" ]]; then

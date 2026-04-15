@@ -29,7 +29,11 @@ else
 fi
 
 REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
-RQ_QUEUE_NAME="${RQ_QUEUE_NAME:-sms}"
+default_queue="sms"
+if [[ "${SAAS_MODE:-0}" == "1" ]]; then
+  default_queue="twinevia-saas"
+fi
+RQ_QUEUE_NAME="${RQ_QUEUE_NAME:-${default_queue}}"
 
 check_redis() {
   if command -v redis-cli >/dev/null 2>&1; then

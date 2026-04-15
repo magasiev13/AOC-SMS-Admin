@@ -5,7 +5,7 @@ Step-by-step checklist for bringing up the SaaS deployment on a fresh Ubuntu VPS
 This assumes:
 
 - Ubuntu with `python3.11`
-- a separate checkout at `/opt/sms-saas`
+- a separate checkout at `/opt/twinevia-saas`
 - PostgreSQL and Redis on the same VPS
 - local health validation first at `127.0.0.1:8100`
 
@@ -35,26 +35,26 @@ python3.11 --version
 ## 2. Create The App User And Directories
 
 ```bash
-sudo adduser --system --group --home /opt/sms-saas --shell /bin/bash smsadmin
-sudo install -d -o smsadmin -g smsadmin /opt/sms-saas
-sudo install -d -o smsadmin -g smsadmin /var/log/sms-saas
+sudo adduser --system --group --home /opt/twinevia-saas --shell /bin/bash twinevia
+sudo install -d -o twinevia -g twinevia /opt/twinevia-saas
+sudo install -d -o twinevia -g twinevia /var/log/twinevia-saas
 ```
 
 ## 3. Clone The Repo
 
 ```bash
-sudo -u smsadmin git clone <repo-url> /opt/sms-saas
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && git branch --show-current && git rev-parse --short HEAD'
+sudo -u twinevia git clone <repo-url> /opt/twinevia-saas
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && git branch --show-current && git rev-parse --short HEAD'
 ```
 
 ## 4. Create PostgreSQL Role And Database
 
 ```bash
 sudo -u postgres psql <<'SQL'
-CREATE USER relayn_saas WITH PASSWORD 'REPLACE_WITH_STRONG_DB_PASSWORD';
-CREATE DATABASE relayn_saas OWNER relayn_saas;
-ALTER ROLE relayn_saas SET client_encoding TO 'UTF8';
-ALTER ROLE relayn_saas SET timezone TO 'UTC';
+CREATE USER twinevia_saas WITH PASSWORD 'REPLACE_WITH_STRONG_DB_PASSWORD';
+CREATE DATABASE twinevia_saas OWNER twinevia_saas;
+ALTER ROLE twinevia_saas SET client_encoding TO 'UTF8';
+ALTER ROLE twinevia_saas SET timezone TO 'UTC';
 SQL
 ```
 
@@ -63,23 +63,23 @@ Connectivity check:
 ```bash
 PGPASSWORD='REPLACE_WITH_STRONG_DB_PASSWORD' psql \
   -h 127.0.0.1 \
-  -U relayn_saas \
-  -d relayn_saas \
+  -U twinevia_saas \
+  -d twinevia_saas \
   -c 'select current_database(), current_user, now();'
 ```
 
-## 5. Create `/opt/sms-saas/.env`
+## 5. Create `/opt/twinevia-saas/.env`
 
 ```bash
-sudo tee /opt/sms-saas/.env >/dev/null <<'EOF'
+sudo tee /opt/twinevia-saas/.env >/dev/null <<'EOF'
 FLASK_ENV=production
 TRUST_PROXY=1
 TRUSTED_HOSTS=app.example.com
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
-RQ_QUEUE_NAME=sms-saas
+RQ_QUEUE_NAME=twinevia-saas
 REDIS_URL=redis://localhost:6379/0
-DATABASE_URL=postgresql+psycopg://relayn_saas:REPLACE_WITH_STRONG_DB_PASSWORD@127.0.0.1:5432/relayn_saas
+DATABASE_URL=postgresql+psycopg://twinevia_saas:REPLACE_WITH_STRONG_DB_PASSWORD@127.0.0.1:5432/twinevia_saas
 SAAS_BASE_URL=https://app.example.com
 SECRET_KEY=REPLACE_WITH_LONG_RANDOM_SECRET
 ADMIN_USERNAME=admin
@@ -108,8 +108,8 @@ SESSION_COOKIE_SAMESITE=Lax
 SESSION_COOKIE_SECURE=1
 REMEMBER_COOKIE_SECURE=1
 EOF
-sudo chown root:smsadmin /opt/sms-saas/.env
-sudo chmod 660 /opt/sms-saas/.env
+sudo chown root:twinevia /opt/twinevia-saas/.env
+sudo chmod 660 /opt/twinevia-saas/.env
 ```
 
 Replace at least:
@@ -127,8 +127,8 @@ Replace at least:
 You can let the installer handle this, but a manual precheck is fine:
 
 ```bash
-sudo -u smsadmin bash -lc '
-  cd /opt/sms-saas &&
+sudo -u twinevia bash -lc '
+  cd /opt/twinevia-saas &&
   python3.11 -m venv venv &&
   ./venv/bin/pip install --upgrade pip &&
   ./venv/bin/pip install -r requirements.txt
@@ -138,8 +138,8 @@ sudo -u smsadmin bash -lc '
 ## 7. Apply And Verify The SaaS Schema
 
 ```bash
-sudo -u smsadmin bash -lc '
-  cd /opt/sms-saas &&
+sudo -u twinevia bash -lc '
+  cd /opt/twinevia-saas &&
   set -a &&
   source .env &&
   set +a &&
@@ -152,8 +152,8 @@ sudo -u smsadmin bash -lc '
 ## 8. Validate App Config Before Starting Services
 
 ```bash
-sudo -u smsadmin bash -lc 'set -euo pipefail
-cd /opt/sms-saas
+sudo -u twinevia bash -lc 'set -euo pipefail
+cd /opt/twinevia-saas
 set -a
 source .env
 set +a
@@ -168,8 +168,8 @@ PY'
 ## 9. Smoke Test Gunicorn Locally
 
 ```bash
-sudo -u smsadmin bash -lc 'set -euo pipefail
-cd /opt/sms-saas
+sudo -u twinevia bash -lc 'set -euo pipefail
+cd /opt/twinevia-saas
 set -a
 source .env
 set +a
@@ -191,8 +191,8 @@ OK
 ## 10. Optional Manual Worker Check
 
 ```bash
-sudo -u smsadmin bash -lc 'set -euo pipefail
-cd /opt/sms-saas
+sudo -u twinevia bash -lc 'set -euo pipefail
+cd /opt/twinevia-saas
 set -a
 source .env
 set +a
@@ -202,16 +202,16 @@ set +a
 ## 11. Install The SaaS Services
 
 ```bash
-cd /opt/sms-saas
+cd /opt/twinevia-saas
 sudo ./deploy/install_saas.sh
 ```
 
 ## 12. Verify The Running Services
 
 ```bash
-sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer --no-pager
-sudo systemctl status sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer --no-pager
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+sudo systemctl status twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer --no-pager
+sudo systemctl status twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer --no-pager
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --doctor'
 curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 ```
 
@@ -227,8 +227,8 @@ The repo does not ship a dedicated SaaS nginx config. Whatever proxy you use mus
 ## 14. Update Later
 
 ```bash
-cd /opt/sms-saas
-sudo ./deploy/deploy_sms_saas.sh
+cd /opt/twinevia-saas
+sudo ./deploy/deploy_twinevia_saas.sh
 ```
 
 ## 15. First Acceptance Checks

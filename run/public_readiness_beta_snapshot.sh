@@ -5,8 +5,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${BETA_SIGNOFF_HOST:-beta.theitwingman.com}"
 SSH_TARGET="${BETA_SIGNOFF_SSH_TARGET:-ubuntu@beta.theitwingman.com}"
 SSH_KEY="${BETA_SIGNOFF_SSH_KEY:-$HOME/.ssh/itlab.key}"
-APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-/opt/sms-saas}"
-APP_USER="${BETA_SIGNOFF_APP_USER:-smsadmin}"
+SSH_PORT="${BETA_SIGNOFF_SSH_PORT:-22}"
+APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-/opt/twinevia-saas}"
+APP_USER="${BETA_SIGNOFF_APP_USER:-}"
 
 RUN_ID=""
 ORG_SLUG=""
@@ -73,19 +74,29 @@ mkdir -p "${OUT_DIR}"
 
 SSH_OPTS=(
   -i "${SSH_KEY}"
+  -p "${SSH_PORT}"
   -o BatchMode=yes
   -o StrictHostKeyChecking=yes
 )
 REQUIRED_UNITS=(
-  "sms-saas"
-  "sms-saas-worker"
-  "sms-saas-scheduler.timer"
-  "sms-saas-billing-reconcile.timer"
-  "sms-saas-a2p-reconcile.timer"
+  "twinevia-saas"
+  "twinevia-saas-worker"
+  "twinevia-saas-scheduler.timer"
+  "twinevia-saas-billing-reconcile.timer"
+  "twinevia-saas-platform-restart-queue.timer"
+  "twinevia-saas-a2p-reconcile.timer"
 )
 
 ssh_run() {
   ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "$@"
+}
+
+resolve_remote_app_user() {
+  if [[ -n "${APP_USER}" ]]; then
+    printf '%s\n' "${APP_USER}"
+    return
+  fi
+  ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; elif id -u smsadmin >/dev/null 2>&1; then printf smsadmin; else printf twinevia; fi"
 }
 
 capture_remote_file() {
@@ -95,6 +106,7 @@ capture_remote_file() {
 }
 
 command_failures=0
+APP_USER="$(resolve_remote_app_user)"
 
 commit_sha="unavailable"
 if commit_sha="$(ssh_run "sudo -u ${APP_USER} git -C ${APP_ROOT} rev-parse HEAD")"; then
@@ -104,11 +116,27 @@ else
   command_failures=1
 fi
 
+live_branch="unavailable"
+if live_branch="$(ssh_run "sudo -u ${APP_USER} git -C ${APP_ROOT} rev-parse --abbrev-ref HEAD")"; then
+  printf '%s\n' "${live_branch}" > "${OUT_DIR}/live_branch.txt"
+else
+  printf '%s\n' "${live_branch}" > "${OUT_DIR}/live_branch.txt"
+  command_failures=1
+fi
+
+tracking_branch="unavailable"
+if tracking_branch="$(ssh_run "sudo -u ${APP_USER} git -C ${APP_ROOT} rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true")"; then
+  printf '%s\n' "${tracking_branch}" > "${OUT_DIR}/live_tracking_branch.txt"
+else
+  printf '%s\n' "${tracking_branch}" > "${OUT_DIR}/live_tracking_branch.txt"
+  command_failures=1
+fi
+
 health_code="$(curl -sS -D "${OUT_DIR}/health.headers" -o "${OUT_DIR}/health.body" -w '%{http_code}' "https://${HOST}/health" || true)"
 printf '%s\n' "${health_code}" > "${OUT_DIR}/health.status"
 
 if ! capture_remote_file saas_dbdoctor.txt \
-  "sudo -u ${APP_USER} bash -lc 'cd ${APP_ROOT} && set -a && source .env && set +a && /usr/local/bin/saas-dbdoctor --doctor'"; then
+  "sudo -u ${APP_USER} bash -lc 'cd ${APP_ROOT} && set -a && source .env && set +a && if [ -x /usr/local/bin/twinevia-saas-dbdoctor ]; then /usr/local/bin/twinevia-saas-dbdoctor --doctor; else /usr/local/bin/saas-dbdoctor --doctor; fi'"; then
   command_failures=1
 fi
 
@@ -124,7 +152,7 @@ if [[ -z "${service_activity}" ]]; then
 fi
 
 if ! capture_remote_file worker.log.txt \
-  "sudo journalctl -u sms-saas-worker -n 120 --no-pager"; then
+  "sudo journalctl -u twinevia-saas-worker -n 120 --no-pager"; then
   command_failures=1
 fi
 

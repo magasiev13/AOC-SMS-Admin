@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS Admin Scheduler Service (oneshot)
+Description=Twinevia Legacy Scheduler Service (oneshot)
 After=network.target
 
 [Service]

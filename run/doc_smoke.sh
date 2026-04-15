@@ -27,6 +27,7 @@ commands=(
   "./run/local_saas_stack.sh --help"
   "./run/public_readiness_local.sh --help"
   "./run/public_readiness_beta_snapshot.sh --help"
+  "./run/beta_cutover.sh --help"
 )
 
 for command in "${commands[@]}"; do

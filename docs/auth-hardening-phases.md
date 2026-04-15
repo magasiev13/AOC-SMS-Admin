@@ -1,4 +1,4 @@
-# Relayn Auth And Account Security Reference
+# Twinevia Auth And Account Security Reference
 
 This file describes the current auth and account-security behavior in the app.
 
@@ -128,9 +128,11 @@ Expected destinations:
 Provision with:
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --ensure-platform-admin'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --ensure-platform-admin'
 ```
+
+For bootstrap-password cleanup on the SaaS runtime, `TWINEVIA_SAAS_ENV_FILE` is the canonical env-file override. `SMS_ADMIN_ENV_FILE` remains accepted as a legacy fallback.
 
 ### Legacy compatibility admin bootstrap
 

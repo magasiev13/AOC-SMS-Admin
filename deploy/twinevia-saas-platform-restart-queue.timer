@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS SaaS Platform Restart Queue Timer
+Description=Twinevia SaaS Platform Restart Queue Timer
 Documentation=man:systemd.timer(5)
 
 [Timer]

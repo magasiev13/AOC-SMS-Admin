@@ -1,0 +1,21 @@
+[Unit]
+Description=Twinevia SaaS RQ Worker
+After=network.target redis.service
+
+[Service]
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=/opt/twinevia-saas
+Environment="APP_ROOT=/opt/twinevia-saas"
+Environment="SAAS_MODE=1"
+Environment="SCHEDULER_ENABLED=0"
+Environment="RQ_QUEUE_NAME=twinevia-saas"
+EnvironmentFile=/opt/twinevia-saas/.env
+ExecStartPre=/opt/twinevia-saas/deploy/check_python_runtime.sh
+ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
+ExecStart=/bin/bash /opt/twinevia-saas/deploy/run_worker.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

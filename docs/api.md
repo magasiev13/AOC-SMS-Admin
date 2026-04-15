@@ -1,6 +1,6 @@
-# Relayn Route Reference
+# Twinevia Route Reference
 
-Relayn is an HTML-first Flask app with session auth, CSRF-protected form posts, and a small number of public webhook endpoints.
+Twinevia is an HTML-first Flask app with session auth, CSRF-protected form posts, and a small number of public webhook endpoints.
 
 This document is organized by capability instead of file order. The canonical source remains `app/routes.py` and `app/auth.py`.
 

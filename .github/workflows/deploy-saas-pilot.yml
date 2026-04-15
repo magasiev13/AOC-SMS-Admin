@@ -1,12 +1,23 @@
-name: Deploy SaaS Pilot (codex/saas-pilot-v2 -> beta)
+name: Deploy SaaS Pilot (beta)
 
 on:
   push:
     branches: ["codex/saas-pilot-v2"]
   workflow_dispatch:
+    inputs:
+      deploy_branch:
+        description: Branch beta should track for this deploy
+        required: false
+        default: codex/saas-pilot-v2
+      deploy_tracking:
+        description: Tracking ref the beta checkout must use
+        required: false
+        default: origin/codex/saas-pilot-v2
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  BETA_DEPLOY_BRANCH: ${{ vars.BETA_DEPLOY_BRANCH }}
+  BETA_DEPLOY_TRACKING: ${{ vars.BETA_DEPLOY_TRACKING }}
 
 concurrency:
   group: deploy-saas-pilot
@@ -77,6 +88,8 @@ jobs:
 
       - name: Deploy
         env:
+          WORKFLOW_DEPLOY_BRANCH: ${{ github.event.inputs.deploy_branch }}
+          WORKFLOW_DEPLOY_TRACKING: ${{ github.event.inputs.deploy_tracking }}
           PILOT_VPS_HOST: ${{ secrets.PILOT_VPS_HOST }}
           PILOT_VPS_USER: ${{ secrets.PILOT_VPS_USER }}
           PILOT_VPS_PORT: ${{ secrets.PILOT_VPS_SSH_PORT }}
@@ -88,27 +101,51 @@ jobs:
           VPS_HOST="${PILOT_VPS_HOST:-beta.theitwingman.com}"
           VPS_USER_VALUE="${PILOT_VPS_USER:-${VPS_USER:-}}"
           VPS_PORT_VALUE="${PILOT_VPS_PORT:-${VPS_PORT:-22}}"
+          REQUIRED_BRANCH="${WORKFLOW_DEPLOY_BRANCH:-${BETA_DEPLOY_BRANCH:-codex/saas-pilot-v2}}"
+          REQUIRED_TRACKING="${WORKFLOW_DEPLOY_TRACKING:-${BETA_DEPLOY_TRACKING:-origin/${REQUIRED_BRANCH}}}"
 
           if [ -z "${VPS_USER_VALUE}" ]; then
             echo "❌ missing PILOT_VPS_USER (or fallback VPS_USER)"
             exit 1
           fi
 
+          echo "==> Beta deploy source"
+          echo "Branch: ${REQUIRED_BRANCH}"
+          echo "Tracking: ${REQUIRED_TRACKING}"
+
           ssh -p "${VPS_PORT_VALUE}" \
             -i ~/.ssh/vps_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
-            "${VPS_USER_VALUE}@${VPS_HOST}" 'bash -s' <<'REMOTE'
+            "${VPS_USER_VALUE}@${VPS_HOST}" bash -s -- "${REQUIRED_BRANCH}" "${REQUIRED_TRACKING}" <<'REMOTE'
           set -euo pipefail
 
-          APP_ROOT="/opt/sms-saas"
-          APP_USER="smsadmin"
-          REQUIRED_BRANCH="codex/saas-pilot-v2"
-          REQUIRED_TRACKING="origin/codex/saas-pilot-v2"
+          REQUIRED_BRANCH="$1"
+          REQUIRED_TRACKING="$2"
+          APP_ROOT="/opt/twinevia-saas"
+          APP_USER="${APP_USER:-}"
+          TWINEVIA_SAAS_DBDOCTOR_BIN="/usr/local/bin/twinevia-saas-dbdoctor"
+          TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="/usr/local/bin/saas-dbdoctor"
 
           fail() {
             echo "❌ $1" >&2
             exit 1
+          }
+
+          resolve_app_user() {
+            if [ -n "${APP_USER}" ]; then
+              printf '%s\n' "${APP_USER}"
+              return
+            fi
+            if id -u twinevia >/dev/null 2>&1; then
+              printf 'twinevia\n'
+              return
+            fi
+            if id -u smsadmin >/dev/null 2>&1; then
+              printf 'smsadmin\n'
+              return
+            fi
+            printf 'twinevia\n'
           }
 
           resolve_health_host() {
@@ -125,6 +162,7 @@ jobs:
           }
 
           echo "==> Pilot preflight"
+          APP_USER="$(resolve_app_user)"
           [ -d "${APP_ROOT}" ] || fail "${APP_ROOT} does not exist. Run deploy/install_saas.sh manually first."
           [ -f "${APP_ROOT}/.env" ] || fail "${APP_ROOT}/.env is missing."
           sudo -u "${APP_USER}" test -d "${APP_ROOT}/.git" || fail "${APP_ROOT} is not a git checkout."
@@ -137,13 +175,21 @@ jobs:
           TRACKING_BRANCH="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
           [ "${TRACKING_BRANCH}" = "${REQUIRED_TRACKING}" ] || fail "${APP_ROOT} tracks ${TRACKING_BRANCH:-<none>}, expected ${REQUIRED_TRACKING}."
 
-          [ -x /usr/local/bin/saas-dbdoctor ] || fail "/usr/local/bin/saas-dbdoctor is missing. Run deploy/install_saas.sh manually first."
+          if [ -x "${TWINEVIA_SAAS_DBDOCTOR_BIN}" ]; then
+            ACTIVE_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN}"
+          elif [ -x "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}" ]; then
+            ACTIVE_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
+          else
+            fail "${TWINEVIA_SAAS_DBDOCTOR_BIN} is missing. Run deploy/install_saas.sh manually first."
+          fi
 
           for unit in \
-            sms-saas.service \
-            sms-saas-worker.service \
-            sms-saas-scheduler.timer \
-            sms-saas-billing-reconcile.timer; do
+            twinevia-saas.service \
+            twinevia-saas-worker.service \
+            twinevia-saas-scheduler.timer \
+            twinevia-saas-billing-reconcile.timer \
+            twinevia-saas-platform-restart-queue.timer \
+            twinevia-saas-a2p-reconcile.timer; do
             systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]" || fail "Missing systemd unit ${unit}. Run deploy/install_saas.sh manually first."
           done
 
@@ -161,26 +207,27 @@ jobs:
             sudo grep -q "^${key}=" "${APP_ROOT}/.env" || fail "Missing ${key} in ${APP_ROOT}/.env"
           done
 
-          sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source .env; set +a; /usr/local/bin/saas-dbdoctor --doctor" >/dev/null
+          sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source .env; set +a; \"${ACTIVE_DBDOCTOR_BIN}\" --doctor" >/dev/null
 
           echo "==> Refresh deploy tooling from repo"
           sudo -u "${APP_USER}" bash -lc "cd \"${APP_ROOT}\" && git pull --ff-only"
-          sudo install -m 0755 "${APP_ROOT}/deploy/deploy_sms_saas.sh" /usr/local/bin/deploy_sms_saas.sh
-          sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" /usr/local/bin/saas-dbdoctor
+          sudo install -m 0755 "${APP_ROOT}/deploy/deploy_twinevia_saas.sh" /usr/local/bin/deploy_twinevia_saas.sh
+          sudo install -m 0755 "${APP_ROOT}/bin/twinevia-saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_BIN}"
+          sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
 
           echo "==> Deploy latest pilot branch"
-          sudo /usr/local/bin/deploy_sms_saas.sh
+          sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" /usr/local/bin/deploy_twinevia_saas.sh
 
           echo "==> Service assertions"
-          sudo systemctl is-active --quiet sms-saas
-          sudo systemctl is-active --quiet sms-saas-worker
-          sudo systemctl is-active --quiet sms-saas-scheduler.timer
-          sudo systemctl is-active --quiet sms-saas-billing-reconcile.timer
-          sudo systemctl is-active --quiet sms-saas-platform-restart-queue.timer
-          sudo systemctl is-active --quiet sms-saas-a2p-reconcile.timer
+          sudo systemctl is-active --quiet twinevia-saas
+          sudo systemctl is-active --quiet twinevia-saas-worker
+          sudo systemctl is-active --quiet twinevia-saas-scheduler.timer
+          sudo systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
+          sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer
+          sudo systemctl is-active --quiet twinevia-saas-a2p-reconcile.timer
 
           echo "==> Restart helper smoke check"
-          sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-sms-saas-services --check >/dev/null
+          sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-twinevia-saas-services --check >/dev/null
 
           echo "==> Health check"
           HEALTH_HOST="$(resolve_health_host)"

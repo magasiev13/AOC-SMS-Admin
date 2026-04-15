@@ -1,0 +1,19 @@
+[Unit]
+Description=Twinevia SaaS Platform Restart Queue Processor (oneshot)
+After=network.target
+
+[Service]
+Type=oneshot
+User=__APP_USER__
+Group=__APP_GROUP__
+WorkingDirectory=/opt/twinevia-saas
+Environment="PATH=/opt/twinevia-saas/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="APP_ROOT=/opt/twinevia-saas"
+Environment="SAAS_MODE=1"
+EnvironmentFile=-/opt/twinevia-saas/.env
+ExecStartPre=/opt/twinevia-saas/deploy/check_python_runtime.sh
+ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
+ExecStart=/bin/bash /opt/twinevia-saas/deploy/run_platform_restart_queue_once.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=twinevia-saas-platform-restart-queue

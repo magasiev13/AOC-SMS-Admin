@@ -1,4 +1,4 @@
-# Relayn Configuration
+# Twinevia Configuration
 
 All runtime configuration is loaded from `app/config.py`.
 
@@ -31,7 +31,7 @@ Production behavior is also strict:
 | Variable | Default | Notes |
 |---|---|---|
 | `PLATFORM_SERVICE_RESTART_ENABLED` | `0` | Enables the platform restart control on `/platform`. |
-| `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-sms-saas-services` | Must be an absolute executable path. |
+| `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-twinevia-saas-services` | Must be an absolute executable path. |
 | `PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS` | `15` | Restart-helper command timeout. |
 | `PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS` | `300` | How long queued restart state can sit before refresh logic treats it as stale. |
 
@@ -103,7 +103,7 @@ Important production rule:
 | Variable | Default | Notes |
 |---|---|---|
 | `REDIS_URL` | `redis://localhost:6379/0` | Shared by worker and local tooling. |
-| `RQ_QUEUE_NAME` | `sms` | Legacy default; SaaS deploys should set `sms-saas`. |
+| `RQ_QUEUE_NAME` | `twinevia-saas` when `SAAS_MODE=1`, else `sms` | Queue default follows the active runtime family. |
 
 ## Hosted Compliance And A2P Defaults
 
@@ -117,13 +117,13 @@ When an org resubmits after a failed Twilio campaign review, the app inspects th
 
 | Variable | Default | Notes |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///.../instance/sms.db` | Primary SaaS production should override with PostgreSQL. |
+| `DATABASE_URL` | `sqlite:///.../instance/twinevia.db` when `SAAS_MODE=1`, else `sqlite:///.../instance/sms.db` | Primary SaaS production should override with PostgreSQL. |
 | `SQLITE_TIMEOUT` | `30` | Applied only when the driver is SQLite. |
 
 Important runtime distinction:
 
 - `dbdoctor` is only for the legacy SQLite path
-- `app.saas_db` / `saas-dbdoctor` are the correct tools for SaaS databases
+- `app.saas_db` / `twinevia-saas-dbdoctor` are the correct tools for SaaS databases
 
 ## Twilio And Messaging Provider Settings
 
@@ -134,7 +134,7 @@ Important runtime distinction:
 | `TWILIO_API_KEY_SID` | unset | Optional production REST auth; must be paired with secret. |
 | `TWILIO_API_KEY_SECRET` | unset | Optional production REST auth; must be paired with SID. |
 | `TWILIO_FROM_NUMBER` | unset | Mainly used by the legacy single-tenant runtime. |
-| `TWILIO_PLATFORM_FRIENDLY_NAME` | `SMS Admin SaaS` | Default naming seed for platform-managed resources. |
+| `TWILIO_PLATFORM_FRIENDLY_NAME` | `Twinevia` | Default naming seed for platform-managed resources. |
 | `TWILIO_CREDENTIAL_ENCRYPTION_KEY` | unset | Required for SaaS billing/provider validation. |
 | `TWILIO_VALIDATE_INBOUND_SIGNATURE` | `1` | Signature validation for inbound Twilio requests. |
 | `INBOUND_AUTO_REPLY_ENABLED` | `1` | Global inbound automation toggle. |
@@ -173,7 +173,12 @@ Important runtime distinction:
 | `ADMIN_USERNAME` | `admin` | Bootstrap admin username. |
 | `ADMIN_EMAIL` | unset | Optional bootstrap email. |
 | `ADMIN_PASSWORD` | unset | Required for first admin bootstrap in legacy production and for first SaaS platform-admin provisioning. |
+| `TWINEVIA_SAAS_ENV_FILE` | unset | Optional SaaS-specific env-file override used when production password changes remove bootstrap `ADMIN_PASSWORD`. |
 | `PLAYWRIGHT_ARTIFACT_DIR` | empty | Overrides browser artifact output location. |
+
+Compatibility note:
+
+- `SMS_ADMIN_ENV_FILE` remains accepted as a legacy fallback after `TWINEVIA_SAAS_ENV_FILE`
 
 ## Production Validation Summary
 
@@ -212,7 +217,7 @@ REMEMBER_COOKIE_SECURE=1
 SESSION_COOKIE_SAMESITE=Lax
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
-RQ_QUEUE_NAME=sms-saas
+RQ_QUEUE_NAME=twinevia-saas
 ```
 
 ## Runtime Profiles
@@ -221,8 +226,8 @@ RQ_QUEUE_NAME=sms-saas
 
 - PostgreSQL in `DATABASE_URL`
 - `SAAS_MODE=1`
-- `RQ_QUEUE_NAME=sms-saas`
-- systemd `sms-saas*` units and timers
+- `RQ_QUEUE_NAME=twinevia-saas`
+- systemd `twinevia-saas*` units and timers
 
 ### Legacy compatibility deployment
 

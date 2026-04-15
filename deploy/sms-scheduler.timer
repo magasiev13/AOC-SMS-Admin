@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS Admin Scheduler Timer
+Description=Twinevia Legacy Scheduler Timer
 Documentation=man:systemd.timer(5)
 
 [Timer]

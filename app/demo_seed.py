@@ -201,7 +201,7 @@ def seed_demo_database(
 
         internal_owner = make_user(
             username="aoc-owner",
-            email="owner@aocinternal.demo.test",
+            email="owner@twineviainternal.demo.test",
             full_name="Avery Cole",
             phone="+15550001002",
             role="admin",
@@ -209,7 +209,7 @@ def seed_demo_database(
         )
         internal_staff = make_user(
             username="aoc-staff",
-            email="staff@aocinternal.demo.test",
+            email="staff@twineviainternal.demo.test",
             full_name="Riley Morgan",
             phone="+15550001003",
             role="social_manager",
@@ -240,7 +240,7 @@ def seed_demo_database(
             password=OWNER_PASSWORD,
         )
 
-        internal_org = Organization(name="AOC SMS Internal", slug="aoc-sms-internal", status="active")
+        internal_org = Organization(name="Twinevia Internal", slug="twinevia-internal", status="active")
         northstar_org = Organization(name="Northstar Fitness", slug="northstar-fitness", status="active")
         harbor_org = Organization(name="Harbor Events Co", slug="harbor-events-co", status="active")
         sunset_org = Organization(name="Sunset Realty Group", slug="sunset-realty-group", status="suspended")
@@ -347,10 +347,10 @@ def seed_demo_database(
         )
         internal_staff_invite = OrganizationInvitation(
             organization_id=internal_org.id,
-            email="next.staff@aocinternal.demo.test",
+            email="next.staff@twineviainternal.demo.test",
             role="staff",
             status="pending",
-            token="aoc-staff-demo-token",
+            token="twinevia-staff-demo-token",
             invited_by_user_id=internal_owner.id,
             expires_at=now + timedelta(days=7),
         )
@@ -600,7 +600,7 @@ def seed_demo_database(
         help_rule = KeywordAutomationRule(
             organization_id=internal_org.id,
             keyword="HELP",
-            response_body="AOC SMS Internal support: reply to this message and our team will follow up.",
+            response_body="Twinevia Internal support: reply to this message and our team will follow up.",
             is_active=True,
             match_count=3,
             last_matched_at=now - timedelta(hours=5),
@@ -743,7 +743,7 @@ def seed_demo_database(
 
         base_url_value = (app.config.get("SAAS_BASE_URL") or "http://127.0.0.1:5000").rstrip("/")
         live_sender_note = (
-            f"Approved sender assigned to AOC SMS Internal: {live_from_number} "
+            f"Approved sender assigned to Twinevia Internal: {live_from_number} "
             f"{f'via managed Messaging Service {live_messaging_service_sid}' if live_messaging_service_sid else '(no Messaging Service SID provided)'}."
             if live_from_number
             else "No live Twilio sender assigned. All organizations are safe to test locally in non-live mode."
@@ -758,13 +758,13 @@ def seed_demo_database(
                     "home": "/platform",
                 },
                 {
-                    "label": "AOC SMS Internal owner",
+                    "label": "Twinevia Internal owner",
                     "email": internal_owner.email,
                     "password": OWNER_PASSWORD,
                     "home": "/dashboard",
                 },
                 {
-                    "label": "AOC SMS Internal staff",
+                    "label": "Twinevia Internal staff",
                     "email": internal_staff.email,
                     "password": STAFF_PASSWORD,
                     "home": "/dashboard",
@@ -843,7 +843,7 @@ def main() -> None:
     parser.add_argument("--reset", action="store_true", help="Delete the target SQLite database before seeding.")
     parser.add_argument("--database-url", help="Override DATABASE_URL for the seed run.")
     parser.add_argument("--base-url", help="Override SAAS_BASE_URL for invite links in the printed summary.")
-    parser.add_argument("--live-from-number", help="Assign an approved live sender number to AOC SMS Internal.")
+    parser.add_argument("--live-from-number", help="Assign an approved live sender number to Twinevia Internal.")
     parser.add_argument(
         "--live-messaging-service-sid",
         help="Optional MG... Messaging Service SID paired with --live-from-number.",

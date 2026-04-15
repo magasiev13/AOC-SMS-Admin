@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS Admin Gunicorn Service
+Description=Twinevia Legacy Gunicorn Service
 After=network.target
 
 [Service]

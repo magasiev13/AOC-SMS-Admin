@@ -59,7 +59,7 @@ class TestDemoSeed(unittest.TestCase):
             self.assertGreaterEqual(InboxThread.query.count(), 3)
             self.assertGreaterEqual(ScheduledMessage.query.count(), 3)
 
-            internal_org = Organization.query.filter_by(slug="aoc-sms-internal").first()
+            internal_org = Organization.query.filter_by(slug="twinevia-internal").first()
             self.assertIsNotNone(internal_org)
             self.assertEqual(internal_org.subscription.status, "trialing")
             self.assertEqual(internal_org.messaging_profile.status, "pending")

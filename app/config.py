@@ -32,6 +32,8 @@ class Config:
     # This secret signs login cookies. Use a random value in production.
     # If this is weak or shared, attackers can forge sessions.
     SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+    PRODUCT_NAME = os.environ.get('PRODUCT_NAME', 'Twinevia').strip() or 'Twinevia'
+    PRODUCT_DESCRIPTOR = os.environ.get('PRODUCT_DESCRIPTOR', 'Messaging Workspace').strip() or 'Messaging Workspace'
 
     # Debug should only be enabled for local development.
     # Leaving debug on in production can expose sensitive internals.
@@ -44,7 +46,7 @@ class Config:
     PLATFORM_SERVICE_RESTART_ENABLED = _env_bool('PLATFORM_SERVICE_RESTART_ENABLED', '0')
     PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
         'PLATFORM_SERVICE_RESTART_SCRIPT',
-        '/usr/local/bin/restart-sms-saas-services',
+        '/usr/local/bin/restart-twinevia-saas-services',
     )
     PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS = _env_int('PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS', '15')
     PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS = _env_int('PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS', '300')
@@ -131,13 +133,14 @@ class Config:
 
     # Redis / RQ
     REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-    RQ_QUEUE_NAME = os.environ.get('RQ_QUEUE_NAME', 'sms')
+    RQ_QUEUE_NAME = os.environ.get('RQ_QUEUE_NAME', 'twinevia-saas' if SAAS_MODE else 'sms')
     
     # Database
     BASE_DIR = Path(__file__).resolve().parent.parent
+    DEFAULT_SQLITE_DB_NAME = 'twinevia.db' if SAAS_MODE else 'sms.db'
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         'DATABASE_URL',
-        f"sqlite:///{BASE_DIR / 'instance' / 'sms.db'}"
+        f"sqlite:///{BASE_DIR / 'instance' / DEFAULT_SQLITE_DB_NAME}"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
@@ -154,7 +157,7 @@ class Config:
     TWILIO_API_KEY_SID = os.environ.get('TWILIO_API_KEY_SID')
     TWILIO_API_KEY_SECRET = os.environ.get('TWILIO_API_KEY_SECRET')
     TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
-    TWILIO_PLATFORM_FRIENDLY_NAME = os.environ.get('TWILIO_PLATFORM_FRIENDLY_NAME', 'SMS Admin SaaS')
+    TWILIO_PLATFORM_FRIENDLY_NAME = os.environ.get('TWILIO_PLATFORM_FRIENDLY_NAME', PRODUCT_NAME)
     TWILIO_CREDENTIAL_ENCRYPTION_KEY = os.environ.get('TWILIO_CREDENTIAL_ENCRYPTION_KEY')
     TWILIO_VALIDATE_INBOUND_SIGNATURE = _env_bool('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1')
     TWILIO_A2P_ONBOARDING_ENABLED = _env_bool('TWILIO_A2P_ONBOARDING_ENABLED', '0')

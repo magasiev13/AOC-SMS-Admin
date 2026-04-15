@@ -76,6 +76,21 @@ class TestAuthHardening(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.headers.get("Location", ""))
 
+    def test_login_page_renders_twinevia_branding(self) -> None:
+        response = self.client.get("/login", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Twinevia", response.data)
+        self.assertIn(b"Messaging Workspace", response.data)
+
+    def test_dashboard_renders_twinevia_branding_for_signed_in_user(self) -> None:
+        self._login("admin", "admin-pass")
+
+        response = self.client.get("/dashboard", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Twinevia", response.data)
+
     def test_missing_phone_is_redirected_to_security_contact(self) -> None:
         self._login("no-phone", "no-phone-pass")
 

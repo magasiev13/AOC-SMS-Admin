@@ -35,7 +35,7 @@ test('workspace and platform login surfaces are clearly separated', async ({ pag
   await expect(page.getByRole('heading', { name: 'Run messaging from one calm workspace.' })).toBeVisible();
   await expect(page.getByLabel('Email or username')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Create a workspace' })).toBeVisible();
-  await expect(page.locator('body')).not.toContainText(/SMS Admin|AOC SMS/);
+  await expect(page.locator('body')).not.toContainText(/SMS Admin|Twinevia Legacy/);
 
   const loginMetrics = await surfaceMetrics(page);
   expect(loginMetrics.scrollWidth).toBeLessThanOrEqual(loginMetrics.innerWidth);
@@ -49,7 +49,7 @@ test('workspace and platform login surfaces are clearly separated', async ({ pag
   await expect(page.getByText('Platform access')).toBeVisible();
   await expect(page.getByText('Review onboarding, workspace access, and sender readiness')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Open workspace login' })).toBeVisible();
-  await expect(page.locator('body')).not.toContainText(/SMS Admin|AOC SMS/);
+  await expect(page.locator('body')).not.toContainText(/SMS Admin|Twinevia Legacy/);
 
   const platformMetrics = await surfaceMetrics(page);
   expect(platformMetrics.scrollWidth).toBeLessThanOrEqual(platformMetrics.innerWidth);
@@ -87,7 +87,7 @@ test('customer-managed owner with active messaging lands in the workspace', asyn
 test('self-serve signup creates a workspace and opens setup', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/signup');
-  await expect(page.locator('body')).not.toContainText(/SMS Admin|AOC SMS/);
+  await expect(page.locator('body')).not.toContainText(/SMS Admin|Twinevia Legacy/);
   await expect(page.locator('[data-signup-indicator="1"]')).toHaveClass(/is-current/);
   await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
 

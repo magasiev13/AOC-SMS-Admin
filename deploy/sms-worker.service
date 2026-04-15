@@ -1,5 +1,5 @@
 [Unit]
-Description=SMS Admin RQ Worker
+Description=Twinevia Legacy RQ Worker
 After=network.target redis.service
 
 [Service]

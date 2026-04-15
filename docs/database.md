@@ -1,6 +1,6 @@
-# Relayn Data Model
+# Twinevia Data Model
 
-Relayn has one ORM model module, `app/models.py`, but two practical data shapes:
+Twinevia has one ORM model module, `app/models.py`, but two practical data shapes:
 
 - primary SaaS: multi-tenant PostgreSQL with explicit SaaS schema management
 - secondary legacy: SQLite with compatibility migrations and optional local/demo use
@@ -154,12 +154,12 @@ Path: `app/saas_migrations/`
 
 - file format: numbered Python files such as `008_add_customer_managed_twilio_fields.py`
 - runner: `app.saas_migrations.runner`
-- CLI: `./venv/bin/python -m app.saas_db` locally, `saas-dbdoctor` in production
+- CLI: `./venv/bin/python -m app.saas_db` locally, `twinevia-saas-dbdoctor` in production
 - intended for SaaS databases, especially PostgreSQL
 
 The SaaS path is explicit by design:
 
-- production SaaS deploys should run `saas-dbdoctor --apply` from `/opt/sms-saas` with `.env` sourced
+- production SaaS deploys should run `twinevia-saas-dbdoctor --apply` from `/opt/twinevia-saas` with `.env` sourced
 - startup validates SaaS schema readiness rather than relying on the legacy migration CLI
 
 ## Runtime Notes
@@ -174,6 +174,8 @@ The SaaS path is explicit by design:
 ./venv/bin/python -m app.saas_db --doctor
 ./venv/bin/python -m app.saas_db --ensure-platform-admin
 ```
+
+The primary local SaaS fallback database is `sqlite:///instance/twinevia.db` when `DATABASE_URL` is unset. Production SaaS should still use PostgreSQL.
 
 ### Legacy compatibility path
 

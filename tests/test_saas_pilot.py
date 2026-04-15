@@ -2424,7 +2424,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             requested_username=self.platform_admin.username,
             client_ip="127.0.0.1",
             status="queued",
-            transient_unit="sms-saas-manual-restart-123",
+            transient_unit="twinevia-saas-manual-restart-123",
             summary="Restart queued. The SaaS services are restarting.",
         )
         self.db.session.add(restart_request)
@@ -2449,7 +2449,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 requested_username=self.platform_admin.username,
                 client_ip="127.0.0.1",
                 status="queued",
-                transient_unit="sms-saas-manual-restart-555",
+                transient_unit="twinevia-saas-manual-restart-555",
                 summary="Restart queued. The SaaS services are restarting.",
             )
         )
@@ -2470,9 +2470,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 requested_username=self.platform_admin.username,
                 client_ip="127.0.0.1",
                 status="succeeded",
-                transient_unit="sms-saas-manual-restart-777",
+                transient_unit="twinevia-saas-manual-restart-777",
                 summary="Restart completed successfully.",
-                detail="Transient unit sms-saas-manual-restart-777 completed with result success.",
+                detail="Transient unit twinevia-saas-manual-restart-777 completed with result success.",
                 completed_at=self.organization.created_at,
             )
         )
@@ -2493,9 +2493,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 requested_username=self.platform_admin.username,
                 client_ip="127.0.0.1",
                 status="failed",
-                transient_unit="sms-saas-manual-restart-999",
+                transient_unit="twinevia-saas-manual-restart-999",
                 summary="Restart failed.",
-                detail="Transient unit sms-saas-manual-restart-999 finished with result failed.",
+                detail="Transient unit twinevia-saas-manual-restart-999 finished with result failed.",
                 completed_at=self.organization.created_at,
             )
         )

@@ -1,4 +1,4 @@
-# Relayn CLI And Script Reference
+# Twinevia CLI And Script Reference
 
 This repo ships two families of operational tooling:
 
@@ -7,9 +7,11 @@ This repo ships two families of operational tooling:
 
 ## Schema CLIs
 
-### `./venv/bin/python -m app.saas_db` / `saas-dbdoctor`
+### `./venv/bin/python -m app.saas_db` / `twinevia-saas-dbdoctor`
 
 Canonical SaaS schema and import workflow.
+
+Compatibility alias: `saas-dbdoctor`
 
 Typical commands:
 
@@ -36,12 +38,12 @@ Import helpers:
 Installed production wrapper:
 
 ```bash
-cd /opt/sms-saas
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
-sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+cd /opt/twinevia-saas
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --apply'
+sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --doctor'
 ```
 
-The installed wrapper inherits the current shell environment. Source `/opt/sms-saas/.env` before using it directly on the server.
+The installed wrapper inherits the current shell environment. Source `/opt/twinevia-saas/.env` before using it directly on the server.
 
 ### `./venv/bin/python -m app.dbdoctor` / `dbdoctor`
 
@@ -198,6 +200,32 @@ Artifacts land under:
 output/signoff/<run-id>/beta/<label>/
 ```
 
+### `./run/beta_cutover.sh`
+
+Orchestrates the safe beta cutover flow for the existing Twinevia SaaS host:
+
+```bash
+./run/beta_cutover.sh \
+  --org-slug public-readiness-control \
+  --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
+  --deploy
+```
+
+What it does:
+
+- optional local signoff via `./run/public_readiness_local.sh`
+- pre-deploy beta snapshot
+- remote PostgreSQL/Redis/config backup bundle
+- branch/tracking guard against deploying the wrong checkout
+- optional in-place `deploy/deploy_twinevia_saas.sh`
+- post-deploy beta snapshot
+
+Artifacts land under:
+
+```text
+output/signoff/<run-id>/beta-cutover/
+```
+
 ## Direct Runtime Commands
 
 ### Flask
@@ -230,7 +258,7 @@ Production should use systemd timers instead of the in-process scheduler.
 
 ```bash
 sudo ./deploy/install_saas.sh
-sudo ./deploy/deploy_sms_saas.sh
+sudo ./deploy/deploy_twinevia_saas.sh
 ```
 
 ### Legacy compatibility

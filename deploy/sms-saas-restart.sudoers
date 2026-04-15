@@ -1,1 +1,0 @@
-smsadmin ALL=(root) NOPASSWD: __RESTART_HELPER_DEST__

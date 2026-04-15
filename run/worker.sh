@@ -30,7 +30,11 @@ else
 fi
 
 REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
-RQ_QUEUE_NAME="${RQ_QUEUE_NAME:-sms}"
+default_queue="sms"
+if [[ "${SAAS_MODE:-0}" == "1" ]]; then
+  default_queue="twinevia-saas"
+fi
+RQ_QUEUE_NAME="${RQ_QUEUE_NAME:-${default_queue}}"
 
 RQ_BIN="${VENV_DIR}/bin/rq"
 if [[ -x "${RQ_BIN}" ]]; then
