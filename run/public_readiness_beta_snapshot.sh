@@ -6,8 +6,9 @@ HOST="${BETA_SIGNOFF_HOST:-beta.theitwingman.com}"
 SSH_TARGET="${BETA_SIGNOFF_SSH_TARGET:-ubuntu@beta.theitwingman.com}"
 SSH_KEY="${BETA_SIGNOFF_SSH_KEY:-$HOME/.ssh/itlab.key}"
 SSH_PORT="${BETA_SIGNOFF_SSH_PORT:-22}"
-APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-/opt/twinevia-saas}"
+APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-}"
 APP_USER="${BETA_SIGNOFF_APP_USER:-}"
+UNIT_PREFIX="${BETA_SIGNOFF_UNIT_PREFIX:-}"
 
 RUN_ID=""
 ORG_SLUG=""
@@ -79,12 +80,6 @@ SSH_OPTS=(
   -o StrictHostKeyChecking=yes
 )
 REQUIRED_UNITS=(
-  "twinevia-saas"
-  "twinevia-saas-worker"
-  "twinevia-saas-scheduler.timer"
-  "twinevia-saas-billing-reconcile.timer"
-  "twinevia-saas-platform-restart-queue.timer"
-  "twinevia-saas-a2p-reconcile.timer"
 )
 
 ssh_run() {
@@ -99,6 +94,22 @@ resolve_remote_app_user() {
   ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; elif id -u smsadmin >/dev/null 2>&1; then printf smsadmin; else printf twinevia; fi"
 }
 
+resolve_remote_app_root() {
+  if [[ -n "${APP_ROOT}" ]]; then
+    printf '%s\n' "${APP_ROOT}"
+    return
+  fi
+  ssh_run "if [ -d /opt/twinevia-saas/.git ]; then printf /opt/twinevia-saas; elif [ -d /opt/sms-saas/.git ]; then printf /opt/sms-saas; else printf /opt/twinevia-saas; fi"
+}
+
+resolve_remote_unit_prefix() {
+  if [[ -n "${UNIT_PREFIX}" ]]; then
+    printf '%s\n' "${UNIT_PREFIX}"
+    return
+  fi
+  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; elif systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then printf sms-saas; else printf twinevia-saas; fi"
+}
+
 capture_remote_file() {
   local output_name="$1"
   shift
@@ -107,6 +118,16 @@ capture_remote_file() {
 
 command_failures=0
 APP_USER="$(resolve_remote_app_user)"
+APP_ROOT="$(resolve_remote_app_root)"
+UNIT_PREFIX="$(resolve_remote_unit_prefix)"
+REQUIRED_UNITS=(
+  "${UNIT_PREFIX}"
+  "${UNIT_PREFIX}-worker"
+  "${UNIT_PREFIX}-scheduler.timer"
+  "${UNIT_PREFIX}-billing-reconcile.timer"
+  "${UNIT_PREFIX}-platform-restart-queue.timer"
+  "${UNIT_PREFIX}-a2p-reconcile.timer"
+)
 
 commit_sha="unavailable"
 if commit_sha="$(ssh_run "sudo -u ${APP_USER} git -C ${APP_ROOT} rev-parse HEAD")"; then

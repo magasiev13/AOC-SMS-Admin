@@ -122,8 +122,9 @@ jobs:
 
           REQUIRED_BRANCH="$1"
           REQUIRED_TRACKING="$2"
-          APP_ROOT="/opt/twinevia-saas"
+          APP_ROOT="${APP_ROOT:-}"
           APP_USER="${APP_USER:-}"
+          CURRENT_UNIT_PREFIX=""
           TWINEVIA_SAAS_DBDOCTOR_BIN="/usr/local/bin/twinevia-saas-dbdoctor"
           TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="/usr/local/bin/saas-dbdoctor"
 
@@ -148,6 +149,34 @@ jobs:
             printf 'twinevia\n'
           }
 
+          resolve_app_root() {
+            if [ -n "${APP_ROOT}" ]; then
+              printf '%s\n' "${APP_ROOT}"
+              return
+            fi
+            if [ -d /opt/twinevia-saas/.git ]; then
+              printf '/opt/twinevia-saas\n'
+              return
+            fi
+            if [ -d /opt/sms-saas/.git ]; then
+              printf '/opt/sms-saas\n'
+              return
+            fi
+            printf '/opt/twinevia-saas\n'
+          }
+
+          resolve_runtime_prefix() {
+            if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then
+              printf 'twinevia-saas\n'
+              return
+            fi
+            if systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then
+              printf 'sms-saas\n'
+              return
+            fi
+            printf 'twinevia-saas\n'
+          }
+
           resolve_health_host() {
             local trusted_hosts
             local first_host
@@ -162,7 +191,9 @@ jobs:
           }
 
           echo "==> Pilot preflight"
+          APP_ROOT="$(resolve_app_root)"
           APP_USER="$(resolve_app_user)"
+          CURRENT_UNIT_PREFIX="$(resolve_runtime_prefix)"
           [ -d "${APP_ROOT}" ] || fail "${APP_ROOT} does not exist. Run deploy/install_saas.sh manually first."
           [ -f "${APP_ROOT}/.env" ] || fail "${APP_ROOT}/.env is missing."
           sudo -u "${APP_USER}" test -d "${APP_ROOT}/.git" || fail "${APP_ROOT} is not a git checkout."
@@ -184,12 +215,12 @@ jobs:
           fi
 
           for unit in \
-            twinevia-saas.service \
-            twinevia-saas-worker.service \
-            twinevia-saas-scheduler.timer \
-            twinevia-saas-billing-reconcile.timer \
-            twinevia-saas-platform-restart-queue.timer \
-            twinevia-saas-a2p-reconcile.timer; do
+            "${CURRENT_UNIT_PREFIX}.service" \
+            "${CURRENT_UNIT_PREFIX}-worker.service" \
+            "${CURRENT_UNIT_PREFIX}-scheduler.timer" \
+            "${CURRENT_UNIT_PREFIX}-billing-reconcile.timer" \
+            "${CURRENT_UNIT_PREFIX}-platform-restart-queue.timer" \
+            "${CURRENT_UNIT_PREFIX}-a2p-reconcile.timer"; do
             systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]" || fail "Missing systemd unit ${unit}. Run deploy/install_saas.sh manually first."
           done
 
@@ -216,7 +247,7 @@ jobs:
           sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
 
           echo "==> Deploy latest pilot branch"
-          sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" /usr/local/bin/deploy_twinevia_saas.sh
+          sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" /usr/local/bin/deploy_twinevia_saas.sh
 
           echo "==> Service assertions"
           sudo systemctl is-active --quiet twinevia-saas

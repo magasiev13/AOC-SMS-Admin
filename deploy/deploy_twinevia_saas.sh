@@ -33,6 +33,14 @@ SAAS_RUNTIME_UNITS=(
   "twinevia-saas-billing-reconcile.timer"
   "twinevia-saas-platform-restart-queue.timer"
 )
+LEGACY_SAAS_RUNTIME_UNITS=(
+  "sms-saas"
+  "sms-saas-worker"
+  "sms-saas-scheduler.timer"
+  "sms-saas-billing-reconcile.timer"
+  "sms-saas-platform-restart-queue.timer"
+  "sms-saas-a2p-reconcile.timer"
+)
 
 resolve_app_user() {
   if [[ -n "${APP_USER}" ]]; then
@@ -150,6 +158,24 @@ sync_deploy_artifacts() {
   sudo systemctl daemon-reload
 }
 
+retire_legacy_saas_runtime() {
+  local legacy_units=()
+  local unit
+
+  for unit in "${LEGACY_SAAS_RUNTIME_UNITS[@]}"; do
+    if systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]"; then
+      legacy_units+=("${unit}")
+    fi
+  done
+
+  if [[ ${#legacy_units[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo "==> Retiring legacy sms-saas runtime units"
+  sudo systemctl disable --now "${legacy_units[@]}" || true
+}
+
 echo "==> Deploying Twinevia SaaS"
 
 APP_USER="$(resolve_app_user)"
@@ -188,6 +214,7 @@ PY"; then
   exit 1
 fi
 
+retire_legacy_saas_runtime
 sudo systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"
 
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then

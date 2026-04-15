@@ -431,6 +431,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("EXPECTED_GIT_BRANCH", deploy_script)
         self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", deploy_script)
         self.assertIn("assert_git_source", deploy_script)
+        self.assertIn("LEGACY_SAAS_RUNTIME_UNITS", deploy_script)
+        self.assertIn("retire_legacy_saas_runtime", deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.service", deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)
@@ -449,6 +451,10 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("deploy_tracking:", workflow)
         self.assertIn("EXPECTED_GIT_BRANCH", workflow)
         self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", workflow)
+        self.assertIn("resolve_app_root", workflow)
+        self.assertIn("/opt/sms-saas", workflow)
+        self.assertIn("CURRENT_UNIT_PREFIX", workflow)
+        self.assertIn('APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}"', workflow)
 
     def test_beta_cutover_script_collects_backups_and_snapshots(self) -> None:
         cutover_script = self._read_repo_file("run", "beta_cutover.sh")
@@ -459,6 +465,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("redis-cli", cutover_script)
         self.assertIn("deploy_twinevia_saas.sh", cutover_script)
         self.assertIn("live_tracking_branch.txt", cutover_script)
+        self.assertIn("resolve_remote_app_root", cutover_script)
+        self.assertIn("resolve_remote_unit_prefix", cutover_script)
 
     def test_saas_unit_templates_use_rendered_user_group_and_canonical_dbdoctor(self) -> None:
         service_unit = self._read_repo_file("deploy", "twinevia-saas.service")

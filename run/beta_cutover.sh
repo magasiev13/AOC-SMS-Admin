@@ -6,8 +6,9 @@ HOST="${BETA_SIGNOFF_HOST:-beta.theitwingman.com}"
 SSH_TARGET="${BETA_SIGNOFF_SSH_TARGET:-ubuntu@beta.theitwingman.com}"
 SSH_KEY="${BETA_SIGNOFF_SSH_KEY:-$HOME/.ssh/itlab.key}"
 SSH_PORT="${BETA_SIGNOFF_SSH_PORT:-22}"
-APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-/opt/twinevia-saas}"
+APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-}"
 APP_USER="${BETA_SIGNOFF_APP_USER:-}"
+UNIT_PREFIX="${BETA_SIGNOFF_UNIT_PREFIX:-}"
 PROXY_CONFIG_PATH="${BETA_CUTOVER_PROXY_CONFIG:-}"
 DEFAULT_BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'codex/saas-pilot-v2')"
 DEPLOY_BRANCH="${BETA_DEPLOY_BRANCH:-${DEFAULT_BRANCH}}"
@@ -44,8 +45,9 @@ Environment:
   BETA_SIGNOFF_SSH_TARGET   SSH target. Default: ubuntu@beta.theitwingman.com
   BETA_SIGNOFF_SSH_KEY      SSH identity file. Default: $HOME/.ssh/itlab.key
   BETA_SIGNOFF_SSH_PORT     SSH port. Default: 22
-  BETA_SIGNOFF_APP_ROOT     Remote app root. Default: /opt/twinevia-saas
+  BETA_SIGNOFF_APP_ROOT     Optional remote app root override. Auto-detects /opt/twinevia-saas then /opt/sms-saas.
   BETA_SIGNOFF_APP_USER     Optional remote app user override.
+  BETA_SIGNOFF_UNIT_PREFIX  Optional remote unit prefix override. Auto-detects twinevia-saas then sms-saas.
   BETA_CUTOVER_PROXY_CONFIG Optional reverse-proxy config path to copy in addition to nginx -T output.
 EOF
 }
@@ -105,6 +107,9 @@ if [[ -z "${DEPLOY_TRACKING}" ]]; then
   DEPLOY_TRACKING="origin/${DEPLOY_BRANCH}"
 fi
 
+APP_ROOT="$(resolve_remote_app_root)"
+UNIT_PREFIX="$(resolve_remote_unit_prefix)"
+
 RUN_DIR="${REPO_ROOT}/output/signoff/${RUN_ID}/beta-cutover"
 mkdir -p "${RUN_DIR}"
 
@@ -117,6 +122,22 @@ SSH_OPTS=(
 
 ssh_run() {
   ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "$@"
+}
+
+resolve_remote_app_root() {
+  if [[ -n "${APP_ROOT}" ]]; then
+    printf '%s\n' "${APP_ROOT}"
+    return
+  fi
+  ssh_run "if [ -d /opt/twinevia-saas/.git ]; then printf /opt/twinevia-saas; elif [ -d /opt/sms-saas/.git ]; then printf /opt/sms-saas; else printf /opt/twinevia-saas; fi"
+}
+
+resolve_remote_unit_prefix() {
+  if [[ -n "${UNIT_PREFIX}" ]]; then
+    printf '%s\n' "${UNIT_PREFIX}"
+    return
+  fi
+  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; elif systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then printf sms-saas; else printf twinevia-saas; fi"
 }
 
 run_and_capture() {
@@ -149,6 +170,7 @@ run_and_capture pre_snapshot "${REPO_ROOT}/run/public_readiness_beta_snapshot.sh
 REMOTE_BACKUP_DIR="$(ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- \
   "${APP_ROOT}" \
   "${APP_USER}" \
+  "${UNIT_PREFIX}" \
   "/var/backups/twinevia-beta-cutover/${RUN_ID}" \
   "${PROXY_CONFIG_PATH}" \
   "${DEPLOY_BRANCH}" \
@@ -157,10 +179,11 @@ set -euo pipefail
 
 APP_ROOT="$1"
 APP_USER_OVERRIDE="$2"
-BACKUP_DIR="$3"
-PROXY_CONFIG_PATH="$4"
-DEPLOY_BRANCH="$5"
-DEPLOY_TRACKING="$6"
+UNIT_PREFIX="$3"
+BACKUP_DIR="$4"
+PROXY_CONFIG_PATH="$5"
+DEPLOY_BRANCH="$6"
+DEPLOY_TRACKING="$7"
 
 resolve_app_user() {
   if [[ -n "${APP_USER_OVERRIDE}" ]]; then
@@ -199,7 +222,7 @@ sudo install -m 0600 "${APP_ROOT}/.env" "${BACKUP_DIR}/app.env"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; git -C \"${APP_ROOT}\" rev-parse HEAD > \"${BACKUP_DIR}/live_commit.txt\""
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; git -C \"${APP_ROOT}\" rev-parse --abbrev-ref HEAD > \"${BACKUP_DIR}/live_branch.txt\""
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; git -C \"${APP_ROOT}\" rev-parse --abbrev-ref --symbolic-full-name '@{u}' > \"${BACKUP_DIR}/live_tracking_branch.txt\""
-sudo bash -lc "systemctl status twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer --no-pager > \"${BACKUP_DIR}/services.status.txt\""
+sudo bash -lc "systemctl status ${UNIT_PREFIX} ${UNIT_PREFIX}-worker ${UNIT_PREFIX}-scheduler.timer ${UNIT_PREFIX}-billing-reconcile.timer ${UNIT_PREFIX}-platform-restart-queue.timer ${UNIT_PREFIX}-a2p-reconcile.timer --no-pager > \"${BACKUP_DIR}/services.status.txt\""
 sudo -u "${APP_USER}" env APP_ROOT="${APP_ROOT}" BACKUP_DIR="${BACKUP_DIR}" bash -lc '
   set -euo pipefail
   cd "${APP_ROOT}"
@@ -243,6 +266,7 @@ printf '%s\n' "${REMOTE_BACKUP_DIR}" > "${RUN_DIR}/remote_backup_dir.txt"
 printf '%s\n' "${HOST}" > "${RUN_DIR}/host.txt"
 printf '%s\n' "${SSH_TARGET}" > "${RUN_DIR}/ssh_target.txt"
 printf '%s\n' "${APP_ROOT}" > "${RUN_DIR}/app_root.txt"
+printf '%s\n' "${UNIT_PREFIX}" > "${RUN_DIR}/unit_prefix.txt"
 printf '%s\n' "${DEPLOY_BRANCH}" > "${RUN_DIR}/deploy_branch.txt"
 printf '%s\n' "${DEPLOY_TRACKING}" > "${RUN_DIR}/deploy_tracking.txt"
 printf '%s\n' "${FREEZE_NOTE}" > "${RUN_DIR}/freeze_note.txt"

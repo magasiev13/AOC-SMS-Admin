@@ -126,6 +126,7 @@ What the cutover script does:
 
 - runs `./run/public_readiness_local.sh` unless `--skip-local-gate` is set
 - captures the pre-deploy beta snapshot
+- auto-detects the current beta app root and unit family so upgrades can start from either `/opt/twinevia-saas` or the older `/opt/sms-saas` host layout
 - locks the remote checkout to the expected branch and tracking ref
 - backs up PostgreSQL with `pg_dump`
 - captures a Redis backup bundle
