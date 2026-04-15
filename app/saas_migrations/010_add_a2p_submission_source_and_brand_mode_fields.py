@@ -20,11 +20,11 @@ ONBOARDING_COLUMNS = (
     ),
     ("external_cta_proof_url", "ALTER TABLE organization_a2p_onboardings ADD COLUMN external_cta_proof_url VARCHAR(255)"),
     ("external_url_validation_json", "ALTER TABLE organization_a2p_onboardings ADD COLUMN external_url_validation_json TEXT"),
-    ("external_urls_last_checked_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN external_urls_last_checked_at DATETIME"),
+    ("external_urls_last_checked_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN external_urls_last_checked_at TIMESTAMP"),
     ("upgrade_recommended_reason", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgrade_recommended_reason TEXT"),
-    ("upgrade_recommended_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgrade_recommended_at DATETIME"),
-    ("upgrade_requested_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgrade_requested_at DATETIME"),
-    ("upgraded_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgraded_at DATETIME"),
+    ("upgrade_recommended_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgrade_recommended_at TIMESTAMP"),
+    ("upgrade_requested_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgrade_requested_at TIMESTAMP"),
+    ("upgraded_at", "ALTER TABLE organization_a2p_onboardings ADD COLUMN upgraded_at TIMESTAMP"),
 )
 
 

@@ -171,3 +171,14 @@ class TestSaasSchemaMigrations(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("A2P onboarding: error=1", stdout.getvalue())
         self.assertIn("WARNING: A2P onboarding has records requiring attention: error=1", stderr.getvalue())
+
+    def test_latest_saas_migration_uses_postgres_safe_timestamp_columns(self) -> None:
+        migration_010 = importlib.import_module(
+            "app.saas_migrations.010_add_a2p_submission_source_and_brand_mode_fields"
+        )
+
+        datetime_statements = [
+            statement for _, statement in migration_010.ONBOARDING_COLUMNS if "DATETIME" in statement.upper()
+        ]
+
+        self.assertEqual(datetime_statements, [])
