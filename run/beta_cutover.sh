@@ -107,9 +107,6 @@ if [[ -z "${DEPLOY_TRACKING}" ]]; then
   DEPLOY_TRACKING="origin/${DEPLOY_BRANCH}"
 fi
 
-APP_ROOT="$(resolve_remote_app_root)"
-UNIT_PREFIX="$(resolve_remote_unit_prefix)"
-
 RUN_DIR="${REPO_ROOT}/output/signoff/${RUN_ID}/beta-cutover"
 mkdir -p "${RUN_DIR}"
 
@@ -139,6 +136,9 @@ resolve_remote_unit_prefix() {
   fi
   ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; elif systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then printf sms-saas; else printf twinevia-saas; fi"
 }
+
+APP_ROOT="$(resolve_remote_app_root)"
+UNIT_PREFIX="$(resolve_remote_unit_prefix)"
 
 run_and_capture() {
   local name="$1"
