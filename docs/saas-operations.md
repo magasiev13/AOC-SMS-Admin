@@ -1,138 +1,203 @@
-# SaaS Operations
+# Relayn SaaS Operations
 
-Operational runbook for the separate SaaS deployment line.
+Day-2 operational runbook for the primary SaaS deployment line.
 
-## Install On A Separate VPS
+## Deployment Topology
 
-Use a separate checkout such as `/opt/sms-saas` and keep it isolated from the legacy `sms` services.
+Canonical SaaS deployment:
+
+- app root: `/opt/sms-saas`
+- app user: `smsadmin`
+- env file: `/opt/sms-saas/.env`
+- web bind: `127.0.0.1:8100`
+- queue name: `sms-saas`
+- service family: `sms-saas*`
+
+Keep this deployment isolated from the legacy line:
+
+- do not share `/opt/sms-admin`
+- do not share the legacy SQLite DB
+- do not point the SaaS worker at queue `sms`
+
+## Required Runtime State
+
+Minimum expected env:
+
+- `SAAS_MODE=1`
+- `DATABASE_URL=postgresql+psycopg://...`
+- `REDIS_URL=redis://localhost:6379/0`
+- `RQ_QUEUE_NAME=sms-saas`
+- `SAAS_BASE_URL=https://app.example.com`
+- `SECRET_KEY=...`
+- `STRIPE_SECRET_KEY=...`
+- `STRIPE_WEBHOOK_SECRET=...`
+- `STRIPE_PRICE_ID=...`
+- `TWILIO_ACCOUNT_SID=...`
+- `TWILIO_AUTH_TOKEN=...`
+- `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...`
+- `TRUSTED_HOSTS=...`
+
+Conditional env:
+
+- `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
+- `TWILIO_A2P_ONBOARDING_ENABLED=1`
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
+- `PLATFORM_SERVICE_RESTART_ENABLED=1`
+
+Bootstrap-only values:
+
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+- `ADMIN_EMAIL`
+
+Once the first platform admin exists, `ADMIN_PASSWORD` is no longer required for routine deploys.
+
+## Core Operational Commands
+
+### Schema and readiness
 
 ```bash
-sudo -u smsadmin git clone <repo> /opt/sms-saas
 cd /opt/sms-saas
-sudo ./deploy/install_saas.sh
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --print'
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --ensure-platform-admin'
 ```
 
-This installs:
-
-- `saas-dbdoctor`
-- `restart-sms-saas-services`
-- `sms-saas.service`
-- `sms-saas-worker.service`
-- `sms-saas-scheduler.timer`
-- `sms-saas-billing-reconcile.timer`
-
-## Required Env
-
-Minimum required in `/opt/sms-saas/.env`:
+### Service checks
 
 ```bash
-SAAS_MODE=1
-DATABASE_URL=postgresql+psycopg://...
-REDIS_URL=redis://localhost:6379/0
-RQ_QUEUE_NAME=sms-saas
-SAAS_BASE_URL=https://beta.example.com
-STRIPE_SECRET_KEY=...
-STRIPE_WEBHOOK_SECRET=...
-STRIPE_PRICE_ID=...
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_API_KEY_SID=...
-TWILIO_API_KEY_SECRET=...
-TWILIO_CREDENTIAL_ENCRYPTION_KEY=...
-TWILIO_A2P_ONBOARDING_ENABLED=0
-TWILIO_A2P_EVENT_STREAMS_ENABLED=0
-TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN=
-TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=
-SECRET_KEY=...
-PLATFORM_SERVICE_RESTART_ENABLED=0
+sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer --no-pager
+sudo systemctl status sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer --no-pager
 ```
 
-Use the parent/master Twilio account for `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`. There is no separate `TWILIO_PARENT_ACCOUNT_SID` setting in this app. When automated A2P onboarding is enabled, `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` must be the primary Trust Hub customer-profile bundle (`BU...`), not an address or supporting-document bundle.
-
-Bootstrap-only for the first platform admin:
+### Health check
 
 ```bash
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-secure-password
+curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 ```
-
-After the first platform admin exists, `ADMIN_PASSWORD` is no longer required for deploys or runtime startup.
-Additional platform admins can be created from `/users` while signed into the platform control plane.
-
-Platform-admin accounts are control-plane only. Use a separate email for each organization owner or staff user.
-
-If you change Twilio or other runtime values in `/opt/sms-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
-
-If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, point the Twilio Event Streams webhook sink at `/webhooks/twilio/a2p-events` and set `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` so the webhook can be authenticated with a bearer token.
-
-## SaaS DB Commands
-
-```bash
-# Print schema status
-python -m app.saas_db --print
-
-# Apply pending SaaS migrations
-python -m app.saas_db --apply
-
-# Validate schema readiness
-python -m app.saas_db --doctor
-
-# Ensure the first platform admin exists
-python -m app.saas_db --ensure-platform-admin
-
-# Import a legacy SQLite snapshot into one default organization
-python -m app.saas_db --import-legacy /path/to/legacy.db \
-  --organization-name "Legacy Production" \
-  --organization-slug legacy-production
-```
-
-`dbdoctor` remains for the legacy SQLite path. Use `saas-dbdoctor` or `python -m app.saas_db` for the SaaS line.
 
 ## Deploy Updates
 
+Canonical update flow:
+
 ```bash
+cd /opt/sms-saas
 sudo ./deploy/deploy_sms_saas.sh
 ```
 
-That flow:
+What it refreshes:
 
-- pulls latest code
-- installs Python dependencies
-- applies SaaS schema migrations
-- ensures the first platform admin exists when needed
-- validates app startup config
-- restarts SaaS web, worker, scheduler, and billing reconciliation timers
-- restarts the A2P reconcile timer when present
+- git checkout contents
+- Python dependencies
+- SaaS schema migrations
+- platform-admin bootstrap state
+- restart helper and sudoers
+- systemd unit files
+- active SaaS services and timers
+
+## Timers And Background Jobs
+
+### Scheduler
+
+- timer: `sms-saas-scheduler.timer`
+- service: `sms-saas-scheduler.service`
+- role: due scheduled sends and retry processing
+
+### Billing reconciliation
+
+- timer: `sms-saas-billing-reconcile.timer`
+- service: `sms-saas-billing-reconcile.service`
+- role: subscription/usage reconciliation and overage posting
+
+### Platform restart queue
+
+- timer: `sms-saas-platform-restart-queue.timer`
+- service: `sms-saas-platform-restart-queue.service`
+- role: queued restart dispatch and status refresh
+
+### A2P reconciliation
+
+- timer: `sms-saas-a2p-reconcile.timer`
+- service: `sms-saas-a2p-reconcile.service`
+- role: Twilio A2P state refresh and recovery
+
+## Restart Helper Operations
+
+When platform restart control is enabled:
+
+- web requests only queue `PlatformServiceRestartRequest` rows
+- host restarts happen out-of-band through `restart-sms-saas-services`
+- the helper must be runnable by `smsadmin` via `sudo -n`
+
+Validation command:
+
+```bash
+sudo -u smsadmin sudo -n /usr/local/bin/restart-sms-saas-services --check
+```
 
 ## Backup And Restore
 
 ### PostgreSQL
 
-```bash
-# Backup
-pg_dump "$DATABASE_URL" > /var/backups/sms-saas-$(date +%Y%m%d-%H%M%S).sql
+Backup:
 
-# Restore to a fresh database
-psql "$TARGET_DATABASE_URL" < /var/backups/sms-saas-YYYYMMDD-HHMMSS.sql
+```bash
+sudo -u smsadmin bash -lc '
+  cd /opt/sms-saas &&
+  set -a &&
+  source .env &&
+  set +a &&
+  pg_dump "$DATABASE_URL" > /var/backups/relayn-$(date +%Y%m%d-%H%M%S).sql
+'
+```
+
+Restore into a fresh target:
+
+```bash
+TARGET_DATABASE_URL='postgresql://user:password@127.0.0.1:5432/relayn_restore'
+psql "$TARGET_DATABASE_URL" < /var/backups/relayn-YYYYMMDD-HHMMSS.sql
 ```
 
 ### Redis
 
-Use Redis persistence plus periodic copies of the persistence files:
+Use managed persistence or copy the Redis persistence files during a controlled window.
+
+Simple local example:
 
 ```bash
-sudo systemctl stop redis
+sudo systemctl stop redis-server
 sudo cp /var/lib/redis/dump.rdb /var/backups/redis-dump-$(date +%Y%m%d-%H%M%S).rdb
-sudo systemctl start redis
+sudo systemctl start redis-server
 ```
 
-## Cutover From Legacy Production
+### Critical local files
 
-Recommended cutover model:
+Also retain:
 
-1. Freeze the legacy app for writes during a short maintenance window.
-2. Snapshot the legacy SQLite database.
-3. Run `python -m app.saas_db --import-legacy ...` into the fresh SaaS database.
-4. Verify imported counts, owner accounts, message logs, scheduled messages, and inbox data.
-5. Switch traffic to the SaaS deployment.
-6. Keep the legacy snapshot for rollback and audit.
+- `/opt/sms-saas/.env`
+- reverse-proxy config
+- any deploy-specific secrets or CI metadata outside the repo
+
+## Cutover From Legacy
+
+Recommended cutover flow:
+
+1. freeze writes on the legacy app
+2. capture a final SQLite snapshot
+3. import the snapshot into SaaS with `app.saas_db`
+4. verify users, invites, recipients, logs, scheduled messages, and inbox state
+5. switch traffic to the SaaS runtime
+6. keep the legacy snapshot for rollback and audit
+
+Example import:
+
+```bash
+./venv/bin/python -m app.saas_db --import-legacy /path/to/legacy.db \
+  --organization-name "Legacy Production" \
+  --organization-slug legacy-production
+```
+
+## Legacy Compatibility Note
+
+Use `dbdoctor` and the `/opt/sms-admin` service family only for the legacy deployment. Do not mix legacy schema tools with the SaaS PostgreSQL database.

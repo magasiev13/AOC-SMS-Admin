@@ -1,17 +1,26 @@
-# Public Readiness Signoff
+# Relayn Public Readiness Signoff
 
-Canonical release gate for first-customer readiness.
+Canonical release gate for SaaS customer readiness.
 
-The app is ready only when:
+The release is ready only when all of the following are true:
 
 - the deterministic local gate passes
-- the beta walkthrough passes
-- `/health` is HTTP 200
-- `saas-dbdoctor --doctor` exits `0`
+- the beta snapshot and walkthrough pass
+- `/health` returns HTTP 200
+- the sourced `saas-dbdoctor --doctor` check exits `0`
 - required `sms-saas*` services and timers are active
 - no `P0` or `P1` issues remain
 
-`P2` issues are acceptable only if they do not affect signup, auth, billing, onboarding, messaging readiness, invites, or tenant isolation.
+`P2` issues are acceptable only when they do not affect:
+
+- signup
+- login
+- billing
+- onboarding
+- invite acceptance
+- tenant isolation
+- workspace readiness state
+- outbound message safety
 
 ## Local Gate
 
@@ -27,36 +36,37 @@ Artifacts land in:
 output/signoff/<run-id>/local/
 ```
 
-The local gate must cover:
+The local gate currently collects:
+
+- browser smoke run via `./run/test_browser.sh`
+- backend pytest run via `./run/test.sh`
+- static verification via `./run/verify.sh`
+
+The local acceptance signal must still cover these product outcomes:
 
 - self-serve signup to `/setup`
-- offline fake checkout return through the real success path
+- checkout completion and return handling
 - billing state messaging after checkout
-- owner setup business-profile save and A2P submit
-- dashboard wait-state and disabled send messaging while approval is pending
-- owner-created staff invite acceptance
-- staff `403` on billing and platform routes
-- platform review of onboarding, billing, and messaging state
-- pending owner-invite flow
-- blocked states for pending A2P, past-due billing, and suspended workspaces
-- tenant isolation across at least two seeded organizations, including one direct route denial
-- mobile sanity for setup, billing, and platform primary actions
+- owner setup progression and messaging-readiness copy
+- staff invite acceptance
+- staff restriction on billing and platform surfaces
+- platform review of org access, billing, and messaging state
+- blocked states for incomplete billing, incomplete messaging, and suspended orgs
+- tenant isolation across multiple seeded organizations
 
-## Beta Gate
+## Beta Snapshot Gate
 
 Use one reusable control tenant by default:
 
 - slug: `public-readiness-control`
 
-If that slug does not exist yet, create a dedicated control tenant once and keep reusing it for signoff.
+Collect snapshots at meaningful milestones:
 
-Capture a beta snapshot at each milestone:
-
-1. Baseline before login or onboarding changes
-2. Post-signup or post-owner-invite acceptance
-3. Post-checkout return
-4. Post-staff-invite acceptance
-5. Post-messaging or onboarding review
+1. baseline
+2. post-signup or post-owner-invite acceptance
+3. post-checkout return
+4. post-staff-invite acceptance
+5. post-messaging/onboarding review
 
 Run:
 
@@ -72,15 +82,15 @@ Artifacts land in:
 output/signoff/<run-id>/beta/<label>/
 ```
 
-Each snapshot must include:
+Each snapshot should include:
 
 - live commit SHA
 - `/health` result
-- `saas-dbdoctor --doctor`
-- required `sms-saas*` service and timer status
+- sourced `saas-dbdoctor --doctor` output
+- `sms-saas*` service and timer state
 - worker log tail
-- organization subscription, membership, invitation, messaging, and A2P state
-- Twilio subaccount, Messaging Service, and `PN...` ownership output when already provisioned
+- organization subscription, invite, membership, messaging, and A2P state
+- Twilio ownership details when a sender already exists
 
 ## Live Walkthrough
 
@@ -97,47 +107,46 @@ Validate these routes on beta:
 - `/platform/organizations/<id>/messaging`
 - `/platform/organizations/<id>/messaging/onboarding`
 
-The beta walkthrough must include:
+The walkthrough should include:
 
 - one real Stripe test checkout on the control tenant
-- return to the correct post-checkout setup or billing state
-- owner dashboard readiness copy and blocked send state while approval is incomplete
-- one staff invite acceptance and staff access restrictions
-- visible UI state matching worker logs and persisted DB state after each milestone
-
-Use Stripe test-mode card values from Stripe’s official testing documentation:
-
-- [Stripe testing docs](https://docs.stripe.com/testing)
+- correct return to setup or billing state
+- owner dashboard blocked-send messaging until the workspace is truly ready
+- one staff invite acceptance
+- visible UI state matching DB and worker/log state
 
 ## Twilio Safety Rules
 
-- Beta Twilio checks are read-only during signoff.
-- Do not submit new A2P packets solely for signoff.
-- Do not buy numbers during signoff.
-- Do not attach parent-account numbers during signoff.
-- If a sender already exists, confirm the org subaccount SID, Messaging Service SID, and `PN...` ownership.
-- If Twilio returns a `direct_customer` or Trust Hub architecture blocker, stop and mark launch blocked rather than retrying around it.
+- keep beta Twilio checks read-only during signoff when possible
+- do not submit new A2P packets solely for signoff
+- do not buy numbers solely for signoff
+- do not attach parent-account numbers solely for signoff
+- if a sender already exists, verify ownership and assignment instead of re-provisioning it
+- if Twilio reports a structural blocker, stop and mark the launch blocked instead of retrying around it
 
 ## Hard Blockers
 
 - broken signup or login
 - failed checkout return
 - invite acceptance failures
-- owner or staff role leaks
+- owner/staff permission leaks
 - tenant data leakage
 - false “ready to send” state
 - Twilio ownership mismatch
 - non-green health
-- schema drift or failed doctor run
-- worker errors affecting onboarding or billing state
+- schema drift
+- worker failures affecting onboarding or billing state
 
 ## Health Definition
 
 Health is green only when all of these are true:
 
-- `https://beta.theitwingman.com/health` returns HTTP `200`
-- `saas-dbdoctor --doctor` exits `0`
+- the public health URL returns HTTP 200
+- the local service health endpoint returns HTTP 200 with the right `Host` header when `TRUSTED_HOSTS` is enforced
+- the sourced `saas-dbdoctor --doctor` check exits `0`
 - required SaaS services and timers are active
-- the signoff tenant shows no onboarding or billing worker failures relevant to the current milestone
+- the signoff tenant has no unresolved onboarding or billing worker failures relevant to the current milestone
 
-Do not rely on older documentation that expected a JSON health payload. The current app returns a simple HTTP `200 OK` response body.
+Current health response detail:
+
+- the app returns plain `OK`, not JSON

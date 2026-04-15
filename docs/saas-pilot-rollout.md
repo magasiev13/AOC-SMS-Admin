@@ -1,209 +1,172 @@
-# SaaS Pilot Rollout
+# Relayn SaaS Rollout And Local Acceptance
 
-This branch adds a separate SaaS pilot deployment line. Do not deploy it over the legacy `sms` services.
+This document covers the separate SaaS runtime, local acceptance flow, and rollout safety rules.
 
-## Separate Runtime
+## Separate Runtime Rule
 
-- Use a separate checkout path such as `/opt/sms-saas`
-- Use separate service names:
-  - `sms-saas.service`
-  - `sms-saas-worker.service`
-  - `sms-saas-scheduler.service`
-  - `sms-saas-scheduler.timer`
-  - `sms-saas-billing-reconcile.service`
-  - `sms-saas-billing-reconcile.timer`
-- Use separate logs under `/var/log/sms-saas`
-- Use a separate host or subdomain such as `beta.<host>` or `app.<host>`
+Treat the SaaS deployment as distinct from the legacy `sms` line.
+
+- use `/opt/sms-saas`
+- use `sms-saas*` units
+- use queue `sms-saas`
+- use a separate database
+- use separate Stripe and Twilio webhook endpoints
+
+Do not deploy the SaaS runtime over the legacy SQLite services.
 
 ## Required SaaS Env
+
+Minimum runtime values:
 
 - `SAAS_MODE=1`
 - `DATABASE_URL=postgresql+psycopg://...`
 - `REDIS_URL=redis://...`
 - `RQ_QUEUE_NAME=sms-saas`
-- `SAAS_BASE_URL=https://beta.example.com`
+- `SAAS_BASE_URL=https://app.example.com`
 - `STRIPE_SECRET_KEY=...`
 - `STRIPE_WEBHOOK_SECRET=...`
 - `STRIPE_PRICE_ID=...`
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
-- `TWILIO_API_KEY_SID=...` and `TWILIO_API_KEY_SECRET=...` for production REST auth (recommended)
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...`
-- `TWILIO_A2P_ONBOARDING_ENABLED=0` by default
-- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...` when A2P automation is enabled
-- `ADMIN_USERNAME=admin` for the first platform admin (optional if `admin` is fine)
-- `ADMIN_PASSWORD=...` for first-time platform admin provisioning only
+- `SECRET_KEY=...`
 
-## Platform-Managed Twilio Strategy
+Conditional:
 
-- Keep `TWILIO_ACCOUNT_SID=AC...`, `TWILIO_AUTH_TOKEN=...`, and `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...` in `.env`.
-- The app does not use a separate `TWILIO_PARENT_ACCOUNT_SID`; `TWILIO_ACCOUNT_SID` must be the parent/master account.
-- After changing `.env`, restart the SaaS web and worker services before testing Twilio provisioning or outbound messaging.
-- When automated A2P onboarding is enabled, also keep `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...` in `.env`. This must be the primary Trust Hub customer-profile bundle, not an address/supporting-document bundle.
-- The platform account is the master Twilio account. Each organization should be provisioned with its own Twilio subaccount and Messaging Service.
-- Use `/platform/organizations/<id>/messaging` to provision the provider, then assign an approved sender number and phone number SID.
-- Use `/platform/organizations/<id>/messaging/onboarding` to submit and monitor automated Twilio A2P onboarding.
-- Per-org Twilio secrets are stored encrypted at rest in the database. Do not add organization-specific tokens to `.env`.
-- Messaging stays `pending` until billing is active, compliance is acknowledged, and the sender review is approved.
-- The platform admin should not paste `AC...` or `MG...` values into the organization create form. Provisioning happens from the managed messaging screen.
-- Platform admins must use a separate email from every organization owner or staff account.
+- `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
+- `TWILIO_A2P_ONBOARDING_ENABLED=1`
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
 
-## Stripe Webhooks
+Bootstrap-only:
 
-- Canonical webhook path: `/webhooks/stripe`
-- Canonical A2P reconcile timer: `sms-saas-a2p-reconcile.timer`
-- Required event subscriptions:
-  - `checkout.session.completed`
-  - `customer.subscription.created`
-  - `customer.subscription.updated`
-  - `customer.subscription.deleted`
-  - `invoice.payment_succeeded`
-  - `invoice.payment_failed`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
 
-### Local Development
+## Platform-Managed Messaging Strategy
 
-- Use the Stripe CLI, not a Dashboard event destination.
-- Forward to:
-  - `stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe`
-- Use the CLI-provided `whsec_...` value as local `STRIPE_WEBHOOK_SECRET`.
+- the parent/master Twilio account lives in `.env`
+- each org gets its own provider state in `OrganizationMessagingProfile`
+- customer-managed org secrets are stored encrypted in the DB
+- platform-managed org provisioning and sender review happen under `/platform/organizations/<id>/messaging`
+- A2P submission and review happen under `/platform/organizations/<id>/messaging/onboarding`
 
-## Local Acceptance Runbook
+An org is send-ready only when:
 
-### Start the local stack
+- billing allows sending
+- provider status is active
+- a valid sender identity exists
 
-1. Populate `.env` with SaaS values:
-   - `SAAS_MODE=1`
-   - local `DATABASE_URL`
-   - local `REDIS_URL`
-   - `RQ_QUEUE_NAME=sms-saas`
-   - `SAAS_BASE_URL=http://127.0.0.1:5000`
-   - Stripe test keys and local `STRIPE_WEBHOOK_SECRET`
-2. Apply the explicit SaaS schema:
-   - `./venv/bin/python -m app.saas_db --apply`
-3. Ensure the first platform admin exists:
-   - `./venv/bin/python -m app.saas_db --ensure-platform-admin`
-4. Start Redis.
-5. Start web + worker:
-   - `./run/up.sh`
-6. Start the scheduler in a second terminal:
-   - `SCHEDULER_ENABLED=1 SCHEDULER_RUNNER=1 ./venv/bin/python -m app.scheduler_runner`
-7. Start Stripe webhook forwarding in a third terminal:
-   - `stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe`
+## Stripe Webhook Path
 
-### Run the owner + staff flow
+Canonical path:
 
-1. Sign in as the platform admin.
-2. Open `/platform/organizations` and create a business.
-3. From the Organizations page, use the visible owner invite link:
-   - `Open invite` to launch it
-   - `Copy link` if you want to open it in a private window
-4. Accept the owner invite with a non-platform-admin email.
-5. Confirm the owner lands on `/setup` instead of the legacy direct billing flow.
-6. Complete Stripe test checkout from `/setup`.
-7. Return to `/setup` and complete the business profile / A2P submission flow.
-8. From `/platform/organizations/<id>/messaging`, click `Provision Provider` and confirm the org gets a Twilio subaccount plus Messaging Service.
-9. Enter:
-   - the approved Twilio sender number
-   - the phone number SID for that number
-   - `approved` sender review status
-   - compliance acknowledgement
-10. Confirm the provider status becomes `active`.
-11. Open `/users` and create a staff invitation from the owner account.
-12. Use the visible staff invite link from the pending invitation table.
-13. Accept the staff invite in a separate browser session.
-14. Confirm the staff user reaches the dashboard and gets `403` on `/billing`.
+- `/webhooks/stripe`
 
-### Verify message behavior locally
+Local development should use the Stripe CLI:
 
-1. As the owner of a provisioned organization, confirm sending is enabled only when billing is `trialing` or `active` and the provider status is `active`.
-2. Verify inbound routing using the organization-owned sender identity.
-3. Confirm that unprovisioned organizations remain `pending` for messaging.
-4. Create a scheduled send and confirm the scheduler processes it.
-5. Run one manual billing reconciliation check:
-   - `APP_ROOT="$(pwd)" ./deploy/run_billing_reconcile_once.sh`
+```bash
+stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe
+```
 
-### Local acceptance criteria
+## Local Acceptance Flow
 
-- No DB inspection or shell token lookup is needed for normal onboarding.
-- The Organizations page shows onboarding progress, billing state, messaging state, and owner invite access.
-- The Organizations page allows the platform admin to provision, suspend, resume, and review provider readiness per organization.
-- The owner setup runway lives at `/setup` and owns checkout return plus A2P submission.
-- The Users page shows pending invitation links for local owner/staff testing.
-- The Billing page explains the current state, the next step, and whether sending is enabled.
-- Staff users cannot access billing or platform admin surfaces.
+### Fast path
+
+```bash
+./run/local_saas_stack.sh --no-open
+```
+
+This wraps:
+
+- demo seeding
+- web app
+- worker
+- local scheduler
+- Stripe CLI webhook forwarding
+
+### Manual path
+
+1. configure `.env` for SaaS
+2. apply schema:
+
+```bash
+./venv/bin/python -m app.saas_db --apply
+./venv/bin/python -m app.saas_db --ensure-platform-admin
+```
+
+3. start Redis
+4. start app and worker:
+
+```bash
+./run/up.sh
+```
+
+5. start scheduler:
+
+```bash
+SCHEDULER_ENABLED=1 SCHEDULER_RUNNER=1 ./venv/bin/python -m app.scheduler_runner
+```
+
+6. start Stripe CLI forwarding:
+
+```bash
+stripe listen --forward-to http://127.0.0.1:5000/webhooks/stripe
+```
+
+## Owner And Staff Acceptance Checklist
+
+1. sign in as a platform admin
+2. create an organization
+3. open the generated owner invite
+4. accept the invite and verify the owner lands on `/setup`
+5. complete checkout
+6. confirm setup/billing state updates
+7. provision or validate provider readiness from the platform side
+8. if using A2P, save and submit onboarding or verify the correct pending state
+9. create a staff invite
+10. accept the staff invite in a separate session
+11. confirm staff access to the workspace and `403` on billing/platform routes
+
+## Local Messaging Verification
+
+As an owner of a provisioned org, verify:
+
+- sending stays blocked until billing and messaging state are both ready
+- inbox activity routes to the org-owned sender identity
+- scheduled sends are processed by the scheduler path
+- logs and usage state update after sends
 
 ## Browser Smoke Tests
 
-### Install once
+Install once:
 
-- `npm install`
-- `npm run playwright:install`
+```bash
+npm install
+npm run playwright:install
+```
 
-### Run the browser suite
+Run:
 
-- `./run/test_browser.sh`
+```bash
+./run/test_browser.sh
+```
 
-This launches a deterministic local Flask server on `http://127.0.0.1:5010` using a seeded SQLite database under `.playwright/`.
-
-### Seeded browser accounts
-
-- Platform admin:
-  - `platform@browser.test`
-  - `Platform-pass1!`
-- Owner:
-  - `owner@browser.test`
-  - `Owner-pass1!`
-- Staff:
-  - `staff@browser.test`
-  - `Staff-pass1!`
-
-### What the browser suite covers
-
-- Platform admin can review onboarding progress and owner invite access.
-- Owner sees human-readable billing state and pending invitation links.
-- Staff receives `403` on billing.
-
-### Browser test artifacts
-
-- HTML report:
-  - `output/playwright/report/`
-- Failure traces, video, screenshots:
-  - `output/playwright/test-results/`
+The browser suite uses a deterministic local app instance and writes artifacts under `output/playwright/`.
 
 ## Production-Like Demo Seed
 
-- Use `./run/seed_demo_saas.sh --reset` to load a realistic multi-organization local dataset.
-- For account credentials, seeded organizations, and the suggested manual acceptance flow, see:
-  - [docs/saas-demo-data.md](/Users/magasiev/Desktop/Projects/AOC-SMS-saas/docs/saas-demo-data.md)
+Use:
 
-### Staging
+```bash
+./run/seed_demo_saas.sh --reset
+```
 
-- Configure a Stripe Dashboard webhook endpoint for:
-  - `https://beta.<host>/webhooks/stripe`
-- Use a staging-specific webhook secret.
+For seeded users and tenants, see [saas-demo-data.md](saas-demo-data.md).
 
-### Production
+## Rollout Safety Rules
 
-- Configure a separate Stripe Dashboard webhook endpoint for:
-  - `https://app.<host>/webhooks/stripe`
-- Use a production-specific webhook secret.
-- Do not reuse local CLI webhook secrets in staging or production.
-
-## Separate SaaS Commands
-
-- Install / update schema:
-  - `python -m app.saas_db --apply`
-- Ensure the first platform admin exists:
-  - `python -m app.saas_db --ensure-platform-admin`
-- Validate schema readiness:
-  - `python -m app.saas_db --doctor`
-- Import a legacy production snapshot into one organization during cutover:
-  - `python -m app.saas_db --import-legacy /path/to/legacy.db --organization-name "Legacy Production" --organization-slug legacy-production`
-
-## Safety Rules
-
-- Keep legacy production on the baseline tag until the pilot is stable.
-- Do not share webhook URLs between legacy and SaaS.
-- Do not reuse the legacy SQLite database for SaaS.
-- Do not point the SaaS worker at the legacy queue name.
-- Do not use `/stripe/webhook`; Stripe must point at `/webhooks/stripe`.
+- keep legacy and SaaS webhook URLs separate
+- keep legacy and SaaS databases separate
+- do not reuse queue `sms` for SaaS
+- do not point SaaS health checks at the legacy gunicorn port
+- do not treat Twilio ownership conflicts as a retryable “just try again” problem

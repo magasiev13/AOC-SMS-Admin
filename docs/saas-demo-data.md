@@ -1,118 +1,93 @@
-# SaaS Demo Data
+# Relayn SaaS Demo Data
 
-Use this dataset when you want a realistic local multi-tenant environment without hand-entering organizations, contacts, events, inbox threads, and billing states.
+Use the demo seed when you need a realistic local multi-tenant environment without hand-entering organizations, contacts, inbox threads, billing states, and scheduled sends.
 
 ## Seed The Demo
-
-From `/Users/magasiev/Desktop/Projects/AOC-SMS-saas`:
 
 ```bash
 ./run/seed_demo_saas.sh --reset
 ```
 
-If you want a real Twilio sender preassigned to the internal test business at seed time:
+Optional live sender assignment for the internal dogfooding org:
 
 ```bash
 ./run/seed_demo_saas.sh --reset \
-  --live-from-number +17207305515 \
+  --live-from-number +15551234567 \
   --live-messaging-service-sid MGXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
 Notes:
 
-- `--reset` only works for SQLite databases.
-- Without `--live-from-number`, every organization stays non-live and safe for local testing.
-- The command prints the invite URLs you can open directly.
+- `--reset` works only for SQLite databases
+- without `--live-from-number`, every org remains safe for non-live local testing
+- the command prints invite URLs that you can open directly
 
 ## Seeded Accounts
 
-- Platform admin:
-  - `platform@demo.test`
-  - `Platform-pass123!`
-  - lands on `/platform`
-- AOC SMS Internal owner:
-  - `owner@aocinternal.demo.test`
-  - `Owner-pass123!`
-  - lands on `/dashboard`
-- AOC SMS Internal staff:
-  - `staff@aocinternal.demo.test`
-  - `Staff-pass123!`
-- Northstar Fitness owner:
-  - `owner@northstar.demo.test`
-  - `Owner-pass123!`
-- Northstar Fitness staff:
-  - `staff@northstar.demo.test`
-  - `Staff-pass123!`
-- Sunset Realty owner:
-  - `owner@sunset.demo.test`
-  - `Owner-pass123!`
+- platform admin: `platform@demo.test` / `Platform-pass123!`
+- AOC SMS Internal owner: `owner@aocinternal.demo.test` / `Owner-pass123!`
+- AOC SMS Internal staff: `staff@aocinternal.demo.test` / `Staff-pass123!`
+- Northstar Fitness owner: `owner@northstar.demo.test` / `Owner-pass123!`
+- Northstar Fitness staff: `staff@northstar.demo.test` / `Staff-pass123!`
+- Sunset Realty Group owner: `owner@sunset.demo.test` / `Owner-pass123!`
 
 ## Seeded Organizations
 
-- `AOC SMS Internal`
-  - status: `active`
-  - billing: `trialing`
-  - messaging: `active` if a live sender is supplied, otherwise `pending`
-  - has owner + staff, pending staff invite, community members, inbox threads, keyword automation, survey flow, events, message history, and a pending scheduled send
-- `Northstar Fitness`
-  - status: `active`
-  - billing: `active`
-  - messaging: `pending`
-  - has owner + staff, pending staff invite, contacts, event registrations, inbox activity, and a pending scheduled send
-- `Harbor Events Co`
-  - status: `active`
-  - billing: `incomplete`
-  - messaging: `pending`
-  - has a pending owner invite for onboarding testing
-- `Sunset Realty Group`
-  - status: `suspended`
-  - billing: `past_due`
-  - messaging: `pending`
-  - has an owner account plus failed scheduled-message history for access-restriction testing
+### `AOC SMS Internal`
 
-## What This Lets You Test
+- org status: `active`
+- billing: `trialing`
+- messaging: `active` when a live sender is supplied, otherwise `pending`
+- includes owner and staff accounts, pending invite state, recipients, events, inbox activity, keyword automation, survey data, logs, and a pending scheduled send
 
-- Platform admin workflow:
-  - platform homepage
-  - organizations directory
-  - org billing and messaging states
-  - owner/staff invite access
-- Owner workflow:
-  - workspace dashboard
-  - billing state messaging
-  - pending invitations
-  - inbox, logs, community, events, and scheduled messages
-- Staff workflow:
-  - workspace access
-  - billing restriction
-- Organization isolation:
-  - same app, different orgs, separate contacts and history
-- Platform-managed messaging strategy:
-  - the internal demo org can carry a real sender for live testing
-  - every other org stays pending and non-live until you provision it intentionally
+### `Northstar Fitness`
 
-## Suggested Manual Acceptance Pass
+- org status: `active`
+- billing: `active`
+- messaging: `pending`
+- includes owner and staff, recipients, event registrations, inbox activity, and a pending scheduled send
 
-1. Log in as `platform@demo.test` and confirm:
-   - `/platform` shows all seeded organizations
-   - `/platform/organizations` shows billing and onboarding differences across orgs
-2. Log in as `owner@aocinternal.demo.test` and confirm:
-   - `/dashboard` loads a populated workspace
-   - `/billing` shows `trialing`
-   - `/users` shows a pending staff invite
-   - `/inbox`, `/community`, `/events`, `/logs`, and `/scheduled` are populated
-3. Log in as `owner@northstar.demo.test` and confirm that org data is different from AOC SMS Internal.
-4. Log in as `staff@aocinternal.demo.test` and confirm `/billing` returns `403`.
-5. Open the Harbor owner invite URL from the seed output and confirm the owner lands on `/setup` for billing + compliance.
-6. Log in as `owner@sunset.demo.test` and confirm billing restrictions are visible for a `past_due` org.
+### `Harbor Events Co`
 
-## Recommended Fake Business Stories
+- org status: `active`
+- billing: `incomplete`
+- messaging: `pending`
+- includes a pending owner invite for onboarding testing
 
-Use the seeded orgs as if they were real customers:
+### `Sunset Realty Group`
 
-- `AOC SMS Internal`: your own dogfooding org
-- `Northstar Fitness`: active customer with staff and event traffic
-- `Harbor Events Co`: onboarding customer not yet through billing
-- `Sunset Realty Group`: suspended customer with billing problems
+- org status: `suspended`
+- billing: `past_due`
+- messaging: `pending`
+- includes failed scheduled-message history for restriction testing
 
-This mix is deliberate. It gives you a realistic spread of platform states instead of four healthy tenants that all look the same.
+## What The Seed Is Good For
+
+- platform admin organization review
+- owner setup and billing state testing
+- staff restriction checks
+- tenant isolation checks
+- populated workspace pages
+- pending and blocked-state UI review
+
+## Suggested Manual Pass
+
+1. log in as `platform@demo.test`
+2. confirm `/platform` and `/platform/organizations` show varied tenant state
+3. log in as `owner@aocinternal.demo.test`
+4. confirm `/dashboard`, `/billing`, `/users`, `/inbox`, `/community`, `/events`, `/logs`, and `/scheduled` are populated
+5. log in as `owner@northstar.demo.test` and confirm the org data is distinct
+6. log in as `staff@aocinternal.demo.test` and confirm `/billing` is denied
+7. open the Harbor owner invite and confirm the owner lands on `/setup`
+8. log in as `owner@sunset.demo.test` and confirm suspended/past-due restrictions are visible
+
+## Intent Of The Dataset
+
+The seed deliberately mixes:
+
+- healthy orgs
+- onboarding orgs
+- billing-blocked orgs
+- suspended orgs
+
+That gives local testing a realistic spread of product states instead of multiple identical healthy tenants.

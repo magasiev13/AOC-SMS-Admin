@@ -1,381 +1,301 @@
-# Troubleshooting Guide
+# Relayn Troubleshooting
 
-Common issues and their solutions.
+This guide is SaaS-first. Legacy SQLite-only problems are grouped near the end.
 
-## Database Issues
+## SaaS Startup And Config Failures
 
-### "attempt to write a readonly database"
+### App fails during startup validation
 
-**Cause:** SQLite database file or directory not writable by smsadmin user.
-
-**Solution:**
-```bash
-sudo chown -R smsadmin:smsadmin /opt/sms-admin/instance
-sudo chmod 750 /opt/sms-admin/instance
-sudo chmod 640 /opt/sms-admin/instance/sms.db
-
-# Also fix WAL/SHM files if they exist
-sudo chmod 640 /opt/sms-admin/instance/sms.db-wal 2>/dev/null || true
-sudo chmod 640 /opt/sms-admin/instance/sms.db-shm 2>/dev/null || true
-```
-
-### "database is locked"
-
-**Cause:** Long-running transaction or multiple processes writing simultaneously.
-
-**Solutions:**
-1. Increase SQLite timeout:
-   ```bash
-   SQLITE_TIMEOUT=60
-   ```
-
-2. Check for stuck processes:
-   ```bash
-   sudo fuser /opt/sms-admin/instance/sms.db
-   ```
-
-3. Restart services:
-   ```bash
-   sudo systemctl restart sms sms-worker
-   ```
-
-### Schema Mismatch / Missing Columns
-
-**Cause:** Migrations not applied.
-
-**Solution:**
-```bash
-sudo -u smsadmin dbdoctor --apply
-sudo systemctl restart sms
-```
-
-### Database Corruption
-
-**Diagnosis:**
-```bash
-sqlite3 /opt/sms-admin/instance/sms.db "PRAGMA integrity_check;"
-```
-
-**Recovery:**
-```bash
-# Attempt repair
-sqlite3 /opt/sms-admin/instance/sms.db ".recover" | sqlite3 /opt/sms-admin/instance/sms-recovered.db
-
-# Or restore from backup
-sudo cp /backup/sms-latest.db /opt/sms-admin/instance/sms.db
-```
-
----
-
-## Scheduler Issues
-
-### Scheduled Messages Not Sending
-
-**Check timer status:**
-```bash
-systemctl list-timers | grep sms-scheduler
-# Should show next trigger time
-```
-
-**Check scheduler logs:**
-```bash
-journalctl -u sms-scheduler.service -n 50
-```
-
-**Common causes:**
-1. Timer not enabled:
-   ```bash
-   sudo systemctl enable --now sms-scheduler.timer
-   ```
-
-2. Database not writable (see above)
-
-3. No pending messages:
-   ```bash
-   sqlite3 /opt/sms-admin/instance/sms.db "SELECT id, status, scheduled_at FROM scheduled_messages WHERE status='pending';"
-   ```
-
-### Messages Stuck in "processing"
-
-**Cause:** Scheduler crashed mid-processing.
-
-**Solution:** Messages stuck for >10 minutes are automatically marked as failed on next scheduler run.
-
-**Manual fix:**
-```bash
-sqlite3 /opt/sms-admin/instance/sms.db "UPDATE scheduled_messages SET status='failed', error_message='Manual reset' WHERE status='processing';"
-```
-
-### Old Scheduler Still Running
-
-If using the old long-running scheduler service:
-```bash
-sudo systemctl stop sms-scheduler
-sudo systemctl disable sms-scheduler
-sudo systemctl enable --now sms-scheduler.timer
-```
-
----
-
-## Twilio Issues
-
-### "Twilio credentials not configured"
-
-**Cause:** Missing environment variables.
-
-**Check:**
-```bash
-sudo cat /opt/sms-admin/.env | grep TWILIO
-```
-
-**Required:**
-```bash
-TWILIO_ACCOUNT_SID=ACxxxx
-TWILIO_AUTH_TOKEN=xxxx
-TWILIO_FROM_NUMBER=+1xxxx
-```
-
-### Rate Limiting (Error 429)
-
-**Cause:** Sending too fast.
-
-**Solutions:**
-1. Increase delay between sends (default 0.1s is usually fine)
-2. Use Twilio Messaging Services for higher throughput
-3. RQ will automatically retry with exponential backoff
-
-### Invalid Phone Numbers
-
-**Symptoms:** High failure rate, error codes 30003, 30005, 30007.
-
-**Solution:** Enable automatic suppression (already enabled by default). Failed numbers are added to `suppressed_contacts` and skipped in future sends.
-
-### Opt-Out Errors (21610, 30004)
-
-**Cause:** Recipient replied STOP.
-
-**Behavior:**
-- Automatically added to `unsubscribed_contacts`.
-- Inbox manual replies are blocked while unsubscribed.
-- The app does not send a custom STOP confirmation SMS; rely on carrier/Twilio opt-out handling.
-- Recipient must reply `START` (or `UNSTOP` / `YES`) to resubscribe before sends can resume.
-
----
-
-## Authentication Issues
-
-### "Too many failed attempts"
-
-**Cause:** Rate limiting after 5 failed login attempts.
-
-**Solution:** Wait 10 minutes or clear from database:
-```bash
-sqlite3 /opt/sms-admin/instance/sms.db "DELETE FROM login_attempts WHERE client_ip='x.x.x.x';"
-```
-
-If account-scoped lockouts are enabled, also clear username-scoped entries:
-```bash
-sqlite3 /opt/sms-admin/instance/sms.db "DELETE FROM login_attempts WHERE client_ip='__account__' AND username='admin';"
-```
-
-### Forgot Password
-
-**Solution:** Reset via database:
-```bash
-# Generate new hash
-python3.11 -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('newpassword'))"
-
-# Update in database
-sqlite3 /opt/sms-admin/instance/sms.db "UPDATE users SET password_hash='pbkdf2:sha256:...' WHERE username='admin';"
-```
-
-### No Admin User
-
-**Cause:** the initial admin bootstrap step was skipped.
-
-**Solution:**
-```bash
-# Legacy runtime: add to .env, then restart to create admin
-echo "ADMIN_PASSWORD=your-password" | sudo tee -a /opt/sms-admin/.env
-
-# Restart to create admin
-sudo systemctl restart sms
-```
-
-For the SaaS line, provision the first platform admin explicitly instead of relying on web startup:
+Run the same config check the deploy scripts use:
 
 ```bash
 cd /opt/sms-saas
-sudo -u smsadmin /usr/local/bin/saas-dbdoctor --ensure-platform-admin
+sudo -u smsadmin bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
+from app import create_app
+create_app(run_startup_tasks=False, start_scheduler=False)
+print("ok")
+PY'
 ```
 
----
+Common causes:
 
-## Service Issues
+- `SECRET_KEY` still uses the development default
+- `TRUSTED_HOSTS` is empty while `FLASK_ENV=production`
+- cookie security values do not satisfy production validation
+- SaaS billing prerequisites are missing
+- only one of `TWILIO_API_KEY_SID` or `TWILIO_API_KEY_SECRET` is set
+- A2P onboarding is enabled without `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID`
 
-### "expected 3.11" / "python version mismatch"
+### Health check returns `400`
 
-**Cause:** The app venv was created with the wrong Python version.
+Cause:
 
-**Check:**
-```bash
-/opt/sms-admin/venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-```
+- `TRUSTED_HOSTS` is enabled and the local health probe is missing an allowed `Host` header
 
-**Fix:**
-```bash
-sudo systemctl stop sms sms-worker sms-scheduler.timer
-sudo rm -rf /opt/sms-admin/venv
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3.11 -m venv venv'
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
-sudo systemctl start sms sms-worker sms-scheduler.timer
-```
-
-### sms.service Won't Start
-
-**Check logs:**
-```bash
-sudo journalctl -u sms -n 100
-```
-
-**Common causes:**
-1. Missing SECRET_KEY in production
-2. Database migrations failed
-3. Port already in use
-
-### sms-worker.service Not Processing Jobs
-
-**Check:**
-```bash
-sudo systemctl status sms-worker
-redis-cli ping  # Should return PONG
-rq info --url redis://localhost:6379/0
-```
-
-**Common causes:**
-1. Redis not running:
-   ```bash
-   sudo systemctl start redis
-   ```
-
-2. Wrong queue name:
-   ```bash
-   # Check .env
-   RQ_QUEUE_NAME=sms
-   ```
-
-### Gunicorn Socket Permission Denied
-
-**Cause:** Nginx can't read Gunicorn socket.
-
-**Solution:**
-```bash
-# Add www-data to smsadmin group
-sudo usermod -aG smsadmin www-data
-sudo systemctl restart nginx
-```
-
----
-
-## Performance Issues
-
-### Slow Dashboard
-
-**Cause:** Large message_logs table.
-
-**Solutions:**
-1. Archive old logs
-2. Add indexes (handled by migrations)
-3. Clear logs periodically (admin feature)
-
-### High Memory Usage
-
-**Cause:** Too many Gunicorn workers.
-
-**Solution:** Reduce workers in `sms.service`:
-```bash
---workers 2
-```
-
----
-
-## Nginx Issues
-
-### 502 Bad Gateway
-
-**Cause:** Gunicorn not running or socket missing.
-
-**Check:**
-```bash
-sudo systemctl status sms
-ls -la /opt/sms-admin/sms.sock
-```
-
-### 403 Forbidden
-
-**Cause:** HTTP Basic Auth failed or missing.
-
-**Check:**
-```bash
-sudo cat /etc/nginx/.htpasswd
-```
-
----
-
-## Diagnostic Commands
-
-### Full System Check
+Fix:
 
 ```bash
-# Service status
-sudo systemctl status sms sms-worker
-systemctl list-timers | grep sms-scheduler
-
-# Database health
-sudo -u smsadmin dbdoctor --doctor
-
-# Redis
-redis-cli ping
-
-# Recent logs
-sudo journalctl -u sms -u sms-worker -u sms-scheduler.service -n 50 --no-pager
+curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 ```
 
-### Database Inspection
+### SaaS doctor reports schema issues
+
+Run:
 
 ```bash
-sqlite3 /opt/sms-admin/instance/sms.db <<EOF
-.mode column
-.headers on
-SELECT 'Community Members' as table_name, COUNT(*) as count FROM community_members
-UNION ALL SELECT 'Events', COUNT(*) FROM events
-UNION ALL SELECT 'Event Registrations', COUNT(*) FROM event_registrations
-UNION ALL SELECT 'Message Logs', COUNT(*) FROM message_logs
-UNION ALL SELECT 'Scheduled Messages', COUNT(*) FROM scheduled_messages
-UNION ALL SELECT 'Unsubscribed', COUNT(*) FROM unsubscribed_contacts
-UNION ALL SELECT 'Suppressed', COUNT(*) FROM suppressed_contacts;
-EOF
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
 ```
 
-### Check Pending Work
+If you accidentally used `dbdoctor` against the SaaS database, switch back to `saas-dbdoctor` or `./venv/bin/python -m app.saas_db`.
+
+## Services And Timers
+
+### Web app is down after deploy
+
+Check:
 
 ```bash
-# Pending scheduled messages
-sqlite3 /opt/sms-admin/instance/sms.db "SELECT id, scheduled_at, status FROM scheduled_messages WHERE status='pending' ORDER BY scheduled_at;"
-
-# Processing logs
-sqlite3 /opt/sms-admin/instance/sms.db "SELECT id, created_at, status FROM message_logs WHERE status='processing';"
-
-# RQ jobs
-rq info --url redis://localhost:6379/0
+sudo systemctl status sms-saas --no-pager
+sudo journalctl -u sms-saas -n 200 --no-pager
 ```
 
----
+Common causes:
 
-## Getting Help
+- failed config validation
+- bad database credentials
+- missing Python dependency after dependency sync
+- reverse proxy or trusted-host mismatch hiding a healthy local app
 
-1. Check this troubleshooting guide
-2. Review logs: `journalctl -u sms -u sms-worker -u sms-scheduler.service`
-3. Run database doctor: `dbdoctor --doctor`
-4. Check GitHub issues
-5. Contact maintainers
+### Worker is not processing jobs
+
+Check:
+
+```bash
+sudo systemctl status sms-saas-worker --no-pager
+sudo journalctl -u sms-saas-worker -n 200 --no-pager
+```
+
+Common causes:
+
+- Redis unavailable
+- wrong `RQ_QUEUE_NAME`
+- schema drift causing worker import/startup failure
+- env changes applied to the web service but not restarted for the worker
+
+### Scheduled sends are not moving
+
+Check the timer and oneshot logs:
+
+```bash
+sudo systemctl status sms-saas-scheduler.timer --no-pager
+sudo journalctl -u sms-saas-scheduler.service -n 200 --no-pager
+```
+
+Also verify:
+
+- `SCHEDULER_ENABLED=0` in production
+- the timer is enabled
+- due rows exist in `scheduled_messages`
+- billing and provider readiness actually allow sending
+
+### Billing reconciliation is not updating usage
+
+Check:
+
+```bash
+sudo systemctl status sms-saas-billing-reconcile.timer --no-pager
+sudo journalctl -u sms-saas-billing-reconcile.service -n 200 --no-pager
+```
+
+Common causes:
+
+- Stripe configuration incomplete
+- message usage rows never reconciled because outbound Twilio state is incomplete
+- subscription state is not active enough to post usage
+
+### Platform restart control is stuck
+
+Check:
+
+```bash
+sudo systemctl status sms-saas-platform-restart-queue.timer --no-pager
+sudo journalctl -u sms-saas-platform-restart-queue.service -n 200 --no-pager
+sudo -u smsadmin sudo -n /usr/local/bin/restart-sms-saas-services --check
+```
+
+Common causes:
+
+- `PLATFORM_SERVICE_RESTART_ENABLED=0`
+- helper script path is wrong
+- sudoers rule was not installed or drifted
+- queue processor timer is not active
+
+### A2P status is stale
+
+Check:
+
+```bash
+sudo systemctl status sms-saas-a2p-reconcile.timer --no-pager
+sudo journalctl -u sms-saas-a2p-reconcile.service -n 200 --no-pager
+```
+
+Also verify:
+
+- `TWILIO_A2P_ONBOARDING_ENABLED=1` if you expect automated flows
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` is a primary `BU...` profile
+- optional Event Streams auth token matches the webhook sender when using `/webhooks/twilio/a2p-events`
+
+## Stripe And Billing
+
+### Stripe webhook failures
+
+Symptoms:
+
+- checkout completes in Stripe but workspace state does not update
+- `billing_overview` remains stale
+
+Check:
+
+```bash
+sudo journalctl -u sms-saas -n 200 --no-pager | rg Stripe
+```
+
+Common causes:
+
+- wrong `STRIPE_WEBHOOK_SECRET`
+- webhook sent to the wrong path
+- `STRIPE_SECRET_KEY` missing
+- event object does not map to the expected organization metadata
+
+### Fake checkout route returns 404
+
+Cause:
+
+- `STRIPE_FAKE_CHECKOUT_ENABLED` is disabled, or the session ID is not a fake test session
+
+This is expected in production.
+
+## Twilio And Messaging
+
+### Inbound webhook fails signature validation
+
+Check:
+
+- `TWILIO_VALIDATE_INBOUND_SIGNATURE`
+- public base URL and reverse proxy host/scheme forwarding
+- Twilio webhook URL configured on the correct sender identity
+
+### Org cannot send even though billing is active
+
+Sending requires both:
+
+- subscription readiness from billing
+- active provider readiness from `OrganizationMessagingProfile`
+
+Check the org’s:
+
+- subscription status
+- provider status
+- sender review status
+- sender identity (`from_number` or `messaging_service_sid`)
+
+### Customer-managed workspace fails validation
+
+Common causes:
+
+- bad external Twilio account SID/auth token
+- sender number or Messaging Service SID already assigned elsewhere
+- phone number SID provided without a matching sender number
+
+### STOP/START behavior looks inconsistent
+
+Remember:
+
+- inbound STOP-like messages update `unsubscribed_contacts`
+- manual inbox replies are blocked while the contact is unsubscribed
+- the contact must send a START-style message to be re-enabled
+
+## Auth And Account Access
+
+### User keeps getting redirected to `/account/security-contact`
+
+Cause:
+
+- authenticated user has no phone on record
+
+### User cannot reach the dashboard after login
+
+In SaaS mode, home routing depends on:
+
+- platform admin vs workspace user
+- owner vs staff
+- whether billing/provider setup is complete
+- whether the org is suspended
+
+Expected destinations:
+
+- platform admin -> `/platform`
+- owner with incomplete setup -> `/setup`
+- staff with incomplete setup -> `/setup/pending`
+- ready workspace user -> `/dashboard`
+
+### Too many failed login attempts
+
+The lockout counters are DB-backed. Review:
+
+- `AUTH_ATTEMPT_WINDOW_SECONDS`
+- `AUTH_LOCKOUT_SECONDS`
+- `AUTH_MAX_ATTEMPTS_IP_ACCOUNT`
+- `AUTH_MAX_ATTEMPTS_ACCOUNT`
+- `AUTH_MAX_ATTEMPTS_IP`
+
+### Need to bootstrap the first platform admin
+
+Use:
+
+```bash
+cd /opt/sms-saas
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --ensure-platform-admin'
+```
+
+## Local Tooling Issues
+
+### `./run/local_saas_stack.sh` fails immediately
+
+Check:
+
+- `stripe` CLI is installed
+- Redis is reachable
+- `.env` contains SaaS-ready values
+- the virtualenv exists and uses Python 3.11
+
+### `./run/test_browser.sh` fails before running specs
+
+Check:
+
+- `npm` is installed
+- `node_modules` exists or can be installed
+- Playwright Chromium can be installed in the local cache
+
+## Legacy Compatibility Appendix
+
+### `attempt to write a readonly database`
+
+This is a legacy SQLite problem. Fix permissions on:
+
+- `/opt/sms-admin/instance`
+- `/opt/sms-admin/instance/sms.db`
+- any `sms.db-wal` and `sms.db-shm` files
+
+### `database is locked`
+
+Also a legacy SQLite problem. Check for long-running transactions, stale processes, or too-small `SQLITE_TIMEOUT`.
+
+### Legacy health check succeeds locally but fails behind nginx
+
+Make sure:
+
+- `TRUSTED_HOSTS` matches the public domain
+- nginx forwards the `Host` header
+- the upstream points to `127.0.0.1:8000`, not the SaaS port

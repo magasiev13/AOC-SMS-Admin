@@ -1,82 +1,109 @@
-# Security Hardening Summary
+# Relayn Security Hardening Reference
 
-## Scope
-This branch hardens authentication/session configuration, production validation, deployment env synchronization, and local test reliability.
+This file is the current production security checklist for the app, not a historical branch summary.
 
-## What Changed
+## Startup Gates
 
-### 1) Config hardening defaults and documentation
-- Added security-focused config keys in `app/config.py`:
-  - `AUTH_ATTEMPT_WINDOW_SECONDS`
-  - `AUTH_LOCKOUT_SECONDS`
-  - `AUTH_MAX_ATTEMPTS_IP_ACCOUNT`
-  - `AUTH_MAX_ATTEMPTS_ACCOUNT`
-  - `AUTH_MAX_ATTEMPTS_IP`
-  - `SESSION_IDLE_TIMEOUT_MINUTES`
-  - `REMEMBER_COOKIE_DURATION_DAYS`
-  - `AUTH_PASSWORD_MIN_LENGTH`
-  - `AUTH_PASSWORD_POLICY_ENFORCE`
-  - `TRUSTED_HOSTS`
-- Added plain-English comments above security variables for non-technical operators.
+When not in debug mode:
 
-### 2) Production fail-closed validation
-- Added production config validation in `app/__init__.py`:
-  - secure cookie expectations
-  - integer/range validation for hardening keys
-  - relational constraints for login limits
-  - non-empty trusted hosts requirement
-- Production startup now raises a clear runtime error if critical security config is invalid.
+- `SECRET_KEY` must not be the development default
+- SaaS billing prerequisites are validated when `SAAS_MODE=1`
 
-### 3) Login hardening now uses config values
-- Updated `app/auth.py` rate-limiting to read config keys dynamically.
-- Added layered counters for:
-  - IP
-  - account
-  - IP+account
-- Preserved legacy key compatibility where needed.
+When `FLASK_ENV=production`:
 
-### 4) Password policy enforcement
-- Added password policy checks in user create/edit flows and account password change.
-- Policy is config-driven (`AUTH_PASSWORD_MIN_LENGTH`, `AUTH_PASSWORD_POLICY_ENFORCE`).
+- `SESSION_COOKIE_SECURE` must be enabled
+- `REMEMBER_COOKIE_SECURE` must be enabled
+- `SESSION_COOKIE_HTTPONLY` and `REMEMBER_COOKIE_HTTPONLY` must remain enabled
+- `SESSION_COOKIE_SAMESITE` must be `Lax` or `Strict`
+- login hardening values must fall within sane ranges
+- `AUTH_PASSWORD_POLICY_ENFORCE` must be enabled
+- `TRUSTED_HOSTS` must be non-empty
 
-### 5) Bootstrap secret cleanup (new)
-- Added automatic cleanup of `ADMIN_PASSWORD` after a successful admin password change in production.
-- Implemented in `app/routes.py`:
-  - Runs only when:
-    - `FLASK_ENV=production`
-    - `DEBUG` is false
-    - current user matches `ADMIN_USERNAME`
-  - Removes `ADMIN_PASSWORD=` from env file (default `/opt/sms-admin/.env`, override `SMS_ADMIN_ENV_FILE`).
-  - Clears in-process `os.environ["ADMIN_PASSWORD"]` and app config value.
-- Added regression test in `tests/test_password_change.py`.
+## Required Production Controls
 
-### 6) Deployment env sync safety
-- Added deploy script `deploy/deploy_sms_admin.sh` to:
-  - append missing hardening keys only
-  - preserve existing keys
-  - warn when existing values are weaker/non-recommended
-  - print sync summary (`appended`, `existing`, `warnings`)
-- Updated workflow/deploy docs accordingly.
+- `TRUST_PROXY=1` only behind a trusted reverse proxy
+- `TRUSTED_HOSTS` set to real public hostnames
+- `SAAS_MODE=1` for the primary runtime
+- `SCHEDULER_ENABLED=0` in production; use systemd timers
+- `RQ_QUEUE_NAME=sms-saas` for the SaaS runtime
 
-### 7) Local test reliability
-- Added `run/test.sh` wrapper to keep test runs isolated to this repo.
-- Ensures `venv`/dependencies are present and Python version is correct.
-- Supports option-only invocations (for example `-q`, `--cov=app`) without collecting unrelated nested test directories.
-- `run/setup.sh` now installs `pytest` and `pytest-cov`.
+## Auth And Session Controls
 
-## Recommended Production Values
-- `AUTH_ATTEMPT_WINDOW_SECONDS=300`
-- `AUTH_LOCKOUT_SECONDS=900`
-- `AUTH_MAX_ATTEMPTS_IP_ACCOUNT=5`
-- `AUTH_MAX_ATTEMPTS_ACCOUNT=8`
-- `AUTH_MAX_ATTEMPTS_IP=30`
-- `SESSION_IDLE_TIMEOUT_MINUTES=30`
-- `REMEMBER_COOKIE_DURATION_DAYS=7`
-- `AUTH_PASSWORD_MIN_LENGTH=12`
-- `AUTH_PASSWORD_POLICY_ENFORCE=1`
-- `TRUSTED_HOSTS=<your production domain list>`
+Current auth hardening model:
 
-## Operational Notes
-- `SECRET_KEY` must always be provided in production `.env`; fallback default is for local/dev only.
-- Rotating `SECRET_KEY` invalidates active sessions.
-- `ADMIN_PASSWORD` should be treated as bootstrap-only; this branch automates its removal after first successful admin password update in production.
+- nonce-bound Flask-Login session IDs
+- forced password change support
+- mandatory security phone capture
+- database-backed lockout counters
+- password reuse prevention
+- auth event audit trail
+
+Recommended production baseline:
+
+```env
+AUTH_ATTEMPT_WINDOW_SECONDS=300
+AUTH_LOCKOUT_SECONDS=900
+AUTH_MAX_ATTEMPTS_IP_ACCOUNT=5
+AUTH_MAX_ATTEMPTS_ACCOUNT=8
+AUTH_MAX_ATTEMPTS_IP=30
+SESSION_IDLE_TIMEOUT_MINUTES=30
+REMEMBER_COOKIE_DURATION_DAYS=7
+AUTH_PASSWORD_MIN_LENGTH=12
+AUTH_PASSWORD_POLICY_ENFORCE=1
+PASSWORD_HISTORY_COUNT=3
+AUTH_ALERTS_ENABLED=1
+AUTH_EVENT_RETENTION_DAYS=180
+```
+
+## SaaS Billing And Provider Controls
+
+When `SAAS_MODE=1`, production should treat these as required:
+
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_ID`
+- `SAAS_BASE_URL`
+- `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
+
+And conditionally:
+
+- `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET` together
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` when automated A2P onboarding is enabled
+
+## Webhook Safety
+
+- Stripe webhook verification depends on `STRIPE_WEBHOOK_SECRET`
+- inbound Twilio signature verification depends on `TWILIO_VALIDATE_INBOUND_SIGNATURE`
+- optional Twilio A2P Event Streams should use `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN`
+
+## Platform Restart Safety
+
+If platform restart control is enabled:
+
+- the feature should remain platform-admin-only
+- the helper path must be absolute and executable
+- the helper must run via `sudo -n`
+- restart requests should flow through `PlatformServiceRestartRequest`, not inline shell execution from web requests
+
+## Bootstrap Admin Handling
+
+### SaaS
+
+- `ADMIN_PASSWORD` is used for first platform-admin provisioning
+- after the first platform admin exists, routine deploys should not depend on it
+
+### Legacy compatibility path
+
+- the older `/opt/sms-admin` runtime still uses `ADMIN_PASSWORD` for first-admin bootstrap
+- the legacy password-cleanup behavior remains tied to that runtime family
+
+## Operational Checklist
+
+Before exposing the app publicly, confirm:
+
+- the sourced `saas-dbdoctor --doctor` check exits `0`
+- `sms-saas`, `sms-saas-worker`, and all required timers are active
+- health checks succeed with an allowed `Host` header
+- platform login and workspace login both work
+- invite acceptance, billing return, and workspace setup do not leak cross-tenant data
+- provider ownership and sender identity are unique per organization

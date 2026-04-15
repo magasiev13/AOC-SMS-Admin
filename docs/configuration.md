@@ -1,376 +1,225 @@
-# Configuration Guide
+# Relayn Configuration
 
-SMS Admin uses environment variables for configuration. All settings are loaded via `app/config.py`.
+All runtime configuration is loaded from `app/config.py`.
 
-## Environment File
+The parser behavior is strict:
 
-Copy `.env.example` to `.env` and configure:
+- booleans must be valid values such as `1/0`, `true/false`, `yes/no`, or `on/off`
+- integers must parse cleanly
+- comma-separated host lists are parsed with trimming
 
-```bash
-cp .env.example .env
-```
+Production behavior is also strict:
 
-## Required Variables
+- `FLASK_ENV=production` turns on the fail-closed startup checks
+- `SECRET_KEY` must not be the development default
+- SaaS billing and provider prerequisites must be present when `SAAS_MODE=1`
+- `TRUSTED_HOSTS` is required for strict production validation
 
-### Twilio Credentials
+## Core Runtime
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `TWILIO_ACCOUNT_SID` | Twilio Account SID. In SaaS platform-managed mode this must be the parent/master account used to provision subaccounts. | `ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `TWILIO_AUTH_TOKEN` | Twilio Auth Token for the same parent/master account | `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` |
-| `TWILIO_FROM_NUMBER` | Twilio phone number (E.164). Required for the legacy single-tenant runtime; optional in SaaS platform-managed mode. | `+18005551234` |
+| Variable | Default | Notes |
+|---|---|---|
+| `SECRET_KEY` | `dev-secret-key-change-in-production` | Required for any real deployment. |
+| `FLASK_ENV` | unset | `development` enables debug; `production` enables strict startup validation. |
+| `FLASK_DEBUG` | unset | Explicit debug override. |
+| `TRUST_PROXY` | `0` | Enables `ProxyFix`; use only behind a trusted reverse proxy. |
+| `SAAS_MODE` | `0` | Enables the SaaS control plane and SaaS readiness validation. |
+| `SAAS_BASE_URL` | empty | Public base URL used for absolute links and Twilio webhook binding. |
 
-### Twilio A2P Automation
+## Platform Operations
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enables the platform-managed A2P onboarding flow. |
-| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables the optional Twilio Event Streams webhook at `/webhooks/twilio/a2p-events` for push-based A2P status updates. |
-| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the Twilio Event Streams webhook when the webhook is enabled. |
-| `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | unset | Primary Twilio Trust Hub customer profile SID used when linking secondary A2P onboarding bundles. |
+| Variable | Default | Notes |
+|---|---|---|
+| `PLATFORM_SERVICE_RESTART_ENABLED` | `0` | Enables the platform restart control on `/platform`. |
+| `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-sms-saas-services` | Must be an absolute executable path. |
+| `PLATFORM_SERVICE_RESTART_TIMEOUT_SECONDS` | `15` | Restart-helper command timeout. |
+| `PLATFORM_SERVICE_RESTART_STALE_AFTER_SECONDS` | `300` | How long queued restart state can sit before refresh logic treats it as stale. |
 
-### Flask Security
+## Session And Cookie Security
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `SECRET_KEY` | Flask secret key for sessions | Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `ADMIN_PASSWORD` | Initial admin password | Required for legacy production bootstrap; bootstrap-only for first SaaS platform admin provisioning |
+| Variable | Default | Notes |
+|---|---|---|
+| `SESSION_COOKIE_SAMESITE` | `Lax` | Production must be `Lax` or `Strict`. |
+| `SESSION_COOKIE_SECURE` | `1` outside debug, `0` in debug | Production must be enabled. |
+| `REMEMBER_COOKIE_SECURE` | mirrors `SESSION_COOKIE_SECURE` | Production must be enabled. |
+| `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Also drives `PERMANENT_SESSION_LIFETIME`. |
+| `REMEMBER_COOKIE_DURATION_DAYS` | `7` | Remember-me lifetime. |
 
-## Optional Variables
+Hard-coded secure defaults:
 
-### Flask
+- `SESSION_COOKIE_HTTPONLY=True`
+- `REMEMBER_COOKIE_HTTPONLY=True`
+- `REMEMBER_COOKIE_SAMESITE=SESSION_COOKIE_SAMESITE`
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FLASK_ENV` | `production` | Set to `development` for debug mode |
-| `FLASK_DEBUG` | `0` | Set to `1` to enable debug mode |
+## Auth Hardening
 
-### Proxy / Reverse Proxy
+| Variable | Default |
+|---|---|
+| `AUTH_ATTEMPT_WINDOW_SECONDS` | `300` |
+| `AUTH_LOCKOUT_SECONDS` | `900` |
+| `AUTH_MAX_ATTEMPTS_IP_ACCOUNT` | `5` |
+| `AUTH_MAX_ATTEMPTS_ACCOUNT` | `8` |
+| `AUTH_MAX_ATTEMPTS_IP` | `30` |
+| `AUTH_PASSWORD_MIN_LENGTH` | `12` |
+| `AUTH_PASSWORD_POLICY_ENFORCE` | `1` |
+| `PASSWORD_HISTORY_COUNT` | `3` |
+| `AUTH_ALERTS_ENABLED` | `1` |
+| `AUTH_EVENT_RETENTION_DAYS` | `180` |
+| `AUTH_LOCKOUT_MAX_ATTEMPTS` | defaults to `AUTH_MAX_ATTEMPTS_IP_ACCOUNT` |
+| `AUTH_LOCKOUT_WINDOW_SECONDS` | defaults to `AUTH_ATTEMPT_WINDOW_SECONDS` |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TRUST_PROXY` | `0` | Set to `1` to enable `ProxyFix` and trust forwarded headers from a known reverse proxy |
+Production validation enforces:
 
-### Admin
+- integer ranges
+- secure cookie settings
+- `AUTH_PASSWORD_POLICY_ENFORCE=1`
+- reasonable relationships between the lockout thresholds
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ADMIN_USERNAME` | `admin` | Initial admin username or first SaaS platform admin username |
-| `ADMIN_TEST_PHONE` | - | Phone number for test mode sends |
+## Host And Proxy Controls
 
-### SaaS Platform Operations
+| Variable | Default | Notes |
+|---|---|---|
+| `TRUSTED_HOSTS` | empty | Comma-separated hostnames; required by strict production validation. |
+| `TRUST_PROXY` | `0` | Enables forwarded host/scheme/IP handling. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SAAS_MODE` | `0` | Enable the SaaS control plane and SaaS startup validation |
-| `SAAS_BASE_URL` | empty | Public base URL used for Twilio inbound webhook binding and other absolute links |
-| `PLATFORM_SERVICE_RESTART_ENABLED` | `0` | Enable the platform-admin-only restart control on `/platform` |
-| `PLATFORM_SERVICE_RESTART_SCRIPT` | `/usr/local/bin/restart-sms-saas-services` | Absolute path to the fixed restart helper executed via `sudo -n` |
+Important production rule:
 
-### SaaS Twilio Platform Settings
+- host-header enforcement runs only when `FLASK_ENV=production` and `TRUSTED_HOSTS` is non-empty
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TWILIO_API_KEY_SID` | empty | Optional Twilio API Key SID for production REST auth. Must be paired with `TWILIO_API_KEY_SECRET`. |
-| `TWILIO_API_KEY_SECRET` | empty | Optional Twilio API Key secret for production REST auth. Must be paired with `TWILIO_API_KEY_SID`. |
-| `TWILIO_CREDENTIAL_ENCRYPTION_KEY` | empty | Required in SaaS mode. Fernet key used to encrypt per-organization Twilio secrets at rest. |
-| `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enable automated Twilio Trust Hub / A2P onboarding flows for organizations. |
-| `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | empty | Required when `TWILIO_A2P_ONBOARDING_ENABLED=1`. Must be the primary Trust Hub customer-profile bundle (`BU...`), not an address or supporting-document bundle. |
-| `TWILIO_A2P_NUMBER_COUNTRY` | `US` | Default country used when the app auto-buys an A2P sender number. |
+## Scheduler And Time
 
-There is no separate `TWILIO_PARENT_ACCOUNT_SID` setting. The app treats `TWILIO_ACCOUNT_SID` as the parent/master account for provisioning and parent-number transfer.
+| Variable | Default | Notes |
+|---|---|---|
+| `SCHEDULER_ENABLED` | `1` in debug, else `0` | For local/dev only; production uses systemd timers. |
+| `SCHEDULED_MESSAGE_MAX_LAG` | `1440` | Minutes before a due send expires. |
+| `SCHEDULED_PROCESSING_TIMEOUT_MINUTES` | `10` | Stuck-processing timeout. |
+| `SCHEDULED_SEND_MAX_RETRIES` | `3` | Retry attempts for transient scheduled failures. |
+| `SCHEDULED_SEND_RETRY_BACKOFF_SECONDS` | `60` | Base retry delay. |
+| `SCHEDULED_SEND_RETRY_MAX_BACKOFF_SECONDS` | `900` | Retry backoff cap. |
+| `APP_TIMEZONE` | `UTC` | Default display timezone when client timezone cookie is absent. |
 
-### Database
+## Redis And Queue
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `sqlite:///instance/sms.db` | SQLAlchemy database URI |
-| `SQLITE_TIMEOUT` | `30` | SQLite lock timeout in seconds |
+| Variable | Default | Notes |
+|---|---|---|
+| `REDIS_URL` | `redis://localhost:6379/0` | Shared by worker and local tooling. |
+| `RQ_QUEUE_NAME` | `sms` | Legacy default; SaaS deploys should set `sms-saas`. |
 
-If `DATABASE_URL` is unset, the app defaults to `instance/sms.db` under the project root.
+## Database
 
-### Redis / Background Jobs
+| Variable | Default | Notes |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///.../instance/sms.db` | Primary SaaS production should override with PostgreSQL. |
+| `SQLITE_TIMEOUT` | `30` | Applied only when the driver is SQLite. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
-| `RQ_QUEUE_NAME` | `sms` | RQ queue name |
+Important runtime distinction:
 
-### Scheduler
+- `dbdoctor` is only for the legacy SQLite path
+- `app.saas_db` / `saas-dbdoctor` are the correct tools for SaaS databases
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SCHEDULER_ENABLED` | `0` (prod), `1` (dev) | Enable APScheduler background thread |
-| `SCHEDULED_MESSAGE_MAX_LAG` | `1440` | Minutes before scheduled message expires |
+## Twilio And Messaging Provider Settings
 
-### Timezone
+| Variable | Default | Notes |
+|---|---|---|
+| `TWILIO_ACCOUNT_SID` | unset | Parent/master account in platform-managed SaaS. |
+| `TWILIO_AUTH_TOKEN` | unset | Parent/master auth token. |
+| `TWILIO_API_KEY_SID` | unset | Optional production REST auth; must be paired with secret. |
+| `TWILIO_API_KEY_SECRET` | unset | Optional production REST auth; must be paired with SID. |
+| `TWILIO_FROM_NUMBER` | unset | Mainly used by the legacy single-tenant runtime. |
+| `TWILIO_PLATFORM_FRIENDLY_NAME` | `SMS Admin SaaS` | Default naming seed for platform-managed resources. |
+| `TWILIO_CREDENTIAL_ENCRYPTION_KEY` | unset | Required for SaaS billing/provider validation. |
+| `TWILIO_VALIDATE_INBOUND_SIGNATURE` | `1` | Signature validation for inbound Twilio requests. |
+| `INBOUND_AUTO_REPLY_ENABLED` | `1` | Global inbound automation toggle. |
+| `SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS` | `3` | Duplicate-answer safety window for surveys. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_TIMEZONE` | `UTC` | Default timezone for display |
+## Twilio A2P Controls
 
-### Session Security
+| Variable | Default | Notes |
+|---|---|---|
+| `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enables automated A2P workflows. |
+| `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | unset | Required when A2P automation is enabled. Must be a `BU...` primary customer profile. |
+| `TWILIO_A2P_NUMBER_COUNTRY` | `US` | Auto-buy country code. |
+| `TWILIO_A2P_FAKE_QUEUE` | `0` | Test/development A2P queueing aid. |
+| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables `/webhooks/twilio/a2p-events`. |
+| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the A2P Event Streams sink. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SESSION_COOKIE_SAMESITE` | `Lax` | Cookie SameSite policy |
-| `SESSION_COOKIE_SECURE` | `1` (prod), `0` (dev) | Require HTTPS for cookies |
-| `REMEMBER_COOKIE_DURATION_DAYS` | `7` | Remember-me session lifetime |
+## Billing And Stripe
 
-### Auth Hardening
+| Variable | Default | Notes |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | unset | Required for SaaS billing validation. |
+| `STRIPE_PUBLISHABLE_KEY` | unset | UI/client-side Stripe usage if needed. |
+| `STRIPE_WEBHOOK_SECRET` | unset | Required for webhook verification and SaaS billing validation. |
+| `STRIPE_PRICE_ID` | unset | Required for SaaS billing validation. |
+| `STRIPE_FAKE_CHECKOUT_ENABLED` | `0` | Enables `/_test/stripe/checkout/<session_id>`. |
+| `BILLING_TRIAL_DAYS` | `14` | Trial length used by fake checkout and some billing flows. |
+| `BILLING_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Included outbound usage per billing period. |
+| `BILLING_USAGE_CURRENCY` | `usd` | Usage billing currency. |
+| `BILLING_OUTBOUND_SEGMENT_RATE_USD` | `0.0300` | Per-segment sell rate. |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PASSWORD_HISTORY_COUNT` | `3` | Number of prior passwords blocked for reuse |
-| `AUTH_ALERTS_ENABLED` | `1` | Enable SMS security alerts |
-| `AUTH_EVENT_RETENTION_DAYS` | `180` | Auth event retention window |
-| `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Failed login attempts before lockout |
-| `AUTH_LOCKOUT_WINDOW_SECONDS` | `300` | Failure counting window |
-| `AUTH_LOCKOUT_SECONDS` | `600` | Lockout duration |
+## Admin And Local Tooling
 
-### Login Hardening (Recommended for Production)
+| Variable | Default | Notes |
+|---|---|---|
+| `ADMIN_TEST_PHONE` | unset | Test-mode send target. |
+| `ADMIN_USERNAME` | `admin` | Bootstrap admin username. |
+| `ADMIN_EMAIL` | unset | Optional bootstrap email. |
+| `ADMIN_PASSWORD` | unset | Required for first admin bootstrap in legacy production and for first SaaS platform-admin provisioning. |
+| `PLAYWRIGHT_ARTIFACT_DIR` | empty | Overrides browser artifact output location. |
 
-| Variable | Recommended | Non-technical description |
-|----------|-------------|---------------------------|
-| `AUTH_ATTEMPT_WINDOW_SECONDS` | `300` | Time window (in seconds) used to count failed sign-ins. |
-| `AUTH_LOCKOUT_SECONDS` | `900` | How long a lockout lasts after too many failed sign-ins. |
-| `AUTH_MAX_ATTEMPTS_IP_ACCOUNT` | `5` | Failed sign-ins allowed for one username from one IP before lockout starts. |
-| `AUTH_MAX_ATTEMPTS_ACCOUNT` | `8` | Failed sign-ins allowed for one username across all IPs before lockout starts. |
-| `AUTH_MAX_ATTEMPTS_IP` | `30` | Failed sign-ins allowed from one IP across all usernames before lockout starts. |
-| `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Maximum idle time before a session expires. |
-| `REMEMBER_COOKIE_DURATION_DAYS` | `7` | How long “Remember me” keeps a user logged in. |
-| `AUTH_PASSWORD_MIN_LENGTH` | `12` | Minimum password length accepted in user forms. |
-| `AUTH_PASSWORD_POLICY_ENFORCE` | `1` | Turns password policy checks on (`1`) or off (`0`). |
-| `TRUSTED_HOSTS` | `sms.theitwingman.com` | Comma-separated hostnames the app should trust in production requests. |
+## Production Validation Summary
 
-### Production Deploy Behavior For Security Keys
+### When `SAAS_MODE=1` and not debug
 
-- Deploy appends missing hardening keys to existing `/opt/sms-admin/.env`.
-- Existing values are never overwritten automatically.
-- If an existing value is not the recommended value, deploy prints a warning for manual review.
+Startup requires:
 
-## Configuration Class
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_ID`
+- `SAAS_BASE_URL`
+- `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
 
-`app/config.py` defines the `Config` class:
+And also:
 
-```python
-class Config:
-    # Flask
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-    DEBUG = os.environ.get('FLASK_DEBUG') == '1' or os.environ.get('FLASK_ENV') == 'development'
-    TRUST_PROXY = os.environ.get('TRUST_PROXY', '0') == '1'
-    SAAS_MODE = os.environ.get('SAAS_MODE', '0') == '1'
-    SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
+- `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET` together, if either is set
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` when `TWILIO_A2P_ONBOARDING_ENABLED=1`
 
-    # Security
-    SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
-    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', '1' if not DEBUG else '0') == '1'
-    REMEMBER_COOKIE_HTTPONLY = True
-    REMEMBER_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
-    REMEMBER_COOKIE_SECURE = SESSION_COOKIE_SECURE
-    SESSION_IDLE_TIMEOUT_MINUTES = int(os.environ.get('SESSION_IDLE_TIMEOUT_MINUTES', '30'))
-    REMEMBER_COOKIE_DURATION_DAYS = int(os.environ.get('REMEMBER_COOKIE_DURATION_DAYS', '7'))
+### When `FLASK_ENV=production`
 
-    AUTH_ATTEMPT_WINDOW_SECONDS = int(os.environ.get('AUTH_ATTEMPT_WINDOW_SECONDS', '300'))
-    AUTH_LOCKOUT_SECONDS = int(os.environ.get('AUTH_LOCKOUT_SECONDS', '900'))
-    AUTH_MAX_ATTEMPTS_IP_ACCOUNT = int(os.environ.get('AUTH_MAX_ATTEMPTS_IP_ACCOUNT', '5'))
-    AUTH_MAX_ATTEMPTS_ACCOUNT = int(os.environ.get('AUTH_MAX_ATTEMPTS_ACCOUNT', '8'))
-    AUTH_MAX_ATTEMPTS_IP = int(os.environ.get('AUTH_MAX_ATTEMPTS_IP', '30'))
+Startup additionally requires:
 
-    AUTH_PASSWORD_MIN_LENGTH = int(os.environ.get('AUTH_PASSWORD_MIN_LENGTH', '12'))
-    AUTH_PASSWORD_POLICY_ENFORCE = os.environ.get('AUTH_PASSWORD_POLICY_ENFORCE', '1') == '1'
-    TRUSTED_HOSTS = [h.strip() for h in os.environ.get('TRUSTED_HOSTS', '').split(',') if h.strip()]
-    PASSWORD_HISTORY_COUNT = int(os.environ.get('PASSWORD_HISTORY_COUNT', '3'))
-    AUTH_ALERTS_ENABLED = os.environ.get('AUTH_ALERTS_ENABLED', '1') == '1'
-    AUTH_EVENT_RETENTION_DAYS = int(os.environ.get('AUTH_EVENT_RETENTION_DAYS', '180'))
-    AUTH_LOCKOUT_MAX_ATTEMPTS = int(os.environ.get('AUTH_LOCKOUT_MAX_ATTEMPTS', '5'))
-    AUTH_LOCKOUT_WINDOW_SECONDS = int(os.environ.get('AUTH_LOCKOUT_WINDOW_SECONDS', '300'))
+- secure session and remember cookies
+- `SESSION_COOKIE_SAMESITE` of `Lax` or `Strict`
+- non-empty `TRUSTED_HOSTS`
+- valid hardening ranges and relationships
 
-    # Scheduler
-    SCHEDULER_ENABLED = os.environ.get('SCHEDULER_ENABLED', '1' if DEBUG else '0') == '1'
-    SCHEDULED_MESSAGE_MAX_LAG = int(os.environ.get('SCHEDULED_MESSAGE_MAX_LAG', '1440'))
+## Recommended Production Baseline
 
-    APP_TIMEZONE = os.environ.get('APP_TIMEZONE', 'UTC')
-
-    # Redis / RQ
-    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-    RQ_QUEUE_NAME = os.environ.get('RQ_QUEUE_NAME', 'sms')
-
-    # Database
-    BASE_DIR = Path(__file__).resolve().parent.parent
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        'DATABASE_URL',
-        f"sqlite:///{BASE_DIR / 'instance' / 'sms.db'}"
-    )
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-    }
-
-    # Twilio
-    TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
-    TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-    TWILIO_API_KEY_SID = os.environ.get('TWILIO_API_KEY_SID')
-    TWILIO_API_KEY_SECRET = os.environ.get('TWILIO_API_KEY_SECRET')
-    TWILIO_FROM_NUMBER = os.environ.get('TWILIO_FROM_NUMBER')
-    TWILIO_CREDENTIAL_ENCRYPTION_KEY = os.environ.get('TWILIO_CREDENTIAL_ENCRYPTION_KEY')
-    TWILIO_VALIDATE_INBOUND_SIGNATURE = os.environ.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', '1') == '1'
-    TWILIO_A2P_ONBOARDING_ENABLED = os.environ.get('TWILIO_A2P_ONBOARDING_ENABLED', '0') == '1'
-    TWILIO_PRIMARY_CUSTOMER_PROFILE_SID = os.environ.get('TWILIO_PRIMARY_CUSTOMER_PROFILE_SID')
-    PLATFORM_SERVICE_RESTART_ENABLED = os.environ.get('PLATFORM_SERVICE_RESTART_ENABLED', '0') == '1'
-    PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
-        'PLATFORM_SERVICE_RESTART_SCRIPT',
-        '/usr/local/bin/restart-sms-saas-services',
-    )
-
-    # Admin
-    ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')
-    ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
-    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')
-```
-
-## Production vs Development
-
-| Setting | Development | Production |
-|---------|-------------|------------|
-| `DEBUG` | `True` | `False` |
-| `SECRET_KEY` | Defaults allowed | **Required** |
-| `ADMIN_PASSWORD` | Optional | **Required** for legacy runtime bootstrap; bootstrap-only for first SaaS platform admin provisioning |
-| `SESSION_COOKIE_SECURE` | `False` | `True` |
-| `AUTH_PASSWORD_POLICY_ENFORCE` | Optional | `True` |
-| `TRUSTED_HOSTS` | Optional | **Required** |
-| `SCHEDULER_ENABLED` | `True` | `False` (use systemd timer) |
-
-## Security Checks
-
-On startup in production (`DEBUG=False`):
-
-1. **SECRET_KEY validation** - App refuses to start with default dev key
-2. **ADMIN_PASSWORD validation** - Legacy runtime uses it to create the initial admin user; the SaaS line provisions the first platform admin explicitly with `python -m app.saas_db --ensure-platform-admin`
-3. **Security hardening validation** - Critical auth/session values must be in safe ranges
-4. **TRUSTED_HOSTS validation** - Must be set to at least one hostname
-
-## Example Production .env
-
-```bash
-# Twilio (required)
-# In SaaS mode, use the parent/master Twilio account here.
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Legacy single-tenant sender. Optional for SaaS platform-managed tenant testing.
-TWILIO_FROM_NUMBER=+18005551234
-
-# Flask (required)
-SECRET_KEY=your-256-bit-random-hex-key
+```env
 FLASK_ENV=production
-# Reverse proxy (optional; set to 1 only behind a trusted proxy)
 TRUST_PROXY=1
-TRUSTED_HOSTS=sms.example.com
-
-# Admin bootstrap
-# Legacy runtime uses these directly. SaaS uses them for first-time
-# platform-admin provisioning via `python -m app.saas_db --ensure-platform-admin`.
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-secure-password
-
-# Login hardening (recommended)
-AUTH_ATTEMPT_WINDOW_SECONDS=300
-AUTH_LOCKOUT_SECONDS=900
-AUTH_MAX_ATTEMPTS_IP_ACCOUNT=5
-AUTH_MAX_ATTEMPTS_ACCOUNT=8
-AUTH_MAX_ATTEMPTS_IP=30
-SESSION_IDLE_TIMEOUT_MINUTES=30
-REMEMBER_COOKIE_DURATION_DAYS=7
-AUTH_PASSWORD_MIN_LENGTH=12
-AUTH_PASSWORD_POLICY_ENFORCE=1
-
-# Optional: Test phone for test mode
-ADMIN_TEST_PHONE=+1234567890
-
-# SaaS platform runtime
-# Required when running the SaaS control plane
+TRUSTED_HOSTS=app.example.com,beta.example.com
+SESSION_COOKIE_SECURE=1
+REMEMBER_COOKIE_SECURE=1
+SESSION_COOKIE_SAMESITE=Lax
 SAAS_MODE=1
-SAAS_BASE_URL=https://beta.example.com
-TWILIO_API_KEY_SID=SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_API_KEY_SECRET=replace_me
-TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
-TWILIO_A2P_ONBOARDING_ENABLED=1
-# Must be the primary Trust Hub customer-profile bundle, not an address/supporting-doc bundle
-TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BUxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Database (optional, defaults work)
-DATABASE_URL=sqlite:///instance/sms.db
-
-# Redis (required for background jobs)
-REDIS_URL=redis://localhost:6379/0
-RQ_QUEUE_NAME=sms
-
-# Optional SaaS-only platform restart control
-PLATFORM_SERVICE_RESTART_ENABLED=0
-PLATFORM_SERVICE_RESTART_SCRIPT=/usr/local/bin/restart-sms-saas-services
-
-# Scheduler (disabled in prod, use systemd timer)
 SCHEDULER_ENABLED=0
-
-# Timezone
-APP_TIMEZONE=America/Denver
+RQ_QUEUE_NAME=sms-saas
 ```
 
-## Example Development .env
+## Runtime Profiles
 
-```bash
-# Twilio (required for actual SMS sending)
-# In SaaS mode, use the parent/master Twilio account here.
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_FROM_NUMBER=+18005551234
+### SaaS production
 
-# Flask
-SECRET_KEY=dev-secret-key
-FLASK_ENV=development
+- PostgreSQL in `DATABASE_URL`
+- `SAAS_MODE=1`
+- `RQ_QUEUE_NAME=sms-saas`
+- systemd `sms-saas*` units and timers
 
-# Admin (optional in dev)
-ADMIN_PASSWORD=admin
+### Legacy compatibility deployment
 
-# Test phone
-ADMIN_TEST_PHONE=+1234567890
-
-# Optional SaaS settings for local platform-managed Twilio testing
-# SAAS_MODE=1
-# SAAS_BASE_URL=http://127.0.0.1:5000
-# TWILIO_CREDENTIAL_ENCRYPTION_KEY=REPLACE_WITH_VALID_FERNET_KEY
-# TWILIO_A2P_ONBOARDING_ENABLED=1
-# TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BUxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Scheduler (enabled for dev)
-SCHEDULER_ENABLED=1
-
-# Redis (if running locally)
-REDIS_URL=redis://localhost:6379/0
-```
-
-## Generating SECRET_KEY
-
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-## File Permissions
-
-In production, protect the .env file:
-
-```bash
-# Create with restricted permissions
-sudo install -m 660 -o root -g smsadmin /dev/null /opt/sms-admin/.env
-
-# Or fix existing file
-sudo chown root:smsadmin /opt/sms-admin/.env
-sudo chmod 660 /opt/sms-admin/.env
-```
-
-This allows:
-- Root to edit the file
-- smsadmin group members to read/write
-- No access for others
+- SQLite `DATABASE_URL` or default instance DB
+- `SAAS_MODE=0`
+- `RQ_QUEUE_NAME=sms`
+- systemd `sms*` units and timer
+- `TWILIO_FROM_NUMBER` still matters directly here

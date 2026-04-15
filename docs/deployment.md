@@ -1,343 +1,258 @@
-# Deployment Guide
+# Relayn Deployment Guide
 
-This guide covers deploying SMS Admin to a Debian/Ubuntu VPS.
+This is the canonical production deployment guide for Relayn SaaS.
 
-## Prerequisites
+Primary target:
 
-- Debian 11+ or Ubuntu 20.04+
-- Python 3.11 (supported/tested)
-- Redis server
-- Domain name with DNS configured
-- Twilio account with phone number
+- `SAAS_MODE=1`
+- PostgreSQL
+- Redis
+- `/opt/sms-saas`
+- `sms-saas*` systemd units
 
-## Quick Deploy
+The legacy `SMS Admin` deployment line is still supported, but it is documented only in the appendix.
+
+## SaaS Production Prerequisites
+
+- Debian or Ubuntu with Python 3.11 available
+- systemd
+- Redis
+- PostgreSQL
+- a reverse proxy that can forward the public Host header to `127.0.0.1:8100`
+- Stripe account and webhook secret
+- Twilio parent/master account
+
+## Recommended Layout
+
+- app root: `/opt/sms-saas`
+- app user/group: `smsadmin`
+- env file: `/opt/sms-saas/.env`
+- logs: `/var/log/sms-saas`
+- gunicorn bind: `127.0.0.1:8100`
+
+## 1. Create The App User And Checkout
 
 ```bash
-# Clone repository
-sudo -u smsadmin git clone https://github.com/YOUR_REPO/AOC-SMS.git /opt/sms-admin
-cd /opt/sms-admin
+sudo adduser --system --group --home /opt/sms-saas --shell /bin/bash smsadmin
+sudo install -d -o smsadmin -g smsadmin /opt/sms-saas
+sudo install -d -o smsadmin -g smsadmin /var/log/sms-saas
 
-# Run automated installer
-sudo ./deploy/install.sh
+sudo -u smsadmin git clone <repo-url> /opt/sms-saas
 ```
 
-The installer handles:
-- Installing `dbdoctor` CLI
-- Creating `.env` file with correct permissions
-- Running database migrations
-- Installing and enabling systemd services
-- Running smoke tests
+## 2. Prepare PostgreSQL And Redis
 
-## Manual Deployment Steps
+Create a dedicated PostgreSQL role and database, then ensure Redis is active.
 
-### 1. System Preparation
+Example:
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y \
-    python3.11 python3.11-venv python3-pip \
-    nginx certbot python3-certbot-nginx \
-    redis-server \
-    git apache2-utils
+sudo systemctl enable --now postgresql redis-server
 ```
 
-### 2. Create Application User
+The repo does not assume managed infrastructure here; local services on the VPS are fine as long as `DATABASE_URL` and `REDIS_URL` are correct.
 
-```bash
-sudo useradd -r -m -d /opt/sms-admin -s /bin/bash smsadmin
-```
+## 3. Create `/opt/sms-saas/.env`
 
-### 3. Clone Repository
+Minimum production shape:
 
-```bash
-sudo -u smsadmin git clone https://github.com/YOUR_REPO/AOC-SMS.git /opt/sms-admin
-sudo chown -R smsadmin:smsadmin /opt/sms-admin
-```
-
-### 4. Setup Python Environment
-
-```bash
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && python3.11 -m venv venv'
-sudo -u smsadmin bash -c 'cd /opt/sms-admin && source venv/bin/activate && pip install -r requirements.txt'
-sudo -u smsadmin /opt/sms-admin/venv/bin/python -c "import sys; print(f'Python {sys.version_info.major}.{sys.version_info.minor}')"
-```
-
-### 5. Configure Environment
-
-```bash
-# Create .env with restricted permissions
-sudo install -m 660 -o root -g smsadmin /dev/null /opt/sms-admin/.env
-
-# Edit configuration
-sudo nano /opt/sms-admin/.env
-```
-
-Minimum required:
-```bash
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_FROM_NUMBER=+18005551234
-SECRET_KEY=$(python3.11 -c "import secrets; print(secrets.token_hex(32))")
+```env
 FLASK_ENV=production
-ADMIN_PASSWORD=your-secure-password
+TRUST_PROXY=1
+TRUSTED_HOSTS=app.example.com
+SAAS_MODE=1
+SCHEDULER_ENABLED=0
+DATABASE_URL=postgresql+psycopg://user:password@127.0.0.1:5432/relayn
 REDIS_URL=redis://localhost:6379/0
+RQ_QUEUE_NAME=sms-saas
+SAAS_BASE_URL=https://app.example.com
+SECRET_KEY=replace-me
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-me
+STRIPE_SECRET_KEY=sk_live_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+STRIPE_PRICE_ID=price_replace_me
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=replace_me
+TWILIO_CREDENTIAL_ENCRYPTION_KEY=replace_me
 ```
 
-### 6. Install dbdoctor
+Add these when applicable:
+
+- `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
+- `TWILIO_A2P_ONBOARDING_ENABLED=1`
+- `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
+- `PLATFORM_SERVICE_RESTART_ENABLED=1`
+
+File permissions should be:
 
 ```bash
-sudo install -m 0755 /opt/sms-admin/bin/dbdoctor /usr/local/bin/dbdoctor
+sudo chown root:smsadmin /opt/sms-saas/.env
+sudo chmod 660 /opt/sms-saas/.env
 ```
 
-### 7. Initialize Database
+## 4. Run The SaaS Installer
 
 ```bash
-sudo -u smsadmin dbdoctor --apply
+cd /opt/sms-saas
+sudo ./deploy/install_saas.sh
 ```
 
-### 8. Create Log Directory
+What `install_saas.sh` does:
+
+- ensures the Python 3.11 virtualenv exists
+- installs `saas-dbdoctor`
+- installs `restart-sms-saas-services`
+- installs the matching sudoers rule
+- creates or normalizes the env file permissions
+- appends key SaaS defaults when missing
+- installs Python dependencies
+- applies SaaS schema migrations
+- ensures the first platform admin exists
+- installs and enables `sms-saas*` services and timers
+- validates restart-helper access
+- runs a local health check against `127.0.0.1:8100/health`
+
+## 5. Runtime Validation
+
+The deploy flow validates config before restarting:
 
 ```bash
-sudo mkdir -p /var/log/sms-admin
-sudo chown smsadmin:smsadmin /var/log/sms-admin
+cd /opt/sms-saas
+sudo -u smsadmin bash -lc 'set -a; source .env; set +a; ./venv/bin/python - <<'"'"'PY'"'"'
+from app import create_app
+create_app(run_startup_tasks=False, start_scheduler=False)
+print("SaaS app config validation ok")
+PY'
 ```
 
-### 9. Install systemd Services
+This is the same validation path used by the deploy scripts and is the right first check when a config change fails.
+
+## 6. SaaS Systemd Units
+
+Installed runtime units:
+
+- `sms-saas.service`
+- `sms-saas-worker.service`
+- `sms-saas-scheduler.service`
+- `sms-saas-scheduler.timer`
+- `sms-saas-billing-reconcile.service`
+- `sms-saas-billing-reconcile.timer`
+- `sms-saas-platform-restart-queue.service`
+- `sms-saas-platform-restart-queue.timer`
+- `sms-saas-a2p-reconcile.service`
+- `sms-saas-a2p-reconcile.timer`
+
+Enabled runtime set:
+
+- `sms-saas`
+- `sms-saas-worker`
+- `sms-saas-scheduler.timer`
+- `sms-saas-billing-reconcile.timer`
+- `sms-saas-platform-restart-queue.timer`
+- `sms-saas-a2p-reconcile.timer`
+
+## 7. Health And Service Checks
+
+Basic checks:
 
 ```bash
-# Copy service files
-sudo cp /opt/sms-admin/deploy/sms.service /etc/systemd/system/
-sudo cp /opt/sms-admin/deploy/sms-worker.service /etc/systemd/system/
-sudo cp /opt/sms-admin/deploy/sms-scheduler.service /etc/systemd/system/
-sudo cp /opt/sms-admin/deploy/sms-scheduler.timer /etc/systemd/system/
-
-# Reload and enable
-sudo systemctl daemon-reload
-sudo systemctl enable --now sms sms-worker
-sudo systemctl enable --now sms-scheduler.timer
+sudo systemctl status sms-saas sms-saas-worker sms-saas-scheduler.timer
+sudo systemctl status sms-saas-billing-reconcile.timer sms-saas-platform-restart-queue.timer sms-saas-a2p-reconcile.timer
+curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
 ```
 
-### 10. Configure Nginx
+Important detail:
+
+- when `TRUSTED_HOSTS` is configured, local health checks must send an allowed `Host` header
+- direct `saas-dbdoctor` wrapper calls should run from `/opt/sms-saas` with `.env` sourced first
+
+## 8. Deploy Updates
+
+Routine SaaS deploys should use:
 
 ```bash
-# Copy config
-sudo cp /opt/sms-admin/deploy/nginx.conf /etc/nginx/sites-available/sms.example.com
-
-# Edit domain name
-sudo nano /etc/nginx/sites-available/sms.example.com
-
-# Enable site
-sudo ln -s /etc/nginx/sites-available/sms.example.com /etc/nginx/sites-enabled/
-
-# Test and reload
-sudo nginx -t
-sudo systemctl reload nginx
+sudo ./deploy/deploy_sms_saas.sh
 ```
 
-### 11. Setup HTTP Basic Auth
+That script:
+
+- pulls latest code
+- syncs restart helper and systemd artifacts
+- installs Python dependencies
+- applies SaaS migrations
+- ensures the first platform admin exists
+- validates config
+- enables and restarts the runtime units
+- validates the restart helper
+- retries the health check on `127.0.0.1:8100`
+
+## 9. Reverse Proxy
+
+This repo does not currently ship a dedicated SaaS nginx config file.
+
+Your reverse proxy must:
+
+- forward the original `Host` header
+- forward `X-Forwarded-*` headers when `TRUST_PROXY=1`
+- proxy the app to `127.0.0.1:8100`
+- allow `/health` through for monitoring
+
+If you reuse the legacy nginx sample, update:
+
+- server name
+- upstream port
+- auth requirements
+- static path assumptions
+
+Do not proxy SaaS traffic to the legacy `sms.service` port.
+
+## 10. Stripe And Twilio Production Notes
+
+### Stripe
+
+- production webhook path: `/webhooks/stripe`
+- configure `STRIPE_WEBHOOK_SECRET` from the live endpoint
+- do not reuse CLI or staging webhook secrets
+
+### Twilio
+
+- `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` should point at the parent/master account in platform-managed SaaS
+- if `TWILIO_A2P_ONBOARDING_ENABLED=1`, `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` must be a primary `BU...` profile
+- customer-managed org secrets are stored encrypted in the database, not in `.env`
+
+## 11. Backup Expectations
+
+At minimum, back up:
+
+- PostgreSQL
+- Redis persistence files or managed Redis snapshots
+- `/opt/sms-saas/.env`
+- `/var/log/sms-saas` if your incident process relies on local log retention
+
+See [saas-operations.md](saas-operations.md) for day-2 backup and restore guidance.
+
+## Legacy Compatibility Appendix
+
+Use the legacy line only when you intentionally need the older single-tenant deployment.
+
+### Legacy deploy roots
+
+- app root: `/opt/sms-admin`
+- direct health target: `127.0.0.1:8000`
+- units: `sms.service`, `sms-worker.service`, `sms-scheduler.timer`
+- CLI: `dbdoctor`
+
+### Legacy install/update commands
 
 ```bash
-sudo htpasswd -c /etc/nginx/.htpasswd admin
+sudo ./deploy/install.sh
+sudo ./deploy/deploy_sms_admin.sh
 ```
 
-### 12. Setup SSL
+### Legacy-specific notes
 
-```bash
-sudo certbot --nginx -d sms.example.com
-```
-
-## systemd Services
-
-### sms.service (Main Web App)
-
-Runs Gunicorn WSGI server.
-
-```ini
-[Unit]
-Description=SMS Admin Web Application
-After=network.target
-
-[Service]
-User=smsadmin
-Group=smsadmin
-WorkingDirectory=/opt/sms-admin
-EnvironmentFile=/opt/sms-admin/.env
-ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
-ExecStartPre=/usr/local/bin/dbdoctor --apply
-ExecStart=/opt/sms-admin/venv/bin/gunicorn \
-    --workers 2 \
-    --bind unix:/opt/sms-admin/sms.sock \
-    --access-logfile /var/log/sms-admin/access.log \
-    --error-logfile /var/log/sms-admin/error.log \
-    wsgi:app
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### sms-worker.service (Background Jobs)
-
-Runs RQ worker for async SMS sending.
-
-```ini
-[Unit]
-Description=SMS Admin RQ Worker
-After=network.target redis.service
-
-[Service]
-User=smsadmin
-Group=smsadmin
-WorkingDirectory=/opt/sms-admin
-EnvironmentFile=/opt/sms-admin/.env
-ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
-ExecStart=/opt/sms-admin/venv/bin/rq worker sms
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### sms-scheduler.timer (Scheduler Timer)
-
-Triggers scheduler every 30 seconds.
-
-```ini
-[Unit]
-Description=SMS Admin Scheduler Timer
-
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=30s
-AccuracySec=1s
-
-[Install]
-WantedBy=timers.target
-```
-
-### sms-scheduler.service (Scheduler Oneshot)
-
-Processes pending scheduled messages.
-
-```ini
-[Unit]
-Description=SMS Admin Scheduler (oneshot)
-After=network.target
-
-[Service]
-Type=oneshot
-User=smsadmin
-Group=smsadmin
-WorkingDirectory=/opt/sms-admin
-EnvironmentFile=/opt/sms-admin/.env
-ExecStartPre=/opt/sms-admin/deploy/check_python_runtime.sh
-ExecStart=/bin/bash /opt/sms-admin/deploy/run_scheduler_once.sh
-```
-
-## Verification
-
-### Check Service Status
-
-```bash
-sudo systemctl status sms sms-worker
-systemctl list-timers | grep sms-scheduler
-```
-
-### Check Health Endpoint
-
-```bash
-curl https://sms.example.com/health
-# Should return: OK
-```
-
-### View Logs
-
-```bash
-# Web app logs
-sudo journalctl -u sms -f
-
-# Worker logs
-sudo journalctl -u sms-worker -f
-
-# Scheduler logs
-sudo journalctl -u sms-scheduler.service -f
-
-# Gunicorn logs
-sudo tail -f /var/log/sms-admin/error.log
-```
-
-### Database Health
-
-```bash
-sudo -u smsadmin dbdoctor --doctor
-```
-
-## Updating
-
-```bash
-# Recommended: use the deploy helper installed from this repo.
-# It pulls latest code, appends missing security hardening env keys,
-# warns on non-recommended existing values, installs dependencies,
-# applies migrations, and restarts services.
-sudo /usr/local/bin/deploy_sms_admin.sh
-```
-
-## Backup
-
-### Database
-
-```bash
-# Stop for consistent backup
-sudo systemctl stop sms sms-worker
-sudo -u smsadmin sqlite3 /opt/sms-admin/instance/sms.db ".backup /backup/sms-$(date +%Y%m%d).db"
-sudo systemctl start sms sms-worker
-```
-
-### Full Application
-
-```bash
-sudo tar -czf /backup/sms-admin-$(date +%Y%m%d).tar.gz \
-    --exclude='venv' \
-    --exclude='__pycache__' \
-    /opt/sms-admin
-```
-
-## Restore
-
-```bash
-# Stop services
-sudo systemctl stop sms sms-worker
-
-# Restore database
-sudo -u smsadmin cp /backup/sms-20240115.db /opt/sms-admin/instance/sms.db
-
-# Start services
-sudo systemctl start sms sms-worker
-```
-
-## Scaling Considerations
-
-### Multiple Workers
-
-Increase Gunicorn workers in `sms.service`:
-```bash
---workers 4
-```
-
-### Multiple RQ Workers
-
-```bash
-sudo systemctl enable sms-worker@{1..3}
-sudo systemctl start sms-worker@{1..3}
-```
-
-(Requires parameterized service file)
-
-### External Database
-
-For high-concurrency, consider PostgreSQL:
-```bash
-DATABASE_URL=postgresql://user:pass@host:5432/smsdb
-```
-
-Note: SQLite migrations are SQLite-specific; use Alembic for PostgreSQL.
+- SQLite permissions on `/opt/sms-admin/instance` matter
+- `TWILIO_FROM_NUMBER` is a direct runtime dependency there
+- the repo ships a legacy nginx sample at `deploy/nginx.conf`

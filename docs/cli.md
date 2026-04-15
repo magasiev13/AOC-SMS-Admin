@@ -1,281 +1,241 @@
-# CLI Tools
+# Relayn CLI And Script Reference
 
-## dbdoctor
+This repo ships two families of operational tooling:
 
-Legacy SQLite database health check and migration tool.
+- Python CLIs for schema and import management
+- shell wrappers for local setup, local runtime, tests, and signoff collection
 
-For the separate SaaS deployment line, use `python -m app.saas_db` or `saas-dbdoctor` instead.
+## Schema CLIs
 
-### Location
+### `./venv/bin/python -m app.saas_db` / `saas-dbdoctor`
 
-```bash
-# Development (from repo root)
-python -m app.dbdoctor
+Canonical SaaS schema and import workflow.
 
-# Production (after install.sh)
-dbdoctor
-```
-
-### Commands
-
-#### Print Migration Status
+Typical commands:
 
 ```bash
-python -m app.dbdoctor --print
+./venv/bin/python -m app.saas_db --print
+./venv/bin/python -m app.saas_db --apply
+./venv/bin/python -m app.saas_db --doctor
+./venv/bin/python -m app.saas_db --ensure-platform-admin
 ```
 
-Output:
-```
-Database file: /opt/sms-admin/instance/sms.db
-Migrations:
-  - 001: applied
-  - 002: applied
-  - 003: pending
-```
-
-#### Apply Pending Migrations
+Import helpers:
 
 ```bash
-python -m app.dbdoctor --apply
-```
-
-Actions:
-1. Creates all SQLAlchemy tables if missing
-2. Applies pending migrations in order
-3. Records applied migrations in `schema_migrations` table
-
-Output:
-```
-2024-01-15 10:30:00 INFO app.dbdoctor Database file in use: /opt/sms-admin/instance/sms.db
-2024-01-15 10:30:00 INFO app.migrations.runner Applying migration 003 (003_add_suppressed_contacts).
-2024-01-15 10:30:00 INFO app.migrations.runner Applied migrations: 003
-```
-
-#### Full Health Check
-
-```bash
-python -m app.dbdoctor --doctor
-```
-
-Checks:
-- Database file exists and is readable/writable
-- SQLite version
-- Migration status
-- `message_logs` table columns
-
-Output (healthy):
-```
-Database file: /opt/sms-admin/instance/sms.db
-File perms: -rw-r-----
-SQLite version: 3.40.1
-Schema migrations: 5/5 applied, pending: none
-message_logs columns: id, created_at, message_body, target, event_id, status, total_recipients, success_count, failure_count, details
-```
-
-Output (issues):
-```
-Database file: /opt/sms-admin/instance/sms.db
-File perms: -r--r-----
-SQLite version: 3.40.1
-Schema migrations: 3/5 applied, pending: 004, 005
-message_logs columns: id, created_at, message_body, target, event_id
-ERROR: Database file /opt/sms-admin/instance/sms.db is not writable. Fix file permissions or ownership.
-ERROR: message_logs is missing columns: status, total_recipients, success_count, failure_count, details. Run `python -m app.dbdoctor --apply` to apply migrations.
-ERROR: Pending migrations detected: 004, 005. Run `python -m app.dbdoctor --apply` to apply them.
-```
-
-Exit code: `0` if healthy, `1` if issues detected.
-
-### Production Usage
-
-The `install.sh` script installs `dbdoctor` to `/usr/local/bin/`:
-
-```bash
-# As smsadmin user
-sudo -u smsadmin dbdoctor --doctor
-
-# Check and apply
-sudo -u smsadmin dbdoctor --apply
-```
-
-### systemd Integration
-
-The `sms.service` and `sms-scheduler.service` run migrations automatically on startup via `ExecStartPre`:
-
-```ini
-[Service]
-ExecStartPre=/usr/local/bin/dbdoctor --apply
-ExecStart=...
-```
-
----
-
-## Flask CLI
-
-## SaaS DB CLI
-
-Separate SaaS schema and legacy-import workflow.
-
-### Location
-
-```bash
-# Development / repo root
-python -m app.saas_db
-
-# Production (after deploy/install_saas.sh)
-saas-dbdoctor
-```
-
-### Commands
-
-```bash
-# Print status
-python -m app.saas_db --print
-
-# Apply pending SaaS migrations
-python -m app.saas_db --apply
-
-# Validate readiness
-python -m app.saas_db --doctor
-
-# Ensure the first platform admin exists
-python -m app.saas_db --ensure-platform-admin
-
-# Import a legacy SQLite snapshot
-python -m app.saas_db --import-legacy /path/to/legacy.db \
+./venv/bin/python -m app.saas_db --import-legacy /path/to/legacy.db \
   --organization-name "Legacy Production" \
   --organization-slug legacy-production
+
+./venv/bin/python -m app.saas_db --import-legacy-into-org /path/to/legacy.db \
+  --organization-name "Legacy Production" \
+  --organization-slug legacy-production \
+  --provider-mode platform_managed
 ```
 
-The SaaS migration path is explicit by design. The app no longer bootstraps a non-SQLite SaaS schema implicitly on startup.
+Installed production wrapper:
 
-## Flask CLI
+```bash
+cd /opt/sms-saas
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --apply'
+sudo -u smsadmin bash -lc 'cd /opt/sms-saas && set -a && source .env && set +a && saas-dbdoctor --doctor'
+```
 
-Standard Flask commands are available:
+The installed wrapper inherits the current shell environment. Source `/opt/sms-saas/.env` before using it directly on the server.
 
-### Run Development Server
+### `./venv/bin/python -m app.dbdoctor` / `dbdoctor`
+
+Legacy SQLite compatibility tooling.
+
+Typical commands:
+
+```bash
+./venv/bin/python -m app.dbdoctor --print
+./venv/bin/python -m app.dbdoctor --apply
+./venv/bin/python -m app.dbdoctor --doctor
+```
+
+Important restriction:
+
+- `dbdoctor` rejects the SaaS non-SQLite path
+
+## Local Bootstrap And Runtime Scripts
+
+### `./run/setup.sh`
+
+Creates a Python 3.11 virtualenv, installs requirements plus pytest tooling, preserves an existing `.env`, and ensures `instance/` exists.
+
+### `./run/dev.sh`
+
+Runs the Flask dev server from the local virtualenv.
+
+```bash
+./run/dev.sh
+```
+
+### `./run/worker.sh`
+
+Starts an RQ worker using `.env` values when present.
+
+```bash
+./run/worker.sh
+```
+
+Defaults:
+
+- `REDIS_URL=redis://localhost:6379/0`
+- `RQ_QUEUE_NAME=sms`
+
+### `./run/up.sh`
+
+Starts the worker in the background and then launches the Flask dev server. Useful for the legacy flow or manual SaaS work when you are managing the scheduler and Stripe CLI separately.
+
+### `./run/local_saas_stack.sh`
+
+Primary local SaaS wrapper. It can:
+
+- seed demo data
+- start Redis-dependent app and worker processes
+- run local scheduler
+- start Stripe CLI forwarding
+- optionally open the login page
+
+Usage:
+
+```bash
+./run/local_saas_stack.sh --no-open
+./run/local_saas_stack.sh --no-seed
+./run/local_saas_stack.sh --keep-data
+./run/local_saas_stack.sh --live-from-number +15551234567
+```
+
+Requirements:
+
+- working local Redis
+- Stripe CLI available as `stripe`
+- valid SaaS env in `.env`
+
+### `./run/seed_demo_saas.sh`
+
+Seeds a deterministic multi-tenant SaaS demo environment through `app.demo_seed`.
+
+```bash
+./run/seed_demo_saas.sh --reset
+./run/seed_demo_saas.sh --reset --live-from-number +15551234567 --live-messaging-service-sid MG...
+```
+
+## Verification And Test Wrappers
+
+### `./run/verify.sh`
+
+Static verification wrapper:
+
+```bash
+./run/verify.sh
+```
+
+What it does:
+
+- uses the repo virtualenv Python when available
+- enforces Python 3.11
+- runs `compileall` over `app` and `tests`
+
+### `./run/test.sh`
+
+Pytest wrapper:
+
+```bash
+./run/test.sh
+./run/test.sh --cov=app
+./run/test.sh tests/test_billing_webhooks.py
+```
+
+What it does:
+
+- bootstraps dependencies if needed
+- enforces Python 3.11
+- defaults to `pytest tests` when only option flags are passed
+- uses `--import-mode=importlib`
+
+### `./run/test_browser.sh`
+
+Playwright browser wrapper:
+
+```bash
+./run/test_browser.sh
+./run/test_browser.sh --headed
+```
+
+What it does:
+
+- installs `node_modules` if missing
+- installs Chromium if the Playwright cache is missing
+- runs `npm run test:browser`
+
+## Signoff And Evidence Collection
+
+### `./run/public_readiness_local.sh`
+
+Runs the deterministic local readiness gate and writes artifacts under:
+
+```text
+output/signoff/<run-id>/local/
+```
+
+### `./run/public_readiness_beta_snapshot.sh`
+
+Collects read-only beta evidence for one organization slug and label:
+
+```bash
+./run/public_readiness_beta_snapshot.sh \
+  --org-slug public-readiness-control \
+  --label baseline
+```
+
+Artifacts land under:
+
+```text
+output/signoff/<run-id>/beta/<label>/
+```
+
+## Direct Runtime Commands
+
+### Flask
 
 ```bash
 flask --app wsgi:app run --debug
-```
-
-### Shell
-
-```bash
 flask --app wsgi:app shell
-```
-
-Access app context:
-```python
->>> from app.models import CommunityMember
->>> CommunityMember.query.count()
-42
-```
-
-### Routes
-
-```bash
 flask --app wsgi:app routes
 ```
 
-Lists all registered routes.
+### Worker
 
----
-
-## RQ Worker
-
-Start background job worker:
+Equivalent worker command:
 
 ```bash
-# Development
-rq worker sms --url redis://localhost:6379/0
-
-# Production (via systemd)
-sudo systemctl start sms-worker
+./venv/bin/rq worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"
 ```
 
-Monitor jobs:
+### Development scheduler
+
 ```bash
-rq info --url redis://localhost:6379/0
+SCHEDULER_ENABLED=1 SCHEDULER_RUNNER=1 ./venv/bin/python -m app.scheduler_runner
 ```
 
----
+Production should use systemd timers instead of the in-process scheduler.
 
-## Scheduler (Development)
+## Deploy Helpers
 
-For development, enable APScheduler in `.env`:
+### SaaS
 
 ```bash
-SCHEDULER_ENABLED=1
+sudo ./deploy/install_saas.sh
+sudo ./deploy/deploy_sms_saas.sh
 ```
 
-Then start the app normally - scheduler runs in background thread.
-
----
-
-## Scheduler (Production)
-
-Use systemd timer instead of background thread:
+### Legacy compatibility
 
 ```bash
-# Check timer status
-systemctl list-timers | grep sms-scheduler
-
-# View scheduler logs
-journalctl -u sms-scheduler.service -f
-
-# Manually trigger
-sudo systemctl start sms-scheduler.service
-```
-
----
-
-## Backfill Suppressions
-
-Process historical message logs to extract suppression data:
-
-### Via RQ Job
-
-```bash
-flask --app wsgi:app shell
->>> from app.queue import get_queue
->>> queue = get_queue()
->>> job = queue.enqueue('app.tasks.backfill_suppressions_job')
->>> print(job.id)
-```
-
-### Via UI
-
-POST to `/unsubscribed/backfill` (admin only)
-
----
-
-## Database Backup
-
-```bash
-# Simple file copy (while app is stopped)
-sudo systemctl stop sms
-sudo cp /opt/sms-admin/instance/sms.db /backup/sms-$(date +%Y%m%d).db
-sudo systemctl start sms
-
-# With SQLite backup command (while running)
-sudo -u smsadmin sqlite3 /opt/sms-admin/instance/sms.db ".backup /backup/sms-$(date +%Y%m%d).db"
-```
-
----
-
-## Database Inspection
-
-```bash
-# Open SQLite CLI
-sqlite3 /opt/sms-admin/instance/sms.db
-
-# Common queries
-.tables
-.schema message_logs
-SELECT COUNT(*) FROM community_members;
-SELECT * FROM schema_migrations;
-
-# Check integrity
-PRAGMA integrity_check;
+sudo ./deploy/install.sh
+sudo ./deploy/deploy_sms_admin.sh
 ```
