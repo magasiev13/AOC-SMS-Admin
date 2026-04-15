@@ -1,50 +1,45 @@
 # deploy/ — Deployment Infrastructure
 
-Debian VPS deployment via systemd + Nginx + Gunicorn. CI via GitHub Actions.
+This directory contains both deployment families:
 
-## STRUCTURE
+- primary SaaS deployment (`sms-saas*`, `/opt/sms-saas`)
+- secondary legacy deployment (`sms*`, `/opt/sms-admin`)
 
-```
-deploy/
-├── install.sh              # Automated deploy: deps, env, migrations, systemd setup
-├── deploy_sms_admin.sh     # Pull/update/migrate/restart deploy helper (+ security env append)
-├── sms.service             # systemd: Gunicorn web app (ExecStartPre runs dbdoctor)
-├── sms-worker.service      # systemd: RQ background worker
-├── sms-scheduler.service   # systemd: Oneshot scheduler (triggered by timer)
-├── sms-scheduler.timer     # systemd: Fires scheduler every 30s
-├── run_scheduler_once.sh   # Wrapper for scheduler oneshot execution
-├── run_worker.sh           # Wrapper for RQ worker startup
-└── nginx.conf              # Reverse proxy + SSL + HTTP basic auth
-```
+## PRIMARY SaaS FILES
 
-## WHERE TO LOOK
+| File | Purpose |
+|---|---|
+| `install_saas.sh` | Primary install/bootstrap flow for SaaS |
+| `deploy_sms_saas.sh` | Primary update/restart flow for SaaS |
+| `sms-saas.service` | Gunicorn web app on `127.0.0.1:8100` |
+| `sms-saas-worker.service` | RQ worker |
+| `sms-saas-scheduler.*` | Scheduled send timer/service |
+| `sms-saas-billing-reconcile.*` | Billing reconciliation timer/service |
+| `sms-saas-platform-restart-queue.*` | Restart queue timer/service |
+| `sms-saas-a2p-reconcile.*` | A2P reconciliation timer/service |
+| `restart_sms_saas_services.sh` | Host restart helper |
+| `sms-saas-restart.sudoers` | `sudo -n` rule for the restart helper |
 
-| Task | File | Notes |
-|------|------|-------|
-| Add systemd service | Copy pattern from `sms.service` | `ExecStartPre=dbdoctor --apply` |
-| Modify scheduler interval | `sms-scheduler.timer` | `OnUnitActiveSec=30s` |
-| Change Gunicorn workers | `sms.service` | `--workers N` in ExecStart |
-| Nginx config changes | `nginx.conf` | SSL certs via Certbot |
-| Automated deploy | `install.sh` | Idempotent; safe to re-run |
+## SECONDARY LEGACY FILES
 
-## CI PIPELINE (.github/workflows/deploy.yml)
-
-- Triggers on push to `main` or manual dispatch
-- SSH to VPS → install `deploy/deploy_sms_admin.sh` to `/usr/local/bin/deploy_sms_admin.sh` → run deploy script → verify services → health check
-- Post-deploy assertions: services active, timer configured, scheduler runs, health endpoint 200
+| File | Purpose |
+|---|---|
+| `install.sh` | Legacy SQLite install flow |
+| `deploy_sms_admin.sh` | Legacy update flow |
+| `sms.service` | Legacy gunicorn web app on `127.0.0.1:8000` |
+| `sms-worker.service` | Legacy RQ worker |
+| `sms-scheduler.*` | Legacy scheduled send timer/service |
+| `nginx.conf` | Legacy nginx sample |
 
 ## CONVENTIONS
 
-- **App path**: `/opt/sms-admin/` on server
-- **App user**: `smsadmin`
-- **Env file**: `/opt/sms-admin/.env` (root:smsadmin, mode 660)
-- **Logs**: `/var/log/sms-admin/` + journald
-- **dbdoctor CLI**: Installed to `/usr/local/bin/dbdoctor`
-- **Migrations auto-run**: `ExecStartPre` in service units
+- SaaS deploys should use `saas-dbdoctor`, not `dbdoctor`.
+- SaaS timers are the production scheduler/reconciliation mechanism; do not rely on in-process scheduling there.
+- Health checks must use an allowed `Host` header when `TRUSTED_HOSTS` is enforced.
+- Keep `/opt/sms-admin` and `/opt/sms-saas` assets separate.
 
 ## ANTI-PATTERNS
 
-- **DO NOT** enable `sms-scheduler.service` directly. Enable `sms-scheduler.timer` only.
-- **DO NOT** edit systemd units in `/etc/systemd/system/` directly. Copy from `deploy/`.
-- **DO NOT** run Flask dev server in production. Always Gunicorn.
-- **DO NOT** skip `dbdoctor --apply` before serving traffic.
+- **DO NOT** copy legacy unit assumptions into the SaaS deploy flow.
+- **DO NOT** enable the oneshot services directly when the timer is the intended long-lived control point.
+- **DO NOT** forget the restart-helper sudoers validation when using platform restart controls.

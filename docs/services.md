@@ -1,320 +1,204 @@
-# Services Documentation
+# Relayn Services
 
-The services layer contains business logic separated from Flask routes.
+The service layer is the main business-logic boundary of the app. Routes coordinate HTTP concerns, while service modules handle provider operations, billing, inbox automation, and background processing.
 
-## TwilioService (`app/services/twilio_service.py`)
-
-Handles all SMS sending via the Twilio API.
-
-### Class: `TwilioService`
-
-```python
-from app.services.twilio_service import TwilioService, get_twilio_service
-
-# Factory function (recommended)
-twilio = get_twilio_service()
-
-# Direct instantiation
-twilio = TwilioService()
-```
-
-**Constructor:**
-Reads Twilio credentials from Flask config:
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_FROM_NUMBER`
+## Service Map
 
-Raises `ValueError` if any credential is missing.
+| Module | Responsibility |
+|---|---|
+| `app/services/auth_security_service.py` | Login lockouts, password policy, auth event recording, retention pruning |
+| `app/services/billing_service.py` | Stripe checkout creation, portal links, webhook processing, subscription reconciliation, usage overage posting |
+| `app/services/inbox_service.py` | Shared inbox message handling, STOP/START logic, keyword replies, survey sessions, manual thread replies |
+| `app/services/legacy_import_service.py` | Imports a legacy SQLite snapshot into the SaaS schema |
+| `app/services/platform_operations_service.py` | Queues and dispatches SaaS host restart requests |
+| `app/services/provider_secret_service.py` | Encrypts and decrypts provider credentials with Fernet |
+| `app/services/recipient_service.py` | Filters unsubscribed and suppressed recipients |
+| `app/services/scheduler_service.py` | Processes scheduled sends, retry backoff, and usage capture |
+| `app/services/security_alert_service.py` | Sends security-alert SMS messages for account events |
+| `app/services/suppression_backfill.py` | Backfills suppressions from historical log detail rows |
+| `app/services/suppression_service.py` | Classifies failures and updates unsubscribe/suppression state |
+| `app/services/twilio_a2p_service.py` | Manages Twilio A2P onboarding draft/save/submit/refresh/reconcile flows |
+| `app/services/twilio_service.py` | Outbound Twilio messaging, provider provisioning, sender sync, inbound signature validation, usage reconciliation |
 
-### Method: `send_message(to_number, body, raise_on_transient=False)`
+## Auth And Account Security
 
-Send a single SMS message.
+### `auth_security_service.py`
 
-**Parameters:**
-| Name | Type | Description |
-|------|------|-------------|
-| `to_number` | str | Recipient phone (E.164 format) |
-| `body` | str | Message content |
-| `raise_on_transient` | bool | Raise `TwilioTransientError` on 429/5xx errors |
+Key responsibilities:
 
-**Returns:**
-```python
-{
-    'success': True,
-    'sid': 'SM1234...',  # Twilio message SID
-    'status': 'queued',
-    'error': None
-}
-# or on failure
-{
-    'success': False,
-    'sid': None,
-    'status': 'failed',
-    'error': 'Error message'
-}
-```
+- normalize login usernames consistently
+- enforce password minimum-length and reuse rules
+- maintain login-attempt counters shared across workers/processes
+- calculate lockout windows from config
+- record auth events such as login failures, resets, and platform restart actions
+- prune old auth events according to `AUTH_EVENT_RETENTION_DAYS`
 
-### Method: `send_bulk(recipients, body, delay=0.1, raise_on_transient=False)`
+Used primarily by:
 
-Send SMS to multiple recipients with rate limiting.
+- `app/auth.py`
+- account-management routes
+- platform restart service audit logging
 
-**Parameters:**
-| Name | Type | Description |
-|------|------|-------------|
-| `recipients` | list[dict] | List of `{'phone': str, 'name': str}` |
-| `body` | str | Message body (supports `{name}`, `{first_name}`, `{full_name}` tokens) |
-| `delay` | float | Seconds between sends (default 0.1) |
-| `raise_on_transient` | bool | Raise on transient errors for retry |
+## Billing And Usage
 
-**Returns:**
-```python
-{
-    'total': 10,
-    'success_count': 8,
-    'failure_count': 2,
-    'details': [
-        {'phone': '+1...', 'name': 'John', 'success': True, 'error': None},
-        {'phone': '+1...', 'name': 'Jane', 'success': False, 'error': 'Invalid number'}
-    ]
-}
-```
+### `billing_service.py`
 
-### Exception: `TwilioTransientError`
+Key responsibilities:
 
-Raised on transient Twilio errors (429 rate limit, 5xx server errors) when `raise_on_transient=True`.
+- create Stripe checkout sessions
+- create Stripe billing portal sessions
+- process and deduplicate Stripe webhook events
+- keep `OrganizationSubscription` in sync with Stripe state
+- support fake checkout mode for local/test flows
+- reconcile closed usage periods into billable overage entries
 
-```python
-class TwilioTransientError(Exception):
-    results: dict | None     # Partial results before failure
-    failed_index: int | None # Index where failure occurred
-```
+Important helper concepts:
 
----
+- `organization_can_send()` is the billing gate used by setup and messaging flows
+- `StripeWebhookEvent` is the idempotency/audit ledger
+- usage billing is downstream of Twilio usage reconciliation, not inline with a send request
 
-## Scheduler Service (`app/services/scheduler_service.py`)
+## Twilio Provider Lifecycle
 
-Background scheduler for processing scheduled messages.
+### `twilio_service.py`
 
-### Function: `send_scheduled_messages(app)`
+Key responsibilities:
 
-Main scheduler function. Designed to be called repeatedly (e.g., by systemd timer).
+- send individual and bulk outbound messages
+- resolve the correct Twilio client for platform-managed or customer-managed messaging
+- validate inbound Twilio signatures
+- provision, suspend, resume, release, and sync per-organization provider state
+- configure service or phone-number inbound webhooks
+- record provider audit entries
+- reconcile message usage into `MessagingUsageRecord`
 
-**Process:**
-1. Mark stuck 'processing' messages as failed (10-minute timeout)
-2. Query pending messages where `scheduled_at <= now`
-3. For each message:
-   - Atomically update status to 'processing'
-   - Skip if already claimed by another process
-   - Check expiry (configurable max lag)
-   - Fetch recipients (community or event)
-   - Filter unsubscribed/suppressed
-   - Send via TwilioService
-   - Create MessageLog
-   - Update ScheduledMessage status
+Important objects:
 
-**Configuration:**
-- `SCHEDULED_MESSAGE_MAX_LAG` - Minutes before message expires (default: 1440 = 24 hours)
+- `TwilioService`
+- `TwilioTransientError`
+- `ProviderProvisioningError`
+- `InboundSignatureValidationResult`
+- `CustomerManagedValidationResult`
 
-### Function: `init_scheduler(app)`
+### `twilio_a2p_service.py`
 
-Initialize APScheduler background scheduler (for development).
+Key responsibilities:
 
-Starts a background thread that calls `send_scheduled_messages()` every 5 seconds.
+- create or load per-org A2P onboarding state
+- normalize and validate Twilio A2P form data
+- save drafts
+- submit onboarding for queued processing
+- refresh or cancel onboarding
+- react to Twilio status callbacks and optional Event Streams payloads
+- reconcile pending onboarding records on a timer
 
-**Note:** In production, use systemd timer instead of APScheduler for reliability.
+It also exposes normalized choice lists used by setup and platform-admin forms.
 
-### Function: `shutdown_scheduler()`
+### `provider_secret_service.py`
 
-Gracefully shutdown the background scheduler.
+Minimal encryption wrapper used for:
 
----
+- encrypted customer-managed Twilio auth tokens
+- encrypted A2P business registration values
+- encrypted verification tokens
 
-## Recipient Service (`app/services/recipient_service.py`)
+It requires `TWILIO_CREDENTIAL_ENCRYPTION_KEY`.
 
-Utilities for filtering recipients before sending.
+## Inbox Automation
 
-### Function: `get_unsubscribed_phone_set(phones)`
+### `inbox_service.py`
 
-Get set of phones that are unsubscribed.
+Key responsibilities:
 
-```python
-phones = ['+1234567890', '+1987654321']
-unsubscribed = get_unsubscribed_phone_set(phones)
-# {'+1234567890'}
-```
+- upsert inbox threads and messages from inbound webhooks
+- manage unread counts and thread rollups
+- send manual replies from the workspace UI
+- enforce unsubscribe behavior
+- start, advance, cancel, and complete surveys
+- match keyword automation rules
+- handle ambiguous fast repeat survey answers safely
 
-### Function: `filter_unsubscribed_recipients(recipients)`
+The inbox service is the main place where inbound messaging, automation, and survey state intersect.
 
-Filter out unsubscribed recipients.
+## Recipient Filtering And Suppression
 
-```python
-recipients = [
-    {'phone': '+1234567890', 'name': 'John'},
-    {'phone': '+1987654321', 'name': 'Jane'}
-]
-filtered, skipped, phones_set = filter_unsubscribed_recipients(recipients)
-# filtered: recipients not unsubscribed
-# skipped: recipients that were unsubscribed
-# phones_set: set of unsubscribed phone numbers
-```
+### `recipient_service.py`
 
-### Function: `get_suppressed_phone_set(phones)`
+Used before send execution to:
 
-Get set of phones that are suppressed (hard failures).
+- gather unsubscribed numbers
+- gather suppressed numbers
+- split recipients into sendable and skipped groups
 
-### Function: `filter_suppressed_recipients(recipients)`
+### `suppression_service.py`
 
-Filter out suppressed recipients.
+Used after send execution to:
 
-```python
-filtered, skipped, phones_set = filter_suppressed_recipients(recipients)
-```
+- classify failures into opt-out, hard-fail, or soft-fail-style outcomes
+- upsert unsubscribe and suppression tables
+- attribute changes back to source log rows
 
----
+### `suppression_backfill.py`
 
-## Suppression Service (`app/services/suppression_service.py`)
+Batch-scans existing `MessageLog.details` payloads and runs suppression handling retroactively.
 
-Automatic suppression management based on delivery failures.
+## Scheduled Work
 
-### Function: `classify_failure(error_text)`
+### `scheduler_service.py`
 
-Classify a Twilio error into a failure category.
+Key responsibilities:
 
-**Returns:** `'opt_out'`, `'hard_fail'`, or `'soft_fail'`
+- find due `ScheduledMessage` rows
+- detect and recover stuck processing rows
+- retry transient failures with backoff
+- create corresponding `MessageLog` entries
+- capture usage candidates without breaking the send path
 
-| Category | Examples | Action |
-|----------|----------|--------|
-| `opt_out` | STOP, unsubscribed, opted out, error 21610/30004 | Add to UnsubscribedContact |
-| `hard_fail` | Invalid number, landline, unreachable, error 30003/30005/30007 | Add to SuppressedContact |
-| `soft_fail` | Timeout, rate limit, server error, 429/5xx | No suppression (retry later) |
+Production usage:
 
-### Function: `process_failure_details(details, source_message_log_id)`
+- systemd oneshot timer
 
-Process a list of delivery results and update suppression tables.
+Development usage:
 
-**Parameters:**
-| Name | Type | Description |
-|------|------|-------------|
-| `details` | list[dict] | Per-recipient delivery results |
-| `source_message_log_id` | int | MessageLog ID for tracking |
+- explicit APScheduler start through `init_scheduler()`
 
-**Actions:**
-- `opt_out` → Upsert to `unsubscribed_contacts`
-- `hard_fail` → Upsert to `suppressed_contacts`
-- Delete matching entries from `community_members` and `event_registrations`
+## Platform Operations
 
-**Returns:**
-```python
-{
-    'total': 100,
-    'failed': 5,
-    'opt_out': 2,
-    'hard_fail': 2,
-    'soft_fail': 1,
-    'unsubscribed_upserts': 2,
-    'suppressed_upserts': 2,
-    'community_member_deletes': 3,
-    'event_registration_deletes': 1,
-    'skipped_no_phone': 0,
-    'skipped_invalid': 0
-}
-```
+### `platform_operations_service.py`
 
----
+Key responsibilities:
 
-## Suppression Backfill (`app/services/suppression_backfill.py`)
+- validate restart-helper configuration
+- enqueue durable restart requests
+- dispatch or poll restart-helper state via `sudo -n`
+- refresh stale requests
+- record auth events for queued/succeeded/failed restart operations
 
-Retroactively process historical message logs to extract suppression data.
+This service keeps host-level restarts out of the request-response path and makes them observable in the database.
 
-### Function: `backfill_suppressions(batch_size=500, logger=None)`
+## Legacy Import
 
-Process all MessageLog entries in batches and extract suppression data.
+### `legacy_import_service.py`
 
-**Use Case:** Run after deploying the suppression feature to populate suppression tables from historical data.
+Used by `app.saas_db` to:
 
-**Parameters:**
-| Name | Type | Description |
-|------|------|-------------|
-| `batch_size` | int | Logs per batch (default 500) |
-| `logger` | object | Logger instance (default: Flask app logger) |
+- validate import readiness
+- create import-run audit records
+- import legacy users, recipients, logs, inbox, surveys, and scheduled messages
+- optionally map usernames during import
+- create a fresh SaaS organization from a legacy SQLite snapshot
 
-**Returns:**
-```python
-{
-    'batches': 10,
-    'logs': 5000,
-    'calls': 4500,  # Logs with details
-    'details': 45000,  # Total recipient records
-    'unsubscribed': 150,
-    'suppressed': 75
-}
-```
+This is the main bridge from the old single-tenant product into the SaaS schema.
 
-**Invocation:**
+## Tasks And Queue Boundary
 
-Via background job:
-```python
-from app.queue import get_queue
-queue = get_queue()
-queue.enqueue('app.tasks.backfill_suppressions_job')
-```
+The service layer is paired with:
 
-Via UI: POST `/unsubscribed/backfill`
+- `app/tasks.py`
+- `app/queue.py`
 
----
+Important runtime rule:
 
-## Tasks (`app/tasks.py`)
+- worker jobs create their own app context instead of reusing web-request state
 
-Background job definitions for RQ worker.
-
-### Function: `send_bulk_job(log_id, recipient_data, final_message, delay=0.1)`
-
-Background job for sending bulk SMS.
-
-**Features:**
-- Resume from partial progress (on retry)
-- Transient error handling with RQ retry
-- Automatic suppression processing
-
-**RQ Configuration:**
-```python
-from rq import Retry
-queue.enqueue(
-    'app.tasks.send_bulk_job',
-    log_id,
-    recipient_data,
-    final_message,
-    retry=Retry(max=3, interval=[30, 120, 300])  # Retry after 30s, 2m, 5m
-)
-```
-
-### Function: `backfill_suppressions_job()`
-
-Background job wrapper for `backfill_suppressions()`.
-
----
-
-## Queue (`app/queue.py`)
-
-Redis/RQ connection utilities.
-
-### Function: `get_redis_connection(app=None)`
-
-Get Redis connection from app config.
-
-```python
-redis = get_redis_connection()
-```
-
-Uses `REDIS_URL` config (default: `redis://localhost:6379/0`).
-
-### Function: `get_queue(app=None)`
-
-Get RQ queue instance.
-
-```python
-queue = get_queue()
-job = queue.enqueue('app.tasks.send_bulk_job', ...)
-```
-
-Uses `RQ_QUEUE_NAME` config (default: `sms`).
+That keeps background execution aligned with the current config and database bindings.

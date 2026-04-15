@@ -1,601 +1,232 @@
-# API Reference
+# Relayn Route Reference
+
+Relayn is an HTML-first Flask app with session auth, CSRF-protected form posts, and a small number of public webhook endpoints.
+
+This document is organized by capability instead of file order. The canonical source remains `app/routes.py` and `app/auth.py`.
+
+## Access Model
 
-This document describes all HTTP routes in the SMS Admin application.
+- public routes: health, favicon, Stripe webhook, Twilio webhooks
+- authenticated workspace routes: owner or staff inside one organization
+- owner-only SaaS routes: setup, billing, some invite flows
+- platform-admin-only routes: `/platform` and organization management
+- admin/social-manager workspace actions are enforced with `@require_roles('admin', 'social_manager')`
+
+In SaaS mode:
 
-## Authentication
-
-All routes except `/health`, `/login`, and `/webhooks/twilio/inbound` require authentication via Flask-Login session.
-Authenticated users without a security phone are redirected to `/account/security-contact` until configured.
-
-### Login Flow
-
-```
-POST /login
-Content-Type: application/x-www-form-urlencoded
-
-username=admin&password=secret&remember=on
-```
-
-**Rate Limiting:**
-- 5 failed attempts within 5 minutes triggers 10-minute lockout
-- Tracked per client IP and account in database
-
-### Logout Flow
-
-```
-POST /logout
-Content-Type: application/x-www-form-urlencoded
-
-csrf_token=...
-```
-
-## Public Routes
-
-### Health Check
-
-```
-GET /health
-```
-
-Returns `OK` with status 200. Used for load balancer health checks.
-
----
-
-## Dashboard
-
-### View Dashboard
-
-```
-GET /dashboard
-```
-
-Displays:
-- Recipient counts (community, event registrations)
-- Unsubscribed count
-- Pending scheduled messages
-- 7-day delivery trends chart
-- Recent message logs
-
-### Send Message
-
-```
-POST /dashboard
-Content-Type: application/x-www-form-urlencoded
-
-message_body=Hello!&target=community|event&event_id=1&test_mode=on&include_unsubscribe=on&schedule_later=on&schedule_date=2024-01-15&schedule_time=14:30&client_timezone=America/Denver
-```
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `message_body` | Yes | Message content |
-| `target` | Yes | `community` or `event` |
-| `event_id` | If target=event | Event ID |
-| `test_mode` | No | Send only to ADMIN_TEST_PHONE |
-| `include_unsubscribe` | No | Append "Reply STOP to unsubscribe" |
-| `schedule_later` | No | Schedule for future delivery |
-| `schedule_date` | If schedule_later | Date (YYYY-MM-DD) |
-| `schedule_time` | If schedule_later | Time (HH:MM) |
-| `client_timezone` | No | Timezone for scheduled time |
-
-**Message Templating:**
-
-The message body supports personalization tokens:
-- `{name}` or `{full_name}` - Recipient's full name
-- `{first_name}` - Recipient's first name
-
-Only these tokens are supported; invalid tokens will be rejected.
-
-Example: `Hello {first_name}!` → `Hello John!`
-
----
-
-## User Management (Admin Only)
-
-### List Users
-
-```
-GET /users
-```
-
-### Add User
-
-```
-GET /users/add
-POST /users/add
-Content-Type: application/x-www-form-urlencoded
-
-username=newuser&role=admin|social_manager&password=secret&must_change_password=on
-```
-
-### Edit User
-
-```
-GET /users/<user_id>/edit
-POST /users/<user_id>/edit
-```
-
-### Delete User
-
-```
-POST /users/<user_id>/delete
-```
-
-**Constraints:**
-- Cannot delete yourself
-- At least one admin must remain
-
-### Change Password
-
-```
-GET /account/password
-POST /account/password
-Content-Type: application/x-www-form-urlencoded
-
-current_password=old&new_password=new&confirm_password=new
-```
-
-Successful password change invalidates active sessions and redirects to `/login`.
-
-### Security Contact
-
-```
-GET /account/security-contact
-POST /account/security-contact
-Content-Type: application/x-www-form-urlencoded
-
-phone=+15551234567
-```
-
-### Security Events (Admin Only)
-
-```
-GET /security/events
-GET /security/events?username=admin&event_type=password_changed&outcome=success&date_from=2026-02-01&date_to=2026-02-21
-```
-
----
-
-## Community Members
-
-### List Members
-
-```
-GET /community
-GET /community?search=john
-```
-
-### Add Member
-
-```
-GET /community/add
-POST /community/add
-Content-Type: application/x-www-form-urlencoded
-
-name=John Doe&phone=+1234567890
-```
-
-### Edit Member
-
-```
-GET /community/<member_id>/edit
-POST /community/<member_id>/edit
-```
-
-### Delete Member
-
-```
-POST /community/<member_id>/delete
-```
-
-### Bulk Delete Members
-
-```
-POST /community/bulk-delete
-Content-Type: application/x-www-form-urlencoded
-
-member_ids=1&member_ids=2&member_ids=3
-```
-
-### Import Members (CSV)
-
-```
-GET /community/import
-POST /community/import
-Content-Type: multipart/form-data
-
-file=@members.csv
-```
-
-**CSV Formats Supported:**
-- Single column: phone only
-- Two columns: name, phone (auto-detected)
-- Three columns: first_name, last_name, phone
-
-### Export Members (CSV)
-
-```
-GET /community/export
-```
-
-Returns CSV with columns: `name`, `phone`, `created_at`
-
-### Unsubscribe Member
-
-```
-POST /community/<member_id>/unsubscribe
-```
-
-Adds member to unsubscribed list (does not delete from community).
-
----
-
-## Events
-
-### List Events
-
-```
-GET /events
-GET /events?search=conference
-```
-
-### Create Event
-
-```
-GET /events/add
-POST /events/add
-Content-Type: application/x-www-form-urlencoded
-
-title=Annual Conference&date=2024-06-15
-```
-
-### View Event
-
-```
-GET /events/<event_id>
-```
-
-Shows event details and registrations.
-
-### Edit Event
-
-```
-GET /events/<event_id>/edit
-POST /events/<event_id>/edit
-```
-
-### Delete Event (Admin Only)
-
-```
-POST /events/<event_id>/delete
-```
-
-Cascade deletes all registrations.
-
-### Add Registration
-
-```
-POST /events/<event_id>/register
-Content-Type: application/x-www-form-urlencoded
-
-name=Jane Doe&phone=+1234567890
-```
-
-### Remove Registration
-
-```
-POST /events/<event_id>/unregister/<registration_id>
-```
-
-### Unsubscribe Registration
-
-```
-POST /events/<event_id>/registrations/<registration_id>/unsubscribe
-```
-
-### Import Registrations (CSV)
-
-```
-POST /events/<event_id>/import
-Content-Type: multipart/form-data
-
-file=@registrations.csv
-```
-
-### Export Registrations (CSV)
-
-```
-GET /events/<event_id>/export
-```
-
----
-
-## Message Logs
-
-### List Logs
-
-```
-GET /logs
-GET /logs?search=hello
-```
-
-Returns most recent 100 logs.
-
-### View Log Detail
-
-```
-GET /logs/<log_id>
-```
-
-Shows message content and per-recipient results.
-
-### Poll Log Status (API)
-
-```
-GET /logs/status?ids=1,2,3
-```
-
-Returns JSON for polling processing logs:
-```json
-{
-  "logs": [
-    {"id": 1, "status": "processing", "success_count": 5, "failure_count": 0},
-    {"id": 2, "status": "sent", "success_count": 10, "failure_count": 2}
-  ]
-}
-```
-
-### Clear All Logs (Admin Only)
-
-```
-POST /logs/clear
-Content-Type: application/x-www-form-urlencoded
-
-admin_password=secret
-```
-
-Requires current user's password confirmation.
-
----
-
-## Scheduled Messages
-
-### List Scheduled
-
-```
-GET /scheduled
-GET /scheduled?search=reminder
-```
-
-### Cancel Scheduled
-
-```
-POST /scheduled/<scheduled_id>/cancel
-```
-
-Only pending/processing messages can be cancelled.
-
-### Delete Scheduled
-
-```
-POST /scheduled/<scheduled_id>/delete
-```
-
-### Bulk Delete Scheduled
-
-```
-POST /scheduled/bulk-delete
-Content-Type: application/x-www-form-urlencoded
-
-scheduled_ids=1,2,3
-```
-
-### Poll Scheduled Status (API)
-
-```
-GET /scheduled/status
-```
-
-Returns JSON:
-```json
-{
-  "pending_count": 5,
-  "pending_ids": [1, 2, 3, 4, 5]
-}
-```
-
----
-
-## Unsubscribed & Suppressed Contacts
-
-### List All
-
-```
-GET /unsubscribed
-GET /unsubscribed?search=john&page=1&sort=created_at&dir=desc
-```
-
-Combined view of unsubscribed and suppressed contacts.
-
-**Sort Keys:** `name`, `phone`, `reason`, `category`, `source`, `created_at`
-**Sort Directions:** `asc`, `desc`
-
-### Add Unsubscribed
-
-```
-GET /unsubscribed/add
-POST /unsubscribed/add
-Content-Type: application/x-www-form-urlencoded
-
-name=John&phone=+1234567890&reason=Requested removal&source=manual
-```
-
-### Import Unsubscribed (CSV)
-
-```
-GET /unsubscribed/import
-POST /unsubscribed/import
-Content-Type: multipart/form-data
-
-file=@unsubscribed.csv
-```
-
-### Export Unsubscribed (CSV)
-
-```
-GET /unsubscribed/export
-```
-
-### Delete Unsubscribed
-
-```
-POST /unsubscribed/<entry_id>/delete
-```
-
-### Bulk Delete
-
-```
-POST /unsubscribed/bulk-delete
-Content-Type: application/x-www-form-urlencoded
-
-unsubscribed_ids=1&unsubscribed_ids=2&suppressed_ids=3
-```
-
-### Backfill Suppressions
-
-```
-POST /unsubscribed/backfill
-```
-
-Queues background job to process historical message logs and extract suppression data.
-
----
-
-## Inbound Inbox & Automations
-
-### Twilio Inbound Webhook (Public)
-
-```
-POST /webhooks/twilio/inbound
-Content-Type: application/x-www-form-urlencoded
-
-From=%2B15551234567&Body=HELP&MessageSid=SMxxxx
-```
-
-Receives inbound SMS from Twilio and:
-- Stores the inbound message in the shared inbox
-- Handles `STOP` / `START` suppression updates
-- Applies matching keyword automation rules
-- Starts or advances survey flows
-
-If `TWILIO_VALIDATE_INBOUND_SIGNATURE=1`, requests require a valid `X-Twilio-Signature`.
-
-### Shared Inbox
-
-```
-GET /inbox
-GET /inbox?search=%2B1555&thread=12
-POST /inbox/<thread_id>/reply
-POST /inbox/threads/<thread_id>/update
-POST /inbox/threads/<thread_id>/delete
-POST /inbox/messages/bulk-delete
-```
-
-Inbox mutations (`reply`, `thread update/delete`, `message bulk delete`) require `admin` or `social_manager`.
-Inbox replies are blocked for unsubscribed contacts until they text `START`, `UNSTOP`, or `YES`.
-
-### Keyword Automations
-
-```
-GET /inbox/keywords
-GET /inbox/keywords/add
-POST /inbox/keywords/add
-GET /inbox/keywords/<rule_id>/edit
-POST /inbox/keywords/<rule_id>/edit
-POST /inbox/keywords/<rule_id>/delete
-```
-
-### Survey Flows
-
-```
-GET /inbox/surveys
-GET /inbox/surveys/add
-POST /inbox/surveys/add
-GET /inbox/surveys/<survey_id>/edit
-POST /inbox/surveys/<survey_id>/edit
-POST /inbox/surveys/<survey_id>/delete
-POST /inbox/surveys/<survey_id>/deactivate
-GET /inbox/surveys/<survey_id>/submissions
-GET /inbox/surveys/<survey_id>/submissions/export
-```
-
-Survey add/edit forms support optional event linkage:
-- `event_link_mode=none|existing|new`
-- `existing_event_id` when linking to an existing event
-- `new_event_title` and optional `new_event_date` when creating a new linked event
-
-When linked, completed survey sessions upsert the sender into `event_registrations` for the linked event (keyed by `event_id + phone`).
-
-Survey deletion permanently removes the survey flow and all related `survey_sessions` and `survey_responses`.
-
-If a survey is linked to an event, it must be unlinked (`event_link_mode=none`) before it can be deleted.
-
----
-
-## Phone Number Formats
-
-The API accepts various phone formats and normalizes them to E.164:
-
-| Input | Normalized |
-|-------|------------|
-| `720-383-2388` | `+17203832388` |
-| `(303) 918-8410` | `+13039188410` |
-| `3236300201` | `+13236300201` |
-| `+1234567890` | `+1234567890` |
-| `1-800-555-0123` | `+18005550123` |
-
-**Validation:** E.164 format requires `+` followed by 7-15 digits.
-
----
-
-## Error Responses
-
-### Flash Messages
-
-Most form submissions return redirects with flash messages:
-- `success` - Operation completed
-- `warning` - Partial success or informational
-- `error` - Operation failed
-
-### HTTP Status Codes
-
-| Code | Meaning |
-|------|---------|
-| 200 | Success |
-| 302 | Redirect (after form submission) |
-| 403 | Forbidden (wrong role) |
-| 404 | Resource not found |
-| 500 | Server error |
-
----
-
-## Role Permissions
-
-| Action | Admin | Social Manager |
-|--------|-------|----------------|
-| View dashboard | ✓ | ✓ |
-| Send messages | ✓ | ✓ |
-| View logs | ✓ | ✓ |
-| View inbox | ✓ | ✓ |
-| Reply from inbox | ✓ | ✓ |
-| Update/delete inbox threads/messages | ✓ | ✓ |
-| Manage keyword/survey automations | ✓ | ✓ |
-| View community | ✓ | ✓ |
-| Add/edit community | ✓ | ✗ |
-| Delete community | ✓ | ✗ |
-| View events | ✓ | ✓ |
-| Create/edit events | ✓ | ✓ |
-| Delete events | ✓ | ✗ |
-| Add registrations | ✓ | ✓ |
-| Manage users | ✓ | ✗ |
-| Clear logs | ✓ | ✗ |
-| Manage unsubscribed | ✓ | ✗ |
+- platform admins use `/platform/login`
+- owners and staff use `/login`
+- owner/staff users are tenant-scoped automatically
+- users without a security phone are redirected to `/account/security-contact`
+
+## Public And Webhook Routes
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/health` | `GET` | Public | Returns plain `OK` with HTTP 200. |
+| `/favicon.ico` | `GET` | Public | Redirects to the static favicon. |
+| `/webhooks/stripe` | `POST` | Public | Stripe webhook; verifies `Stripe-Signature` and requires `STRIPE_WEBHOOK_SECRET`. |
+| `/webhooks/twilio/trusthub-status` | `POST` | Public | Twilio Trust Hub/A2P status callback; validates Twilio signature. |
+| `/webhooks/twilio/inbound` | `POST` | Public | Twilio inbound SMS webhook; validates signature when enabled. |
+| `/webhooks/twilio/a2p-events` | `POST` | Public | Optional Twilio Event Streams sink; bearer-protected when enabled. |
+
+## Authentication And Account Routes
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/login` | `GET`, `POST` | Public | Workspace login surface for owner/staff and legacy users. |
+| `/platform/login` | `GET`, `POST` | Public | Platform-admin login surface. |
+| `/signup` | `GET`, `POST` | Public | SaaS self-serve signup. |
+| `/logout` | `POST` | Authenticated | CSRF-protected logout only. |
+| `/invites/<token>` | `GET`, `POST` | Public | Accept owner/staff invitation and create or link a user. |
+| `/account/password` | `GET`, `POST` | Authenticated | Password change with policy, reuse, and session invalidation rules. |
+| `/account/security-contact` | `GET`, `POST` | Authenticated | Mandatory security phone capture/update. |
+
+### Auth behavior notes
+
+- unauthorized access redirects to `/platform/login` for `/platform*` paths and `/login` elsewhere
+- `must_change_password` forces the user through `/account/password`
+- missing phone forces the user through `/account/security-contact`
+- suspended organizations are logged out and denied workspace access
+
+## Home And Platform Surfaces
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/` | `GET` | Authenticated | Redirects to the correct home surface for the current user. |
+| `/platform` | `GET` | Platform admin | Platform home/dashboard. |
+| `/platform/operations/restart-services` | `POST` | Platform admin | Queues a host restart request when enabled. |
+
+## SaaS Setup And Billing
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/setup` | `GET`, `POST` | Owner | Owner setup runway for billing and messaging readiness. |
+| `/setup/pending` | `GET` | Staff | Read-only setup status for non-owner workspace users. |
+| `/setup/status` | `GET` | Workspace user | JSON status snapshot for setup UI polling. |
+| `/setup/billing/checkout` | `POST` | Owner | Starts Stripe checkout from setup. |
+| `/billing` | `GET` | Owner | Billing overview and post-checkout reconciliation. |
+| `/billing/checkout` | `GET`, `POST` | Owner | POST starts Stripe checkout; GET redirects back to billing overview. |
+| `/billing/portal` | `POST` | Owner | Starts Stripe billing portal session. |
+| `/_test/stripe/checkout/<session_id>` | `GET`, `POST` | Owner | Fake checkout helper for local/test flows when `STRIPE_FAKE_CHECKOUT_ENABLED=1`. |
+
+### Setup actions handled on `/setup`
+
+Owner POSTs to `/setup` may:
+
+- save business profile / A2P draft
+- submit A2P onboarding
+- refresh onboarding
+- cancel onboarding
+
+Customer-managed workspaces are intentionally blocked from editing external compliance in this flow.
+
+## Platform Organization Management
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/platform/organizations` | `GET` | Platform admin | Organization directory and status overview. |
+| `/platform/organizations/add` | `GET`, `POST` | Platform admin | Creates an organization, subscription shell, invite, and messaging profile. |
+| `/platform/organizations/<organization_id>/access` | `GET` | Platform admin | Access, invite, owner/staff, and billing management surface. |
+| `/platform/organizations/<organization_id>/access/invite-staff` | `POST` | Platform admin | Creates a staff invite. |
+| `/platform/organizations/<organization_id>/access/billing` | `POST` | Platform admin | Grants or clears complimentary billing. |
+| `/platform/organizations/<organization_id>/access/reissue-owner-invite` | `POST` | Platform admin | Reissues owner invite when appropriate. |
+| `/platform/organizations/<organization_id>/messaging` | `GET`, `POST` | Platform admin | Platform-managed or customer-managed Twilio settings. |
+| `/platform/organizations/<organization_id>/messaging/onboarding` | `GET`, `POST` | Platform admin | Twilio A2P onboarding review and actions. |
+| `/platform/organizations/<organization_id>/toggle-status` | `POST` | Platform admin | Suspends or reactivates an organization and its provider status. |
+
+## Workspace Messaging And Operations
+
+### Dashboard
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/dashboard` | `GET`, `POST` | Workspace user | Main send surface. POST handles immediate or scheduled sends. |
+
+Dashboard POST supports:
+
+- community or event targeting
+- test mode
+- unsubscribe footer
+- immediate send via worker queue
+- scheduled send creation
+
+## Workspace User And Team Management
+
+| Path | Methods | Access | Notes |
+|---|---|---|---|
+| `/users` | `GET` | Workspace admin or platform admin | User directory. |
+| `/users/add` | `GET`, `POST` | Workspace admin or platform admin | Adds a user directly. |
+| `/users/<user_id>/edit` | `GET`, `POST` | Workspace admin or platform admin | Edits role, account state, and profile fields. |
+| `/users/<user_id>/delete` | `POST` | Workspace admin or platform admin | Deletes a user with role-safety checks. |
+| `/team/invite` | `GET`, `POST` | Workspace owner/admin | Creates an invitation-based team member. |
+| `/team/invitations/<invitation_id>/revoke` | `POST` | Workspace owner/admin | Revokes a pending invitation. |
+| `/security/events` | `GET` | Admin | Auth/security event viewer with filters. |
+
+## Community Recipient Management
+
+| Path | Methods | Access |
+|---|---|---|
+| `/community` | `GET` | Workspace user |
+| `/community/add` | `GET`, `POST` | Workspace admin/social manager |
+| `/community/<member_id>/edit` | `GET`, `POST` | Workspace admin/social manager |
+| `/community/<member_id>/delete` | `POST` | Workspace admin/social manager |
+| `/community/export` | `GET` | Workspace user |
+| `/community/bulk-delete` | `POST` | Workspace admin/social manager |
+| `/community/import` | `GET`, `POST` | Workspace admin/social manager |
+| `/community/<member_id>/unsubscribe` | `POST` | Workspace admin/social manager |
+
+## Event And Registration Management
+
+| Path | Methods | Access |
+|---|---|---|
+| `/events` | `GET` | Workspace user |
+| `/events/add` | `GET`, `POST` | Workspace admin/social manager |
+| `/events/<event_id>` | `GET` | Workspace user |
+| `/events/<event_id>/edit` | `GET`, `POST` | Workspace admin/social manager |
+| `/events/<event_id>/delete` | `POST` | Workspace admin/social manager |
+| `/events/bulk-delete` | `POST` | Workspace admin/social manager |
+| `/events/<event_id>/register` | `POST` | Workspace admin/social manager |
+| `/events/<event_id>/unregister/<registration_id>` | `POST` | Workspace admin/social manager |
+| `/events/<event_id>/registrations/<registration_id>/unsubscribe` | `POST` | Workspace admin/social manager |
+| `/events/<event_id>/import` | `POST` | Workspace admin/social manager |
+| `/events/<event_id>/export` | `GET` | Workspace user |
+
+## Logs And Scheduled Sends
+
+| Path | Methods | Access |
+|---|---|---|
+| `/logs` | `GET` | Workspace user |
+| `/logs/<log_id>` | `GET` | Workspace user |
+| `/logs/status` | `GET` | Workspace user |
+| `/logs/clear` | `POST` | Admin |
+| `/scheduled` | `GET` | Workspace user |
+| `/scheduled/<scheduled_id>/cancel` | `POST` | Workspace admin/social manager |
+| `/scheduled/<scheduled_id>/delete` | `POST` | Workspace admin/social manager |
+| `/scheduled/bulk-delete` | `POST` | Workspace admin/social manager |
+| `/scheduled/bulk-cancel` | `POST` | Workspace admin/social manager |
+| `/scheduled/status` | `GET` | Workspace user |
+
+## Unsubscribe And Suppression Operations
+
+| Path | Methods | Access |
+|---|---|---|
+| `/unsubscribed` | `GET` | Workspace user |
+| `/unsubscribed/backfill` | `POST` | Admin |
+| `/unsubscribed/add` | `GET`, `POST` | Workspace admin/social manager |
+| `/unsubscribed/import` | `GET`, `POST` | Workspace admin/social manager |
+| `/unsubscribed/export` | `GET` | Workspace user |
+| `/unsubscribed/<entry_id>/delete` | `POST` | Workspace admin/social manager |
+| `/unsubscribed/bulk-delete` | `POST` | Workspace admin/social manager |
+
+## Inbox, Keywords, And Surveys
+
+| Path | Methods | Access |
+|---|---|---|
+| `/inbox` | `GET` | Workspace user |
+| `/inbox/status` | `GET` | Workspace user |
+| `/inbox/<thread_id>/reply` | `POST` | Workspace admin/social manager |
+| `/inbox/threads/<thread_id>/update` | `POST` | Workspace admin/social manager |
+| `/inbox/threads/<thread_id>/delete` | `POST` | Workspace admin/social manager |
+| `/inbox/messages/bulk-delete` | `POST` | Workspace admin/social manager |
+| `/inbox/keywords` | `GET` | Workspace admin/social manager |
+| `/inbox/keywords/add` | `GET`, `POST` | Workspace admin/social manager |
+| `/inbox/keywords/<rule_id>/edit` | `GET`, `POST` | Workspace admin/social manager |
+| `/inbox/keywords/<rule_id>/delete` | `POST` | Workspace admin/social manager |
+| `/inbox/surveys` | `GET` | Workspace admin/social manager |
+| `/inbox/surveys/<survey_id>/submissions` | `GET` | Workspace admin/social manager |
+| `/inbox/surveys/<survey_id>/submissions/export` | `GET` | Workspace admin/social manager |
+| `/inbox/surveys/add` | `GET`, `POST` | Workspace admin/social manager |
+| `/inbox/surveys/<survey_id>/edit` | `GET`, `POST` | Workspace admin/social manager |
+| `/inbox/surveys/<survey_id>/delete` | `POST` | Workspace admin/social manager |
+| `/inbox/surveys/<survey_id>/deactivate` | `POST` | Workspace admin/social manager |
+
+## Data Export And Polling Endpoints
+
+The app uses HTML pages as the primary UI, but several endpoints support UI refresh or CSV export:
+
+- `GET /logs/status`
+- `GET /scheduled/status`
+- `GET /inbox/status`
+- `GET /setup/status`
+- CSV exports under `/community/export`, `/events/<id>/export`, `/unsubscribed/export`, and survey submission export
+
+All CSV exports use `sanitize_csv_cell()` to mitigate spreadsheet formula injection.
+
+## Runtime Differences
+
+### SaaS-only surfaces
+
+- `/platform/login`
+- `/signup`
+- `/platform*`
+- `/setup*`
+- billing ownership checks tied to organization role
+
+### Legacy compatibility behavior
+
+The legacy runtime still uses the same main blueprint for most workspace features, but it does not use:
+
+- tenant scoping
+- SaaS signup/setup/platform routes as its primary workflow
+- SaaS PostgreSQL schema tooling

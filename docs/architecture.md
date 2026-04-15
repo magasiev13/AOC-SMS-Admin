@@ -1,168 +1,201 @@
-# Architecture Overview
+# Relayn Architecture
 
-## System Components
+Relayn is a Flask application with two supported runtime modes:
 
-SMS Admin is a Flask-based web application for sending community and event SMS blasts via Twilio.
+- primary: multi-tenant SaaS on PostgreSQL with explicit SaaS schema management
+- secondary: legacy single-tenant `SMS Admin` on SQLite with the older `dbdoctor` migration path
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              SMS Admin Architecture                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐                │
-│   │    Nginx     │────▶│   Gunicorn   │────▶│  Flask App   │                │
-│   │ (Reverse     │     │  (WSGI)      │     │              │                │
-│   │  Proxy +     │     └──────────────┘     └──────┬───────┘                │
-│   │  HTTP Auth)  │                                 │                         │
-│   └──────────────┘                                 │                         │
-│                                                    ▼                         │
-│                          ┌────────────────────────────────────────┐         │
-│                          │             Services Layer             │         │
-│                          │  ┌─────────┐ ┌─────────┐ ┌───────────┐ │         │
-│                          │  │ Twilio  │ │Scheduler│ │Suppression│ │         │
-│                          │  │ Service │ │ Service │ │  Service  │ │         │
-│                          │  └────┬────┘ └────┬────┘ └─────┬─────┘ │         │
-│                          └───────┼───────────┼────────────┼───────┘         │
-│                                  │           │            │                 │
-│   ┌──────────────┐               │           │            │                 │
-│   │    Redis     │◀──────────────┤           │            │                 │
-│   │   (Queue)    │               │           │            │                 │
-│   └──────┬───────┘               │           │            │                 │
-│          │                       │           │            │                 │
-│          ▼                       ▼           ▼            ▼                 │
-│   ┌──────────────┐        ┌──────────────────────────────────┐             │
-│   │  RQ Worker   │        │           SQLite Database         │             │
-│   │ (Background  │        │  ┌────────┐ ┌────────┐ ┌───────┐ │             │
-│   │   Jobs)      │───────▶│  │Members │ │Events  │ │ Logs  │ │             │
-│   └──────────────┘        │  └────────┘ └────────┘ └───────┘ │             │
-│                           └──────────────────────────────────┘             │
-│   ┌──────────────┐                                                          │
-│   │   systemd    │        ┌──────────────────────────────────┐             │
-│   │    Timer     │───────▶│     Scheduler (Oneshot)          │             │
-│   │ (every 30s)  │        │  Processes pending scheduled     │             │
-│   └──────────────┘        │  messages                        │             │
-│                           └──────────────────────────────────┘             │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+The production design is SaaS-first. Legacy behavior remains in the codebase for compatibility and migration support.
+
+## System At A Glance
+
+```text
+Browser / Reverse Proxy
+  -> Flask app (wsgi.py -> create_runtime_app)
+    -> auth and account gates
+    -> tenant-scoped workspace routes
+    -> platform admin routes
+    -> public webhooks
+    -> service layer
+      -> Stripe billing and webhook sync
+      -> Twilio provider provisioning and A2P onboarding
+      -> inbox automation and survey flows
+      -> scheduled send processing
+      -> platform restart queue
+    -> SQLAlchemy models
+      -> PostgreSQL (primary SaaS)
+      -> SQLite (legacy compatibility / local demos)
+    -> Redis / RQ worker
+    -> systemd timers for scheduler, billing reconciliation, A2P reconciliation, restart queue
 ```
 
-## Component Descriptions
+## Runtime Entry Points
 
-### Web Application (`app/`)
+### App factory
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| **App Factory** | `__init__.py` | Creates Flask app, initializes extensions, runs migrations |
-| **Configuration** | `config.py` | Environment-based configuration for Flask, Twilio, Redis |
-| **Models** | `models.py` | SQLAlchemy ORM models for all database entities |
-| **Routes** | `routes.py` | HTTP endpoints for web UI and API |
-| **Authentication** | `auth.py` | Flask-Login setup, login/logout, rate limiting, role decorators |
-| **Utilities** | `utils.py` | Phone normalization, CSV parsing, message templating |
-| **Queue** | `queue.py` | Redis/RQ connection factory |
-| **Tasks** | `tasks.py` | Background job definitions for async SMS sending |
+- `app.create_app(run_startup_tasks=False, start_scheduler=False)`
+  - pure application factory
+  - used by tests, workers, CLI helpers, and validation checks
+- `app.create_runtime_app(start_scheduler=False)`
+  - runtime entrypoint with startup side effects
+  - runs schema readiness/bootstrap work
+  - optionally starts the in-process scheduler when explicitly requested
 
-### Services (`app/services/`)
+### WSGI entrypoint
 
-| Service | File | Purpose |
-|---------|------|---------|
-| **Twilio Service** | `twilio_service.py` | SMS sending via Twilio API with retry support |
-| **Scheduler Service** | `scheduler_service.py` | Background scheduler for delayed message sending |
-| **Recipient Service** | `recipient_service.py` | Filtering unsubscribed/suppressed recipients |
-| **Suppression Service** | `suppression_service.py` | Failure classification, auto-suppression management |
-| **Suppression Backfill** | `suppression_backfill.py` | Retroactively process historical failures |
+- `wsgi.py`
+  - loads `.env` with `python-dotenv`
+  - creates the runtime app
+  - starts the in-process scheduler only when `SCHEDULER_ENABLED=1`
 
-### Database Migrations (`app/migrations/`)
+### Production validation
 
-SQLite-specific migrations using a custom runner. Each migration is a Python file with an `apply(connection, logger)` function.
+When `FLASK_ENV=production` and the app is not in debug mode, startup validates:
 
-| Migration | Description |
-|-----------|-------------|
-| `001_add_message_logs_columns.py` | Adds status, counts, details columns to message_logs |
-| `002_add_users_must_change_password.py` | Adds must_change_password flag to users |
-| `003_add_suppressed_contacts.py` | Creates suppressed_contacts table |
-| `004_add_unsubscribed_reason.py` | Adds reason column to unsubscribed_contacts |
-| `005_add_scheduled_processing_started_at.py` | Adds processing_started_at to scheduled_messages |
+- `SECRET_KEY`
+- cookie security settings
+- auth hardening numeric ranges
+- `TRUSTED_HOSTS`
+- SaaS billing requirements when `SAAS_MODE=1`
 
-### Deployment (`deploy/`)
+## Tenant Model
 
-| File | Purpose |
-|------|---------|
-| `install.sh` | Automated deployment script for Debian VPS |
-| `sms.service` | systemd unit for main web application |
-| `sms-worker.service` | systemd unit for RQ background worker |
-| `sms-scheduler.service` | systemd oneshot unit for scheduler |
-| `sms-scheduler.timer` | systemd timer triggering scheduler every 30s |
-| `run_scheduler_once.sh` | Shell wrapper for scheduler oneshot execution |
-| `nginx.conf` | Nginx reverse proxy configuration sample |
+### SaaS control plane
 
-## Data Flow
+The SaaS product introduces a platform layer above individual workspaces:
 
-### Immediate SMS Blast
+- platform admins sign in through `/platform/login`
+- businesses are represented by `Organization`
+- owner/staff assignments live in `OrganizationMembership`
+- invite flows use `OrganizationInvitation`
+- billing state lives in `OrganizationSubscription`
+- messaging provider state lives in `OrganizationMessagingProfile`
+- Twilio A2P state lives in `OrganizationA2POnboarding`
 
-```
-1. User submits message via dashboard
-2. Flask route validates input
-3. MessageLog created with status='processing'
-4. Job enqueued to Redis/RQ
-5. User redirected to log detail page
-6. RQ Worker picks up job
-7. TwilioService.send_bulk() sends messages
-8. Results saved to MessageLog
-9. SuppressionService processes failures
-10. MessageLog status updated to 'sent' or 'failed'
-```
+### Tenant scoping
 
-### Scheduled SMS Blast
+Tenant isolation is implemented in `app/tenant.py`:
 
-```
-1. User submits message with schedule_later=True
-2. ScheduledMessage created with status='pending'
-3. User redirected to scheduled list
-4. systemd timer triggers sms-scheduler.service every 30s
-5. Scheduler queries for due pending messages
-6. For each message:
-   a. Atomic status update to 'processing'
-   b. Fetch recipients
-   c. Filter unsubscribed/suppressed
-   d. Send via TwilioService
-   e. Create MessageLog
-   f. Update ScheduledMessage status to 'sent'
-```
+- request-time org context is stored in a `ContextVar`
+- `auth.py` sets the current org for non-platform-admin SaaS users
+- SQLAlchemy `do_orm_execute` adds tenant criteria automatically for scoped models
+- SQLAlchemy `before_flush` auto-populates `organization_id` on new tenant-scoped rows
 
-## Design Decisions
+This keeps platform tables global while ensuring workspace data stays organization-bound.
 
-### Why SQLite?
-- Single-server deployment
-- Simple backup (file copy)
-- No external database server needed
-- Suitable for low-concurrency (<1000 recipients per blast)
+## Request And Job Flows
 
-### Why systemd Timer vs Long-Running Scheduler?
-- **Reliability**: Each invocation is independent—no background threads that can die silently
-- **Recovery**: If scheduler crashes, systemd invokes it again on next tick
-- **Auditability**: Clear logs per run via journald
-- **Simplicity**: No daemon management complexity
+### Auth and session flow
 
-### Why RQ for Background Jobs?
-- Simple Redis-based queue
-- Retry support with configurable intervals
-- Job status tracking
-- Minimal configuration
+- session auth is handled with Flask-Login
+- user IDs are nonce-bound via `AppUser.get_id()`
+- password changes and admin resets rotate `session_nonce`
+- users without a security phone are forced through `/account/security-contact`
+- owner/staff SaaS users are routed to `/setup`, `/setup/pending`, or `/dashboard` depending on workspace readiness
 
-### Why Separate Recipient Pools?
-- **Community Members**: Receive community-wide blasts
-- **Event Registrations**: Receive event-specific blasts only
-- Allows same person to be in both pools with different contexts
-- Prevents accidental cross-targeting
+### Owner setup flow
 
-## Security Model
+Typical SaaS onboarding path:
 
-| Layer | Protection |
-|-------|------------|
-| **Network** | HTTPS via Let's Encrypt + Nginx |
-| **Authentication** | Flask-Login with password hashing (pbkdf2/scrypt) |
-| **Authorization** | Role-based access (admin, social_manager) |
-| **Rate Limiting** | Login attempt tracking with lockout |
-| **CSRF** | Flask-WTF CSRF protection |
-| **Secrets** | Environment variables, never committed |
-| **Session** | HTTP-only, secure, SameSite cookies |
+1. owner accepts `/invites/<token>` or signs up through `/signup`
+2. owner lands on `/setup`
+3. billing is started through Stripe checkout
+4. Twilio provider readiness is configured:
+   - platform-managed provider via platform admin
+   - customer-managed provider via saved external credentials
+5. Twilio A2P onboarding is saved, submitted, refreshed, or canceled
+6. workspace becomes send-enabled only when billing and provider readiness allow it
+
+### Outbound messaging flow
+
+1. user submits from `/dashboard`
+2. app resolves target recipients from community members or event registrations
+3. app filters unsubscribed and suppressed contacts
+4. immediate sends are queued to RQ
+5. scheduled sends are stored in `ScheduledMessage`
+6. worker or scheduler calls `TwilioService`
+7. logs, suppressions, usage records, and audit records are updated
+
+### Inbound messaging flow
+
+1. Twilio posts to `/webhooks/twilio/inbound`
+2. signature validation runs when enabled
+3. `inbox_service.process_inbound_sms()` creates or updates thread/message state
+4. STOP/START logic updates unsubscribe state
+5. keyword automation and survey sessions may send automated replies
+6. workspace users view and reply through `/inbox`
+
+### Billing flow
+
+1. checkout session is created from `/setup/billing/checkout` or `/billing/checkout`
+2. Stripe sends events to `/webhooks/stripe`
+3. `billing_service.process_stripe_webhook_event()` deduplicates via `StripeWebhookEvent`
+4. subscription state updates are written to `OrganizationSubscription`
+5. usage reconciliation jobs turn outbound message usage into overage billing periods
+
+### Platform operations flow
+
+1. platform admin queues restart from `/platform/operations/restart-services`
+2. request is stored in `PlatformServiceRestartRequest`
+3. `sms-saas-platform-restart-queue.timer` invokes the queue processor
+4. helper script is executed via `sudo -n`
+5. final state is written back and recorded as an auth event
+
+## Background Processing
+
+### RQ worker
+
+`app/tasks.py` runs background jobs in isolated app contexts:
+
+- bulk send job
+- suppression backfill job
+- any queued provider/A2P work
+
+### systemd timers
+
+SaaS production uses timer-driven oneshot jobs instead of long-lived background threads:
+
+- `sms-saas-scheduler.timer`: scheduled outbound sends
+- `sms-saas-billing-reconcile.timer`: billing reconciliation
+- `sms-saas-platform-restart-queue.timer`: queued restart dispatch/status refresh
+- `sms-saas-a2p-reconcile.timer`: Twilio A2P reconciliation
+
+The in-process APScheduler path exists only for development and only starts when explicitly requested.
+
+## Persistence Layers
+
+### Primary SaaS path
+
+- database: PostgreSQL via `DATABASE_URL`
+- queue: Redis via `REDIS_URL`
+- schema CLI: `./venv/bin/python -m app.saas_db` locally / `saas-dbdoctor` in production
+
+### Legacy compatibility path
+
+- database: SQLite via `DATABASE_URL` defaulting to `instance/sms.db`
+- queue: Redis via `REDIS_URL`
+- schema CLI: `./venv/bin/python -m app.dbdoctor` locally / `dbdoctor` in production
+
+## Deployment Families
+
+### SaaS family
+
+- root: `/opt/sms-saas`
+- gunicorn bind: `127.0.0.1:8100`
+- service units: `sms-saas*`
+- deploy helpers: `deploy/install_saas.sh`, `deploy/deploy_sms_saas.sh`
+
+### Legacy family
+
+- root: `/opt/sms-admin`
+- gunicorn bind: `127.0.0.1:8000`
+- service units: `sms*`
+- deploy helpers: `deploy/install.sh`, `deploy/deploy_sms_admin.sh`
+
+## Key Constraints
+
+- `dbdoctor` is for the legacy SQLite path only
+- non-SQLite SaaS schema management is explicit and should not be handled by legacy migration tooling
+- platform admins are not allowed to act as workspace users inside tenant-scoped routes
+- outbound sending is blocked until both billing state and messaging provider state allow it
+- A2P state is part of workspace readiness, not a standalone admin-only concern

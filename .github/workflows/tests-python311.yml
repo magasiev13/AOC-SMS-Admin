@@ -26,12 +26,14 @@ jobs:
         run: |
           ./run/verify.sh
 
-      - name: Install dependencies
+      - name: Bootstrap project venv
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m pip install pytest
+          ./run/setup.sh
+
+      - name: Run documented CLI smoke checks
+        run: |
+          ./run/doc_smoke.sh
 
       - name: Run test suite
         run: |
-          python -m pytest -q
+          ./run/test.sh -q

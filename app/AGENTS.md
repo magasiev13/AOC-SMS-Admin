@@ -1,79 +1,66 @@
 # app/ — Core Application
 
-Flask application package. Runtime entrypoints use `create_runtime_app()`; `create_app()` is the pure app factory in `__init__.py`.
+This package contains the Flask app, SaaS control-plane logic, workspace routes, tenant scoping, and both schema-management entrypoints.
 
-Supported runtime for this project is Python 3.11.
+## PRIMARY ENTRYPOINTS
 
-## STRUCTURE
+- `__init__.py`
+  - `create_app()` for pure app creation
+  - `create_runtime_app()` for runtime startup with schema/bootstrap side effects
+- `wsgi.py`
+  - loads `.env`
+  - creates the runtime app
 
-```
-app/
-├── __init__.py          # Pure app factory, runtime bootstrap helpers, extension init
-├── config.py            # All config from env vars (Config class)
-├── models.py            # 15 SQLAlchemy models (see below)
-├── routes.py            # Blueprint 'main', 40+ endpoints, all UI routes
-├── auth.py              # Blueprint 'auth', login/logout, rate limiting, require_roles()
-├── utils.py             # normalize_phone, validate_phone, CSV parsers, template rendering
-├── tasks.py             # RQ job definitions: send_bulk_job, backfill_suppressions_job
-├── queue.py             # get_queue() → Redis/RQ connection
-├── dbdoctor.py          # CLI: --print, --apply, --doctor
-├── sort_utils.py        # normalize_sort_params() for safe column sorting
-├── scheduler_runner.py  # Standalone entry for systemd scheduler oneshot
-├── services/            # Business logic layer (see services/AGENTS.md)
-├── migrations/          # Custom SQLite migrations (see migrations/AGENTS.md)
-├── templates/           # Jinja2 grouped by feature (auth/, community/, events/, inbox/, etc.)
-└── static/              # css/style.css, js/timezone.js, js/sidebar.js
-```
+## PRIMARY MODULES
+
+| File | Purpose |
+|---|---|
+| `config.py` | All env-backed config and validation defaults |
+| `auth.py` | Login surfaces, account gates, role decorator, unauthorized routing |
+| `routes.py` | Main blueprint for setup, billing, platform, workspace, and webhook routes |
+| `models.py` | ORM models for users, organizations, subscriptions, provider state, workspace data |
+| `tenant.py` | Tenant context + automatic ORM scoping |
+| `tasks.py` | RQ job entrypoints |
+| `queue.py` | Redis/RQ connection helpers |
+| `dbdoctor.py` | Legacy SQLite schema CLI |
+| `saas_db.py` | Primary SaaS schema/import CLI |
 
 ## WHERE TO LOOK
 
-| Task | File | Key symbols |
-|------|------|-------------|
-| Add/modify route | `routes.py` | `bp = Blueprint('main', ...)`, use `@login_required` |
-| Add admin-only route | `routes.py` | Stack `@login_required` then `@require_roles('admin')` |
-| Add/modify model | `models.py` | Subclass `db.Model`, set `__tablename__`, use `utc_now` default |
-| Phone handling | `utils.py` | `normalize_phone()`, `validate_phone()`, `_looks_like_phone()` |
-| CSV import logic | `utils.py` | `parse_recipients_csv()`, `parse_phones_csv()` |
-| CSV export safety | `utils.py` | `sanitize_csv_cell()` — prefix formula chars with `'` |
-| Message templating | `utils.py` | `render_message_template()`, tokens: `{name}`, `{first_name}`, `{full_name}` |
-| Keyword normalization | `utils.py` | `normalize_keyword()` — uppercase + collapse whitespace |
-| Background job | `tasks.py` | Each job calls `create_app(run_startup_tasks=False, start_scheduler=False)` |
-| Queue connection | `queue.py` | `get_queue()` returns RQ queue for `sms` |
-| App config | `config.py` | All from `os.environ`; required: `TWILIO_*`, `SECRET_KEY` |
-| Password change flow | `auth.py` | `enforce_password_change()` redirects if `must_change_password` |
-| Sort validation | `sort_utils.py` | `normalize_sort_params(allowed_columns, ...)` |
+| Task | File |
+|---|---|
+| Strict startup validation | `__init__.py` |
+| Host/proxy behavior | `__init__.py`, `config.py` |
+| Role checks and setup routing | `auth.py` |
+| Platform org management | `routes.py` |
+| Billing and setup routes | `routes.py` |
+| Webhooks | `routes.py` |
+| Tenant isolation hooks | `tenant.py` |
+| Config surface | `config.py` |
 
-## MODELS (15 total in models.py)
+## MODEL SURFACE
 
-| Model | Table | Purpose |
-|-------|-------|---------|
-| `AppUser` | `users` | Login users with roles (admin, social_manager) |
-| `CommunityMember` | `community_members` | Community blast recipients |
-| `UnsubscribedContact` | `unsubscribed_contacts` | Opted-out phones (STOP, manual) |
-| `SuppressedContact` | `suppressed_contacts` | Invalid/failed phones (auto-detected) |
-| `Event` | `events` | Event definitions |
-| `EventRegistration` | `event_registrations` | Per-event recipient registrations |
-| `MessageLog` | `message_logs` | Send history with per-recipient JSON details |
-| `InboxThread` | `inbox_threads` | Conversation threads grouped by phone |
-| `InboxMessage` | `inbox_messages` | Individual inbound/outbound messages |
-| `KeywordAutomationRule` | `keyword_automation_rules` | Auto-reply rules triggered by keyword |
-| `SurveyFlow` | `survey_flows` | Multi-step survey definitions |
-| `SurveySession` | `survey_sessions` | Per-phone survey progress |
-| `SurveyResponse` | `survey_responses` | Individual survey answers |
-| `ScheduledMessage` | `scheduled_messages` | Future-scheduled blasts |
-| `LoginAttempt` | `login_attempts` | Failed login tracking for rate limiting |
+`models.py` currently includes:
 
-## CONVENTIONS (app-specific)
+- identity/access models
+- organization + invitation + membership models
+- subscription, webhook, usage, and restart queue models
+- messaging profile and A2P onboarding models
+- workspace recipient, log, inbox, keyword, survey, and scheduling models
 
-- **App factory pattern**: `create_app()` builds the Flask app only; `create_runtime_app()` performs migrations/admin bootstrap and optional scheduler startup.
-- **Two blueprints only**: `main` (routes.py) and `auth` (auth.py). Register new routes in one of these.
-- **Model validators**: Use `@validates('field')` for auto-normalization (e.g., phone, keyword).
-- **`localtime` filter**: Template filter in `__init__.py` converts UTC to client timezone via cookie.
-- **Config safety**: Runtime error if `SECRET_KEY` is default in non-debug mode.
-- **Proxy support**: `ProxyFix` middleware enabled when `TRUST_PROXY=1`.
+Use `utc_now()` for stored timestamps and existing validators for phone/keyword normalization.
+
+## CONVENTIONS
+
+- `SAAS_MODE=1` is the primary production assumption.
+- Tenant-scoped workspace writes should normally rely on `tenant.py` auto-assignment.
+- Platform admins are intentionally blocked from acting as tenant users in workspace routes.
+- Customer-managed Twilio credentials must go through the provider secret helpers.
+- Use local imports where existing app-factory patterns already do so to avoid circular import problems.
 
 ## ANTI-PATTERNS
 
-- **DO NOT** import models at module level in `__init__.py` (causes circular imports). Use local imports.
-- **DO NOT** add a third blueprint without discussing architecture impact.
-- **DO NOT** store timezone-aware datetimes in SQLite. Strip tzinfo before storage.
+- **DO NOT** start the scheduler implicitly outside the explicit runtime paths.
+- **DO NOT** bypass account-security gates by adding unaudited special routes.
+- **DO NOT** assume SQLite-only behavior in new logic or docs.
+- **DO NOT** use legacy deploy assumptions (`/opt/sms-admin`, queue `sms`) for SaaS work.

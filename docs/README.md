@@ -1,28 +1,45 @@
-# SMS Admin Documentation
+# Relayn Documentation
 
-This directory contains technical documentation for the SMS Admin application.
+This directory is the maintained documentation set for Relayn.
 
-## Documentation Index
+Documentation is SaaS-first:
 
-### Architecture & Design
-- [Architecture Overview](architecture.md) - System components, data flow, and design decisions
-- [Database Schema](database.md) - Data models, relationships, and migrations
+- canonical production target: `SAAS_MODE=1`
+- canonical database: PostgreSQL
+- canonical deploy root: `/opt/sms-saas`
+- canonical service family: `sms-saas*`
 
-### Development
-- [API Reference](api.md) - Routes, endpoints, and request/response formats
-- [Services](services.md) - Service layer documentation (Twilio, Scheduler, Suppression)
-- [Configuration](configuration.md) - Environment variables and settings
+The legacy `SMS Admin` SQLite runtime remains documented only where required for compatibility or migration.
 
-### Operations
-- [Deployment Guide](deployment.md) - Production deployment instructions
-- [CLI Tools](cli.md) - Command-line utilities (dbdoctor)
-- [SaaS Operations](saas-operations.md) - Separate SaaS deployment, schema, import, and backup runbook
-- [Public Readiness Signoff](public-readiness-signoff.md) - Local + beta release gate, evidence collection, and launch blockers
-- [Ubuntu VPS SaaS Checklist](ubuntu-vps-saas-checklist.md) - Exact Ubuntu VPS bring-up steps from clone to first local run
-- [Troubleshooting](troubleshooting.md) - Common issues and solutions
+## Start Here
 
-## Quick Links
+- [Architecture](architecture.md): system boundaries, tenant scoping, jobs, billing, provider flows
+- [Configuration](configuration.md): full env-var reference from `app/config.py`
+- [Deployment](deployment.md): SaaS production deploy guide plus legacy appendix
+- [SaaS Operations](saas-operations.md): day-2 operations, backups, deploy updates, cutover
 
-- **Main README**: [../README.md](../README.md)
-- **Environment Example**: [../.env.example](../.env.example)
-- **Agent Guidelines**: [../AGENTS.md](../AGENTS.md)
+## Reference
+
+- [API Reference](api.md): current route surface grouped by capability
+- [Database](database.md): model domains, tenant scoping, migration systems
+- [Services](services.md): business logic and background processing modules
+- [CLI Tools](cli.md): `dbdoctor`, `saas-dbdoctor`, local scripts, worker and scheduler entrypoints
+- [Troubleshooting](troubleshooting.md): current failure modes and recovery paths
+
+## Release And Rollout
+
+- [Public Readiness Signoff](public-readiness-signoff.md): local and beta evidence gate
+- [SaaS Pilot Rollout](saas-pilot-rollout.md): local acceptance and rollout expectations
+- [Ubuntu VPS SaaS Checklist](ubuntu-vps-saas-checklist.md): step-by-step VPS bring-up
+- [SaaS Demo Data](saas-demo-data.md): seeded tenants, accounts, and manual walkthrough
+
+## Security And Account Operations
+
+- [Security Hardening Summary](security-hardening-summary.md): current production security checklist
+- [Auth Hardening Phases](auth-hardening-phases.md): current auth/account-security reference
+
+## Pointers Back To The Repo
+
+- [Main README](../README.md)
+- [Environment Sample](../.env.example)
+- [Top-Level Agent Guide](../AGENTS.md)

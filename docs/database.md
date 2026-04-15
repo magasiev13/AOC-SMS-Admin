@@ -1,354 +1,198 @@
-# Database Schema
+# Relayn Data Model
 
-SMS Admin uses SQLite with SQLAlchemy ORM. All timestamps are stored in UTC.
+Relayn has one ORM model module, `app/models.py`, but two practical data shapes:
 
-## Entity Relationship Diagram
+- primary SaaS: multi-tenant PostgreSQL with explicit SaaS schema management
+- secondary legacy: SQLite with compatibility migrations and optional local/demo use
 
-```
-┌─────────────────────┐       ┌─────────────────────┐
-│      AppUser        │       │   CommunityMember   │
-├─────────────────────┤       ├─────────────────────┤
-│ id (PK)             │       │ id (PK)             │
-│ username (UNIQUE)   │       │ name                │
-│ password_hash       │       │ phone (UNIQUE)      │
-│ role                │       │ created_at          │
-│ must_change_password│       └─────────────────────┘
-│ created_at          │
-└─────────────────────┘       ┌─────────────────────┐
-                              │ UnsubscribedContact │
-┌─────────────────────┐       ├─────────────────────┤
-│       Event         │       │ id (PK)             │
-├─────────────────────┤       │ name                │
-│ id (PK)             │       │ phone (UNIQUE)      │
-│ title               │       │ reason              │
-│ date                │       │ source              │
-│ created_at          │       │ created_at          │
-└──────────┬──────────┘       └─────────────────────┘
-           │
-           │ 1:N                ┌─────────────────────┐
-           ▼                    │  SuppressedContact  │
-┌─────────────────────┐        ├─────────────────────┤
-│  EventRegistration  │        │ id (PK)             │
-├─────────────────────┤        │ phone (UNIQUE)      │
-│ id (PK)             │        │ reason              │
-│ event_id (FK)       │        │ category            │
-│ name                │        │ source              │
-│ phone               │        │ source_type         │
-│ created_at          │        │ source_message_log_id│
-└─────────────────────┘        │ created_at          │
- (UNIQUE: event_id+phone)      │ updated_at          │
-                               └─────────────────────┘
-┌─────────────────────┐
-│     MessageLog      │        ┌─────────────────────┐
-├─────────────────────┤        │  ScheduledMessage   │
-│ id (PK)             │        ├─────────────────────┤
-│ created_at          │        │ id (PK)             │
-│ message_body        │        │ created_at          │
-│ target              │        │ scheduled_at        │
-│ event_id (FK)       │        │ message_body        │
-│ status              │        │ target              │
-│ total_recipients    │        │ event_id (FK)       │
-│ success_count       │        │ status              │
-│ failure_count       │        │ test_mode           │
-│ details (JSON)      │        │ processing_started_at│
-└─────────────────────┘        │ sent_at             │
-                               │ error_message       │
-┌─────────────────────┐        │ message_log_id (FK) │
-│    LoginAttempt     │        └─────────────────────┘
-├─────────────────────┤
-│ id (PK)             │
-│ client_ip (INDEX)   │
-│ attempt_count       │
-│ first_attempt_at    │
-│ locked_until        │
-└─────────────────────┘
-```
+## Model Domains
 
-## Model Details
+`app/models.py` currently defines 28 ORM models.
 
-### AppUser
+### Identity And Access
 
-Application users with role-based access control.
+| Model | Table | Purpose |
+|---|---|---|
+| `AppUser` | `users` | User account, role, session nonce, phone, platform-admin flag |
+| `Organization` | `organizations` | SaaS tenant boundary |
+| `OrganizationMembership` | `organization_memberships` | Owner/staff membership within an org |
+| `OrganizationInvitation` | `organization_invitations` | Pending owner/staff invite tokens |
+| `UserPasswordHistory` | `user_password_history` | Recent password hashes for reuse prevention |
+| `AuthEvent` | `auth_events` | Security-relevant login/account activity audit log |
+| `LoginAttempt` | `login_attempts` | Shared lockout counters across workers/processes |
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `username` | String(80) | NOT NULL, UNIQUE | Login username |
-| `password_hash` | String(255) | NOT NULL | Hashed password (pbkdf2/scrypt) |
-| `phone` | String(20) | nullable, indexed | Security alert phone number |
-| `role` | String(30) | NOT NULL, default='admin' | User role: 'admin' or 'social_manager' |
-| `must_change_password` | Boolean | NOT NULL, default=False | Force password change on login |
-| `session_nonce` | String(64) | NOT NULL | Session revocation token |
-| `created_at` | DateTime | default=utc_now | Account creation timestamp |
+### Billing And Platform Operations
 
-**Methods:**
-- `set_password(password)` - Hash and store password
-- `check_password(password)` - Verify password against hash
+| Model | Table | Purpose |
+|---|---|---|
+| `OrganizationSubscription` | `organization_subscriptions` | Stripe subscription state for one org |
+| `StripeWebhookEvent` | `stripe_webhook_events` | Stripe event idempotency and operational ledger |
+| `MessagingUsageRecord` | `messaging_usage_records` | Per-message outbound usage and cost reconciliation |
+| `OrganizationUsageBillingPeriod` | `organization_usage_billing_periods` | Closed-period overage summary |
+| `PlatformServiceRestartRequest` | `platform_service_restart_requests` | Durable restart queue entries for host-level operations |
 
-### StripeWebhookEvent
+### Messaging Provider And Compliance
 
-Minimal Stripe webhook ledger used for idempotency and operational audit.
+| Model | Table | Purpose |
+|---|---|---|
+| `OrganizationMessagingProfile` | `organization_messaging_profiles` | Provider mode, sender identity, Messaging Service, provider state |
+| `OrganizationA2POnboarding` | `organization_a2p_onboardings` | Twilio A2P/trust data, submission state, remote identifiers |
+| `OrganizationProviderAuditLog` | `organization_provider_audit_logs` | Audit trail for provider lifecycle actions |
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `stripe_event_id` | String(80) | UNIQUE, NOT NULL | Stripe event identifier used for dedupe |
-| `event_type` | String(80) | NOT NULL | Stripe event type |
-| `stripe_object_id` | String(80) | nullable | Primary Stripe object id from the event payload |
-| `stripe_customer_id` | String(80) | nullable | Stripe customer id if present |
-| `stripe_subscription_id` | String(80) | nullable | Stripe subscription id if present |
-| `organization_id` | Integer | FK(organizations.id), nullable | Linked organization when resolvable |
-| `signature_verified` | Boolean | NOT NULL | Whether the Stripe signature check passed |
-| `event_created_at` | DateTime | nullable | Stripe event creation time |
-| `received_at` | DateTime | NOT NULL | First receipt time in the app |
-| `last_seen_at` | DateTime | NOT NULL | Most recent duplicate/retry receipt time |
-| `processed_at` | DateTime | nullable | Successful or ignored completion time |
-| `status` | String(20) | NOT NULL | `processing`, `processed`, `ignored`, or `failed` |
-| `attempt_count` | Integer | NOT NULL | Number of deliveries seen for this event id |
-| `last_error` | Text | nullable | Last processing failure message |
-- `get_id()` - Returns nonce-bound session identifier (`id:session_nonce`)
-- `rotate_session_nonce()` - Invalidates all active sessions
-- `is_admin` - Property returning True if role is 'admin'
-- `is_social_manager` - Property returning True if role is 'social_manager'
+### Workspace Messaging Data
 
-### CommunityMember
+| Model | Table | Purpose |
+|---|---|---|
+| `CommunityMember` | `community_members` | General recipient list |
+| `UnsubscribedContact` | `unsubscribed_contacts` | STOP/manual unsubscribe ledger |
+| `SuppressedContact` | `suppressed_contacts` | Hard-failure suppression ledger |
+| `Event` | `events` | Event definition |
+| `EventRegistration` | `event_registrations` | Event-specific recipients |
+| `MessageLog` | `message_logs` | Blast send history and per-recipient details |
+| `ScheduledMessage` | `scheduled_messages` | Future sends and retry state |
+| `InboxThread` | `inbox_threads` | Shared inbox conversation thread |
+| `InboxMessage` | `inbox_messages` | Inbound/outbound message in a thread |
+| `KeywordAutomationRule` | `keyword_automation_rules` | Keyword-triggered auto-replies |
+| `SurveyFlow` | `survey_flows` | Keyword-started survey definitions |
+| `SurveySession` | `survey_sessions` | Per-phone survey progress |
+| `SurveyResponse` | `survey_responses` | Captured survey answers |
 
-Recipients for community-wide SMS blasts.
+## Tenant Scoping
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `name` | String(100) | nullable | Contact name (optional) |
-| `phone` | String(20) | NOT NULL, UNIQUE | E.164 phone number |
-| `created_at` | DateTime | default=utc_now | Record creation timestamp |
+The following workspace tables are tenant-scoped in SaaS mode:
 
-### Event
+- `auth_events`
+- `community_members`
+- `event_registrations`
+- `events`
+- `inbox_messages`
+- `inbox_threads`
+- `keyword_automation_rules`
+- `message_logs`
+- `organization_invitations`
+- `organization_subscriptions`
+- `scheduled_messages`
+- `suppressed_contacts`
+- `survey_flows`
+- `survey_responses`
+- `survey_sessions`
+- `unsubscribed_contacts`
 
-Event definitions for event-specific SMS blasts.
+Tenant scoping is enforced in `app/tenant.py` by:
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `title` | String(200) | NOT NULL | Event title |
-| `date` | Date | nullable | Event date (optional) |
-| `created_at` | DateTime | default=utc_now | Record creation timestamp |
+- setting the current organization on request entry
+- automatically adding `organization_id == current_org` criteria to ORM selects
+- auto-filling `organization_id` on new rows before flush
 
-**Relationships:**
-- `registrations` - One-to-many with EventRegistration (cascade delete)
+Platform tables such as `organizations`, `users`, `platform_service_restart_requests`, provider audit logs, and Stripe webhook events stay globally queryable.
 
-### EventRegistration
+## Core Relationships
 
-Recipients registered for specific events (separate from community members).
+### User and tenant relationships
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `event_id` | Integer | FK(events.id), NOT NULL | Parent event |
-| `name` | String(100) | nullable | Registrant name (optional) |
-| `phone` | String(20) | NOT NULL | E.164 phone number |
-| `created_at` | DateTime | default=utc_now | Record creation timestamp |
+- one `Organization` has many `OrganizationMembership`
+- one `AppUser` can have many `OrganizationMembership`, though the current product assumes one primary org membership at a time
+- one `Organization` has many `OrganizationInvitation`
+- one `Organization` has one `OrganizationSubscription`
+- one `Organization` has one `OrganizationMessagingProfile`
+- one `Organization` has one `OrganizationA2POnboarding`
 
-**Constraints:**
-- UNIQUE(event_id, phone) - Same phone can't register twice for same event
+### Messaging relationships
 
-### SurveyFlow
+- one `Event` has many `EventRegistration`
+- one `InboxThread` has many `InboxMessage`
+- one `SurveyFlow` has many `SurveySession` and `SurveyResponse`
+- one `SurveySession` has many `SurveyResponse`
+- one `ScheduledMessage` may point to one `MessageLog`
 
-Inbound multi-step survey definitions started by keyword.
+## Key State Fields
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `name` | String(120) | NOT NULL, UNIQUE | Survey display name |
-| `trigger_keyword` | String(40) | NOT NULL, UNIQUE | Keyword that starts survey |
-| `intro_message` | Text | nullable | Optional first message |
-| `questions_json` | Text | NOT NULL | JSON array of prompts |
-| `completion_message` | Text | nullable | Optional completion message |
-| `linked_event_id` | Integer | FK(events.id), nullable, INDEX | Optional event to upsert registrations on completion |
-| `is_active` | Boolean | NOT NULL, default=True | Survey enabled state |
-| `start_count` | Integer | NOT NULL, default=0 | Number of survey starts |
-| `completion_count` | Integer | NOT NULL, default=0 | Number of completed sessions |
-| `created_at` | DateTime | default=utc_now | Record creation timestamp |
-| `updated_at` | DateTime | default=utc_now, onupdate | Last update timestamp |
+### Organization lifecycle
 
-### UnsubscribedContact
+- `organizations.status`: `active` or `suspended`
+- `organization_subscriptions.status`: values such as `incomplete`, `trialing`, `active`, `past_due`, `canceled`, `complimentary`
+- `organization_messaging_profiles.provider_mode`: `platform_managed` or `customer_managed`
+- `organization_messaging_profiles.provider_status`: `pending`, `provisioning`, `active`, `suspended`, `error`
+- `organization_messaging_profiles.sender_review_status`: `pending`, `approved`, `rejected`
+- `organization_a2p_onboardings.onboarding_status`: `draft`, `queued`, `processing`, `pending`, `approved`, `needs_action`, `rejected`, `canceled`, `error`
 
-Phone numbers that have opted out and should not receive messages.
+### Workspace lifecycle
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `name` | String(100) | nullable | Contact name (if known) |
-| `phone` | String(20) | NOT NULL, UNIQUE | E.164 phone number |
-| `reason` | Text | nullable | Unsubscribe reason or error message |
-| `source` | String(50) | NOT NULL, default='manual' | How they unsubscribed |
-| `created_at` | DateTime | default=utc_now | Unsubscribe timestamp |
+- `message_logs.status`: `processing`, `sent`, `failed`
+- `scheduled_messages.status`: `pending`, `processing`, `sent`, `failed`, `expired`, `cancelled`
+- `survey_sessions.status`: `active`, `completed`, `cancelled`
 
-**Source values:**
-- `manual` - Manually added via UI
-- `import` - CSV import
-- `community` - Unsubscribed from community list
-- `event:{id}` - Unsubscribed from event registration
-- `inbound` - Inbound STOP/UNSUBSCRIBE/CANCEL keyword received
-- `message_failure` - Auto-detected from Twilio opt-out error
+## Operational Invariants
 
-### SuppressedContact
+- usernames are case-insensitively unique
+- user emails are case-insensitively unique when present
+- community members, unsubscribes, suppressions, keyword rules, and surveys are unique per organization where applicable
+- event registrations are unique per organization, event, and phone
+- inbox threads are unique per organization and phone
+- message SID usage records are globally unique
+- each organization has at most one subscription, messaging profile, and A2P onboarding row
 
-Phone numbers that failed delivery and should be skipped.
+## Migration Systems
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `phone` | String(20) | NOT NULL, UNIQUE | E.164 phone number (auto-normalized) |
-| `reason` | Text | nullable | Failure error message |
-| `category` | String(20) | NOT NULL | Failure category |
-| `source` | String(50) | nullable | Source identifier |
-| `source_type` | String(50) | nullable | Source type (e.g., 'message_log') |
-| `source_message_log_id` | Integer | FK(message_logs.id), nullable | Source message log |
-| `created_at` | DateTime | default=utc_now | Suppression timestamp |
-| `updated_at` | DateTime | default=utc_now, onupdate | Last update timestamp |
+### Legacy migration system
 
-**Category values:**
-- `opt_out` - User opted out (STOP, etc.)
-- `hard_fail` - Invalid number, landline, etc.
-- `soft_fail` - Temporary failure (not suppressed)
+Path: `app/migrations/`
 
-### MessageLog
+- file format: numbered Python files such as `021_add_customer_managed_twilio_fields.py`
+- runner: `app.migrations.runner`
+- tracking table: `schema_migrations`
+- CLI: `./venv/bin/python -m app.dbdoctor` locally, `dbdoctor` in production
+- intended for the legacy SQLite line
 
-Log of sent SMS blasts with per-recipient results.
+Important detail:
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `created_at` | DateTime | default=utc_now | Send timestamp |
-| `message_body` | Text | NOT NULL | Message content |
-| `target` | String(20) | NOT NULL | Target type: 'community' or 'event' |
-| `event_id` | Integer | FK(events.id), nullable | Target event (if target='event') |
-| `status` | String(20) | default='sent' | Status: 'processing', 'sent', 'failed' |
-| `total_recipients` | Integer | default=0 | Total recipient count |
-| `success_count` | Integer | default=0 | Successful deliveries |
-| `failure_count` | Integer | default=0 | Failed deliveries |
-| `details` | Text | nullable | JSON array of per-recipient results |
+- `dbdoctor` explicitly rejects the SaaS non-SQLite path
 
-**Details JSON format:**
-```json
-[
-  {"phone": "+1234567890", "name": "John", "success": true, "error": null},
-  {"phone": "+1987654321", "name": "Jane", "success": false, "error": "Invalid number"}
-]
-```
+### SaaS migration system
 
-### ScheduledMessage
+Path: `app/saas_migrations/`
 
-Scheduled SMS blasts for future sending.
+- file format: numbered Python files such as `008_add_customer_managed_twilio_fields.py`
+- runner: `app.saas_migrations.runner`
+- CLI: `./venv/bin/python -m app.saas_db` locally, `saas-dbdoctor` in production
+- intended for SaaS databases, especially PostgreSQL
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `created_at` | DateTime | default=utc_now | Creation timestamp |
-| `scheduled_at` | DateTime | NOT NULL | Scheduled send time (UTC) |
-| `message_body` | Text | NOT NULL | Message content |
-| `target` | String(20) | NOT NULL | Target type: 'community' or 'event' |
-| `event_id` | Integer | FK(events.id), nullable | Target event (if target='event') |
-| `status` | String(20) | default='pending' | Status (see below) |
-| `test_mode` | Boolean | default=False | Send only to admin test phone |
-| `processing_started_at` | DateTime | nullable | When processing began |
-| `sent_at` | DateTime | nullable | Actual send timestamp |
-| `error_message` | Text | nullable | Error details if failed |
-| `message_log_id` | Integer | FK(message_logs.id), nullable | Linked message log |
+The SaaS path is explicit by design:
 
-**Status values:**
-- `pending` - Waiting to be sent
-- `processing` - Currently being processed
-- `sent` - Successfully sent
-- `failed` - Failed to send
-- `expired` - Exceeded max lag time
-- `cancelled` - Manually cancelled
+- production SaaS deploys should run `saas-dbdoctor --apply` from `/opt/sms-saas` with `.env` sourced
+- startup validates SaaS schema readiness rather than relying on the legacy migration CLI
 
-### LoginAttempt
+## Runtime Notes
 
-Tracks failed login attempts for rate limiting across workers.
+### Primary SaaS path
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `client_ip` | String(45) | NOT NULL, INDEX | Client IP address |
-| `username` | String(80) | NOT NULL, default='' | Username scope (`''` for IP scope) |
-| `attempt_count` | Integer | NOT NULL, default=1 | Failed attempt count |
-| `first_attempt_at` | DateTime | NOT NULL, default=utc_now | First attempt timestamp |
-| `locked_until` | DateTime | nullable | Lockout expiration time |
-
-### UserPasswordHistory
-
-Stores previous password hashes per user to block password reuse.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `user_id` | Integer | FK(users.id), NOT NULL | User ID |
-| `password_hash` | String(255) | NOT NULL | Previous password hash |
-| `created_at` | DateTime | NOT NULL, default=utc_now | History entry timestamp |
-
-### AuthEvent
-
-Security audit trail for login, lockout, password updates, and alert failures.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| `id` | Integer | PRIMARY KEY | Auto-increment ID |
-| `event_type` | String(50) | NOT NULL, INDEX | Event name (`login_success`, `password_changed`, etc.) |
-| `outcome` | String(20) | NOT NULL | Event outcome (`success`, `failed`, `blocked`) |
-| `user_id` | Integer | FK(users.id), nullable, INDEX | Related user id |
-| `username` | String(80) | nullable, INDEX | Username at event time |
-| `client_ip` | String(45) | nullable | Source IP |
-| `metadata_json` | Text | nullable | Structured context payload |
-| `created_at` | DateTime | NOT NULL, INDEX | Event timestamp |
-
-## Migration System
-
-Migrations are SQLite-specific Python files in `app/migrations/`. Each migration has an `apply(connection, logger)` function.
-
-### Migration Tables
-
-| Table | Purpose |
-|-------|---------|
-| `schema_migrations` | Tracks applied migration versions |
-| `schema_migration_lock` | Prevents concurrent migrations |
-
-### Running Migrations
-
-Migrations run automatically on app startup or via:
+- recommended database: PostgreSQL
+- explicit schema commands:
 
 ```bash
-# Check status
-python -m app.dbdoctor --print
-
-# Apply pending migrations
-python -m app.dbdoctor --apply
-
-# Full health check
-python -m app.dbdoctor --doctor
+./venv/bin/python -m app.saas_db --apply
+./venv/bin/python -m app.saas_db --doctor
+./venv/bin/python -m app.saas_db --ensure-platform-admin
 ```
 
-## Indexes
+### Legacy compatibility path
 
-| Table | Index | Columns |
-|-------|-------|---------|
-| `login_attempts` | `ix_login_attempts_client_ip` | `client_ip` |
-| `login_attempts` | `ux_login_attempts_client_ip_username` | `client_ip, username` |
-| `users` | `ix_users_phone` | `phone` |
-| `users` | `uq_users_phone_nonempty` | `phone` (partial unique) |
-| `user_password_history` | `ix_user_password_history_user_created` | `user_id, created_at` |
-| `auth_events` | `ix_auth_events_created_at` | `created_at` |
-| `auth_events` | `ix_auth_events_event_type` | `event_type` |
-| `community_members` | implicit | `phone` (UNIQUE) |
-| `unsubscribed_contacts` | implicit | `phone` (UNIQUE) |
-| `suppressed_contacts` | implicit | `phone` (UNIQUE) |
-| `event_registrations` | `unique_event_phone` | `event_id, phone` |
+- default database: `sqlite:///instance/sms.db`
+- compatibility schema commands:
 
-## Database File Location
-
-Default: `instance/sms.db`
-
-Override via `DATABASE_URL` environment variable:
+```bash
+./venv/bin/python -m app.dbdoctor --apply
+./venv/bin/python -m app.dbdoctor --doctor
 ```
-DATABASE_URL=sqlite:///path/to/custom.db
-```
+
+## Sensitive Data
+
+The app stores or derives sensitive operational data in these areas:
+
+- password hashes in `users` and `user_password_history`
+- encrypted Twilio auth secrets in `organization_messaging_profiles`
+- encrypted registration/business values in `organization_a2p_onboardings`
+- security metadata in `auth_events`
+- webhook and provider error payloads in Stripe, Twilio, inbox, and A2P-related tables
+
+Production docs and tooling should treat those tables as operationally sensitive even when the app exposes a higher-level UI for the same flows.
