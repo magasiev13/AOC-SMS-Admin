@@ -375,6 +375,113 @@ class TestSaasPilotFoundation(unittest.TestCase):
             self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
         )
 
+    def test_owner_setup_review_surfaces_rejected_a2p_failure_details(self) -> None:
+        self.subscription.status = "active"
+        self.messaging_profile.status = "error"
+        self.messaging_profile.provider_status = "error"
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="rejected",
+            brand_status="approved",
+            campaign_status="failed",
+            business_name="Acme LLC",
+            business_type="Limited Liability Corporation",
+            business_industry="Technology",
+            business_registration_identifier="EIN",
+            business_registration_number_encrypted="encrypted-ein",
+            business_regions_json='["USA_AND_CANADA"]',
+            website_url="https://beta.example.com/acme",
+            email="owner@acme.test",
+            notification_email="owner@acme.test",
+            first_name="Owner",
+            last_name="User",
+            business_title="Owner",
+            job_position="CEO",
+            address_country="US",
+            address_line1="1 Main Street",
+            address_city="Denver",
+            address_region="CO",
+            address_postal_code="80202",
+            campaign_description="Transactional reminders and support updates.",
+            message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
+            message_samples_json='["Acme: Your reminder is ready. Reply STOP to opt out."]',
+            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+            failure_code="30909",
+            last_error="CTA could not be verified.",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/setup")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Latest provider issue", response.data)
+        self.assertIn(b"Twilio code:", response.data)
+        self.assertIn(b"30909", response.data)
+        self.assertIn(b"CTA could not be verified.", response.data)
+        self.assertIn(b"Resubmit for Twilio review", response.data)
+
+        launch_response = self.client.get("/setup?step=launch")
+
+        self.assertEqual(launch_response.status_code, 200)
+        self.assertIn(b"Twilio rejected the current packet.", launch_response.data)
+        self.assertNotIn(b"Twilio review is in progress.", launch_response.data)
+
+    def test_owner_setup_compliance_step_surfaces_rejected_a2p_failure_details(self) -> None:
+        self.subscription.status = "active"
+        self.messaging_profile.status = "error"
+        self.messaging_profile.provider_status = "error"
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="rejected",
+            brand_status="approved",
+            campaign_status="failed",
+            business_name="Acme LLC",
+            business_type="Limited Liability Corporation",
+            business_industry="Technology",
+            business_registration_identifier="EIN",
+            website_url="https://beta.example.com/acme",
+            email="owner@acme.test",
+            notification_email="owner@acme.test",
+            first_name="Owner",
+            last_name="User",
+            business_title="Owner",
+            job_position="CEO",
+            address_country="US",
+            address_line1="1 Main Street",
+            address_city="Denver",
+            address_region="CO",
+            address_postal_code="80202",
+            campaign_description="Transactional reminders and support updates.",
+            message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
+            message_samples_json='["Acme: Your reminder is ready. Reply STOP to opt out."]',
+            failure_code="30909",
+            last_error="CTA could not be verified.",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/setup")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Latest provider issue", response.data)
+        self.assertIn(b"Twilio code:", response.data)
+        self.assertIn(b"30909", response.data)
+        self.assertIn(b"CTA could not be verified.", response.data)
+        self.assertIn(b"https://beta.example.com/compliance/acme/sms/privacy", response.data)
+        self.assertIn(b"https://beta.example.com/compliance/acme/sms/terms", response.data)
+        self.assertIn(b"https://beta.example.com/compliance/acme/sms/opt-in", response.data)
+
     def test_customer_managed_setup_rejects_platform_managed_a2p_submission_actions(self) -> None:
         organization, _, _, user = self._create_customer_managed_workspace(
             slug="customer-managed-guardrail",
@@ -1468,6 +1575,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
             messaging_service_sid="MGcust0001",
             campaign_sid="QEcust0001",
             campaign_status="verified",
+            campaign_failure_reason=None,
+            campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
         )
@@ -1579,8 +1688,55 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"A2P Onboarding", response.data)
         self.assertIn(b"Legal Business Name", response.data)
+        self.assertRegex(response.data, rb'<option value="low_volume_standard" selected>')
         self.assertRegex(response.data, rb'<option value="ACCOUNT_NOTIFICATION" selected>')
+        self.assertIn(b"external_privacy_policy_url", response.data)
+        self.assertIn(b"has_public_website", response.data)
+        self.assertIn(b"https://beta.example.com/compliance/acme/sms/privacy", response.data)
         self.assertNotIn(b'value="None"', response.data)
+
+    def test_platform_admin_messaging_page_shows_a2p_failure_detail(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="rejected",
+            brand_status="verified",
+            campaign_status="failed",
+            brand_registration_sid="BNcust0001",
+            campaign_sid="QEcust0001",
+            failure_code="30909",
+            last_error="CTA could not be verified.",
+            raw_status_json='{"campaign_failure_code":"30909","campaign_failure_reason":"CTA could not be verified."}',
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Twilio 30909", response.data)
+        self.assertIn(b"CTA could not be verified.", response.data)
+
+    def test_platform_admin_onboarding_page_shows_a2p_failure_detail(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="rejected",
+            brand_status="verified",
+            campaign_status="failed",
+            failure_code="30909",
+            last_error="CTA could not be verified.",
+            raw_status_json='{"campaign_failure_code":"30909","campaign_failure_reason":"CTA could not be verified."}',
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Twilio code:", response.data)
+        self.assertIn(b"30909", response.data)
+        self.assertIn(b"CTA could not be verified.", response.data)
 
     def test_platform_admin_a2p_onboarding_is_read_only_for_customer_managed_org(self) -> None:
         self.messaging_profile.provider_mode = "customer_managed"
@@ -1656,6 +1812,27 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response.data, rb'id="has_embedded_links"[^>]*checked')
         self.assertRegex(response.data, rb'id="has_embedded_phone"[^>]*checked')
+
+    def test_hosted_sms_compliance_pages_render_tenant_sender(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            business_name="Acme Realty",
+            campaign_description="Appointment reminders and account updates.",
+            message_flow="Customers opt in on this page before receiving recurring SMS reminders. Reply STOP to opt out and HELP for help.",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        privacy_response = self.client.get("/compliance/acme/sms/privacy")
+        terms_response = self.client.get("/compliance/acme/sms/terms")
+        opt_in_response = self.client.get("/compliance/acme/sms/opt-in")
+
+        self.assertEqual(privacy_response.status_code, 200)
+        self.assertEqual(terms_response.status_code, 200)
+        self.assertEqual(opt_in_response.status_code, 200)
+        self.assertIn(b"Acme Realty", privacy_response.data)
+        self.assertIn(b"SMS Terms and Conditions", terms_response.data)
+        self.assertIn(b"STOP", opt_in_response.data)
 
     @patch("app.routes.submit_a2p_onboarding")
     def test_platform_admin_can_submit_a2p_onboarding(self, mock_submit_a2p_onboarding) -> None:

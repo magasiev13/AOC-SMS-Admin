@@ -79,6 +79,12 @@
                                 </div>
                                 {% if a2p_status %}
                                 <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
+                                {% if a2p_status.failure_reason %}
+                                <div class="platform-note__copy mt-1 text-danger">
+                                    {% if a2p_status.failure_code %}<strong>Twilio {{ a2p_status.failure_code }}:</strong> {% endif %}
+                                    {{ a2p_status.failure_reason }}
+                                </div>
+                                {% endif %}
                                 <div class="small text-muted mt-1">
                                     {{ a2p_status.eta }}
                                     {% if a2p_status.last_checked_display %}

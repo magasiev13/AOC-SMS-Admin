@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import tempfile
 import unittest
@@ -39,6 +40,7 @@ class TestTwilioA2PService(unittest.TestCase):
         from app.services.provider_secret_service import encrypt_provider_secret
         from app.services.twilio_a2p_service import (
             _create_a2p_campaign,
+            _sync_remote_status,
             _upsert_a2p_resources,
             describe_a2p_onboarding,
             ensure_a2p_onboarding,
@@ -55,6 +57,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.ProviderProvisioningError = ProviderProvisioningError
         self.encrypt_provider_secret = encrypt_provider_secret
         self._create_a2p_campaign = _create_a2p_campaign
+        self._sync_remote_status = _sync_remote_status
         self._upsert_a2p_resources = _upsert_a2p_resources
         self.describe_a2p_onboarding = describe_a2p_onboarding
         self.ensure_a2p_onboarding = ensure_a2p_onboarding
@@ -95,11 +98,15 @@ class TestTwilioA2PService(unittest.TestCase):
             "registration_path": "standard",
             "number_strategy": "auto_buy",
             "business_name": "Acme",
+            "legal_business_name": "Acme",
+            "public_brand_name": "Acme",
             "business_type": "LLC",
             "business_industry": "TECHNOLOGY",
+            "has_business_tax_id": "on",
             "business_regions": ["USA_AND_CANADA"],
             "business_registration_identifier": "EIN",
             "business_registration_number": "12-3456789",
+            "has_public_website": "on",
             "website_url": "https://acme.test",
             "email": "ops@acme.test",
             "notification_email": "ops@acme.test",
@@ -280,6 +287,9 @@ class TestTwilioA2PService(unittest.TestCase):
             self._valid_submission_payload(
                 registration_path="sole_proprietor",
                 business_name="Jane Doe",
+                legal_business_name="Jane Doe",
+                public_brand_name="Jane Doe",
+                has_business_tax_id="",
                 business_registration_identifier=None,
                 business_registration_number=None,
                 message_samples="Sample 1\nSample 2",
@@ -313,6 +323,92 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.campaign_use_case, "ACCOUNT_NOTIFICATION")
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 18)
 
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_defaults_ein_backed_businesses_to_low_volume_standard(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        payload = self._valid_submission_payload()
+        payload.pop("registration_path")
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            payload,
+            actor_user_id=19,
+        )
+
+        self.assertEqual(onboarding.registration_path, "low_volume_standard")
+        self.assertEqual(onboarding.brand_registration_mode, "low_volume_standard")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 19)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_routes_true_sole_proprietor_without_tax_id(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        payload = self._valid_submission_payload(
+            business_name="Jane Doe",
+            legal_business_name="Jane Doe",
+            public_brand_name="Jane Doe",
+            business_type="Sole Proprietor",
+            business_registration_identifier=None,
+            business_registration_number=None,
+            has_business_tax_id="",
+            campaign_use_case="SOLE_PROPRIETOR",
+            message_samples="Sample 1\nSample 2",
+        )
+        payload.pop("registration_path")
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            payload,
+            actor_user_id=20,
+        )
+
+        self.assertEqual(onboarding.registration_path, "sole_proprietor")
+        self.assertEqual(onboarding.brand_registration_mode, "sole_proprietor")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 20)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_populates_hosted_compliance_defaults(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        payload = self._valid_submission_payload(
+            has_public_website="",
+            website_url="",
+            privacy_policy_url="",
+            terms_and_conditions_url="",
+            cta_proof_url="",
+        )
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            payload,
+            actor_user_id=20,
+        )
+
+        self.assertEqual(onboarding.website_url, "https://beta.example.com/compliance/acme/sms/opt-in")
+        self.assertEqual(onboarding.privacy_policy_url, "https://beta.example.com/compliance/acme/sms/privacy")
+        self.assertEqual(onboarding.terms_and_conditions_url, "https://beta.example.com/compliance/acme/sms/terms")
+        self.assertEqual(onboarding.cta_proof_url, "https://beta.example.com/compliance/acme/sms/opt-in")
+        self.assertEqual(onboarding.submission_source_mode, "hosted_fallback")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 20)
+
+    def test_submit_a2p_onboarding_requires_public_compliance_urls_when_hosted_defaults_unavailable(self) -> None:
+        self.app.config["SAAS_BASE_URL"] = ""
+
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "Privacy policy URL is required"):
+            self.submit_a2p_onboarding(
+                self.organization.id,
+                self._valid_submission_payload(
+                    privacy_policy_url="",
+                    terms_and_conditions_url="",
+                    cta_proof_url="",
+                ),
+                actor_user_id=21,
+            )
+
     def test_submit_a2p_onboarding_requires_two_message_samples(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "at least two real message samples"):
             self.submit_a2p_onboarding(
@@ -323,19 +419,49 @@ class TestTwilioA2PService(unittest.TestCase):
                 actor_user_id=19,
             )
 
-    def test_submit_a2p_onboarding_requires_nonprofit_online_presence(self) -> None:
-        with self.assertRaisesRegex(self.ProviderProvisioningError, "website URL or social profile URL"):
-            self.submit_a2p_onboarding(
-                self.organization.id,
-                self._valid_submission_payload(
-                    registration_path="nonprofit",
-                    business_name="Acme Nonprofit",
-                    business_type=None,
-                    website_url=None,
-                    social_profile_url=None,
-                ),
-                actor_user_id=22,
-            )
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_falls_back_to_hosted_pages_when_external_site_is_incomplete(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            self._valid_submission_payload(
+                has_public_website="on",
+                privacy_policy_url="https://acme.test/privacy",
+                terms_and_conditions_url="https://acme.test/terms",
+                cta_proof_url="https://acme.test/opt-in",
+                website_url=None,
+            ),
+            actor_user_id=22,
+        )
+
+        self.assertEqual(onboarding.submission_source_mode, "hosted_fallback")
+        self.assertEqual(onboarding.website_url, "https://beta.example.com/compliance/acme/sms/opt-in")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 22)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_uses_external_site_when_all_public_urls_validate(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.submit_a2p_onboarding(
+            self.organization.id,
+            self._valid_submission_payload(
+                has_public_website="on",
+                external_website_url="https://acme.test/contact",
+                external_privacy_policy_url="https://acme.test/privacy",
+                external_terms_and_conditions_url="https://acme.test/terms",
+                external_cta_proof_url="https://acme.test/opt-in",
+            ),
+            actor_user_id=23,
+        )
+
+        self.assertEqual(onboarding.submission_source_mode, "external_site")
+        self.assertEqual(onboarding.website_url, "https://acme.test/contact")
+        self.assertEqual(onboarding.privacy_policy_url, "https://acme.test/privacy")
+        self.assertEqual(onboarding.external_cta_proof_url, "https://acme.test/opt-in")
+        queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 23)
 
     @patch("app.services.twilio_a2p_service.get_queue")
     def test_submit_a2p_onboarding_marks_record_error_when_queueing_fails(self, mock_get_queue) -> None:
@@ -376,7 +502,7 @@ class TestTwilioA2PService(unittest.TestCase):
             "ELtrust123"
         )
         mock_client.messaging.v1.brand_registrations.create.return_value.sid = "BNbrand123"
-        mock_client.messaging.v1.services.return_value.us_app_to_person.create.return_value.sid = "QEcampaign123"
+        mock_client.messaging.v1.services.return_value.us_app_to_person._version.create.return_value = {"sid": "QEcampaign123"}
 
         onboarding = self.ensure_a2p_onboarding(self.organization)
         onboarding.registration_path = "standard"
@@ -420,7 +546,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.brand_registration_sid, "BNbrand123")
         self.assertIsNone(onboarding.campaign_sid)
         mock_client.addresses.create.assert_called_once()
-        mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_not_called()
+        mock_client.messaging.v1.services.return_value.us_app_to_person._version.create.assert_not_called()
 
     @patch("app.services.twilio_a2p_service._build_subaccount_client")
     def test_upsert_a2p_resources_rejects_missing_registration_number_before_twilio_calls(self, mock_build_subaccount_client) -> None:
@@ -473,13 +599,16 @@ class TestTwilioA2PService(unittest.TestCase):
         with self.assertRaisesRegex(self.ProviderProvisioningError, "at least two real message samples"):
             self._create_a2p_campaign(onboarding, self.messaging_profile)
 
-        mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_not_called()
+        mock_client.messaging.v1.services.return_value.us_app_to_person._version.create.assert_not_called()
 
     @patch("app.services.twilio_a2p_service._build_subaccount_client")
     def test_create_a2p_campaign_persists_campaign_sid(self, mock_build_subaccount_client) -> None:
         mock_client = MagicMock()
         mock_build_subaccount_client.return_value = mock_client
-        mock_client.messaging.v1.services.return_value.us_app_to_person.create.return_value.sid = "QEcampaign123"
+        mock_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = []
+        mock_client.messaging.v1.services.return_value.us_app_to_person._version.create.return_value = {
+            "sid": "QEcampaign123"
+        }
 
         onboarding = self.ensure_a2p_onboarding(self.organization)
         onboarding.registration_path = "standard"
@@ -494,13 +623,211 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
         onboarding.raw_submission_json = '{"has_embedded_links": true, "has_embedded_phone": false}'
         self._populate_onboarding_profile(onboarding)
 
         self._create_a2p_campaign(onboarding, self.messaging_profile)
 
-        mock_client.messaging.v1.services.return_value.us_app_to_person.create.assert_called_once()
+        mock_client.messaging.v1.services.return_value.us_app_to_person._version.create.assert_called_once()
         self.assertEqual(onboarding.campaign_sid, "QEcampaign123")
+
+    @patch("app.services.twilio_a2p_service.time.sleep")
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_create_a2p_campaign_recreates_failed_campaign_when_use_case_changes(
+        self,
+        mock_build_subaccount_client,
+        mock_sleep,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+        service_context = mock_client.messaging.v1.services.return_value
+        existing_campaign = MagicMock(
+            sid="QEfailed123",
+            campaign_status="FAILED",
+            us_app_to_person_usecase="MIXED",
+            brand_registration_sid="BNbrand123",
+            errors=[
+                {
+                    "registrationerrorcode": "30909",
+                    "registrationerrordescription": "CTA could not be verified.",
+                }
+            ],
+            failure_reason=None,
+        )
+        service_context.us_app_to_person.list.return_value = [existing_campaign]
+        delete_context = service_context.us_app_to_person.return_value
+        delete_context.delete = MagicMock(return_value=True)
+        service_context.us_app_to_person._version.create.return_value = {"sid": "QEnew123"}
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "Limited Liability Corporation"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.business_registration_number_encrypted = self.encrypt_provider_secret("12-3456789")
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = None
+        onboarding.campaign_use_case = "ACCOUNT_NOTIFICATION"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
+        self._populate_onboarding_profile(onboarding)
+
+        self._create_a2p_campaign(onboarding, self.messaging_profile, actor_user_id=7)
+
+        service_context.us_app_to_person.assert_called_with("QEfailed123")
+        delete_context.delete.assert_called_once()
+        mock_sleep.assert_called_once_with(5)
+        service_context.us_app_to_person._version.create.assert_called_once()
+        self.assertEqual(onboarding.campaign_sid, "QEnew123")
+        self.assertIn("last_deleted_campaign", onboarding.raw_status_json or "")
+
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_create_a2p_campaign_blocks_auto_recreate_for_editable_failed_campaign(
+        self,
+        mock_build_subaccount_client,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+        service_context = mock_client.messaging.v1.services.return_value
+        existing_campaign = MagicMock(
+            sid="QEfailed123",
+            campaign_status="FAILED",
+            us_app_to_person_usecase="ACCOUNT_NOTIFICATION",
+            brand_registration_sid="BNbrand123",
+            errors=[
+                {
+                    "registrationerrorcode": "30909",
+                    "registrationerrordescription": "CTA could not be verified.",
+                }
+            ],
+            failure_reason=None,
+        )
+        service_context.us_app_to_person.list.return_value = [existing_campaign]
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "Limited Liability Corporation"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.business_registration_number_encrypted = self.encrypt_provider_secret("12-3456789")
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = None
+        onboarding.campaign_use_case = "ACCOUNT_NOTIFICATION"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
+        self._populate_onboarding_profile(onboarding)
+
+        with self.assertRaisesRegex(self.ProviderProvisioningError, "campaign edit and retry flow"):
+            self._create_a2p_campaign(onboarding, self.messaging_profile)
+
+        service_context.us_app_to_person._version.create.assert_not_called()
+
+    @patch("app.services.twilio_a2p_service.time.sleep")
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_create_a2p_campaign_retries_after_twilio_association_conflict(
+        self,
+        mock_build_subaccount_client,
+        mock_sleep,
+    ) -> None:
+        from twilio.base.exceptions import TwilioRestException
+
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+        service_context = mock_client.messaging.v1.services.return_value
+        existing_campaign = MagicMock(
+            sid="QEfailed123",
+            campaign_status="FAILED",
+            us_app_to_person_usecase="MIXED",
+            brand_registration_sid="BNbrand123",
+            errors=[],
+            failure_reason=None,
+        )
+        service_context.us_app_to_person.list.side_effect = [[], [existing_campaign]]
+        delete_context = service_context.us_app_to_person.return_value
+        delete_context.delete = MagicMock(return_value=True)
+        service_context.us_app_to_person._version.create.side_effect = [
+            TwilioRestException(
+                409,
+                "/v1/Services/MGsub0001/Compliance/Usa2p",
+                msg="Unable to create record: There is already a Campaign associated with this Messaging Service.",
+            ),
+            {"sid": "QEnew123"},
+        ]
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.business_name = "Acme"
+        onboarding.business_type = "Limited Liability Corporation"
+        onboarding.business_registration_identifier = "EIN"
+        onboarding.business_registration_number_encrypted = self.encrypt_provider_secret("12-3456789")
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = None
+        onboarding.campaign_use_case = "ACCOUNT_NOTIFICATION"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
+        self._populate_onboarding_profile(onboarding)
+
+        self._create_a2p_campaign(onboarding, self.messaging_profile, actor_user_id=7)
+
+        self.assertEqual(service_context.us_app_to_person._version.create.call_count, 2)
+        service_context.us_app_to_person.assert_called_with("QEfailed123")
+        delete_context.delete.assert_called_once()
+        mock_sleep.assert_called_once_with(5)
+        self.assertEqual(onboarding.campaign_sid, "QEnew123")
+
+    @patch("app.services.twilio_a2p_service._build_subaccount_client")
+    def test_sync_remote_status_prefers_campaign_status_and_errors(self, mock_build_subaccount_client) -> None:
+        mock_client = MagicMock()
+        mock_build_subaccount_client.return_value = mock_client
+        mock_client.messaging.v1.brand_registrations.return_value.fetch.return_value = MagicMock(
+            status="APPROVED",
+            failure_reason=None,
+            tcr_id="TCR123",
+            errors=None,
+        )
+        mock_client.messaging.v1.services.return_value.us_app_to_person.return_value.fetch.return_value = MagicMock(
+            campaign_status="FAILED",
+            errors=[
+                {"registrationerrorcode": "30909", "registrationerrordescription": "CTA could not be verified."},
+                {"registrationerrorcode": "30891", "registrationerrordescription": "Privacy policy URL is missing."},
+            ],
+            failure_reason=None,
+        )
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = "QEcampaign123"
+        self.db.session.commit()
+
+        brand_status, campaign_status = self._sync_remote_status(onboarding, self.messaging_profile)
+
+        self.assertEqual(brand_status, "approved")
+        self.assertEqual(campaign_status, "failed")
+        self.assertEqual(onboarding.failure_code, "30909")
+        self.assertIn("CTA could not be verified", onboarding.raw_status_json or "")
 
     @patch("app.services.twilio_a2p_service._complete_number_setup")
     @patch("app.services.twilio_a2p_service._create_a2p_campaign")
@@ -564,7 +891,8 @@ class TestTwilioA2PService(unittest.TestCase):
             onboarding.trust_product_sid = "BUtrust123"
             onboarding.brand_registration_sid = "BNbrand123"
 
-        def seed_campaign(onboarding, _profile):
+        def seed_campaign(onboarding, _profile, *, actor_user_id=None):
+            self.assertEqual(actor_user_id, 7)
             onboarding.campaign_sid = "QEcampaign123"
 
         mock_upsert.side_effect = seed_resources
@@ -699,23 +1027,35 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertIn("Campaign description is too vague.", onboarding.last_error or "")
         self.assertEqual(self.messaging_profile.provider_status, "error")
 
+    @patch("app.routes.validate_inbound_signature_detailed")
     @patch("app.routes.ingest_a2p_event_stream_payload", return_value={"events_seen": 1, "events_applied": 1, "events_ignored": 0, "events_duplicate": 0, "events_out_of_order": 0})
-    def test_a2p_event_stream_webhook_requires_bearer_token(self, mock_ingest) -> None:
+    def test_a2p_event_stream_webhook_validates_signed_json_body(self, mock_ingest, mock_validate) -> None:
         self.app.config["TWILIO_A2P_EVENT_STREAMS_ENABLED"] = True
         self.app.config["TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN"] = "secret-token"
+        mock_validate.side_effect = [
+            MagicMock(is_valid=True, reason="valid"),
+            MagicMock(is_valid=False, reason="invalid_signature"),
+        ]
 
-        forbidden = self.client.post(
-            "/webhooks/twilio/a2p-events",
-            json={"id": "evt-1", "type": "com.twilio.messaging.a2p.brand-registration.brand-verified", "data": {}},
-        )
         allowed = self.client.post(
-            "/webhooks/twilio/a2p-events",
-            json={"id": "evt-2", "type": "com.twilio.messaging.a2p.brand-registration.brand-verified", "data": {}},
-            headers={"Authorization": "Bearer secret-token"},
+            f"/webhooks/twilio/a2p-events?organization_id={self.organization.id}",
+            data='{"id":"evt-1","type":"com.twilio.messaging.a2p.brand-registration.brand-verified","data":{}}',
+            headers={
+                "Content-Type": "application/json",
+                "X-Twilio-Signature": "signature-1",
+            },
+        )
+        forbidden = self.client.post(
+            f"/webhooks/twilio/a2p-events?organization_id={self.organization.id}",
+            data='{"id":"evt-2","type":"com.twilio.messaging.a2p.brand-registration.brand-verified","data":{}}',
+            headers={
+                "Content-Type": "application/json",
+                "X-Twilio-Signature": "signature-2",
+            },
         )
 
-        self.assertEqual(forbidden.status_code, 403)
         self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(forbidden.status_code, 403)
         mock_ingest.assert_called_once()
 
     def test_describe_a2p_onboarding_surfaces_reviewing_wait_state(self) -> None:
@@ -729,6 +1069,54 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(view["stage"], "reviewing")
         self.assertTrue(view["show_wait_state"])
         self.assertIn("carrier", view["summary"].lower())
+
+    def test_describe_a2p_onboarding_prefers_submitted_stage_for_queued_resubmission(self) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "queued"
+        onboarding.raw_status_json = json.dumps(
+            {
+                "campaign_failure_reason": "CTA could not be verified.",
+                "campaign_failure_code": "30909",
+            }
+        )
+
+        view = self.describe_a2p_onboarding(onboarding, self.messaging_profile)
+
+        self.assertEqual(view["stage"], "submitted")
+        self.assertIn("queued", view["summary"].lower())
+
+    def test_describe_a2p_onboarding_surfaces_customer_managed_failure(self) -> None:
+        self.messaging_profile.provider_mode = "customer_managed"
+        self.messaging_profile.provider_status = "error"
+        self.messaging_profile.twilio_account_sid = "ACcust0001"
+        self.messaging_profile.messaging_service_sid = "MGcust0001"
+        self.messaging_profile.phone_number_sid = "PNcust0001"
+        self.messaging_profile.from_number = "+15550001111"
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "needs_action"
+        onboarding.brand_status = "verified"
+        onboarding.campaign_status = "failed"
+        onboarding.failure_code = "30909"
+        onboarding.last_error = "CTA could not be verified."
+        onboarding.raw_status_json = json.dumps(
+            {
+                "external_managed": True,
+                "provider_mode": "customer_managed",
+                "campaign_status": "failed",
+                "campaign_failure_reason": "CTA could not be verified.",
+                "campaign_failure_code": "30909",
+                "brand_status": "verified",
+                "messaging_service_sid": "MGcust0001",
+                "phone_number_sid": "PNcust0001",
+            }
+        )
+
+        view = self.describe_a2p_onboarding(onboarding, self.messaging_profile)
+
+        self.assertEqual(view["stage"], "needs_action")
+        self.assertEqual(view["failure_code"], "30909")
+        self.assertIn("CTA", view["summary"])
 
 
 if __name__ == "__main__":

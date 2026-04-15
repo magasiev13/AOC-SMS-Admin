@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from flask import current_app
 from twilio.base.exceptions import TwilioRestException
@@ -32,6 +32,8 @@ from app.utils import normalize_phone, render_message_template
 TERMINAL_MESSAGE_STATUSES = {"delivered", "sent", "undelivered", "failed"}
 CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "active", "verified"}
 CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
+CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES = {"failed", "rejected", "deleted"}
+CUSTOMER_MANAGED_FAILED_BRAND_STATUSES = {"failed", "rejected", "registration_failed", "secondary_vetting_failed"}
 
 
 class TwilioTransientError(Exception):
@@ -65,6 +67,8 @@ class CustomerManagedValidationResult:
     messaging_service_sid: str | None
     campaign_sid: str | None
     campaign_status: str | None
+    campaign_failure_reason: str | None
+    campaign_failure_code: str | None
     brand_registration_sid: str | None
     brand_status: str | None
 
@@ -298,22 +302,58 @@ def _resolve_customer_managed_phone_number(
     )
 
 
-def _resolve_customer_managed_campaign(service_context) -> tuple[str | None, str | None, str | None]:
+def _twilio_error_details(errors: Any) -> tuple[str | None, str | None]:
+    if not isinstance(errors, list):
+        return None, None
+
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        message = (
+            item.get("description")
+            or item.get("registrationerrordescription")
+            or item.get("message")
+        )
+        code = (
+            item.get("error_code")
+            or item.get("registrationerrorcode")
+            or item.get("code")
+        )
+        normalized_message = str(message).strip() if message else None
+        normalized_code = str(code).strip() if code else None
+        if normalized_message or normalized_code:
+            return normalized_message, normalized_code
+    return None, None
+
+
+def _resolved_customer_managed_campaign_status(campaign: Any) -> str | None:
+    return _normalized_twilio_status(
+        getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None)
+    )
+
+
+def _resolve_customer_managed_campaign(service_context) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     campaigns = service_context.us_app_to_person.list(limit=20)
     if not campaigns:
-        return None, None, None
+        return None, None, None, None, None
 
     preferred = None
     for campaign in campaigns:
-        status = _normalized_twilio_status(getattr(campaign, "status", None))
+        status = _resolved_customer_managed_campaign_status(campaign)
         if status in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES:
             preferred = campaign
             break
     campaign = preferred or campaigns[0]
+    failure_reason, failure_code = _twilio_error_details(getattr(campaign, "errors", None))
+    if not failure_reason:
+        raw_failure_reason = getattr(campaign, "failure_reason", None)
+        failure_reason = str(raw_failure_reason).strip() if raw_failure_reason else None
     return (
         getattr(campaign, "sid", None),
-        _normalized_twilio_status(getattr(campaign, "status", None)),
+        _resolved_customer_managed_campaign_status(campaign),
         getattr(campaign, "brand_registration_sid", None),
+        failure_reason,
+        failure_code,
     )
 
 
@@ -626,30 +666,47 @@ def save_customer_managed_profile(
 
         campaign_sid = None
         campaign_status = None
+        campaign_failure_reason = None
+        campaign_failure_code = None
         brand_registration_sid = None
         brand_status = None
         if normalized_service_sid:
             service_context = customer_client.messaging.v1.services(normalized_service_sid)
             service_context.fetch()
-            campaign_sid, campaign_status, brand_registration_sid = _resolve_customer_managed_campaign(
+            campaign_sid, campaign_status, brand_registration_sid, campaign_failure_reason, campaign_failure_code = _resolve_customer_managed_campaign(
                 service_context
             )
             if not campaign_sid:
                 raise ProviderProvisioningError(
                     "The customer-managed Messaging Service does not have an attached A2P campaign."
                 )
-            if campaign_status not in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES:
-                raise ProviderProvisioningError(
-                    "The customer-managed Messaging Service campaign is not approved for live sending yet."
-                )
             brand_status = _fetch_customer_managed_brand_status(customer_client, brand_registration_sid)
-            if brand_status is not None and brand_status not in CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES:
-                raise ProviderProvisioningError(
-                    "The customer-managed Twilio brand is not approved for live sending yet."
-                )
             service_context.update(use_inbound_webhook_on_number=True)
 
         _configure_phone_number_webhook(customer_client, resolved_number.sid)
+
+        campaign_is_approved = (
+            campaign_status in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES
+            if campaign_status is not None
+            else False
+        )
+        brand_is_approved = (
+            brand_status in CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES
+            if brand_status is not None
+            else True
+        )
+        review_failed = (
+            campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES
+            or brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES
+        )
+        provider_status = "active" if campaign_is_approved and brand_is_approved else ("error" if review_failed else "pending")
+        sender_review_status = "approved" if provider_status == "active" else ("rejected" if review_failed else "pending")
+        failure_message = campaign_failure_reason
+        if review_failed and not failure_message:
+            if campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES:
+                failure_message = "The customer-managed Messaging Service campaign needs correction in Twilio."
+            elif brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES:
+                failure_message = "The customer-managed Twilio brand needs correction in Twilio."
 
         profile.provider_mode = "customer_managed"
         profile.twilio_account_sid = normalized_account_sid
@@ -661,12 +718,13 @@ def save_customer_managed_profile(
         profile.inbound_identity = resolved_number.phone_number or normalized_from_number
         profile.business_type = business_type
         profile.use_case = use_case
-        profile.sender_review_status = "approved"
-        profile.consent_acknowledged_at = utc_now()
+        profile.sender_review_status = sender_review_status
+        if provider_status == "active":
+            profile.consent_acknowledged_at = utc_now()
         profile.provisioned_at = profile.provisioned_at or utc_now()
         profile.provider_last_checked_at = utc_now()
-        profile.last_provision_error = None
-        profile.set_provider_status("active")
+        profile.last_provision_error = failure_message if review_failed else None
+        profile.set_provider_status(provider_status)
         _record_provider_audit(
             organization.id,
             "customer_managed_validate",
@@ -679,8 +737,11 @@ def save_customer_managed_profile(
                 "phone_number_sid": profile.phone_number_sid,
                 "campaign_sid": campaign_sid,
                 "campaign_status": campaign_status,
+                "campaign_failure_reason": campaign_failure_reason,
+                "campaign_failure_code": campaign_failure_code,
                 "brand_registration_sid": brand_registration_sid,
                 "brand_status": brand_status,
+                "provider_status": provider_status,
             },
         )
         db.session.commit()
@@ -691,6 +752,8 @@ def save_customer_managed_profile(
             messaging_service_sid=normalized_service_sid,
             campaign_sid=campaign_sid,
             campaign_status=campaign_status,
+            campaign_failure_reason=campaign_failure_reason,
+            campaign_failure_code=campaign_failure_code,
             brand_registration_sid=brand_registration_sid,
             brand_status=brand_status,
         )
@@ -960,7 +1023,7 @@ def resolve_messaging_profile(payload: dict) -> OrganizationMessagingProfile | N
 
 def validate_inbound_signature_detailed(
     url: str,
-    params: dict,
+    params: dict | str,
     signature: Optional[str],
     *,
     messaging_profile: OrganizationMessagingProfile | None = None,

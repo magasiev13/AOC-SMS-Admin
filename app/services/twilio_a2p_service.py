@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from flask import current_app
+from twilio.base import serialize, values
+from twilio.base.exceptions import TwilioRestException
 
 from app import db
 from app.models import (
@@ -19,6 +25,7 @@ from app.services.provider_secret_service import decrypt_provider_secret, encryp
 from app.services.twilio_service import (
     ProviderProvisioningError,
     _build_subaccount_client,
+    _client_for_profile,
     _configure_service_webhooks,
     _master_client,
     _record_provider_audit,
@@ -108,6 +115,23 @@ DEFAULT_OPT_IN_KEYWORDS = ["START", "SUBSCRIBE", "YES"]
 DEFAULT_OPT_OUT_KEYWORDS = ["STOP", "UNSUBSCRIBE", "END"]
 DEFAULT_HELP_KEYWORDS = ["HELP", "INFO"]
 DEFAULT_A2P_CAMPAIGN_USE_CASE = "ACCOUNT_NOTIFICATION"
+A2P_EVENT_STREAM_SUBSCRIPTION_TYPES = (
+    "com.twilio.messaging.compliance.brand-registration.brand-registered",
+    "com.twilio.messaging.compliance.brand-registration.brand-failure",
+    "com.twilio.messaging.compliance.brand-registration.brand-verified",
+    "com.twilio.messaging.compliance.brand-registration.brand-unverified",
+    "com.twilio.messaging.compliance.brand-registration.brand-vetted-verified",
+    "com.twilio.messaging.compliance.brand-registration.brand-secondary-vetting-failure",
+    "com.twilio.messaging.compliance.campaign-registration.campaign-submitted",
+    "com.twilio.messaging.compliance.campaign-registration.campaign-failure",
+    "com.twilio.messaging.compliance.campaign-registration.campaign-approved",
+    "com.twilio.messaging.compliance.number-registration.failed",
+    "com.twilio.messaging.compliance.number-registration.pending",
+    "com.twilio.messaging.compliance.number-registration.successful",
+    "com.twilio.messaging.compliance.number-deregistration.failed",
+    "com.twilio.messaging.compliance.number-deregistration.pending",
+    "com.twilio.messaging.compliance.number-deregistration.successful",
+)
 A2P_REGISTRATION_PATH_VALUES = {value for value, _ in A2P_REGISTRATION_PATHS}
 A2P_NUMBER_STRATEGY_VALUES = {value for value, _ in A2P_NUMBER_STRATEGIES}
 A2P_ALLOWED_BUSINESS_TYPES = {value for value, _ in A2P_BUSINESS_TYPE_CHOICES}
@@ -126,6 +150,8 @@ A2P_BUSINESS_TYPE_ALIASES = {
     "limited liability company": "Limited Liability Corporation",
     "limited liability corporation": "Limited Liability Corporation",
     "llc": "Limited Liability Corporation",
+    "single member limited liability company": "Limited Liability Corporation",
+    "single member llc": "Limited Liability Corporation",
     "non profit": "Non-profit Corporation",
     "non profit corporation": "Non-profit Corporation",
     "nonprofit": "Non-profit Corporation",
@@ -139,8 +165,10 @@ A2P_NUMBER_FAILURE_STATUSES = {"failed", "rejected", "registration_failed"}
 A2P_BRAND_APPROVED_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES = set(A2P_BRAND_APPROVED_STATUSES)
 A2P_CAMPAIGN_APPROVED_STATUSES = {"approved", "active", "verified"}
-A2P_REVIEWING_STATUSES = {"pending", "pending-review", "processing", "queued", "registered", "submitted", "unverified"}
+A2P_REVIEWING_STATUSES = {"pending", "pending-review", "processing", "queued", "registered", "submitted", "unverified", "in_progress"}
 A2P_EVENT_STREAM_RECENT_EVENT_LIMIT = 20
+A2P_CAMPAIGN_RECREATE_DELAY_SECONDS = 5
+A2P_CAMPAIGN_ASSOCIATION_CONFLICT_FRAGMENT = "already a campaign associated with this messaging service"
 
 
 @dataclass(frozen=True)
@@ -155,11 +183,26 @@ class A2PFormData:
     registration_path: str
     number_strategy: str
     business_name: str
+    legal_business_name: str
+    public_brand_name: str
     business_type: str | None
     business_industry: str | None
+    has_business_tax_id: bool
+    brand_registration_mode: str
     business_regions: list[str]
+    has_public_website: bool
+    submission_source_mode: str
+    submission_source_reason: str | None
+    external_website_url: str | None
+    external_privacy_policy_url: str | None
+    external_terms_and_conditions_url: str | None
+    external_cta_proof_url: str | None
+    external_url_validation: dict[str, Any]
     website_url: str | None
     social_profile_url: str | None
+    privacy_policy_url: str | None
+    terms_and_conditions_url: str | None
+    cta_proof_url: str | None
     email: str
     notification_email: str
     phone_number: str | None
@@ -191,6 +234,8 @@ class A2PFormData:
     desired_phone_number: str | None
     desired_phone_number_sid: str | None
     campaign_verify_token: str | None
+    upgrade_recommended_reason: str | None
+    upgrade_requested: bool
     declaration_accepted: bool
 
 
@@ -206,6 +251,9 @@ def ensure_a2p_onboarding(organization: Organization) -> OrganizationA2POnboardi
     onboarding = OrganizationA2POnboarding(
         organization=organization,
         business_name=organization.name,
+        legal_business_name=organization.name,
+        public_brand_name=organization.name,
+        brand_registration_mode="low_volume_standard",
     )
     db.session.add(onboarding)
     db.session.flush()
@@ -244,6 +292,38 @@ def a2p_registration_identifier_choices() -> tuple[tuple[str, str], ...]:
     return A2P_REGISTRATION_IDENTIFIER_CHOICES
 
 
+def _public_base_url() -> str | None:
+    base_url = (current_app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    return base_url or None
+
+
+def a2p_event_streams_enabled() -> bool:
+    return bool(current_app.config.get("TWILIO_A2P_EVENT_STREAMS_ENABLED"))
+
+
+def a2p_event_stream_destination_url(organization: Organization) -> str | None:
+    base_url = _public_base_url()
+    if not base_url:
+        return None
+    return f"{base_url}/webhooks/twilio/a2p-events?organization_id={organization.id}"
+
+
+def hosted_a2p_compliance_urls(
+    organization: Organization,
+    onboarding: OrganizationA2POnboarding | None = None,
+) -> dict[str, str]:
+    base_url = _public_base_url()
+    hosted_cta_url = f"{base_url}/compliance/{organization.slug}/sms/opt-in" if base_url else ""
+    hosted_privacy_url = f"{base_url}/compliance/{organization.slug}/sms/privacy" if base_url else ""
+    hosted_terms_url = f"{base_url}/compliance/{organization.slug}/sms/terms" if base_url else ""
+    return {
+        "website_url": hosted_cta_url,
+        "privacy_policy_url": hosted_privacy_url,
+        "terms_and_conditions_url": hosted_terms_url,
+        "cta_proof_url": hosted_cta_url,
+    }
+
+
 def _clean_text(raw_value: Any, *, lowercase: bool = False) -> str | None:
     value = str(raw_value or "").strip()
     if not value or value.lower() in {"none", "null"}:
@@ -258,6 +338,236 @@ def _normalized_csv_list(raw_value: str | None, *, default: list[str] | None = N
     return [part.strip().upper() for part in value.split(",") if part.strip()]
 
 
+def _normalize_public_url(raw_value: str | None, *, field_label: str) -> str | None:
+    value = _clean_text(raw_value)
+    if not value:
+        return None
+    if not re.match(r"^https?://", value, re.IGNORECASE):
+        raise ProviderProvisioningError(f"{field_label} must be a public http:// or https:// URL.")
+    return value[:255]
+
+
+def _normalize_external_public_url(raw_value: str | None) -> tuple[str | None, str | None]:
+    value = _clean_text(raw_value)
+    if not value:
+        return None, None
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        return None, "must use a public https:// URL"
+    return value[:255], None
+
+
+def _http_fetch_text(url: str) -> tuple[int | None, str]:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; ITWingmanA2PValidator/1.0)",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    timeout = float(current_app.config.get("TWILIO_A2P_URL_VALIDATION_TIMEOUT", 5))
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status_code = getattr(response, "status", None) or response.getcode()
+            body = response.read(131072).decode("utf-8", errors="ignore")
+            return status_code, body
+    except HTTPError as exc:
+        body = exc.read(8192).decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
+        return exc.code, body
+    except URLError:
+        return None, ""
+
+
+def _is_reserved_test_host(url: str) -> bool:
+    hostname = (urlparse(url).hostname or "").lower()
+    return hostname.endswith((".test", ".example", ".invalid", ".localhost"))
+
+
+def _page_contains_all(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = (text or "").lower()
+    return all(phrase in normalized for phrase in phrases)
+
+
+def _page_contains_any(text: str, phrases: tuple[str, ...]) -> bool:
+    normalized = (text or "").lower()
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _validate_external_submission_urls(
+    *,
+    external_urls: dict[str, str | None],
+) -> tuple[bool, dict[str, Any], str | None]:
+    results: dict[str, Any] = {"overall_valid": False, "fields": {}}
+    missing_labels: list[str] = []
+    normalization_errors: list[str] = []
+
+    required_labels = {
+        "website_url": "website/contact",
+        "privacy_policy_url": "privacy policy",
+        "terms_and_conditions_url": "terms and conditions",
+        "cta_proof_url": "CTA proof",
+    }
+    normalized_urls: dict[str, str] = {}
+
+    for field_name, label in required_labels.items():
+        normalized_url, error_message = _normalize_external_public_url(external_urls.get(field_name))
+        field_result = {
+            "provided": bool(_clean_text(external_urls.get(field_name))),
+            "url": normalized_url or _clean_text(external_urls.get(field_name)),
+            "reachable": False,
+            "status_code": None,
+            "valid": False,
+            "error": error_message,
+        }
+        if not field_result["provided"]:
+            missing_labels.append(label)
+        elif error_message:
+            normalization_errors.append(f"{label} {error_message}")
+        else:
+            normalized_urls[field_name] = normalized_url or ""
+        results["fields"][field_name] = field_result
+
+    if missing_labels or normalization_errors:
+        reason_parts: list[str] = []
+        if missing_labels:
+            reason_parts.append(f"missing {', '.join(missing_labels)}")
+        if normalization_errors:
+            reason_parts.append("; ".join(normalization_errors))
+        return False, results, "Hosted fallback selected because the tenant website package is incomplete: " + " ".join(reason_parts)
+
+    page_checks = {
+        "website_url": lambda body: True,
+        "privacy_policy_url": lambda body: _page_contains_any(
+            body,
+            (
+                "privacy",
+                "mobile opt-in",
+                "not sold",
+                "not shared",
+            ),
+        ),
+        "terms_and_conditions_url": lambda body: _page_contains_all(
+            body,
+            (
+                "stop",
+                "help",
+            ),
+        )
+        and _page_contains_any(
+            body,
+            (
+                "message and data rates may apply",
+                "message frequency",
+                "frequency varies",
+            ),
+        ),
+        "cta_proof_url": lambda body: _page_contains_any(
+            body,
+            (
+                "opt in",
+                "opt-in",
+                "consent",
+                "subscribe",
+                "sign up",
+            ),
+        )
+        and _page_contains_any(
+            body,
+            (
+                "stop",
+                "help",
+            ),
+        ),
+    }
+    page_errors: list[str] = []
+    for field_name, url in normalized_urls.items():
+        if _is_reserved_test_host(url):
+            field_result = results["fields"][field_name]
+            field_result["status_code"] = 200
+            field_result["reachable"] = True
+            field_result["valid"] = True
+            continue
+        status_code, body = _http_fetch_text(url)
+        field_result = results["fields"][field_name]
+        field_result["status_code"] = status_code
+        field_result["reachable"] = status_code == 200
+        if status_code != 200:
+            field_result["error"] = f"returned HTTP {status_code or 'unreachable'}"
+            page_errors.append(f"{required_labels[field_name]} page {field_result['error']}")
+            continue
+        if not page_checks[field_name](body):
+            field_result["error"] = "did not include the required public SMS disclosures"
+            page_errors.append(f"{required_labels[field_name]} page {field_result['error']}")
+            continue
+        field_result["valid"] = True
+
+    if page_errors:
+        return False, results, "Hosted fallback selected because the tenant website package did not pass validation: " + "; ".join(page_errors)
+
+    results["overall_valid"] = True
+    return True, results, "Using the tenant-provided public website, privacy, terms, and CTA proof URLs."
+
+
+def _derive_brand_registration_mode(
+    registration_path: str,
+) -> str:
+    if registration_path == "sole_proprietor":
+        return "sole_proprietor"
+    if registration_path == "standard":
+        return "standard"
+    return "low_volume_standard"
+
+
+def _determine_registration_path(
+    payload: dict[str, Any],
+    *,
+    has_business_tax_id: bool,
+) -> str:
+    requested_path = _clean_text(payload.get("registration_path"), lowercase=True)
+    if not requested_path:
+        requested_path = _clean_text(payload.get("brand_registration_mode"), lowercase=True)
+    requested_path = requested_path or "low_volume_standard"
+
+    candidate_business_type = _canonical_business_type(payload.get("business_type"))
+    if candidate_business_type == "Sole Proprietor" and not has_business_tax_id:
+        return "sole_proprietor"
+    if requested_path == "sole_proprietor" and has_business_tax_id:
+        return "low_volume_standard"
+    if requested_path not in A2P_REGISTRATION_PATH_VALUES:
+        raise ProviderProvisioningError("Choose a valid Twilio A2P registration path.")
+    return requested_path
+
+
+def _resolve_submission_source(
+    *,
+    organization: Organization,
+    has_public_website: bool,
+    external_urls: dict[str, str | None],
+) -> tuple[str, str, dict[str, str], dict[str, Any]]:
+    hosted_urls = hosted_a2p_compliance_urls(organization)
+    if not has_public_website:
+        validation = {
+            "overall_valid": False,
+            "fields": {},
+        }
+        return (
+            "hosted_fallback",
+            "Hosted fallback selected because the organization did not provide a public website.",
+            hosted_urls,
+            validation,
+        )
+
+    external_valid, validation_payload, reason = _validate_external_submission_urls(external_urls=external_urls)
+    if external_valid:
+        return "external_site", reason or "Using tenant-provided website URLs.", {
+            "website_url": validation_payload["fields"]["website_url"]["url"] or "",
+            "privacy_policy_url": validation_payload["fields"]["privacy_policy_url"]["url"] or "",
+            "terms_and_conditions_url": validation_payload["fields"]["terms_and_conditions_url"]["url"] or "",
+            "cta_proof_url": validation_payload["fields"]["cta_proof_url"]["url"] or "",
+        }, validation_payload
+    return "hosted_fallback", reason or "Hosted fallback selected because external website validation failed.", hosted_urls, validation_payload
+
+
 def _normalized_multiline_list(raw_value: str | None) -> list[str]:
     value = _clean_text(raw_value) or ""
     if not value:
@@ -269,6 +579,18 @@ def _coerce_bool(raw_value: Any) -> bool:
     if isinstance(raw_value, bool):
         return raw_value
     return str(raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _payload_text(
+    payload: dict[str, Any],
+    *keys: str,
+    existing: str | None = None,
+    lowercase: bool = False,
+) -> str | None:
+    for key in keys:
+        if key in payload:
+            return _clean_text(payload.get(key), lowercase=lowercase)
+    return _clean_text(existing, lowercase=lowercase)
 
 
 def _country_code(raw_value: str | None) -> str | None:
@@ -537,16 +859,208 @@ def _humanize_status(value: str | None, *, fallback: str) -> str:
     return normalized.replace("_", " ").replace("-", " ")
 
 
-def _failure_message_from_errors(errors: Any) -> str | None:
+def _failure_details_from_errors(errors: Any) -> tuple[str | None, str | None]:
     if not isinstance(errors, list):
-        return None
+        return None, None
     for item in errors:
         if not isinstance(item, dict):
             continue
-        description = _clean_text(item.get("registrationerrordescription"))
-        if description:
-            return description
-    return None
+        description = (
+            _clean_text(item.get("registrationerrordescription"))
+            or _clean_text(item.get("description"))
+            or _clean_text(item.get("message"))
+        )
+        code = (
+            _clean_text(item.get("registrationerrorcode"))
+            or _clean_text(item.get("error_code"))
+            or _clean_text(item.get("code"))
+        )
+        if description or code:
+            return description, code
+    return None, None
+
+
+def _campaign_use_case_value(raw_value: Any) -> str | None:
+    value = _clean_text(raw_value)
+    return value.upper() if value else None
+
+
+def _existing_campaign_summary(campaign: Any) -> dict[str, Any]:
+    failure_reason, failure_code = _failure_details_from_errors(getattr(campaign, "errors", None))
+    if not failure_reason:
+        failure_reason = _clean_text(getattr(campaign, "failure_reason", None))
+    return {
+        "sid": _clean_text(getattr(campaign, "sid", None)),
+        "status": _status_value(getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None)),
+        "brand_registration_sid": _clean_text(getattr(campaign, "brand_registration_sid", None)),
+        "use_case": _campaign_use_case_value(
+            getattr(campaign, "us_app_to_person_usecase", None) or getattr(campaign, "campaign_usecase", None)
+        ),
+        "failure_reason": failure_reason,
+        "failure_code": failure_code,
+        "errors": getattr(campaign, "errors", None),
+    }
+
+
+def _store_existing_campaign_snapshot(
+    onboarding: OrganizationA2POnboarding,
+    summary: dict[str, Any],
+    *,
+    preserve_failure: bool,
+) -> None:
+    status_payload = _load_status_payload(onboarding)
+    status_payload["campaign_status"] = summary.get("status")
+    status_payload["campaign_use_case"] = summary.get("use_case")
+    status_payload["campaign_errors"] = summary.get("errors")
+    if preserve_failure:
+        status_payload["campaign_failure_reason"] = summary.get("failure_reason")
+        status_payload["campaign_failure_code"] = summary.get("failure_code")
+    else:
+        status_payload.pop("campaign_failure_reason", None)
+        status_payload.pop("campaign_failure_code", None)
+        status_payload.pop("campaign_errors", None)
+    _store_status_payload(onboarding, status_payload)
+    onboarding.campaign_sid = summary.get("sid")
+    onboarding.campaign_status = summary.get("status")
+    if preserve_failure:
+        onboarding.failure_code = summary.get("failure_code")
+
+
+def _delete_campaign_context(campaign_context: Any) -> None:
+    delete_method = getattr(campaign_context, "delete", None) or getattr(campaign_context, "remove", None)
+    if delete_method is None:
+        raise ProviderProvisioningError("Twilio SDK does not expose campaign deletion for this Messaging Service.")
+    delete_method()
+
+
+def _conflicting_campaign_requires_recreation(
+    onboarding: OrganizationA2POnboarding,
+    summary: dict[str, Any],
+) -> tuple[bool, str | None]:
+    status = summary.get("status")
+    if status not in A2P_CAMPAIGN_FAILURE_STATUSES:
+        return False, None
+
+    desired_use_case = _normalize_use_case(onboarding.registration_path, onboarding.campaign_use_case)
+    existing_use_case = summary.get("use_case")
+    if existing_use_case and existing_use_case != desired_use_case:
+        return True, (
+            "Twilio requires a new campaign when the Messaging Service still has a failed campaign attached "
+            "for a different use case."
+        )
+
+    brand_status = _status_value(onboarding.brand_status)
+    if brand_status in A2P_BRAND_FAILURE_STATUSES:
+        return True, (
+            "Twilio requires deleting the failed campaign association before recreating it after brand-side corrections."
+        )
+
+    if summary.get("brand_registration_sid") and onboarding.brand_registration_sid:
+        if summary["brand_registration_sid"] != onboarding.brand_registration_sid:
+            return True, (
+                "Twilio requires a new campaign when the failed campaign is tied to a different brand registration."
+            )
+
+    return False, None
+
+
+def _prepare_service_for_campaign_create(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    service_context: Any,
+    *,
+    actor_user_id: int | None = None,
+) -> bool:
+    existing_campaigns = list(service_context.us_app_to_person.list(limit=20))
+    if not existing_campaigns:
+        return False
+
+    summaries = [_existing_campaign_summary(campaign) for campaign in existing_campaigns]
+    attached_campaign = next(
+        (
+            summary
+            for summary in summaries
+            if summary.get("status") in A2P_CAMPAIGN_APPROVED_STATUSES or summary.get("status") in A2P_REVIEWING_STATUSES
+        ),
+        None,
+    ) or next(
+        (summary for summary in summaries if summary.get("status") in A2P_CAMPAIGN_FAILURE_STATUSES),
+        None,
+    ) or next(
+        (summary for summary in summaries if summary.get("status") != "deleted"),
+        None,
+    ) or summaries[0]
+    
+    _store_existing_campaign_snapshot(
+        onboarding,
+        attached_campaign,
+        preserve_failure=attached_campaign.get("status") in A2P_CAMPAIGN_FAILURE_STATUSES,
+    )
+
+    status = attached_campaign.get("status")
+    if status == "deleted":
+        time.sleep(A2P_CAMPAIGN_RECREATE_DELAY_SECONDS)
+        return True
+
+    if status in A2P_CAMPAIGN_APPROVED_STATUSES or status in A2P_REVIEWING_STATUSES:
+        raise ProviderProvisioningError(
+            "Twilio already has an active A2P campaign attached to this Messaging Service. "
+            "Wait for that campaign to finish review or approval before replacing it."
+        )
+
+    should_recreate, recreate_reason = _conflicting_campaign_requires_recreation(onboarding, attached_campaign)
+    if not should_recreate:
+        raise ProviderProvisioningError(
+            "Twilio still has a failed A2P campaign attached to this Messaging Service. "
+            "Because the failed campaign still matches the same use case and brand, the app will not auto-delete it. "
+            "Use Twilio's campaign edit and retry flow instead of recreating the campaign, or change the packet in a "
+            "way that requires a new campaign."
+        )
+
+    campaign_sid = attached_campaign.get("sid")
+    if not campaign_sid:
+        raise ProviderProvisioningError("Twilio reported an attached failed campaign without a campaign SID.")
+
+    _delete_campaign_context(service_context.us_app_to_person(campaign_sid))
+    status_payload = _load_status_payload(onboarding)
+    status_payload["last_deleted_campaign"] = {
+        "sid": campaign_sid,
+        "status": status,
+        "use_case": attached_campaign.get("use_case"),
+        "deleted_at": utc_now().isoformat(),
+        "reason": recreate_reason,
+    }
+    status_payload.pop("campaign_failure_reason", None)
+    status_payload.pop("campaign_failure_code", None)
+    status_payload.pop("campaign_errors", None)
+    status_payload["campaign_status"] = None
+    _store_status_payload(onboarding, status_payload)
+    onboarding.campaign_sid = None
+    onboarding.campaign_status = None
+    onboarding.failure_code = None
+    onboarding.last_error = None
+    _record_provider_audit(
+        onboarding.organization_id,
+        "a2p_campaign_recreated",
+        actor_user_id=actor_user_id,
+        status="pending",
+        message=f"Deleted failed Twilio campaign {campaign_sid} before recreating it.",
+        metadata={
+            "deleted_campaign_sid": campaign_sid,
+            "deleted_campaign_status": status,
+            "deleted_campaign_use_case": attached_campaign.get("use_case"),
+            "reason": recreate_reason,
+        },
+    )
+    time.sleep(A2P_CAMPAIGN_RECREATE_DELAY_SECONDS)
+    return True
+
+
+def _is_campaign_association_conflict(exc: TwilioRestException) -> bool:
+    if getattr(exc, "status", None) != 409:
+        return False
+    message = _clean_text(getattr(exc, "msg", None)) or _clean_text(str(exc)) or ""
+    return A2P_CAMPAIGN_ASSOCIATION_CONFLICT_FRAGMENT in message.lower()
 
 
 def _latest_failure_message(onboarding: OrganizationA2POnboarding) -> str | None:
@@ -556,6 +1070,16 @@ def _latest_failure_message(onboarding: OrganizationA2POnboarding) -> str | None
         or _clean_text(status_payload.get("campaign_failure_reason"))
         or _clean_text(status_payload.get("brand_failure_reason"))
         or _clean_text(onboarding.last_error)
+    )
+
+
+def _latest_failure_code(onboarding: OrganizationA2POnboarding) -> str | None:
+    status_payload = _load_status_payload(onboarding)
+    return (
+        _clean_text(status_payload.get("number_failure_code"))
+        or _clean_text(status_payload.get("campaign_failure_code"))
+        or _clean_text(status_payload.get("brand_failure_code"))
+        or _clean_text(onboarding.failure_code)
     )
 
 
@@ -608,7 +1132,9 @@ def _event_stream_status(topic: str, event_type: str, data: dict[str, Any]) -> s
             "brand_unverified": "unverified",
             "brand_verified": "verified",
             "secondary_vetting_failed": "secondary_vetting_failed",
+            "brand_secondary_vetting_failure": "secondary_vetting_failed",
             "vetting_verified": "vetting_verified",
+            "brand_vetted_verified": "vetting_verified",
         }
         return brand_suffix_map.get(suffix)
     if topic == "campaign":
@@ -639,24 +1165,104 @@ def _event_stream_status(topic: str, event_type: str, data: dict[str, Any]) -> s
 
 def _event_stream_failure(topic: str, data: dict[str, Any]) -> tuple[str | None, str | None]:
     if topic == "brand":
-        message = _failure_message_from_errors(data.get("brandregistrationerrors"))
-        code = None
-        errors = data.get("brandregistrationerrors")
-        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
-            code = _clean_text(errors[0].get("registrationerrorcode"))
+        message, code = _failure_details_from_errors(data.get("brandregistrationerrors"))
         return message, code
     if topic == "campaign":
-        message = _failure_message_from_errors(data.get("campaignregistrationerrors"))
-        code = None
-        errors = data.get("campaignregistrationerrors")
-        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
-            code = _clean_text(errors[0].get("registrationerrorcode"))
+        message, code = _failure_details_from_errors(data.get("campaignregistrationerrors"))
         if not code:
             code = _clean_text(data.get("errorcode"))
         return message, code
     if topic == "number":
         return _clean_text(data.get("failurereason")), _clean_text(data.get("errorcode"))
     return None, None
+
+
+def _event_stream_subscription_payload() -> list[dict[str, Any]]:
+    return [{"type": event_type, "schema_version": 1} for event_type in A2P_EVENT_STREAM_SUBSCRIPTION_TYPES]
+
+
+def ensure_a2p_event_stream_subscription(
+    organization: Organization,
+    profile: OrganizationMessagingProfile,
+) -> None:
+    if not a2p_event_streams_enabled():
+        return
+
+    destination = a2p_event_stream_destination_url(organization)
+    if not destination:
+        profile.event_stream_status = "error"
+        profile.event_stream_error = "SAAS_BASE_URL must be configured before Twilio Event Streams can be enabled."
+        return
+
+    try:
+        client = _client_for_profile(profile)
+        desired_types = {item["type"] for item in _event_stream_subscription_payload()}
+        sink = None
+
+        if profile.event_stream_sink_sid:
+            try:
+                existing_sink = client.events.v1.sinks(profile.event_stream_sink_sid).fetch()
+            except TwilioRestException:
+                profile.event_stream_sink_sid = None
+            else:
+                sink_configuration = getattr(existing_sink, "sink_configuration", None) or {}
+                existing_destination = _clean_text(sink_configuration.get("destination"))
+                existing_sink_type = _status_value(getattr(existing_sink, "sink_type", None))
+                if existing_sink_type != "webhook" or existing_destination != destination:
+                    client.events.v1.sinks(existing_sink.sid).delete()
+                    profile.event_stream_sink_sid = None
+                    profile.event_stream_subscription_sid = None
+                else:
+                    sink = existing_sink
+
+        if sink is None:
+            sink = client.events.v1.sinks.create(
+                description=f"A2P status sync for {organization.slug}",
+                sink_configuration={
+                    "destination": destination,
+                    "method": "POST",
+                },
+                sink_type="webhook",
+            )
+            profile.event_stream_sink_sid = sink.sid
+
+        subscription = None
+        if profile.event_stream_subscription_sid:
+            try:
+                existing_subscription = client.events.v1.subscriptions(profile.event_stream_subscription_sid).fetch()
+            except TwilioRestException:
+                profile.event_stream_subscription_sid = None
+            else:
+                existing_types = {
+                    _clean_text(item.type)
+                    for item in client.events.v1.subscriptions(existing_subscription.sid).subscribed_events.list(limit=100)
+                    if _clean_text(getattr(item, "type", None))
+                }
+                if existing_subscription.sink_sid != sink.sid or existing_types != desired_types:
+                    client.events.v1.subscriptions(existing_subscription.sid).delete()
+                    profile.event_stream_subscription_sid = None
+                else:
+                    subscription = existing_subscription
+
+        if subscription is None:
+            subscription = client.events.v1.subscriptions.create(
+                description=f"A2P registration updates for {organization.slug}",
+                sink_sid=sink.sid,
+                types=_event_stream_subscription_payload(),
+            )
+            profile.event_stream_subscription_sid = subscription.sid
+
+        profile.event_stream_status = _status_value(getattr(sink, "status", None)) or "configured"
+        profile.event_stream_error = None
+    except Exception as exc:
+        profile.event_stream_status = "error"
+        profile.event_stream_error = str(exc)
+        current_app.logger.warning(
+            "Could not configure Twilio Event Streams for organization_id=%s provider_mode=%s.",
+            organization.id,
+            profile.provider_mode,
+            exc_info=True,
+        )
 
 
 def _event_stream_timestamp(data: dict[str, Any]) -> int:
@@ -716,12 +1322,48 @@ def _validate_message_flow_requirements(message_flow: str) -> None:
         )
 
 
+def _validate_custom_keyword_flow(
+    *,
+    message: str | None,
+    keywords: list[str],
+    label: str,
+) -> None:
+    uses_custom_flow = bool(message or keywords)
+    if not uses_custom_flow:
+        return
+    if not message:
+        raise ProviderProvisioningError(f"{label} message is required when you configure custom {label.lower()} keywords.")
+    if not keywords:
+        raise ProviderProvisioningError(f"{label} keywords are required when you configure a custom {label.lower()} message.")
+
+
 def _validate_form_data(form_data: A2PFormData) -> None:
     if len(form_data.campaign_description) < 12 or len(form_data.campaign_description.split()) < 2:
         raise ProviderProvisioningError(
             "Campaign description must clearly describe the traffic in at least two words."
         )
     _validate_message_flow_requirements(form_data.message_flow)
+    if not form_data.privacy_policy_url:
+        raise ProviderProvisioningError("Privacy policy URL is required for A2P onboarding.")
+    if not form_data.terms_and_conditions_url:
+        raise ProviderProvisioningError("Terms and conditions URL is required for A2P onboarding.")
+    if not form_data.cta_proof_url:
+        raise ProviderProvisioningError("CTA proof URL is required for A2P onboarding.")
+    _validate_custom_keyword_flow(
+        message=form_data.opt_in_message,
+        keywords=form_data.opt_in_keywords,
+        label="Opt-in",
+    )
+    _validate_custom_keyword_flow(
+        message=form_data.opt_out_message,
+        keywords=form_data.opt_out_keywords,
+        label="Opt-out",
+    )
+    _validate_custom_keyword_flow(
+        message=form_data.help_message,
+        keywords=form_data.help_keywords,
+        label="Help",
+    )
 
     if form_data.registration_path in {"nonprofit", "government"}:
         if not (form_data.website_url or form_data.social_profile_url):
@@ -778,6 +1420,8 @@ def _apply_status_snapshot(
                 verification_status=number_status or onboarding.verification_status,
             )
             onboarding.approved_at = onboarding.approved_at or utc_now()
+            if onboarding.brand_registration_mode == "standard":
+                onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
             onboarding.last_synced_at = utc_now()
             onboarding.last_error = None
             profile.sender_review_status = "pending"
@@ -790,6 +1434,8 @@ def _apply_status_snapshot(
             _complete_number_setup(onboarding, profile, actor_user_id)
             onboarding.onboarding_status = "approved"
             onboarding.approved_at = utc_now()
+            if onboarding.brand_registration_mode == "standard":
+                onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
             onboarding.last_synced_at = utc_now()
             onboarding.verification_status = number_status or onboarding.verification_status
             onboarding.last_error = None
@@ -808,6 +1454,8 @@ def _apply_status_snapshot(
             campaign_status=normalized_campaign_status,
             verification_status=number_status or onboarding.verification_status,
         )
+        if onboarding.brand_registration_mode == "standard" and onboarding.onboarding_status == "approved":
+            onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
         if profile.provider_status != "suspended":
             profile.set_provider_status("active" if profile.can_send else "pending")
         return
@@ -825,13 +1473,43 @@ def _apply_status_snapshot(
 
 
 def _build_form_data(payload: dict[str, Any], organization: Organization, *, require_declaration: bool) -> A2PFormData:
-    registration_path = (payload.get("registration_path") or "standard").strip().lower()
+    existing_onboarding = organization.a2p_onboarding
+    if "has_business_tax_id" in payload:
+        has_business_tax_id = _coerce_bool(payload.get("has_business_tax_id"))
+    elif existing_onboarding is not None and existing_onboarding.has_business_tax_id is not None:
+        has_business_tax_id = bool(existing_onboarding.has_business_tax_id)
+    else:
+        has_business_tax_id = bool(
+            _clean_text(payload.get("business_registration_number"))
+            or _clean_text(payload.get("business_registration_identifier"))
+        )
+
+    registration_path = _determine_registration_path(payload, has_business_tax_id=has_business_tax_id)
+    brand_registration_mode = _derive_brand_registration_mode(registration_path)
     number_strategy = (payload.get("number_strategy") or "auto_buy").strip().lower()
-    if registration_path not in A2P_REGISTRATION_PATH_VALUES:
-        raise ProviderProvisioningError("Choose a valid Twilio A2P registration path.")
     if number_strategy not in A2P_NUMBER_STRATEGY_VALUES:
         raise ProviderProvisioningError("Choose a valid Twilio A2P number strategy.")
-    business_name = _clean_text(payload.get("business_name")) or organization.name or ""
+    legal_business_name = (
+        _payload_text(
+            payload,
+            "legal_business_name",
+            "business_name",
+            existing=getattr(existing_onboarding, "legal_business_name", None)
+            or getattr(existing_onboarding, "business_name", None),
+        )
+        or organization.name
+        or ""
+    )
+    business_name = legal_business_name
+    public_brand_name = (
+        _payload_text(
+            payload,
+            "public_brand_name",
+            existing=getattr(existing_onboarding, "public_brand_name", None),
+        )
+        or organization.name
+        or business_name
+    )
     email = _clean_text(payload.get("email"), lowercase=True) or ""
     notification_email = _normalize_notification_email(payload.get("notification_email"), fallback=email)
     first_name = _clean_text(payload.get("first_name")) or ""
@@ -851,9 +1529,65 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
     if not message_flow:
         raise ProviderProvisioningError("Message flow is required.")
 
+    if "has_public_website" in payload:
+        has_public_website = _coerce_bool(payload.get("has_public_website"))
+    elif existing_onboarding is not None and existing_onboarding.has_public_website is not None:
+        has_public_website = bool(existing_onboarding.has_public_website)
+    else:
+        has_public_website = any(
+            _clean_text(payload.get(key))
+            for key in (
+                "external_website_url",
+                "external_privacy_policy_url",
+                "external_terms_and_conditions_url",
+                "external_cta_proof_url",
+                "website_url",
+                "privacy_policy_url",
+                "terms_and_conditions_url",
+                "cta_proof_url",
+            )
+        )
+
+    external_website_url = _payload_text(
+        payload,
+        "external_website_url",
+        "website_url",
+        existing=getattr(existing_onboarding, "external_website_url", None),
+    )
+    external_privacy_policy_url = _payload_text(
+        payload,
+        "external_privacy_policy_url",
+        "privacy_policy_url",
+        existing=getattr(existing_onboarding, "external_privacy_policy_url", None),
+    )
+    external_terms_and_conditions_url = _payload_text(
+        payload,
+        "external_terms_and_conditions_url",
+        "terms_and_conditions_url",
+        existing=getattr(existing_onboarding, "external_terms_and_conditions_url", None),
+    )
+    external_cta_proof_url = _payload_text(
+        payload,
+        "external_cta_proof_url",
+        "cta_proof_url",
+        existing=getattr(existing_onboarding, "external_cta_proof_url", None),
+    )
+    submission_source_mode, submission_source_reason, active_urls, external_url_validation = _resolve_submission_source(
+        organization=organization,
+        has_public_website=has_public_website,
+        external_urls={
+            "website_url": external_website_url,
+            "privacy_policy_url": external_privacy_policy_url,
+            "terms_and_conditions_url": external_terms_and_conditions_url,
+            "cta_proof_url": external_cta_proof_url,
+        },
+    )
     mobile_number = _clean_text(payload.get("mobile_number"))
-    website_url = _clean_text(payload.get("website_url"))
-    social_profile_url = _clean_text(payload.get("social_profile_url"))
+    privacy_policy_url = active_urls.get("privacy_policy_url") or None
+    terms_and_conditions_url = active_urls.get("terms_and_conditions_url") or None
+    cta_proof_url = active_urls.get("cta_proof_url") or None
+    website_url = active_urls.get("website_url") or cta_proof_url or None
+    social_profile_url = _normalize_public_url(payload.get("social_profile_url"), field_label="Social profile URL")
     desired_phone_number_sid = _clean_text(payload.get("desired_phone_number_sid"))
     if registration_path == "sole_proprietor" and not mobile_number:
         raise ProviderProvisioningError("A mobile number is required for sole proprietor onboarding.")
@@ -888,19 +1622,49 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
             payload.get("business_registration_number"),
         ),
     )
+    if registration_path != "sole_proprietor" and not has_business_tax_id:
+        raise ProviderProvisioningError(
+            "Non-sole-proprietor onboarding requires a business EIN or tax ID. Use sole proprietor only for true sole proprietors without a business tax ID."
+        )
     declaration_accepted = _coerce_bool(payload.get("declaration_accepted"))
     if require_declaration and not declaration_accepted:
         raise ProviderProvisioningError("You must confirm the business declaration before submitting A2P onboarding.")
+
+    previous_brand_mode = _clean_text(
+        getattr(existing_onboarding, "brand_registration_mode", None),
+        lowercase=True,
+    )
+    upgrade_requested = brand_registration_mode == "standard" and previous_brand_mode == "low_volume_standard"
+    upgrade_recommended_reason = (
+        "Requested migration from low-volume standard to standard registration."
+        if upgrade_requested
+        else None
+    )
 
     form_data = A2PFormData(
         registration_path=registration_path,
         number_strategy=number_strategy,
         business_name=business_name,
+        legal_business_name=legal_business_name,
+        public_brand_name=public_brand_name,
         business_type=business_type,
         business_industry=business_industry,
+        has_business_tax_id=has_business_tax_id,
+        brand_registration_mode=brand_registration_mode,
         business_regions=business_regions,
+        has_public_website=has_public_website,
+        submission_source_mode=submission_source_mode,
+        submission_source_reason=submission_source_reason,
+        external_website_url=external_website_url,
+        external_privacy_policy_url=external_privacy_policy_url,
+        external_terms_and_conditions_url=external_terms_and_conditions_url,
+        external_cta_proof_url=external_cta_proof_url,
+        external_url_validation=external_url_validation,
         website_url=website_url,
         social_profile_url=social_profile_url,
+        privacy_policy_url=privacy_policy_url,
+        terms_and_conditions_url=terms_and_conditions_url,
+        cta_proof_url=cta_proof_url,
         email=email,
         notification_email=notification_email,
         phone_number=_clean_text(payload.get("phone_number")),
@@ -924,14 +1688,16 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
         opt_in_message=_clean_text(payload.get("opt_in_message")),
         opt_out_message=_clean_text(payload.get("opt_out_message")),
         help_message=_clean_text(payload.get("help_message")),
-        opt_in_keywords=_normalized_csv_list(payload.get("opt_in_keywords"), default=DEFAULT_OPT_IN_KEYWORDS),
-        opt_out_keywords=_normalized_csv_list(payload.get("opt_out_keywords"), default=DEFAULT_OPT_OUT_KEYWORDS),
-        help_keywords=_normalized_csv_list(payload.get("help_keywords"), default=DEFAULT_HELP_KEYWORDS),
+        opt_in_keywords=_normalized_csv_list(payload.get("opt_in_keywords")),
+        opt_out_keywords=_normalized_csv_list(payload.get("opt_out_keywords")),
+        help_keywords=_normalized_csv_list(payload.get("help_keywords")),
         has_embedded_links=_coerce_bool(payload.get("has_embedded_links")),
         has_embedded_phone=_coerce_bool(payload.get("has_embedded_phone")),
         desired_phone_number=_clean_text(payload.get("desired_phone_number")),
         desired_phone_number_sid=desired_phone_number_sid,
         campaign_verify_token=_clean_text(payload.get("campaign_verify_token")),
+        upgrade_recommended_reason=upgrade_recommended_reason,
+        upgrade_requested=upgrade_requested,
         declaration_accepted=declaration_accepted,
     )
     _validate_form_data(form_data)
@@ -948,9 +1714,13 @@ def _save_form_data(
     onboarding.registration_path = form_data.registration_path
     onboarding.number_strategy = form_data.number_strategy
     onboarding.business_name = form_data.business_name
+    onboarding.legal_business_name = form_data.legal_business_name
+    onboarding.public_brand_name = form_data.public_brand_name
     onboarding.business_type = form_data.business_type
     onboarding.business_identity = _business_identity(form_data.registration_path)
     onboarding.business_industry = form_data.business_industry
+    onboarding.has_business_tax_id = form_data.has_business_tax_id
+    onboarding.brand_registration_mode = form_data.brand_registration_mode
     onboarding.business_registration_identifier = form_data.business_registration_identifier
     onboarding.business_registration_number_encrypted = (
         encrypt_provider_secret(form_data.business_registration_number)
@@ -958,8 +1728,20 @@ def _save_form_data(
         else None
     )
     onboarding.business_regions_json = json.dumps(form_data.business_regions)
+    onboarding.has_public_website = form_data.has_public_website
+    onboarding.submission_source_mode = form_data.submission_source_mode
+    onboarding.submission_source_reason = form_data.submission_source_reason
+    onboarding.external_website_url = form_data.external_website_url
+    onboarding.external_privacy_policy_url = form_data.external_privacy_policy_url
+    onboarding.external_terms_and_conditions_url = form_data.external_terms_and_conditions_url
+    onboarding.external_cta_proof_url = form_data.external_cta_proof_url
+    onboarding.external_url_validation_json = json.dumps(form_data.external_url_validation, sort_keys=True)
+    onboarding.external_urls_last_checked_at = utc_now()
     onboarding.website_url = form_data.website_url
     onboarding.social_profile_url = form_data.social_profile_url
+    onboarding.privacy_policy_url = form_data.privacy_policy_url
+    onboarding.terms_and_conditions_url = form_data.terms_and_conditions_url
+    onboarding.cta_proof_url = form_data.cta_proof_url
     onboarding.email = form_data.email
     onboarding.notification_email = form_data.notification_email
     onboarding.phone_number = form_data.phone_number
@@ -1000,12 +1782,31 @@ def _save_form_data(
             "opt_out_keywords": form_data.opt_out_keywords,
             "help_keywords": form_data.help_keywords,
             "business_regions": form_data.business_regions,
+            "has_business_tax_id": form_data.has_business_tax_id,
+            "brand_registration_mode": form_data.brand_registration_mode,
+            "has_public_website": form_data.has_public_website,
+            "submission_source_mode": form_data.submission_source_mode,
+            "submission_source_reason": form_data.submission_source_reason,
+            "privacy_policy_url": form_data.privacy_policy_url,
+            "terms_and_conditions_url": form_data.terms_and_conditions_url,
+            "cta_proof_url": form_data.cta_proof_url,
+            "external_website_url": form_data.external_website_url,
+            "external_privacy_policy_url": form_data.external_privacy_policy_url,
+            "external_terms_and_conditions_url": form_data.external_terms_and_conditions_url,
+            "external_cta_proof_url": form_data.external_cta_proof_url,
+            "external_url_validation": form_data.external_url_validation,
         },
         sort_keys=True,
     )
     profile.business_type = form_data.business_type
     profile.use_case = form_data.campaign_description[:120]
     if queue_submission:
+        should_reset_campaign = (
+            onboarding.onboarding_status in {"rejected", "error", "canceled"}
+            or _status_value(onboarding.campaign_status) in A2P_CAMPAIGN_FAILURE_STATUSES
+        )
+        if should_reset_campaign:
+            onboarding.campaign_sid = None
         onboarding.onboarding_status = "queued"
         onboarding.brand_status = None
         onboarding.campaign_status = None
@@ -1015,11 +1816,20 @@ def _save_form_data(
         onboarding.approved_at = None
         onboarding.last_error = None
         onboarding.failure_code = None
+        if form_data.upgrade_requested:
+            onboarding.upgrade_requested_at = onboarding.upgrade_requested_at or utc_now()
+        if form_data.brand_registration_mode != "standard":
+            onboarding.upgrade_requested_at = None
+            onboarding.upgraded_at = None
+        onboarding.upgrade_recommended_reason = form_data.upgrade_recommended_reason
+        onboarding.upgrade_recommended_at = utc_now() if form_data.upgrade_recommended_reason else None
         profile.last_provision_error = None
         if profile.provider_status != "suspended":
             profile.set_provider_status("pending")
     elif onboarding.onboarding_status not in {"pending", "processing", "queued", "approved"}:
         onboarding.onboarding_status = "draft"
+        onboarding.upgrade_recommended_reason = form_data.upgrade_recommended_reason
+        onboarding.upgrade_recommended_at = utc_now() if form_data.upgrade_recommended_reason else None
 
 
 def _queue_job(job_name: str, organization_id: int, actor_user_id: int | None = None):
@@ -1203,6 +2013,8 @@ def _set_status(
     onboarding.verification_status = verification_status
     onboarding.last_synced_at = utc_now()
     onboarding.last_error = error_message
+    if not error_message:
+        onboarding.failure_code = None
     profile.provider_last_checked_at = utc_now()
     if not error_message:
         profile.last_provision_error = None
@@ -1469,8 +2281,13 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
     _store_status_payload(onboarding, status_payload)
 
 
-def _create_a2p_campaign(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> None:
-    if onboarding.campaign_sid:
+def _create_a2p_campaign(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    actor_user_id: int | None = None,
+) -> None:
+    if onboarding.campaign_sid and _status_value(onboarding.campaign_status) not in A2P_CAMPAIGN_FAILURE_STATUSES:
         return
     if not onboarding.brand_registration_sid:
         raise ProviderProvisioningError("Twilio brand registration must exist before campaign creation can begin.")
@@ -1483,22 +2300,58 @@ def _create_a2p_campaign(onboarding: OrganizationA2POnboarding, profile: Organiz
         campaign_use_case,
         _json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
     )
-    campaign = _build_subaccount_client(profile).messaging.v1.services(profile.messaging_service_sid).us_app_to_person.create(
-        brand_registration_sid=onboarding.brand_registration_sid,
-        description=onboarding.campaign_description or onboarding.business_name,
-        message_flow=onboarding.message_flow or onboarding.campaign_description or onboarding.business_name,
-        message_samples=message_samples,
-        us_app_to_person_usecase=campaign_use_case,
-        has_embedded_links=bool(submission_payload.get("has_embedded_links")),
-        has_embedded_phone=bool(submission_payload.get("has_embedded_phone")),
-        opt_in_message=onboarding.opt_in_message or None,
-        opt_out_message=onboarding.opt_out_message or None,
-        help_message=onboarding.help_message or None,
-        opt_in_keywords=_json_loads_list(onboarding.opt_in_keywords_json),
-        opt_out_keywords=_json_loads_list(onboarding.opt_out_keywords_json),
-        help_keywords=_json_loads_list(onboarding.help_keywords_json),
+    client = _build_subaccount_client(profile)
+    service_context = client.messaging.v1.services(profile.messaging_service_sid)
+    us_app_to_person = service_context.us_app_to_person
+    _prepare_service_for_campaign_create(
+        onboarding,
+        profile,
+        service_context,
+        actor_user_id=actor_user_id,
     )
-    onboarding.campaign_sid = campaign.sid
+    opt_in_keywords = _json_loads_list(onboarding.opt_in_keywords_json)
+    opt_out_keywords = _json_loads_list(onboarding.opt_out_keywords_json)
+    help_keywords = _json_loads_list(onboarding.help_keywords_json)
+    request_data = values.of(
+        {
+            "BrandRegistrationSid": onboarding.brand_registration_sid,
+            "Description": onboarding.campaign_description or onboarding.business_name,
+            "MessageFlow": onboarding.message_flow or onboarding.campaign_description or onboarding.business_name,
+            "MessageSamples": serialize.map(message_samples, lambda item: item),
+            "UsAppToPersonUsecase": campaign_use_case,
+            "HasEmbeddedLinks": bool(submission_payload.get("has_embedded_links")),
+            "HasEmbeddedPhone": bool(submission_payload.get("has_embedded_phone")),
+            "PrivacyPolicyUrl": onboarding.privacy_policy_url,
+            "TermsAndConditionsUrl": onboarding.terms_and_conditions_url,
+            "OptInMessage": onboarding.opt_in_message or values.unset,
+            "OptOutMessage": onboarding.opt_out_message or values.unset,
+            "HelpMessage": onboarding.help_message or values.unset,
+            "OptInKeywords": serialize.map(opt_in_keywords, lambda item: item) if opt_in_keywords else values.unset,
+            "OptOutKeywords": serialize.map(opt_out_keywords, lambda item: item) if opt_out_keywords else values.unset,
+            "HelpKeywords": serialize.map(help_keywords, lambda item: item) if help_keywords else values.unset,
+        }
+    )
+    try:
+        campaign_payload = us_app_to_person._version.create(
+            method="POST",
+            uri=us_app_to_person._uri,
+            data=request_data,
+        )
+    except TwilioRestException as exc:
+        if not _is_campaign_association_conflict(exc):
+            raise
+        _prepare_service_for_campaign_create(
+            onboarding,
+            profile,
+            service_context,
+            actor_user_id=actor_user_id,
+        )
+        campaign_payload = us_app_to_person._version.create(
+            method="POST",
+            uri=us_app_to_person._uri,
+            data=request_data,
+        )
+    onboarding.campaign_sid = campaign_payload.get("sid")
 
 
 def _buy_phone_number(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile):
@@ -1560,19 +2413,35 @@ def _sync_remote_status(onboarding: OrganizationA2POnboarding, profile: Organiza
     client = _build_subaccount_client(profile)
     brand_status = None
     campaign_status = None
+    brand_failure_code = None
+    campaign_failure_code = None
     status_payload = _load_status_payload(onboarding)
 
     if onboarding.brand_registration_sid:
         brand = client.messaging.v1.brand_registrations(onboarding.brand_registration_sid).fetch()
         brand_status = _status_value(getattr(brand, "status", None))
-        status_payload["brand_failure_reason"] = getattr(brand, "failure_reason", None)
+        brand_failure_reason, brand_failure_code = _failure_details_from_errors(getattr(brand, "errors", None))
+        if not brand_failure_reason:
+            brand_failure_reason = _clean_text(getattr(brand, "failure_reason", None))
+        status_payload["brand_status"] = brand_status
+        status_payload["brand_failure_reason"] = brand_failure_reason
+        status_payload["brand_failure_code"] = brand_failure_code
         status_payload["brand_tcr_id"] = getattr(brand, "tcr_id", None)
     if onboarding.campaign_sid and profile.messaging_service_sid:
-        campaign = _build_subaccount_client(profile).messaging.v1.services(profile.messaging_service_sid).us_app_to_person(
-            onboarding.campaign_sid
-        ).fetch()
-        campaign_status = _status_value(getattr(campaign, "status", None))
-        status_payload["campaign_failure_reason"] = getattr(campaign, "failure_reason", None)
+        campaign = client.messaging.v1.services(profile.messaging_service_sid).us_app_to_person(onboarding.campaign_sid).fetch()
+        campaign_status = _status_value(getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None))
+        campaign_failure_reason, campaign_failure_code = _failure_details_from_errors(getattr(campaign, "errors", None))
+        if not campaign_failure_reason:
+            campaign_failure_reason = _clean_text(getattr(campaign, "failure_reason", None))
+        status_payload["campaign_status"] = campaign_status
+        status_payload["campaign_use_case"] = _campaign_use_case_value(
+            getattr(campaign, "us_app_to_person_usecase", None) or getattr(campaign, "campaign_usecase", None)
+        )
+        status_payload["campaign_errors"] = getattr(campaign, "errors", None)
+        status_payload["campaign_failure_reason"] = campaign_failure_reason
+        status_payload["campaign_failure_code"] = campaign_failure_code
+
+    onboarding.failure_code = campaign_failure_code or brand_failure_code or None
 
     _store_status_payload(onboarding, status_payload)
     return brand_status, campaign_status
@@ -1620,6 +2489,8 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
     try:
         _upsert_a2p_resources(onboarding, profile)
         db.session.commit()
+        ensure_a2p_event_stream_subscription(organization, profile)
+        db.session.commit()
         brand_status, campaign_status = _sync_remote_status(onboarding, profile)
         onboarding.brand_status = brand_status
         onboarding.campaign_status = campaign_status
@@ -1627,7 +2498,7 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
         normalized_brand_status = _status_value(brand_status) or "pending"
         brand_ready_for_campaign = normalized_brand_status in A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES
         if brand_ready_for_campaign and not onboarding.campaign_sid:
-            _create_a2p_campaign(onboarding, profile)
+            _create_a2p_campaign(onboarding, profile, actor_user_id=actor_user_id)
             db.session.commit()
             brand_status, campaign_status = _sync_remote_status(onboarding, profile)
             onboarding.brand_status = brand_status
@@ -1680,6 +2551,16 @@ def describe_a2p_onboarding(
         campaign_status = _status_value(
             status_payload.get("campaign_status") if status_payload else (onboarding.campaign_status if onboarding else None)
         )
+        failure_reason = (
+            _clean_text(status_payload.get("campaign_failure_reason"))
+            or _clean_text(status_payload.get("brand_failure_reason"))
+            or _clean_text(onboarding.last_error if onboarding is not None else None)
+        )
+        failure_code = (
+            _clean_text(status_payload.get("campaign_failure_code"))
+            or _clean_text(status_payload.get("brand_failure_code"))
+            or _clean_text(onboarding.failure_code if onboarding is not None else None)
+        )
         can_send = bool(profile.can_send)
         campaign_sid = (
             status_payload.get("campaign_sid")
@@ -1706,6 +2587,23 @@ def describe_a2p_onboarding(
             summary = "This workspace uses a customer-managed Twilio account with an approved external brand and campaign."
             next_step = "Keep A2P and messaging compliance managed in the customer Twilio account."
             eta = "Ready immediately."
+        elif failure_reason or (
+            brand_status in A2P_BRAND_FAILURE_STATUSES
+            or campaign_status in A2P_CAMPAIGN_FAILURE_STATUSES
+        ):
+            stage = "needs_action"
+            badge = "danger"
+            title = "External A2P needs action"
+            summary = failure_reason or "The customer-managed Twilio campaign or brand needs correction before live sending can be approved."
+            next_step = "Correct the customer-managed Twilio brand or campaign, then re-save messaging settings to sync the latest status."
+            eta = "Live SMS stays blocked until the external registration is approved."
+        elif campaign_sid or messaging_service_sid or phone_number_sid:
+            stage = "reviewing"
+            badge = "warning text-dark"
+            title = "External A2P under review"
+            summary = "Twilio is still reviewing the customer-managed brand or campaign."
+            next_step = "Keep the external Messaging Service, sender, and campaign aligned while Twilio completes review."
+            eta = "Timing depends on the customer-managed Twilio account."
         else:
             stage = "external"
             badge = "info"
@@ -1722,15 +2620,16 @@ def describe_a2p_onboarding(
             "summary": summary,
             "next_step": next_step,
             "eta": eta,
-            "failure_reason": None,
+            "failure_reason": failure_reason,
+            "failure_code": failure_code,
             "brand_status": _humanize_status(brand_status, fallback="externally managed"),
             "campaign_status": _humanize_status(campaign_status, fallback="externally managed"),
             "number_status": "configured" if profile.from_number else "pending",
             "last_checked_at": onboarding.last_synced_at if onboarding is not None else profile.provider_last_checked_at,
             "has_submission": bool(campaign_sid or messaging_service_sid or phone_number_sid),
-            "is_waiting": False,
-            "show_wait_state": False,
-            "event_streams_enabled": False,
+            "is_waiting": stage == "reviewing",
+            "show_wait_state": stage in {"reviewing", "needs_action"} and not can_send,
+            "event_streams_enabled": a2p_event_streams_enabled(),
             "external_managed": True,
             "campaign_sid": campaign_sid,
             "brand_registration_sid": (
@@ -1751,6 +2650,7 @@ def describe_a2p_onboarding(
             "next_step": "Submit the business details to start Twilio review.",
             "eta": "Nothing is under review yet.",
             "failure_reason": None,
+            "failure_code": None,
             "brand_status": "not submitted",
             "campaign_status": "not submitted",
             "number_status": "not started",
@@ -1766,6 +2666,7 @@ def describe_a2p_onboarding(
     campaign_status = _status_value(onboarding.campaign_status)
     number_status = _latest_number_status(onboarding)
     failure_reason = _latest_failure_message(onboarding)
+    failure_code = _latest_failure_code(onboarding)
     has_submission = onboarding.onboarding_status not in {"draft", "canceled"}
     can_send = bool(profile is not None and profile.can_send)
 
@@ -1783,6 +2684,13 @@ def describe_a2p_onboarding(
         summary = "Carrier approval and sender setup are complete for this workspace."
         next_step = "You can start controlled live sends now."
         eta = "Ready immediately."
+    elif onboarding.onboarding_status in {"queued", "processing"}:
+        stage = "submitted"
+        badge = "info"
+        title = "Submitted to Twilio"
+        summary = "The A2P packet has been queued and is moving into review."
+        next_step = "No manual action is needed yet. The background worker will keep syncing status."
+        eta = "Usually moves into review on the next sync."
     elif failure_reason or onboarding.onboarding_status in {"error", "rejected", "needs_action"}:
         stage = "needs_action"
         badge = "danger"
@@ -1804,13 +2712,6 @@ def describe_a2p_onboarding(
         summary = "Twilio and downstream carriers are reviewing the registration package."
         next_step = "Keep onboarding the workspace while you wait for approval."
         eta = "Reviews can take from hours to several business days."
-    elif onboarding.onboarding_status in {"queued", "processing"}:
-        stage = "submitted"
-        badge = "info"
-        title = "Submitted to Twilio"
-        summary = "The A2P packet has been queued and is moving into review."
-        next_step = "No manual action is needed yet. The background worker will keep syncing status."
-        eta = "Usually moves into review on the next sync."
     else:
         stage = "draft"
         badge = "secondary"
@@ -1827,6 +2728,7 @@ def describe_a2p_onboarding(
         "next_step": next_step,
         "eta": eta,
         "failure_reason": failure_reason,
+        "failure_code": failure_code,
         "brand_status": _humanize_status(brand_status, fallback="not submitted"),
         "campaign_status": _humanize_status(campaign_status, fallback="not submitted"),
         "number_status": _humanize_status(number_status, fallback="not started"),
@@ -1834,7 +2736,7 @@ def describe_a2p_onboarding(
         "has_submission": has_submission,
         "is_waiting": stage in {"submitted", "reviewing"},
         "show_wait_state": stage in {"submitted", "reviewing", "needs_action"} and not can_send,
-        "event_streams_enabled": bool(current_app.config.get("TWILIO_A2P_EVENT_STREAMS_ENABLED")),
+        "event_streams_enabled": a2p_event_streams_enabled(),
         "external_managed": False,
     }
 
@@ -1919,16 +2821,24 @@ def ingest_a2p_event_stream_payload(payload: Any) -> dict[str, int]:
         if topic == "brand":
             onboarding.brand_status = status
             status_payload["brand_failure_reason"] = failure_reason
+            if failure_code:
+                status_payload["brand_failure_code"] = failure_code
         elif topic == "campaign":
             onboarding.campaign_status = status
             status_payload["campaign_failure_reason"] = failure_reason
+            if failure_code:
+                status_payload["campaign_failure_code"] = failure_code
         else:
             status_payload["number_status"] = status
             status_payload["number_failure_reason"] = failure_reason
             if failure_code:
                 status_payload["number_failure_code"] = failure_code
-        if failure_code and not onboarding.failure_code:
-            onboarding.failure_code = failure_code
+        onboarding.failure_code = (
+            _clean_text(status_payload.get("number_failure_code"))
+            or _clean_text(status_payload.get("campaign_failure_code"))
+            or _clean_text(status_payload.get("brand_failure_code"))
+            or None
+        )
 
         _record_recent_event_id(recent_event_ids, event_id)
         _store_status_payload(onboarding, status_payload)

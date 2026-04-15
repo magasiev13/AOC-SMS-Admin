@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }} | {{ organization.name }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=app_version) }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/app.css', v=app_version) }}" rel="stylesheet">
+</head>
+<body class="app-body">
+    {% set public_brand_name = onboarding.public_brand_name if onboarding and onboarding.public_brand_name else organization.name %}
+    {% set legal_business_name = onboarding.legal_business_name if onboarding and onboarding.legal_business_name else (onboarding.business_name if onboarding and onboarding.business_name else organization.name) %}
+    {% set sender_name = public_brand_name %}
+    {% set sender_email = onboarding.notification_email if onboarding and onboarding.notification_email else (onboarding.email if onboarding else None) %}
+    {% set sender_phone = onboarding.phone_number if onboarding and onboarding.phone_number else (onboarding.mobile_number if onboarding else None) %}
+    {% set campaign_description = onboarding.campaign_description if onboarding and onboarding.campaign_description else 'SMS updates and service follow-ups.' %}
+    {% set message_flow = onboarding.message_flow if onboarding and onboarding.message_flow else 'Contacts opt in directly through this workspace before any recurring SMS is sent.' %}
+    {% set opt_in_message = onboarding.opt_in_message if onboarding and onboarding.opt_in_message else sender_name ~ ': You are subscribed to recurring SMS updates. Message frequency varies. Reply STOP to opt out or HELP for help.' %}
+    <main class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-xl-8 col-lg-9">
+                <div class="mb-4">
+                    <div class="text-uppercase small text-muted fw-semibold">Hosted SMS Compliance</div>
+                    <h1 class="h2 mb-2">{{ page_title }}</h1>
+                    <p class="text-muted mb-0">
+                        Sender: <strong>{{ sender_name }}</strong>
+                        {% if legal_business_name and legal_business_name != sender_name %}
+                        <span>· Legal entity: {{ legal_business_name }}</span>
+                        {% endif %}
+                        {% if product_name %}
+                        · Platform operator: {{ product_name }}
+                        {% endif %}
+                    </p>
+                </div>
+
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-4 p-lg-5">
+                        {% if page_kind == 'privacy' %}
+                        <p><strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %} uses SMS to deliver {{ campaign_description|lower }} We collect the mobile number and consent details needed to send these messages, respond to support requests, and maintain delivery, opt-out, and compliance records.</p>
+                        <p>Mobile opt-in data and consent records are used only for this sender's messaging program. They are not sold or shared with third parties for unrelated marketing.</p>
+                        <p>When this program is operated through {{ product_name }}, the platform acts only as the messaging service operator on behalf of {{ sender_name }}.</p>
+                        <p>You can stop SMS at any time by replying <strong>STOP</strong>. For help, reply <strong>HELP</strong>.</p>
+                        {% elif page_kind == 'terms' %}
+                        <p>By opting in to SMS from <strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %}, you agree to receive recurring text messages related to {{ campaign_description|lower }}</p>
+                        <p>Message frequency varies based on your activity and requests. Message and data rates may apply. Consent is not a condition of purchase.</p>
+                        <p>Reply <strong>STOP</strong> to opt out. Reply <strong>HELP</strong> for help. Supported opt-in flow: {{ message_flow }}</p>
+                        {% if sender_email or sender_phone %}
+                        <p>Support contact:
+                            {% if sender_email %}{{ sender_email }}{% endif %}
+                            {% if sender_email and sender_phone %} · {% endif %}
+                            {% if sender_phone %}{{ sender_phone }}{% endif %}
+                        </p>
+                        {% endif %}
+                        {% else %}
+                        <p>This page documents the public SMS consent path for <strong>{{ sender_name }}</strong>.</p>
+                        <p>{{ message_flow }}</p>
+                        <div class="border rounded-3 p-3 bg-light mb-3">
+                            <div class="fw-semibold mb-2">Example opt-in disclosure</div>
+                            <p class="mb-2">{{ opt_in_message }}</p>
+                            <p class="mb-0 text-muted small">Message frequency varies. Message and data rates may apply. Reply STOP to opt out and HELP for help.</p>
+                        </div>
+                        <p class="mb-0">Related compliance pages:
+                            <a href="{{ hosted_compliance_urls.privacy_policy_url }}">Privacy policy</a>
+                            · <a href="{{ hosted_compliance_urls.terms_and_conditions_url }}">Terms and conditions</a>
+                        </p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

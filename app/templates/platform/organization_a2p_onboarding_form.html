@@ -115,13 +115,15 @@
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit">
-                    {% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'standard') %}
+                    {% set selected_registration_path = request.form.get('registration_path', onboarding.registration_path if onboarding else 'low_volume_standard') %}
                     {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') %}
                     {% set selected_business_type = request.form.get('business_type', (onboarding.business_type if onboarding else '') or ('Non-profit Corporation' if selected_registration_path in ('nonprofit', 'government') else ('Sole Proprietor' if selected_registration_path == 'sole_proprietor' else ''))) %}
                     {% set selected_business_registration_identifier = request.form.get('business_registration_identifier', (onboarding.business_registration_identifier if onboarding else '') or ('EIN' if selected_registration_path != 'sole_proprietor' else '')) %}
                     {% set selected_business_industry = request.form.get('business_industry', (onboarding.business_industry if onboarding else '') or 'OTHER') %}
                     {% set selected_job_position = request.form.get('job_position', (onboarding.job_position if onboarding else '') or '') %}
                     {% set selected_business_regions = request.form.getlist('business_regions') if request.form.getlist('business_regions') else ((a2p_form_defaults.business_regions or 'USA_AND_CANADA').split(',')) %}
+                    {% set selected_has_public_website = request.form.get('has_public_website') == 'on' if request.method == 'POST' else a2p_source_defaults.has_public_website %}
+                    {% set selected_has_business_tax_id = request.form.get('has_business_tax_id') == 'on' if request.method == 'POST' else a2p_source_defaults.has_business_tax_id %}
 
                     <div class="platform-shell__eyebrow mb-2">Registration settings</div>
                     <div class="row g-3">
@@ -132,6 +134,7 @@
                                 <option value="{{ value }}" {% if selected_registration_path == value %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
+                            <div class="form-text">Low-Volume Standard is the default path for eligible EIN-backed businesses. Standard remains available as the upgrade path.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="number_strategy">Number Strategy</label>
@@ -148,8 +151,12 @@
                     <div class="platform-shell__eyebrow mb-2">Business identity</div>
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label" for="business_name">Legal Business Name</label>
-                            <input class="form-control" id="business_name" name="business_name" required value="{{ request.form.get('business_name', onboarding.business_name if onboarding and onboarding.business_name else organization.name) }}">
+                            <label class="form-label" for="legal_business_name">Legal Business Name</label>
+                            <input class="form-control" id="legal_business_name" name="legal_business_name" required value="{{ request.form.get('legal_business_name', a2p_source_defaults.legal_business_name if a2p_source_defaults else organization.name) }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="public_brand_name">Public Brand Name</label>
+                            <input class="form-control" id="public_brand_name" name="public_brand_name" required value="{{ request.form.get('public_brand_name', a2p_source_defaults.public_brand_name if a2p_source_defaults else organization.name) }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="business_type">Business Type</label>
@@ -160,6 +167,24 @@
                                 {% endfor %}
                             </select>
                             <div class="form-text">Standard and low-volume registrations must use a Twilio-approved legal structure. Nonprofit, government, and sole proprietor paths are set automatically.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check mt-4 pt-2">
+                                <input class="form-check-input" type="checkbox" id="has_business_tax_id" name="has_business_tax_id" {% if selected_has_business_tax_id %}checked{% endif %}>
+                                <label class="form-check-label" for="has_business_tax_id">This business has its own EIN or business tax ID</label>
+                            </div>
+                            <div class="form-text">If the org is EIN-backed, keep it on Low-Volume Standard by default and only move to Standard when needed.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check mt-4 pt-2">
+                                <input class="form-check-input" type="checkbox" id="has_public_website" name="has_public_website" {% if selected_has_public_website %}checked{% endif %}>
+                                <label class="form-check-label" for="has_public_website">This business has a public website and public SMS compliance pages</label>
+                            </div>
+                            <div class="form-text">When these URLs are incomplete or weak, the packet falls back automatically to the hosted compliance pages below.</div>
+                        </div>
+                        <div class="col-md-6" data-external-site-field>
+                            <label class="form-label" for="external_website_url">Public Website / Contact URL</label>
+                            <input class="form-control" id="external_website_url" name="external_website_url" placeholder="https://example.org/contact" value="{{ request.form.get('external_website_url', a2p_source_defaults.external_website_url if a2p_source_defaults else '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="business_industry">Business Industry</label>
@@ -184,10 +209,6 @@
                         <div class="col-md-6">
                             <label class="form-label" for="mobile_number">Mobile / OTP Phone</label>
                             <input class="form-control" id="mobile_number" name="mobile_number" placeholder="+15551234567" value="{{ request.form.get('mobile_number', (onboarding.mobile_number if onboarding else '') or '') }}">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label" for="website_url">Website URL</label>
-                            <input class="form-control" id="website_url" name="website_url" placeholder="https://example.org" value="{{ request.form.get('website_url', (onboarding.website_url if onboarding else '') or '') }}">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="social_profile_url">Social Profile URL</label>
@@ -243,6 +264,27 @@
                             <label class="form-label" for="campaign_verify_token">Campaign Verify Token</label>
                             <input class="form-control" id="campaign_verify_token" name="campaign_verify_token" placeholder="Optional for 527 orgs" value="{{ request.form.get('campaign_verify_token', '') }}">
                         </div>
+                        <div class="col-12">
+                            <div class="platform-note" role="note">
+                                <div class="platform-note__title">Current submission source</div>
+                                <div class="platform-note__copy">
+                                    {% if a2p_source_defaults.submission_source_mode == 'external_site' %}
+                                    The next Twilio packet will use the tenant-provided website package.
+                                    {% else %}
+                                    The next Twilio packet will use the hosted fallback package.
+                                    {% endif %}
+                                    {% if a2p_source_defaults.submission_source_reason %}
+                                    {{ a2p_source_defaults.submission_source_reason }}
+                                    {% endif %}
+                                </div>
+                                <div class="small text-muted mt-2">
+                                    Hosted fallback pages:
+                                    <a href="{{ hosted_compliance_urls.website_url }}" target="_blank" rel="noopener">website/opt-in</a>,
+                                    <a href="{{ hosted_compliance_urls.privacy_policy_url }}" target="_blank" rel="noopener">privacy</a>,
+                                    <a href="{{ hosted_compliance_urls.terms_and_conditions_url }}" target="_blank" rel="noopener">terms</a>
+                                </div>
+                            </div>
+                        </div>
                         <div class="col-md-4">
                             <label class="form-label" for="address_country">Country</label>
                             {% set selected_country = request.form.get('address_country', (onboarding.address_country if onboarding else '') or 'US') %}
@@ -294,6 +336,20 @@
                         <div class="col-12">
                             <label class="form-label" for="message_flow">Opt-in / Message Flow</label>
                             <textarea class="form-control" id="message_flow" name="message_flow" rows="4" required>{{ request.form.get('message_flow', (onboarding.message_flow if onboarding else '') or '') }}</textarea>
+                            <div class="form-text">Spell out the exact CTA, where consent happens, message purpose, frequency, and STOP/HELP instructions.</div>
+                        </div>
+                        <div class="col-md-4" data-external-site-field>
+                            <label class="form-label" for="external_privacy_policy_url">External Privacy Policy URL</label>
+                            <input class="form-control" id="external_privacy_policy_url" name="external_privacy_policy_url" type="url" value="{{ request.form.get('external_privacy_policy_url', a2p_source_defaults.external_privacy_policy_url if a2p_source_defaults else '') }}">
+                        </div>
+                        <div class="col-md-4" data-external-site-field>
+                            <label class="form-label" for="external_terms_and_conditions_url">External Terms &amp; Conditions URL</label>
+                            <input class="form-control" id="external_terms_and_conditions_url" name="external_terms_and_conditions_url" type="url" value="{{ request.form.get('external_terms_and_conditions_url', a2p_source_defaults.external_terms_and_conditions_url if a2p_source_defaults else '') }}">
+                        </div>
+                        <div class="col-md-4" data-external-site-field>
+                            <label class="form-label" for="external_cta_proof_url">External CTA / Opt-In Proof URL</label>
+                            <input class="form-control" id="external_cta_proof_url" name="external_cta_proof_url" type="url" value="{{ request.form.get('external_cta_proof_url', a2p_source_defaults.external_cta_proof_url if a2p_source_defaults else '') }}">
+                            <div class="form-text">When these external URLs are absent or weak, the hosted fallback package becomes the submission source automatically.</div>
                         </div>
                         <div class="col-12">
                             <label class="form-label" for="message_samples">Message Samples</label>
@@ -314,15 +370,16 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_in_keywords">Opt-in Keywords</label>
-                            <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" placeholder="START,SUBSCRIBE,YES" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords or 'START,SUBSCRIBE,YES') }}">
+                            <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" placeholder="START,SUBSCRIBE,YES" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords) }}">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="opt_out_keywords">Opt-out Keywords</label>
-                            <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" placeholder="STOP,UNSUBSCRIBE,END" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords or 'STOP,UNSUBSCRIBE,END') }}">
+                            <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" placeholder="STOP,UNSUBSCRIBE,END" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords) }}">
                         </div>
                         <div class="col-md-4">
                             <label class="form-label" for="help_keywords">Help Keywords</label>
-                            <input class="form-control" id="help_keywords" name="help_keywords" placeholder="HELP,INFO" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords or 'HELP,INFO') }}">
+                            <input class="form-control" id="help_keywords" name="help_keywords" placeholder="HELP,INFO" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords) }}">
+                            <div class="form-text">Leave these advanced fields blank to use Twilio-managed defaults.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="desired_phone_number">Desired Phone Number</label>
@@ -368,6 +425,12 @@
                         <li><strong>Number</strong><span>{{ a2p_status.number_status if a2p_status else (onboarding.verification_status or 'n/a') }}</span></li>
                         <li><strong>Messaging service</strong><span>{{ messaging_profile.messaging_service_sid or 'not provisioned yet' }}</span></li>
                     </ul>
+                    {% if a2p_status and a2p_status.failure_code %}
+                    <div class="small text-danger mt-3"><strong>Twilio code:</strong> {{ a2p_status.failure_code }}</div>
+                    {% endif %}
+                    {% if a2p_status and a2p_status.failure_reason %}
+                    <div class="small text-muted mt-2">{{ a2p_status.failure_reason }}</div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -376,6 +439,12 @@
                     <div class="platform-shell__eyebrow mb-2">Guidance</div>
                     <p class="small text-muted mb-3">
                         Promotional consent cannot be created from a phone number alone. Use a hosted web or QR opt-in with clear disclosures, then mirror existing consent into Twilio later if needed.
+                    </p>
+                    <p class="small text-muted mb-3">
+                        Hosted defaults for this workspace:
+                        <a href="{{ hosted_compliance_urls.privacy_policy_url }}" target="_blank" rel="noopener">privacy</a>,
+                        <a href="{{ hosted_compliance_urls.terms_and_conditions_url }}" target="_blank" rel="noopener">terms</a>,
+                        <a href="{{ hosted_compliance_urls.cta_proof_url }}" target="_blank" rel="noopener">opt-in proof</a>.
                     </p>
                     <p class="small text-muted mb-3">
                         {% if customer_managed_a2p %}
@@ -418,11 +487,14 @@
     (() => {
         const registrationPathInput = document.getElementById('registration_path');
         const businessTypeInput = document.getElementById('business_type');
+        const taxIdInput = document.getElementById('has_business_tax_id');
+        const websiteCheckbox = document.getElementById('has_public_website');
         const campaignUseCaseInput = document.getElementById('campaign_use_case');
         const registrationIdentifierInput = document.getElementById('business_registration_identifier');
         const registrationNumberInput = document.getElementById('business_registration_number');
         const messageSamplesInput = document.getElementById('message_samples');
-        if (!registrationPathInput || !businessTypeInput || !campaignUseCaseInput || !registrationIdentifierInput || !registrationNumberInput || !messageSamplesInput) {
+        const externalFields = Array.from(document.querySelectorAll('[data-external-site-field]'));
+        if (!registrationPathInput || !businessTypeInput || !taxIdInput || !websiteCheckbox || !campaignUseCaseInput || !registrationIdentifierInput || !registrationNumberInput || !messageSamplesInput) {
             return;
         }
 
@@ -433,6 +505,12 @@
         };
 
         const syncRegistrationRequirements = () => {
+            if (businessTypeInput.value === 'Sole Proprietor' && !taxIdInput.checked) {
+                registrationPathInput.value = 'sole_proprietor';
+            } else if (registrationPathInput.value === 'sole_proprietor' && taxIdInput.checked) {
+                registrationPathInput.value = 'low_volume_standard';
+            }
+
             const path = registrationPathInput.value;
             const forcedBusinessType = forcedBusinessTypeByPath[path] || '';
             const usesSelectableBusinessType = path === 'standard' || path === 'low_volume_standard';
@@ -454,6 +532,19 @@
             }
         };
 
+        const syncWebsiteFields = () => {
+            const enabled = websiteCheckbox.checked;
+            externalFields.forEach((wrapper) => {
+                wrapper.hidden = !enabled;
+                wrapper.querySelectorAll('input, textarea, select').forEach((field) => {
+                    if (!field.name.startsWith('external_')) {
+                        return;
+                    }
+                    field.disabled = !enabled;
+                });
+            });
+        };
+
         const syncMessageSampleValidation = () => {
             const count = messageSamplesInput.value
                 .split(/\r?\n/)
@@ -469,9 +560,13 @@
         };
 
         registrationPathInput.addEventListener('change', syncRegistrationRequirements);
+        businessTypeInput.addEventListener('change', syncRegistrationRequirements);
+        taxIdInput.addEventListener('change', syncRegistrationRequirements);
+        websiteCheckbox.addEventListener('change', syncWebsiteFields);
         campaignUseCaseInput.addEventListener('change', syncMessageSampleValidation);
         messageSamplesInput.addEventListener('input', syncMessageSampleValidation);
         syncRegistrationRequirements();
+        syncWebsiteFields();
         syncMessageSampleValidation();
     })();
 

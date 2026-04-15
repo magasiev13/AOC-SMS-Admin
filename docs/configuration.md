@@ -25,8 +25,8 @@ cp .env.example .env
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TWILIO_A2P_ONBOARDING_ENABLED` | `0` | Enables the platform-managed A2P onboarding flow. |
-| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables the optional Twilio Event Streams webhook at `/webhooks/twilio/a2p-events` for push-based A2P status updates. |
-| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the Twilio Event Streams webhook when the webhook is enabled. |
+| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables the optional Twilio Event Streams webhook for push-based A2P status updates. The app provisions org-specific webhook destinations under `/webhooks/twilio/a2p-events?organization_id=<id>`. |
+| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Optional secondary bearer token accepted by the Twilio Event Streams webhook. The primary trust check is Twilio signature validation over the raw JSON body. |
 | `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | unset | Primary Twilio Trust Hub customer profile SID used when linking secondary A2P onboarding bundles. |
 
 ### Flask Security
@@ -79,6 +79,12 @@ cp .env.example .env
 | `TWILIO_A2P_NUMBER_COUNTRY` | `US` | Default country used when the app auto-buys an A2P sender number. |
 
 There is no separate `TWILIO_PARENT_ACCOUNT_SID` setting. The app treats `TWILIO_ACCOUNT_SID` as the parent/master account for provisioning and parent-number transfer.
+
+When `SAAS_BASE_URL` is set, the app also exposes tenant-hosted SMS compliance pages at `/compliance/<organization-slug>/sms/privacy`, `/terms`, and `/opt-in`. These URLs are generated for every org and act as the automatic A2P fallback package whenever the tenant does not have a public site or the supplied public website/privacy/terms/CTA URLs fail validation.
+
+The self-serve A2P flow now defaults eligible EIN-backed businesses to `low_volume_standard` and defaults the campaign posture to `ACCOUNT_NOTIFICATION`. Organizations can still move to `standard` later when they need more throughput or explicitly request the upgrade.
+
+When an org resubmits after a failed Twilio campaign review, the app now inspects the Messaging Service before creating a replacement campaign. It only auto-deletes the attached failed campaign when Twilio requires a new campaign, such as a use-case change or a brand-side correction. If the failed campaign is still the same use case and brand, the app refuses to recreate it automatically so operators do not accidentally trigger another paid vetting cycle.
 
 ### Database
 

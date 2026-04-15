@@ -31,8 +31,10 @@ test('golden owner journey covers signup billing onboarding staff invite and pla
   await page.getByLabel('Business name').fill(organizationName);
   await page.getByLabel('Full name').fill('Golden Owner');
   await page.getByLabel('Business email').fill(ownerEmail);
-  await page.getByLabel('Username').fill('golden-owner');
   await page.getByLabel('Mobile phone').fill('+15550001999');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.locator('[data-signup-indicator="2"]')).toHaveClass(/is-current/);
+  await page.getByLabel('Username').fill('golden-owner');
   await page.getByLabel('Password', { exact: true }).fill('GoldenOwner-pass1!');
   await page.getByLabel('Confirm password').fill('GoldenOwner-pass1!');
   await page.getByRole('button', { name: 'Create workspace' }).click();

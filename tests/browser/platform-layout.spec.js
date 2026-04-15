@@ -47,7 +47,7 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   await page.goto(messagingHref);
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-shell__summary-meta')).toBeVisible();
-  await expect(page.getByText('Platform-managed Twilio')).toBeVisible();
+  await expect(page.getByText('Platform-managed Twilio', { exact: true })).toBeVisible();
   await expect(page.locator('form button.btn-primary')).toHaveCount(1);
 
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();

@@ -359,6 +359,10 @@ class OrganizationMessagingProfile(db.Model):
     provisioned_at = db.Column(db.DateTime, nullable=True)
     suspended_at = db.Column(db.DateTime, nullable=True)
     provider_last_checked_at = db.Column(db.DateTime, nullable=True)
+    event_stream_sink_sid = db.Column(db.String(64), nullable=True)
+    event_stream_subscription_sid = db.Column(db.String(64), nullable=True)
+    event_stream_status = db.Column(db.String(30), nullable=True, index=True)
+    event_stream_error = db.Column(db.Text, nullable=True)
     last_provision_error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -430,19 +434,32 @@ class OrganizationA2POnboarding(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, unique=True, index=True)
-    registration_path = db.Column(db.String(32), nullable=False, default='standard')
+    registration_path = db.Column(db.String(32), nullable=False, default='low_volume_standard')
     number_strategy = db.Column(db.String(32), nullable=False, default='auto_buy')
     onboarding_status = db.Column(db.String(20), nullable=False, default='draft', index=True)
     brand_status = db.Column(db.String(30), nullable=True, index=True)
     campaign_status = db.Column(db.String(30), nullable=True, index=True)
     verification_status = db.Column(db.String(30), nullable=True, index=True)
     business_name = db.Column(db.String(120), nullable=True)
+    legal_business_name = db.Column(db.String(120), nullable=True)
+    public_brand_name = db.Column(db.String(120), nullable=True)
     business_type = db.Column(db.String(80), nullable=True)
     business_identity = db.Column(db.String(40), nullable=True)
     business_industry = db.Column(db.String(40), nullable=True)
+    has_business_tax_id = db.Column(db.Boolean, nullable=True)
+    brand_registration_mode = db.Column(db.String(40), nullable=True, index=True)
     business_registration_identifier = db.Column(db.String(40), nullable=True)
     business_registration_number_encrypted = db.Column(db.Text, nullable=True)
     business_regions_json = db.Column(db.Text, nullable=True)
+    has_public_website = db.Column(db.Boolean, nullable=True)
+    submission_source_mode = db.Column(db.String(40), nullable=True, index=True)
+    submission_source_reason = db.Column(db.Text, nullable=True)
+    external_website_url = db.Column(db.String(255), nullable=True)
+    external_privacy_policy_url = db.Column(db.String(255), nullable=True)
+    external_terms_and_conditions_url = db.Column(db.String(255), nullable=True)
+    external_cta_proof_url = db.Column(db.String(255), nullable=True)
+    external_url_validation_json = db.Column(db.Text, nullable=True)
+    external_urls_last_checked_at = db.Column(db.DateTime, nullable=True)
     website_url = db.Column(db.String(255), nullable=True)
     social_profile_url = db.Column(db.String(255), nullable=True)
     email = db.Column(db.String(255), nullable=True)
@@ -466,10 +483,13 @@ class OrganizationA2POnboarding(db.Model):
     brand_registration_sid = db.Column(db.String(64), nullable=True, unique=True)
     vetting_sid = db.Column(db.String(64), nullable=True, unique=True)
     campaign_sid = db.Column(db.String(64), nullable=True, unique=True)
-    campaign_use_case = db.Column(db.String(40), nullable=False, default='MIXED')
+    campaign_use_case = db.Column(db.String(40), nullable=False, default='ACCOUNT_NOTIFICATION')
     campaign_description = db.Column(db.Text, nullable=True)
     message_flow = db.Column(db.Text, nullable=True)
     message_samples_json = db.Column(db.Text, nullable=True)
+    privacy_policy_url = db.Column(db.String(255), nullable=True)
+    terms_and_conditions_url = db.Column(db.String(255), nullable=True)
+    cta_proof_url = db.Column(db.String(255), nullable=True)
     opt_in_message = db.Column(db.Text, nullable=True)
     opt_out_message = db.Column(db.Text, nullable=True)
     help_message = db.Column(db.Text, nullable=True)
@@ -483,6 +503,10 @@ class OrganizationA2POnboarding(db.Model):
     raw_status_json = db.Column(db.Text, nullable=True)
     last_error = db.Column(db.Text, nullable=True)
     failure_code = db.Column(db.String(80), nullable=True)
+    upgrade_recommended_reason = db.Column(db.Text, nullable=True)
+    upgrade_recommended_at = db.Column(db.DateTime, nullable=True)
+    upgrade_requested_at = db.Column(db.DateTime, nullable=True)
+    upgraded_at = db.Column(db.DateTime, nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=True)
     last_synced_at = db.Column(db.DateTime, nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
@@ -500,6 +524,24 @@ class OrganizationA2POnboarding(db.Model):
             raise ValueError(
                 "Registration path must be standard, low_volume_standard, nonprofit, government, or sole_proprietor."
             )
+        return normalized
+
+    @validates("brand_registration_mode")
+    def _normalize_brand_registration_mode(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {"sole_proprietor", "low_volume_standard", "standard"}:
+            raise ValueError("Brand registration mode must be sole_proprietor, low_volume_standard, or standard.")
+        return normalized
+
+    @validates("submission_source_mode")
+    def _normalize_submission_source_mode(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {"external_site", "hosted_fallback"}:
+            raise ValueError("Submission source mode must be external_site or hosted_fallback.")
         return normalized
 
     @validates("number_strategy")

@@ -63,7 +63,13 @@ Platform-admin accounts are control-plane only. Use a separate email for each or
 
 If you change Twilio or other runtime values in `/opt/sms-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
 
-If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, point the Twilio Event Streams webhook sink at `/webhooks/twilio/a2p-events` and set `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` so the webhook can be authenticated with a bearer token.
+If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, the app provisions org-specific Twilio Event Streams webhook destinations at `/webhooks/twilio/a2p-events?organization_id=<id>`. Twilio signature validation over the raw JSON body is the primary trust check. `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` is only an optional secondary bearer fallback.
+
+Organizations without their own public website can use the tenant-hosted compliance pages generated under `/compliance/<organization-slug>/sms/privacy`, `/terms`, and `/opt-in`. The SaaS onboarding flow now creates this hosted package for every org and automatically falls back to it whenever tenant-supplied public website/privacy/terms/CTA URLs are incomplete or fail validation.
+
+For eligible EIN-backed businesses, the default A2P registration path is now `low_volume_standard`. Treat `standard` as the upgrade path when low-volume limits no longer fit the org's throughput or campaign posture.
+
+For failed A2P resubmissions, the worker now preflights the Twilio Messaging Service before it creates a replacement campaign. It automatically deletes the attached failed campaign only when Twilio requires a new campaign, such as a changed use case or a corrected brand association. If the failed campaign still matches the same use case and brand, the worker stops and surfaces guidance instead of silently deleting it and risking another paid vetting review.
 
 ## SaaS DB Commands
 

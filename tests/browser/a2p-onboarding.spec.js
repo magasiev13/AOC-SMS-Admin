@@ -40,12 +40,19 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Registration Path')).toBeVisible();
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.getByLabel('Legal Business Name')).toHaveValue('Onboarding Bakery');
+  await expect(page.getByLabel('Public Brand Name')).toHaveValue('Onboarding Bakery');
   await expect(page.getByLabel('Business Type')).toHaveValue('');
   await expect(page.getByLabel('Business Industry')).toBeVisible();
   await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
   await expect(page.getByLabel('Business Email')).toBeVisible();
   await expect(page.getByLabel('Notification Email')).toBeVisible();
-  await expect(page.getByLabel('Website URL')).toBeVisible();
+  await expect(page.getByLabel('This business has its own EIN or business tax ID')).toBeVisible();
+  await expect(page.getByLabel('This business has a public website and public SMS compliance pages')).toBeVisible();
+  await expect(page.getByText('The next Twilio packet will use the hosted fallback package.')).toBeVisible();
+  await expect(page.getByLabel('Public Website / Contact URL')).toBeHidden();
+  await expect(page.getByLabel('External Privacy Policy URL')).toBeHidden();
+  await expect(page.getByLabel('External Terms & Conditions URL')).toBeHidden();
+  await expect(page.getByLabel('External CTA / Opt-In Proof URL')).toBeHidden();
   await expect(page.getByLabel('Rep First Name')).toBeVisible();
   await expect(page.getByLabel('Rep Last Name')).toBeVisible();
   await expect(page.getByLabel('Business Title')).toBeVisible();
@@ -67,16 +74,22 @@ test('platform admin can navigate onboarding from messaging and submit determini
   expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(false);
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(false);
 
-  await page.getByLabel('Registration Path').selectOption('low_volume_standard');
+  await page.getByLabel('This business has its own EIN or business tax ID').check();
+  await expect(page.getByLabel('Registration Path')).toHaveValue('low_volume_standard');
   await expect(page.getByLabel('Business Type')).toBeEnabled();
   await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
   expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(true);
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(true);
+  await page.getByLabel('This business has a public website and public SMS compliance pages').check();
+  await expect(page.getByLabel('Public Website / Contact URL')).toBeVisible();
+  await expect(page.getByLabel('External Privacy Policy URL')).toBeVisible();
+  await expect(page.getByLabel('External Terms & Conditions URL')).toBeVisible();
+  await expect(page.getByLabel('External CTA / Opt-In Proof URL')).toBeVisible();
   await page.getByLabel('Business Type').selectOption('Limited Liability Corporation');
   await page.getByLabel('Business Industry').selectOption('TECHNOLOGY');
   await page.getByLabel('Business Email').fill('ops@onboarding.test');
   await page.getByLabel('Notification Email').fill('alerts@onboarding.test');
-  await page.getByLabel('Website URL').fill('https://onboarding.test');
+  await page.getByLabel('Public Website / Contact URL').fill('https://onboarding.test/contact');
   await page.getByLabel('Rep First Name').fill('Olivia');
   await page.getByLabel('Rep Last Name').fill('Owner');
   await page.getByLabel('Business Title').fill('Owner');
@@ -92,6 +105,7 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page).toHaveURL(/\/platform\/organizations\/1\/messaging\/onboarding$/);
+  expect(await page.getByLabel('External Privacy Policy URL').evaluate((el) => el.validationMessage)).toBe('');
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.validationMessage)).not.toBe('');
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Not submitted yet');
 
@@ -107,6 +121,10 @@ test('platform admin can navigate onboarding from messaging and submit determini
 
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Submitted to Twilio');
+  await expect(page.getByText('The next Twilio packet will use the hosted fallback package.')).toBeVisible();
+  await expect(
+    page.getByText('Hosted fallback selected because the tenant website package is incomplete')
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 

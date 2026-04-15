@@ -106,6 +106,8 @@ from app.services.twilio_a2p_service import (
     cancel_a2p_onboarding,
     describe_a2p_onboarding,
     ensure_a2p_onboarding,
+    ensure_a2p_event_stream_subscription,
+    hosted_a2p_compliance_urls,
     ingest_a2p_event_stream_payload,
     refresh_a2p_onboarding,
     save_a2p_onboarding_draft,
@@ -200,6 +202,88 @@ def _a2p_form_defaults(onboarding) -> dict[str, str]:
         "has_embedded_links": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_links"),
         "has_embedded_phone": _json_bool(getattr(onboarding, "raw_submission_json", None), "has_embedded_phone"),
     }
+
+
+def _json_dict(value: str | None) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _a2p_source_defaults(organization: Organization, onboarding: OrganizationA2POnboarding | None) -> dict[str, object]:
+    hosted_urls = hosted_a2p_compliance_urls(organization)
+    validation = _json_dict(getattr(onboarding, "external_url_validation_json", None))
+    source_mode = (
+        getattr(onboarding, "submission_source_mode", None)
+        or ("external_site" if getattr(onboarding, "external_website_url", None) else "hosted_fallback")
+    )
+    return {
+        "legal_business_name": (
+            getattr(onboarding, "legal_business_name", None)
+            or getattr(onboarding, "business_name", None)
+            or organization.name
+        ),
+        "public_brand_name": getattr(onboarding, "public_brand_name", None) or organization.name,
+        "has_business_tax_id": (
+            bool(onboarding.has_business_tax_id)
+            if onboarding and onboarding.has_business_tax_id is not None
+            else bool(getattr(onboarding, "business_registration_identifier", None))
+        ),
+        "has_public_website": (
+            bool(onboarding.has_public_website)
+            if onboarding and onboarding.has_public_website is not None
+            else bool(getattr(onboarding, "external_website_url", None))
+        ),
+        "brand_registration_mode": getattr(onboarding, "brand_registration_mode", None) or "low_volume_standard",
+        "submission_source_mode": source_mode,
+        "submission_source_reason": getattr(onboarding, "submission_source_reason", None),
+        "external_website_url": (
+            getattr(onboarding, "external_website_url", None)
+            or (
+                getattr(onboarding, "website_url", None)
+                if source_mode == "external_site"
+                else ""
+            )
+        ),
+        "external_privacy_policy_url": (
+            getattr(onboarding, "external_privacy_policy_url", None)
+            or (
+                getattr(onboarding, "privacy_policy_url", None)
+                if source_mode == "external_site"
+                else ""
+            )
+        ),
+        "external_terms_and_conditions_url": (
+            getattr(onboarding, "external_terms_and_conditions_url", None)
+            or (
+                getattr(onboarding, "terms_and_conditions_url", None)
+                if source_mode == "external_site"
+                else ""
+            )
+        ),
+        "external_cta_proof_url": (
+            getattr(onboarding, "external_cta_proof_url", None)
+            or (
+                getattr(onboarding, "cta_proof_url", None)
+                if source_mode == "external_site"
+                else ""
+            )
+        ),
+        "hosted_urls": hosted_urls,
+        "active_urls": {
+            "website_url": getattr(onboarding, "website_url", None) or hosted_urls["website_url"],
+            "privacy_policy_url": getattr(onboarding, "privacy_policy_url", None) or hosted_urls["privacy_policy_url"],
+            "terms_and_conditions_url": (
+                getattr(onboarding, "terms_and_conditions_url", None) or hosted_urls["terms_and_conditions_url"]
+            ),
+            "cta_proof_url": getattr(onboarding, "cta_proof_url", None) or hosted_urls["cta_proof_url"],
+        },
+        "external_validation": validation,
+    }
 def _validate_org_messaging_profile_input(
     sender_number: str | None,
     messaging_service_sid: str | None,
@@ -280,6 +364,8 @@ def _sync_customer_managed_onboarding_state(
     onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
     campaign_status = (validation_result.campaign_status or "").strip().lower() or None
     brand_status = (validation_result.brand_status or "").strip().lower() or None
+    failure_reason = (validation_result.campaign_failure_reason or "").strip() or None
+    failure_code = (validation_result.campaign_failure_code or "").strip() or None
 
     onboarding.raw_status_json = json.dumps(
         {
@@ -291,6 +377,8 @@ def _sync_customer_managed_onboarding_state(
             "from_number": validation_result.from_number,
             "campaign_sid": validation_result.campaign_sid,
             "campaign_status": validation_result.campaign_status,
+            "campaign_failure_reason": failure_reason,
+            "campaign_failure_code": failure_code,
             "brand_registration_sid": validation_result.brand_registration_sid,
             "brand_status": validation_result.brand_status,
         },
@@ -303,11 +391,19 @@ def _sync_customer_managed_onboarding_state(
     onboarding.campaign_status = campaign_status or onboarding.campaign_status or "approved"
     onboarding.brand_status = brand_status or onboarding.brand_status or "approved"
     onboarding.last_synced_at = utc_now()
-    if campaign_status in {"approved", "active", "verified"}:
+    onboarding.last_error = failure_reason
+    onboarding.failure_code = failure_code
+    if campaign_status in {"approved", "active", "verified"} and brand_status in {None, "approved", "registered", "verified", "vetting_verified"}:
         onboarding.onboarding_status = "approved"
         onboarding.approved_at = onboarding.approved_at or utc_now()
+        onboarding.last_error = None
+        onboarding.failure_code = None
+    elif failure_reason or campaign_status in {"failed", "rejected", "deleted"} or brand_status in {"failed", "rejected", "registration_failed", "secondary_vetting_failed"}:
+        onboarding.onboarding_status = "needs_action"
     elif validation_result.messaging_service_sid:
         onboarding.onboarding_status = "pending"
+        onboarding.last_error = None
+        onboarding.failure_code = None
 
 
 def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
@@ -533,6 +629,9 @@ def _a2p_profile_ready(onboarding: OrganizationA2POnboarding | None) -> bool:
         onboarding.email,
         onboarding.notification_email,
         onboarding.website_url,
+        onboarding.privacy_policy_url,
+        onboarding.terms_and_conditions_url,
+        onboarding.cta_proof_url,
         onboarding.first_name,
         onboarding.last_name,
         onboarding.business_title,
@@ -689,6 +788,7 @@ def _setup_status_payload(organization: Organization) -> dict:
             "summary": a2p_status["summary"],
             "brand_status": a2p_status.get("brand_status"),
             "campaign_status": a2p_status.get("campaign_status"),
+            "failure_code": a2p_status.get("failure_code"),
             "last_error": (
                 onboarding.last_error
                 if onboarding and onboarding.last_error
@@ -726,6 +826,32 @@ def _should_reconcile_subscription(organization: Organization | None, session_id
 
 def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding) -> dict[str, str]:
     defaults = _a2p_form_defaults(onboarding)
+    organization = onboarding.organization or db.session.get(Organization, onboarding.organization_id)
+    source_defaults = _a2p_source_defaults(organization, onboarding) if organization is not None else {
+        "legal_business_name": onboarding.business_name or "",
+        "public_brand_name": onboarding.business_name or "",
+        "has_business_tax_id": False,
+        "has_public_website": False,
+        "brand_registration_mode": "low_volume_standard",
+        "submission_source_mode": "hosted_fallback",
+        "submission_source_reason": "",
+        "external_website_url": "",
+        "external_privacy_policy_url": "",
+        "external_terms_and_conditions_url": "",
+        "external_cta_proof_url": "",
+        "active_urls": {
+            "website_url": "",
+            "privacy_policy_url": "",
+            "terms_and_conditions_url": "",
+            "cta_proof_url": "",
+        },
+    }
+    active_urls = source_defaults["active_urls"] if organization is not None else {
+        "website_url": "",
+        "privacy_policy_url": "",
+        "terms_and_conditions_url": "",
+        "cta_proof_url": "",
+    }
     business_registration_number = (
         decrypt_provider_secret(onboarding.business_registration_number_encrypted)
         if onboarding.business_registration_number_encrypted
@@ -737,16 +863,29 @@ def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding)
         else ""
     )
     return {
-        "registration_path": onboarding.registration_path or "standard",
+        "registration_path": onboarding.registration_path or "low_volume_standard",
+        "brand_registration_mode": onboarding.brand_registration_mode or str(source_defaults["brand_registration_mode"]),
         "number_strategy": onboarding.number_strategy or "platform_assign",
         "business_name": onboarding.business_name or "",
+        "legal_business_name": str(source_defaults["legal_business_name"]),
+        "public_brand_name": str(source_defaults["public_brand_name"]),
         "business_type": onboarding.business_type or "",
         "business_industry": onboarding.business_industry or "",
+        "has_business_tax_id": "on" if bool(source_defaults["has_business_tax_id"]) else "",
         "business_registration_identifier": onboarding.business_registration_identifier or "",
         "business_registration_number": business_registration_number,
         "business_regions": defaults["business_regions"] or "USA_AND_CANADA",
-        "website_url": onboarding.website_url or "",
+        "has_public_website": "on" if bool(source_defaults["has_public_website"]) else "",
+        "submission_source_mode": str(source_defaults["submission_source_mode"]),
+        "website_url": onboarding.website_url or active_urls["website_url"],
+        "external_website_url": str(source_defaults["external_website_url"] or ""),
         "social_profile_url": onboarding.social_profile_url or "",
+        "privacy_policy_url": onboarding.privacy_policy_url or active_urls["privacy_policy_url"],
+        "external_privacy_policy_url": str(source_defaults["external_privacy_policy_url"] or ""),
+        "terms_and_conditions_url": onboarding.terms_and_conditions_url or active_urls["terms_and_conditions_url"],
+        "external_terms_and_conditions_url": str(source_defaults["external_terms_and_conditions_url"] or ""),
+        "cta_proof_url": onboarding.cta_proof_url or active_urls["cta_proof_url"],
+        "external_cta_proof_url": str(source_defaults["external_cta_proof_url"] or ""),
         "email": onboarding.email or "",
         "notification_email": onboarding.notification_email or onboarding.email or "",
         "phone_number": onboarding.phone_number or "",
@@ -761,7 +900,7 @@ def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding)
         "address_city": onboarding.address_city or "",
         "address_region": onboarding.address_region or "",
         "address_postal_code": onboarding.address_postal_code or "",
-        "campaign_use_case": onboarding.campaign_use_case or "MIXED",
+        "campaign_use_case": onboarding.campaign_use_case or "ACCOUNT_NOTIFICATION",
         "campaign_description": onboarding.campaign_description or "",
         "message_flow": onboarding.message_flow or "",
         "message_samples": defaults["message_samples"] or "",
@@ -777,6 +916,14 @@ def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding)
         "desired_phone_number_sid": onboarding.desired_phone_number_sid or "",
         "campaign_verify_token": campaign_verify_token,
     }
+
+
+def _public_organization_by_slug_or_404(organization_slug: str) -> Organization:
+    with without_tenant_scope():
+        organization = Organization.query.filter_by(slug=organization_slug).first()
+    if organization is None:
+        abort(404)
+    return organization
 
 
 def _tenant_get_or_404(model, entity_id: int):
@@ -3426,12 +3573,13 @@ def platform_organizations_messaging_edit(organization_id):
                     use_case=use_case,
                     actor_user_id=current_user.id,
                 )
+                ensure_a2p_event_stream_subscription(organization, messaging_profile)
                 _sync_customer_managed_onboarding_state(organization, validation_result)
                 db.session.commit()
             except ProviderProvisioningError as exc:
                 flash(str(exc), 'error')
                 return render_page()
-            flash('Customer-managed Twilio settings validated and activated.', 'success')
+            flash('Customer-managed Twilio settings validated and synced.', 'success')
             return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
 
         phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
@@ -3528,6 +3676,8 @@ def platform_organizations_messaging_onboarding(organization_id):
             onboarding=onboarding,
             a2p_status=_a2p_status_view(onboarding, messaging_profile),
             a2p_form_defaults=_a2p_form_defaults(onboarding),
+            hosted_compliance_urls=hosted_a2p_compliance_urls(organization),
+            a2p_source_defaults=_a2p_source_defaults(organization, onboarding),
             business_industry_choices=a2p_business_industry_choices(),
             business_region_choices=a2p_business_region_choices(),
             business_type_choices=a2p_business_type_choices(),
@@ -3759,6 +3909,51 @@ def fake_stripe_checkout(session_id):
     )
 
 
+@bp.route('/compliance/<organization_slug>/sms/privacy', methods=['GET'])
+def hosted_sms_privacy_policy(organization_slug):
+    organization = _public_organization_by_slug_or_404(organization_slug)
+    onboarding = organization.a2p_onboarding
+    hosted_urls = hosted_a2p_compliance_urls(organization)
+    return render_template(
+        'public/sms_compliance_page.html',
+        organization=organization,
+        onboarding=onboarding,
+        hosted_compliance_urls=hosted_urls,
+        page_kind='privacy',
+        page_title='SMS Privacy Policy',
+    )
+
+
+@bp.route('/compliance/<organization_slug>/sms/terms', methods=['GET'])
+def hosted_sms_terms_and_conditions(organization_slug):
+    organization = _public_organization_by_slug_or_404(organization_slug)
+    onboarding = organization.a2p_onboarding
+    hosted_urls = hosted_a2p_compliance_urls(organization)
+    return render_template(
+        'public/sms_compliance_page.html',
+        organization=organization,
+        onboarding=onboarding,
+        hosted_compliance_urls=hosted_urls,
+        page_kind='terms',
+        page_title='SMS Terms and Conditions',
+    )
+
+
+@bp.route('/compliance/<organization_slug>/sms/opt-in', methods=['GET'])
+def hosted_sms_opt_in(organization_slug):
+    organization = _public_organization_by_slug_or_404(organization_slug)
+    onboarding = organization.a2p_onboarding
+    hosted_urls = hosted_a2p_compliance_urls(organization)
+    return render_template(
+        'public/sms_compliance_page.html',
+        organization=organization,
+        onboarding=onboarding,
+        hosted_compliance_urls=hosted_urls,
+        page_kind='opt_in',
+        page_title='SMS Opt-In and Consent',
+    )
+
+
 @bp.route('/setup', methods=['GET', 'POST'])
 @login_required
 def setup():
@@ -3854,6 +4049,8 @@ def setup():
         subscription=organization.subscription,
         subscription_view=_subscription_view(organization.subscription),
         a2p_form_defaults=_a2p_form_defaults(onboarding),
+        hosted_compliance_urls=hosted_a2p_compliance_urls(organization) if not setup_is_customer_managed else None,
+        a2p_source_defaults=_a2p_source_defaults(organization, onboarding) if not setup_is_customer_managed else None,
         business_type_choices=a2p_business_type_choices(),
         business_industry_choices=a2p_business_industry_choices(),
         business_region_choices=a2p_business_region_choices(),
@@ -5398,14 +5595,42 @@ def twilio_a2p_event_stream_webhook():
         abort(404)
 
     expected_token = (current_app.config.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN') or '').strip()
-    if expected_token:
-        authorization = request.headers.get('Authorization', '')
-        if authorization != f'Bearer {expected_token}':
-            current_app.logger.warning(
-                'Rejected Twilio A2P Event Streams webhook due to auth mismatch remote_addr=%s',
-                request.remote_addr,
-            )
-            return 'Forbidden', 403
+    authorization = request.headers.get('Authorization', '')
+    bearer_valid = bool(expected_token) and authorization == f'Bearer {expected_token}'
+
+    organization_id = request.args.get('organization_id', type=int)
+    messaging_profile = None
+    if organization_id:
+        organization = db.session.get(Organization, organization_id)
+        messaging_profile = organization.messaging_profile if organization is not None else None
+
+    signature = request.headers.get('X-Twilio-Signature')
+    validation = None
+    if messaging_profile is not None and signature:
+        validation = validate_inbound_signature_detailed(
+            request.url,
+            request.get_data(cache=True, as_text=True),
+            signature,
+            messaging_profile=messaging_profile,
+        )
+    elif signature:
+        validation = validate_inbound_signature_detailed(
+            request.url,
+            request.get_data(cache=True, as_text=True),
+            signature,
+        )
+
+    if validation is not None and validation.is_valid:
+        pass
+    elif not bearer_valid:
+        current_app.logger.warning(
+            'Rejected Twilio A2P Event Streams webhook due to auth validation failure. '
+            'reason=%s remote_addr=%s organization_id=%s',
+            validation.reason if validation is not None else 'missing_signature',
+            request.remote_addr,
+            organization_id,
+        )
+        return 'Forbidden', 403
 
     payload = request.get_json(silent=True)
     if payload is None:

@@ -88,6 +88,24 @@ class TestTwilioInboundSignatureValidation(unittest.TestCase):
         self.assertFalse(result.is_valid)
         self.assertEqual(result.reason, "invalid_signature")
 
+    @patch("app.services.twilio_service.RequestValidator")
+    def test_validate_inbound_signature_accepts_raw_json_body(self, mock_validator) -> None:
+        from app.services.twilio_service import validate_inbound_signature_detailed
+
+        mock_validator.return_value.validate.return_value = True
+        result = validate_inbound_signature_detailed(
+            "https://example.com/webhooks/twilio/a2p-events?organization_id=3&bodySHA256=test",
+            '{"id":"evt-1"}',
+            "signature",
+        )
+
+        self.assertTrue(result.is_valid)
+        mock_validator.return_value.validate.assert_called_once_with(
+            "https://example.com/webhooks/twilio/a2p-events?organization_id=3&bodySHA256=test",
+            '{"id":"evt-1"}',
+            "signature",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -293,6 +311,42 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertIs(service.client, mock_build_customer_client.return_value)
         self.assertEqual(service.account_sid, "ACCUST0001")
         self.assertEqual(service.auth_token, "customer-token")
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_save_customer_managed_profile_persists_rejected_external_state(self, mock_build_customer_client) -> None:
+        from app.services.twilio_service import save_customer_managed_profile
+
+        organization, _ = self._create_org_with_profile()
+        customer_client = mock_build_customer_client.return_value
+        customer_client.incoming_phone_numbers.list.return_value = [
+            SimpleNamespace(sid="PNcust0001", phone_number="+15550001111")
+        ]
+        customer_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = [
+            SimpleNamespace(
+                sid="QEcust0001",
+                campaign_status="FAILED",
+                errors=[{"error_code": "30909", "description": "CTA could not be verified."}],
+                brand_registration_sid="BNcust0001",
+            )
+        ]
+        customer_client.messaging.v1.brand_registrations.return_value.fetch.return_value = SimpleNamespace(
+            status="VERIFIED"
+        )
+
+        profile, validation = save_customer_managed_profile(
+            organization.id,
+            twilio_account_sid="ACcust0001",
+            twilio_auth_token="customer-token",
+            from_number="+15550001111",
+            messaging_service_sid="MGcust0001",
+        )
+
+        self.assertEqual(profile.provider_status, "error")
+        self.assertEqual(profile.sender_review_status, "rejected")
+        self.assertEqual(profile.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(validation.campaign_status, "failed")
+        self.assertEqual(validation.campaign_failure_code, "30909")
+        self.assertIn("CTA", validation.campaign_failure_reason or "")
 
     @patch("app.services.twilio_service._configure_service_webhooks")
     @patch("app.services.twilio_service._build_subaccount_client")

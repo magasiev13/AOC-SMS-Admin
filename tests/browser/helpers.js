@@ -149,7 +149,9 @@ async function fillOwnerSetupCompliance(page, { organizationName, businessEmail,
 
   await page.getByLabel('Business type').selectOption('Limited Liability Corporation');
   await page.getByLabel('Legal business name').fill(organizationName);
-  await page.getByLabel('Business website').fill('https://example.test');
+  await page.getByLabel('Public brand name').fill(organizationName);
+  await page.getByLabel('This business has its own EIN or business tax ID').check();
+  await expect(page.getByText('Using hosted fallback pages for Twilio submission.')).toBeVisible();
   await page.getByLabel('Business industry').selectOption('TECHNOLOGY');
   await page.getByLabel('Business email').fill(businessEmail);
   await page.getByLabel('Notification email').fill(notificationEmail || businessEmail);
@@ -175,10 +177,12 @@ async function fillOwnerSetupCompliance(page, { organizationName, businessEmail,
 
   await expect(page.getByText('Business profile saved.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Review and submit' })).toBeVisible();
+  await expect(page.getByText('Submission source')).toBeVisible();
+  await expect(page.getByText('hosted_fallback')).toBeVisible();
 }
 
 async function submitOwnerOnboarding(page) {
-  await page.getByRole('checkbox').check();
+  await page.getByLabel(/I confirm the information provided is accurate/i).check();
   await page.getByRole('button', { name: 'Submit for Twilio review' }).click();
   await expect(page.getByText('Twilio A2P onboarding queued for review.')).toBeVisible();
 }
