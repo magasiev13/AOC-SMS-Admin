@@ -54,7 +54,10 @@ test('golden owner journey covers signup billing onboarding staff invite and pla
     businessEmail: ownerEmail,
   });
   await submitOwnerOnboarding(page);
-  await expect(page.getByRole('heading', { name: 'Await approval and sender assignment' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Await Twilio review' })).toBeVisible();
+  await expect(page.getByText('Launch readiness')).toBeVisible();
+  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
+  await expect(page.getByText('First-send runbook')).toBeVisible();
 
   await page.goto('/dashboard');
   await expect(page.getByText('Live SMS is paused.')).toBeVisible();

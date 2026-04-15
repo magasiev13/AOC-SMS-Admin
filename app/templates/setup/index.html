@@ -18,6 +18,7 @@
 {% set selected_has_public_website = request.form.get('has_public_website') == 'on' if request.method == 'POST' else a2p_source_defaults.has_public_website %}
 {% set selected_has_business_tax_id = request.form.get('has_business_tax_id') == 'on' if request.method == 'POST' else a2p_source_defaults.has_business_tax_id %}
 {% set selected_source_mode = request.form.get('submission_source_mode', a2p_source_defaults.submission_source_mode if a2p_source_defaults else 'hosted_fallback') %}
+{% set show_advanced_keyword_settings = request.form.get('opt_in_message') or request.form.get('opt_out_message') or request.form.get('help_message') or request.form.get('opt_in_keywords') or request.form.get('opt_out_keywords') or request.form.get('help_keywords') or (onboarding and (onboarding.opt_in_message or onboarding.opt_out_message or onboarding.help_message)) or a2p_form_defaults.opt_in_keywords or a2p_form_defaults.opt_out_keywords or a2p_form_defaults.help_keywords %}
 <section
     class="setup-shell"
     data-setup-shell
@@ -503,30 +504,42 @@
                         <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
                         <div class="form-text">Enter one example per line. Mixed campaigns require at least two samples.</div>
                     </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="opt_in_keywords">Opt-in keywords</label>
-                        <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords) }}">
-                    </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="opt_out_keywords">Opt-out keywords</label>
-                        <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords) }}">
-                    </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="help_keywords">Help keywords</label>
-                        <input class="form-control" id="help_keywords" name="help_keywords" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords) }}">
-                        <div class="form-text">Leave these advanced keyword fields blank to use Twilio-managed defaults.</div>
-                    </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="opt_in_message">Opt-in message</label>
-                        <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', onboarding.opt_in_message if onboarding else '') }}</textarea>
-                    </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="opt_out_message">Opt-out message</label>
-                        <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', onboarding.opt_out_message if onboarding else '') }}</textarea>
-                    </div>
-                    <div class="setup-field">
-                        <label class="form-label" for="help_message">Help message</label>
-                        <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', onboarding.help_message if onboarding else '') }}</textarea>
+                    <div class="setup-field setup-field--full">
+                        <details class="border rounded p-3" {% if show_advanced_keyword_settings %}open{% endif %}>
+                            <summary><strong>Advanced keyword and reply settings</strong></summary>
+                            <div class="setup-form-grid mt-3">
+                                <div class="setup-field setup-field--full">
+                                    <div class="form-text">
+                                        Leave these fields blank for the default website-only transactional packet. Only expand this when the campaign truly uses custom keyword-driven opt-in, help, or opt-out flows.
+                                    </div>
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="opt_in_keywords">Opt-in keywords</label>
+                                    <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords) }}">
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="opt_out_keywords">Opt-out keywords</label>
+                                    <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords) }}">
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="help_keywords">Help keywords</label>
+                                    <input class="form-control" id="help_keywords" name="help_keywords" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords) }}">
+                                    <div class="form-text">Leave these advanced keyword fields blank to use Twilio-managed defaults.</div>
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="opt_in_message">Opt-in message</label>
+                                    <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', onboarding.opt_in_message if onboarding else '') }}</textarea>
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="opt_out_message">Opt-out message</label>
+                                    <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', onboarding.opt_out_message if onboarding else '') }}</textarea>
+                                </div>
+                                <div class="setup-field">
+                                    <label class="form-label" for="help_message">Help message</label>
+                                    <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', onboarding.help_message if onboarding else '') }}</textarea>
+                                </div>
+                            </div>
+                        </details>
                     </div>
                     <div class="setup-field">
                         <label class="setup-checkbox">
@@ -619,6 +632,12 @@
                     <div class="platform-note__copy">{{ onboarding.submission_source_reason }}</div>
                 </div>
                 {% endif %}
+                {% if retry_guidance %}
+                <div class="platform-note mt-4" role="note">
+                    <div class="platform-note__title">Retry guidance</div>
+                    <div class="platform-note__copy">{{ retry_guidance }}</div>
+                </div>
+                {% endif %}
                 <form method="POST" class="setup-review-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="submit_onboarding">
@@ -640,7 +659,7 @@
                 <div class="setup-panel__header">
                     <div>
                         <div class="setup-panel__kicker">Step 5</div>
-                        <h2>{{ 'Workspace is live' if setup_status.messaging.can_send else 'Await approval and sender assignment' }}</h2>
+                        <h2>{{ launch_readiness.heading }}</h2>
                     </div>
                 </div>
                 {% if onboarding and onboarding.last_error %}
@@ -652,20 +671,13 @@
                     {% endif %}
                 </div>
                 {% endif %}
-                <p class="setup-panel__copy">
-                    {% if setup_status.messaging.can_send %}
-                    Billing is active and your sender is assigned. You can move into the workspace now.
-                    {% elif onboarding and onboarding.onboarding_status == 'approved' %}
-                    Twilio approved the registration. Platform support will assign the first sender next so you do not incur automatic number spend unexpectedly.
-                    {% elif onboarding and onboarding.onboarding_status in ('rejected', 'error') %}
-                    Twilio rejected the current packet. Review the CTA explanation, hosted compliance links, and submission details, then resubmit for review.
-                    {% elif onboarding and onboarding.onboarding_status == 'canceled' %}
-                    The Twilio packet is not under review right now. Update the details if needed, then resubmit when you are ready.
-                    {% else %}
-                    Twilio review is in progress. This page refreshes automatically whenever a new provider update arrives.
-                    {% endif %}
-                </p>
-                <div class="setup-summary-grid">
+                <p class="setup-panel__copy">{{ launch_readiness.summary }}</p>
+                <div class="mb-4">
+                    {% set launch_readiness_title = 'Launch readiness' %}
+                    {% set launch_readiness_show_summary = false %}
+                    {% include 'includes/launch_readiness_panel.html' %}
+                </div>
+                <div class="setup-summary-grid mb-4">
                     <div class="setup-summary-card">
                         <span>Billing</span>
                         <strong>{{ subscription_view.title }}</strong>
@@ -682,6 +694,9 @@
                         <span>Campaign</span>
                         <strong>{{ onboarding.campaign_status or 'not submitted' }}</strong>
                     </div>
+                </div>
+                <div class="mb-4">
+                    {% include 'includes/provider_activity_timeline.html' %}
                 </div>
                 <div class="setup-actions">
                     {% if setup_status.messaging.can_send %}

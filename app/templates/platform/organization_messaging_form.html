@@ -115,6 +115,18 @@
                     </div>
                     {% endif %}
 
+                    <div class="mb-4">
+                        {% set launch_readiness_title = 'Launch readiness' %}
+                        {% include 'includes/launch_readiness_panel.html' %}
+                    </div>
+
+                    {% if not provider_is_customer_managed and launch_readiness.awaiting_sender_assignment %}
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">Next operator action</div>
+                        <div class="platform-note__copy">{{ launch_readiness.sender_action }}</div>
+                    </div>
+                    {% endif %}
+
                     <div class="platform-key-grid mb-4">
                         <div class="platform-key-item">
                             <div class="platform-key-label">Provider mode</div>
@@ -185,6 +197,10 @@
                             </button>
                         </form>
                         {% endif %}
+                    </div>
+
+                    <div class="mb-4">
+                        {% include 'includes/provider_activity_timeline.html' %}
                     </div>
 
                     <form method="POST">

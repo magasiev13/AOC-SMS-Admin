@@ -1088,6 +1088,67 @@ def _latest_number_status(onboarding: OrganizationA2POnboarding) -> str | None:
     return _status_value(status_payload.get("number_status"))
 
 
+def _a2p_audit_metadata(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+) -> dict[str, Any]:
+    return {
+        "brand_registration_sid": onboarding.brand_registration_sid,
+        "campaign_sid": onboarding.campaign_sid,
+        "campaign_use_case": onboarding.campaign_use_case,
+        "failure_code": onboarding.failure_code,
+        "messaging_service_sid": profile.messaging_service_sid,
+        "phone_number_sid": profile.phone_number_sid,
+        "provider_status": profile.provider_status,
+        "submission_source_mode": onboarding.submission_source_mode,
+    }
+
+
+def _record_review_transition_audit(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    actor_user_id: int | None,
+    previous_onboarding_status: str | None,
+    previous_failure_code: str | None,
+    previous_error_message: str | None,
+) -> None:
+    current_status = (onboarding.onboarding_status or "").strip().lower()
+    if current_status == "approved" and previous_onboarding_status != "approved":
+        _record_provider_audit(
+            onboarding.organization_id,
+            "a2p_review_approved",
+            actor_user_id=actor_user_id,
+            message="Twilio approved the A2P registration.",
+            metadata=_a2p_audit_metadata(onboarding, profile),
+        )
+        return
+
+    if current_status not in {"rejected", "needs_action"}:
+        return
+
+    current_failure_code = (onboarding.failure_code or "").strip() or None
+    current_error_message = (onboarding.last_error or "").strip() or None
+    should_record = (
+        previous_onboarding_status not in {"rejected", "needs_action"}
+        or current_failure_code != previous_failure_code
+        or current_error_message != previous_error_message
+    )
+    if not should_record:
+        return
+
+    metadata = _a2p_audit_metadata(onboarding, profile)
+    metadata["failure_reason"] = current_error_message
+    _record_provider_audit(
+        onboarding.organization_id,
+        "a2p_review_rejected",
+        actor_user_id=actor_user_id,
+        status="error",
+        message=current_error_message or "Twilio flagged the A2P registration for correction.",
+        metadata=metadata,
+    )
+
+
 def _event_stream_state(onboarding: OrganizationA2POnboarding) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     status_payload = _load_status_payload(onboarding)
     event_stream = status_payload.get("event_stream")
@@ -1381,6 +1442,9 @@ def _apply_status_snapshot(
     actor_user_id: int | None = None,
     allow_number_setup: bool,
 ) -> None:
+    previous_onboarding_status = (onboarding.onboarding_status or "").strip().lower() or None
+    previous_failure_code = (onboarding.failure_code or "").strip() or None
+    previous_error_message = (onboarding.last_error or "").strip() or None
     normalized_brand_status = _status_value(onboarding.brand_status) or "pending"
     normalized_campaign_status = _status_value(onboarding.campaign_status) or "pending"
     number_status = _latest_number_status(onboarding)
@@ -1395,6 +1459,14 @@ def _apply_status_snapshot(
             campaign_status=normalized_campaign_status,
             error_message=failure_message or "Twilio rejected the A2P registration.",
         )
+        _record_review_transition_audit(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+            previous_onboarding_status=previous_onboarding_status,
+            previous_failure_code=previous_failure_code,
+            previous_error_message=previous_error_message,
+        )
         return
 
     if number_status in A2P_NUMBER_FAILURE_STATUSES:
@@ -1406,6 +1478,14 @@ def _apply_status_snapshot(
             campaign_status=normalized_campaign_status,
             verification_status=number_status,
             error_message=failure_message or "Twilio could not finish the phone number registration.",
+        )
+        _record_review_transition_audit(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+            previous_onboarding_status=previous_onboarding_status,
+            previous_failure_code=previous_failure_code,
+            previous_error_message=previous_error_message,
         )
         return
 
@@ -1428,6 +1508,14 @@ def _apply_status_snapshot(
             profile.last_provision_error = None
             if profile.provider_status != "suspended":
                 profile.set_provider_status("pending")
+            _record_review_transition_audit(
+                onboarding,
+                profile,
+                actor_user_id=actor_user_id,
+                previous_onboarding_status=previous_onboarding_status,
+                previous_failure_code=previous_failure_code,
+                previous_error_message=previous_error_message,
+            )
             return
 
         if allow_number_setup:
@@ -1444,6 +1532,14 @@ def _apply_status_snapshot(
             if profile.provider_status != "suspended":
                 profile.set_provider_status("active")
             profile.last_provision_error = None
+            _record_review_transition_audit(
+                onboarding,
+                profile,
+                actor_user_id=actor_user_id,
+                previous_onboarding_status=previous_onboarding_status,
+                previous_failure_code=previous_failure_code,
+                previous_error_message=previous_error_message,
+            )
             return
 
         _set_status(
@@ -1458,6 +1554,14 @@ def _apply_status_snapshot(
             onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
         if profile.provider_status != "suspended":
             profile.set_provider_status("active" if profile.can_send else "pending")
+        _record_review_transition_audit(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+            previous_onboarding_status=previous_onboarding_status,
+            previous_failure_code=previous_failure_code,
+            previous_error_message=previous_error_message,
+        )
         return
 
     _set_status(
@@ -1470,6 +1574,14 @@ def _apply_status_snapshot(
     )
     if profile.provider_status != "suspended":
         profile.set_provider_status("pending")
+    _record_review_transition_audit(
+        onboarding,
+        profile,
+        actor_user_id=actor_user_id,
+        previous_onboarding_status=previous_onboarding_status,
+        previous_failure_code=previous_failure_code,
+        previous_error_message=previous_error_message,
+    )
 
 
 def _build_form_data(payload: dict[str, Any], organization: Organization, *, require_declaration: bool) -> A2PFormData:
@@ -1898,6 +2010,8 @@ def submit_a2p_onboarding(
             "registration_path": onboarding.registration_path,
             "number_strategy": onboarding.number_strategy,
             "campaign_use_case": onboarding.campaign_use_case,
+            "submission_source_mode": onboarding.submission_source_mode,
+            "messaging_service_sid": profile.messaging_service_sid,
         },
     )
     db.session.commit()
@@ -1935,6 +2049,7 @@ def save_a2p_onboarding_draft(
         metadata={
             "registration_path": onboarding.registration_path,
             "number_strategy": onboarding.number_strategy,
+            "submission_source_mode": onboarding.submission_source_mode,
         },
     )
     db.session.commit()
@@ -1954,6 +2069,19 @@ def refresh_a2p_onboarding(organization_id: int, *, actor_user_id: int | None = 
     onboarding.last_error = None
     db.session.commit()
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    _record_provider_audit(
+        organization.id,
+        "a2p_refresh",
+        actor_user_id=actor_user_id,
+        status="pending",
+        message="Queued a Twilio A2P status refresh.",
+        metadata={
+            "campaign_sid": onboarding.campaign_sid,
+            "messaging_service_sid": profile.messaging_service_sid,
+            "submission_source_mode": onboarding.submission_source_mode,
+        },
+    )
+    db.session.commit()
     try:
         _queue_job("app.tasks.process_a2p_onboarding_job", organization.id, actor_user_id)
     except Exception as exc:

@@ -30,8 +30,10 @@ test('platform admin can navigate onboarding from messaging and submit determini
 
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
   await expect(page.getByText('A2P onboarding', { exact: true })).toBeVisible();
+  await expect(page.getByText('Launch readiness')).toBeVisible();
+  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Manage A2P Onboarding' })).toBeVisible();
-  await expect(page.getByText('Status:')).toContainText('Not submitted yet');
+  await expect(page.getByText(/Status:\s*Not submitted yet/).first()).toBeVisible();
   await expect(page.getByText('Twilio subaccount not provisioned yet')).toBeVisible();
 
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
@@ -61,9 +63,16 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByLabel('Campaign Description')).toBeVisible();
   await expect(page.getByLabel('Opt-in / Message Flow')).toBeVisible();
   await expect(page.getByLabel('Message Samples')).toBeVisible();
+  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
+  await expect(page.getByLabel('Opt-in Message')).toBeHidden();
+  await expect(page.getByLabel('Opt-in Keywords')).toBeHidden();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
   await expect(page.locator('li').filter({ hasText: 'Messaging service' })).toContainText('not provisioned yet');
+
+  await page.locator('summary').filter({ hasText: 'Advanced keyword and reply settings' }).click();
+  await expect(page.getByLabel('Opt-in Message')).toBeVisible();
+  await expect(page.getByLabel('Opt-in Keywords')).toBeVisible();
 
   expect(await page.getByLabel('Registration Identifier').evaluate((el) => el.required)).toBe(true);
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.required)).toBe(true);
@@ -125,12 +134,13 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(
     page.getByText('Hosted fallback selected because the tenant website package is incomplete')
   ).toBeVisible();
+  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel' })).toBeEnabled();
 
   await page.getByRole('link', { name: 'Back to Messaging' }).click();
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
-  await expect(page.getByText('Status:')).toContainText('Submitted to Twilio');
+  await expect(page.getByText(/Status:\s*Submitted to Twilio/).first()).toBeVisible();
 });
 
 test('platform admin sees each seeded onboarding state and action availability', async ({ page }) => {

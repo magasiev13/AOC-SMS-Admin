@@ -73,6 +73,10 @@
                 </div>
                 {% endif %}
 
+                <div class="mb-4">
+                    {% include 'includes/provider_activity_timeline.html' %}
+                </div>
+
                 {% if customer_managed_a2p %}
                 <div class="platform-note mb-4" role="note">
                     <div class="platform-note__title">Customer-managed A2P</div>
@@ -124,6 +128,7 @@
                     {% set selected_business_regions = request.form.getlist('business_regions') if request.form.getlist('business_regions') else ((a2p_form_defaults.business_regions or 'USA_AND_CANADA').split(',')) %}
                     {% set selected_has_public_website = request.form.get('has_public_website') == 'on' if request.method == 'POST' else a2p_source_defaults.has_public_website %}
                     {% set selected_has_business_tax_id = request.form.get('has_business_tax_id') == 'on' if request.method == 'POST' else a2p_source_defaults.has_business_tax_id %}
+                    {% set show_advanced_keyword_settings = request.form.get('opt_in_message') or request.form.get('opt_out_message') or request.form.get('help_message') or request.form.get('opt_in_keywords') or request.form.get('opt_out_keywords') or request.form.get('help_keywords') or (onboarding and (onboarding.opt_in_message or onboarding.opt_out_message or onboarding.help_message)) or a2p_form_defaults.opt_in_keywords or a2p_form_defaults.opt_out_keywords or a2p_form_defaults.help_keywords %}
 
                     <div class="platform-shell__eyebrow mb-2">Registration settings</div>
                     <div class="row g-3">
@@ -356,30 +361,42 @@
                             <textarea class="form-control" id="message_samples" name="message_samples" rows="4" required>{{ request.form.get('message_samples', a2p_form_defaults.message_samples) }}</textarea>
                             <div class="form-text">Provide at least two real examples, one per line.</div>
                         </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="opt_in_message">Opt-in Message</label>
-                            <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', (onboarding.opt_in_message if onboarding else '') or '') }}</textarea>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="opt_out_message">Opt-out Message</label>
-                            <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', (onboarding.opt_out_message if onboarding else '') or '') }}</textarea>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="help_message">Help Message</label>
-                            <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', (onboarding.help_message if onboarding else '') or '') }}</textarea>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="opt_in_keywords">Opt-in Keywords</label>
-                            <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" placeholder="START,SUBSCRIBE,YES" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords) }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="opt_out_keywords">Opt-out Keywords</label>
-                            <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" placeholder="STOP,UNSUBSCRIBE,END" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords) }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label" for="help_keywords">Help Keywords</label>
-                            <input class="form-control" id="help_keywords" name="help_keywords" placeholder="HELP,INFO" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords) }}">
-                            <div class="form-text">Leave these advanced fields blank to use Twilio-managed defaults.</div>
+                        <div class="col-12">
+                            <details class="border rounded p-3" {% if show_advanced_keyword_settings %}open{% endif %}>
+                                <summary><strong>Advanced keyword and reply settings</strong></summary>
+                                <div class="row g-3 mt-1">
+                                    <div class="col-12">
+                                        <div class="form-text">
+                                            Leave these fields blank for the safer default packet path. Only expand this when the campaign truly uses custom keyword-driven opt-in, help, or opt-out flows.
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="opt_in_message">Opt-in Message</label>
+                                        <textarea class="form-control" id="opt_in_message" name="opt_in_message" rows="3">{{ request.form.get('opt_in_message', (onboarding.opt_in_message if onboarding else '') or '') }}</textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="opt_out_message">Opt-out Message</label>
+                                        <textarea class="form-control" id="opt_out_message" name="opt_out_message" rows="3">{{ request.form.get('opt_out_message', (onboarding.opt_out_message if onboarding else '') or '') }}</textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="help_message">Help Message</label>
+                                        <textarea class="form-control" id="help_message" name="help_message" rows="3">{{ request.form.get('help_message', (onboarding.help_message if onboarding else '') or '') }}</textarea>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="opt_in_keywords">Opt-in Keywords</label>
+                                        <input class="form-control" id="opt_in_keywords" name="opt_in_keywords" placeholder="START,SUBSCRIBE,YES" value="{{ request.form.get('opt_in_keywords', a2p_form_defaults.opt_in_keywords) }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="opt_out_keywords">Opt-out Keywords</label>
+                                        <input class="form-control" id="opt_out_keywords" name="opt_out_keywords" placeholder="STOP,UNSUBSCRIBE,END" value="{{ request.form.get('opt_out_keywords', a2p_form_defaults.opt_out_keywords) }}">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label" for="help_keywords">Help Keywords</label>
+                                        <input class="form-control" id="help_keywords" name="help_keywords" placeholder="HELP,INFO" value="{{ request.form.get('help_keywords', a2p_form_defaults.help_keywords) }}">
+                                        <div class="form-text">Leave these fields blank to use Twilio-managed defaults.</div>
+                                    </div>
+                                </div>
+                            </details>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="desired_phone_number">Desired Phone Number</label>
@@ -455,6 +472,12 @@
                         Use Refresh Status when Event Streams are not configured yet. The background reconcile job will keep polling Twilio.
                         {% endif %}
                     </p>
+                    {% if retry_guidance %}
+                    <div class="platform-note mb-3" role="note">
+                        <div class="platform-note__title">Retry guidance</div>
+                        <div class="platform-note__copy">{{ retry_guidance }}</div>
+                    </div>
+                    {% endif %}
                     <div class="platform-shell__eyebrow mb-3">Actions</div>
                     <div class="platform-form-actions">
                         <form method="POST">

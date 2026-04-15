@@ -71,6 +71,36 @@ For eligible EIN-backed businesses, the default A2P registration path is now `lo
 
 For failed A2P resubmissions, the worker now preflights the Twilio Messaging Service before it creates a replacement campaign. It automatically deletes the attached failed campaign only when Twilio requires a new campaign, such as a changed use case or a corrected brand association. If the failed campaign still matches the same use case and brand, the worker stops and surfaces guidance instead of silently deleting it and risking another paid vetting review.
 
+## A2P Review To Go-Live
+
+While Twilio review is in progress, do not mutate the packet again unless the product explicitly shows a rejected or needs-action state.
+
+Use the built-in product surfaces during review:
+
+- owner `/setup` launch step
+- platform organization messaging page
+- platform A2P onboarding page
+
+Those pages now show:
+
+- a launch-readiness checklist
+- recent Twilio/provider lifecycle activity from `organization_provider_audit_logs`
+- explicit post-approval sender guidance
+- retry guidance when a failed campaign should use an in-place Twilio edit/retry path instead of delete-and-recreate
+
+### First Controlled Send
+
+After Twilio approves the campaign, keep customer traffic paused until this manual runbook is complete:
+
+1. Confirm the approval has synced into the app and the launch-readiness checklist shows the campaign as approved.
+2. Attach the sender to the Messaging Service using the configured number strategy.
+3. Verify the provider status turns `active`.
+4. Send one controlled internal test message.
+5. Confirm inbound `STOP` and `HELP` handling still works as expected.
+6. Only then allow live customer traffic.
+
+If the campaign is approved but no sender is attached yet, the platform messaging page will show the exact next operator action based on the stored number strategy.
+
 ## SaaS DB Commands
 
 ```bash

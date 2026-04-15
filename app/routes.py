@@ -45,6 +45,7 @@ from app.models import (
     OrganizationInvitation,
     OrganizationMembership,
     OrganizationMessagingProfile,
+    OrganizationProviderAuditLog,
     OrganizationSubscription,
     ScheduledMessage,
     SuppressedContact,
@@ -530,6 +531,304 @@ def _format_datetime_display(value):
     return normalized.strftime('%b %d, %Y %I:%M %p UTC')
 
 
+_PROVIDER_AUDIT_ACTION_LABELS = {
+    "a2p_cancel": "Canceled A2P submission",
+    "a2p_campaign_recreated": "Recreated failed campaign",
+    "a2p_failed": "A2P processing failed",
+    "a2p_queue_failed": "A2P queue failed",
+    "a2p_refresh": "Queued Twilio refresh",
+    "a2p_review_approved": "A2P approved",
+    "a2p_review_rejected": "A2P needs correction",
+    "a2p_save_draft": "Saved A2P draft",
+    "a2p_submit": "Submitted to Twilio",
+    "customer_managed_validate": "Validated external Twilio",
+    "provision_complete": "Provisioned Twilio resources",
+    "provision_failed": "Twilio provisioning failed",
+    "provision_start": "Started Twilio provisioning",
+    "release_sender": "Released sender",
+    "release_sender_failed": "Sender release failed",
+    "resume": "Resumed provider",
+    "sender_detach": "Detached sender from service",
+    "sender_sync": "Attached sender to service",
+    "sender_sync_failed": "Sender sync failed",
+    "suspend": "Suspended provider",
+}
+
+
+def _provider_audit_action_label(action: str) -> str:
+    normalized = (action or "").strip().lower()
+    if normalized in _PROVIDER_AUDIT_ACTION_LABELS:
+        return _PROVIDER_AUDIT_ACTION_LABELS[normalized]
+    if not normalized:
+        return "Provider update"
+    return normalized.replace("_", " ").strip().title()
+
+
+def _provider_audit_status_badge(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized == "success":
+        return "success"
+    if normalized == "error":
+        return "danger"
+    if normalized == "pending":
+        return "warning text-dark"
+    return "secondary"
+
+
+def _provider_audit_status_label(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    return normalized.replace("_", " ") if normalized else "info"
+
+
+def _metadata_value(metadata: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = metadata.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _submission_source_label(mode: str | None) -> str | None:
+    normalized = (mode or "").strip().lower()
+    if not normalized:
+        return None
+    return "Hosted fallback" if normalized == "hosted_fallback" else "Tenant site"
+
+
+def _provider_audit_metadata_items(metadata: dict[str, object]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+
+    def add(label: str, value: str | None) -> None:
+        if value:
+            items.append({"label": label, "value": value})
+
+    add("Campaign SID", _metadata_value(metadata, "campaign_sid", "deleted_campaign_sid"))
+    add("Messaging Service SID", _metadata_value(metadata, "messaging_service_sid"))
+    add("Phone Number SID", _metadata_value(metadata, "phone_number_sid"))
+    add("Failure code", _metadata_value(metadata, "failure_code", "campaign_failure_code", "brand_failure_code"))
+    add("Submission source", _submission_source_label(_metadata_value(metadata, "submission_source_mode")))
+    add("Campaign use case", _metadata_value(metadata, "campaign_use_case", "deleted_campaign_use_case"))
+    add("Registration path", _metadata_value(metadata, "registration_path"))
+    add("Provider status", _metadata_value(metadata, "provider_status"))
+    add("Sender", _metadata_value(metadata, "from_number"))
+    return items
+
+
+def _provider_activity_timeline(organization_id: int, *, limit: int = 8) -> list[dict[str, object]]:
+    audit_rows = (
+        OrganizationProviderAuditLog.query
+        .filter_by(organization_id=organization_id)
+        .order_by(OrganizationProviderAuditLog.created_at.desc(), OrganizationProviderAuditLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    entries: list[dict[str, object]] = []
+    for row in audit_rows:
+        metadata = _json_dict(row.metadata_json)
+        entries.append(
+            {
+                "id": row.id,
+                "action_label": _provider_audit_action_label(row.action),
+                "status_label": _provider_audit_status_label(row.status).title(),
+                "status_badge": _provider_audit_status_badge(row.status),
+                "message": row.message,
+                "created_at_display": _format_datetime_display(row.created_at),
+                "metadata_items": _provider_audit_metadata_items(metadata),
+            }
+        )
+    return entries
+
+
+def _message_log_smoke_test_record(
+    organization_id: int,
+    *,
+    approved_at: datetime | None = None,
+) -> MessageLog | None:
+    query = MessageLog.query.filter(
+        MessageLog.organization_id == organization_id,
+        MessageLog.success_count > 0,
+    )
+    if approved_at is not None:
+        query = query.filter(MessageLog.created_at >= approved_at)
+    return query.order_by(MessageLog.created_at.desc(), MessageLog.id.desc()).first()
+
+
+def _sender_assignment_action(onboarding: OrganizationA2POnboarding | None) -> str:
+    strategy = (onboarding.number_strategy if onboarding is not None else "platform_assign") or "platform_assign"
+    if strategy == "platform_assign":
+        return "Assign a sender now inside the org Twilio subaccount, then save the live sender number and PN SID here."
+    if strategy == "auto_buy":
+        return "Buy and attach a sender now, then save the live sender number and PN SID here."
+    return "Attach the configured PN SID to the Messaging Service now, then save the sender number and PN SID here."
+
+
+def _launch_readiness_view(
+    organization: Organization,
+    onboarding: OrganizationA2POnboarding | None,
+    messaging_profile: OrganizationMessagingProfile | None,
+    *,
+    subscription_view: dict | None = None,
+    a2p_status: dict | None = None,
+) -> dict[str, object]:
+    subscription_view = subscription_view or _subscription_view(organization.subscription)
+    a2p_status = a2p_status or _a2p_status_view(onboarding, messaging_profile)
+    billing_active = bool(subscription_view["can_send"])
+    a2p_approved = bool(
+        onboarding is not None
+        and (
+            onboarding.onboarding_status == "approved"
+            or (
+                (onboarding.brand_status or "").strip().lower() in {"approved", "verified", "registered", "vetting_verified"}
+                and (onboarding.campaign_status or "").strip().lower() in {"approved", "verified"}
+            )
+        )
+    )
+    sender_attached = bool(
+        messaging_profile is not None
+        and messaging_profile.messaging_service_sid
+        and messaging_profile.from_number
+        and messaging_profile.phone_number_sid
+    )
+    provider_active = bool(messaging_profile is not None and messaging_profile.provider_status == "active")
+    smoke_test_record = _message_log_smoke_test_record(
+        organization.id,
+        approved_at=onboarding.approved_at if onboarding is not None else None,
+    )
+    smoke_test_complete = smoke_test_record is not None
+    awaiting_sender_assignment = bool(
+        onboarding is not None
+        and onboarding.approved_at is not None
+        and (
+            not sender_attached
+            or (messaging_profile is not None and messaging_profile.provider_status == "pending")
+        )
+    )
+    awaiting_provider_activation = bool(
+        onboarding is not None
+        and onboarding.approved_at is not None
+        and sender_attached
+        and not provider_active
+    )
+
+    items = [
+        {
+            "label": "Billing active",
+            "state_label": "Complete" if billing_active else "Waiting",
+            "complete": billing_active,
+            "detail": subscription_view["title"] if billing_active else subscription_view["next_step"],
+        },
+        {
+            "label": "A2P campaign approved",
+            "state_label": "Approved" if a2p_approved else "Waiting",
+            "complete": a2p_approved,
+            "detail": (
+                f"{a2p_status['brand_status']} brand / {a2p_status['campaign_status']} campaign."
+                if a2p_approved
+                else a2p_status["summary"]
+            ),
+        },
+        {
+            "label": "Sender attached",
+            "state_label": "Attached" if sender_attached else "Waiting",
+            "complete": sender_attached,
+            "detail": (
+                messaging_profile.from_number
+                if sender_attached and messaging_profile is not None
+                else (
+                    "Twilio approved the registration. The sender still needs to be attached to the Messaging Service."
+                    if awaiting_sender_assignment
+                    else "Sender attachment begins after A2P approval."
+                )
+            ),
+        },
+        {
+            "label": "Provider active",
+            "state_label": "Active" if provider_active else "Waiting",
+            "complete": provider_active,
+            "detail": (
+                "Provider status is active and live sending is unlocked."
+                if provider_active
+                else (
+                    "Sender is attached. Wait for provider status to flip active."
+                    if awaiting_provider_activation
+                    else f"Current provider status: {(messaging_profile.provider_status if messaging_profile else 'pending').replace('_', ' ')}."
+                )
+            ),
+        },
+        {
+            "label": "First smoke test",
+            "state_label": "Passed" if smoke_test_complete else "Manual",
+            "complete": smoke_test_complete,
+            "detail": (
+                f"First successful outbound send recorded on {_format_datetime_display(smoke_test_record.created_at)}."
+                if smoke_test_complete and smoke_test_record is not None
+                else (
+                    "Run one controlled internal send, verify STOP and HELP, then open customer traffic."
+                    if provider_active
+                    else "Manual step after the provider turns active."
+                )
+            ),
+        },
+    ]
+
+    if provider_active and smoke_test_complete:
+        heading = "Workspace is live"
+        summary = "Billing, approval, sender sync, and the first controlled smoke test are complete."
+    elif awaiting_sender_assignment:
+        heading = "Await sender assignment"
+        summary = "Twilio approved the packet. The sender still needs to be attached before live sending unlocks."
+    elif awaiting_provider_activation:
+        heading = "Await provider activation"
+        summary = "The sender is attached, but the workspace should stay paused until provider status flips active."
+    elif onboarding is not None and onboarding.onboarding_status in {"rejected", "error", "needs_action"}:
+        heading = "Needs packet correction"
+        summary = "Twilio flagged the packet for correction. Fix the CTA and compliance details before resubmitting."
+    elif onboarding is not None and onboarding.onboarding_status == "canceled":
+        heading = "Submission paused"
+        summary = "No carrier review is active right now. Update the packet and resubmit when ready."
+    else:
+        heading = "Await Twilio review"
+        summary = "Billing is active. Keep the workspace paused until carrier review and sender setup are complete."
+
+    return {
+        "heading": heading,
+        "summary": summary,
+        "items": items,
+        "awaiting_sender_assignment": awaiting_sender_assignment,
+        "awaiting_provider_activation": awaiting_provider_activation,
+        "sender_action": _sender_assignment_action(onboarding) if awaiting_sender_assignment else None,
+        "runbook_steps": [
+            "Confirm the latest Twilio approval state has synced into the app.",
+            "Attach the sender based on the saved number strategy.",
+            "Verify provider status is active before opening sending.",
+            "Send one controlled internal test.",
+            "Confirm inbound STOP and HELP still behave correctly.",
+            "Only then open customer traffic.",
+        ],
+    }
+
+
+def _retry_in_place_guidance(onboarding: OrganizationA2POnboarding | None) -> str | None:
+    if onboarding is None:
+        return None
+    if onboarding.onboarding_status not in {"rejected", "needs_action", "error"}:
+        return None
+    if not onboarding.campaign_sid:
+        return None
+    status_payload = _json_dict(onboarding.raw_status_json)
+    remote_use_case = str(status_payload.get("campaign_use_case") or "").strip().upper()
+    local_use_case = (onboarding.campaign_use_case or "").strip().upper()
+    if not remote_use_case or not local_use_case or remote_use_case != local_use_case:
+        return None
+    return (
+        "This failed campaign still matches the same brand and use case. Use Twilio's edit and retry flow "
+        "instead of delete-and-recreate so you do not trigger another paid vetting cycle."
+    )
+
+
 def _a2p_status_view(
     onboarding,
     messaging_profile: OrganizationMessagingProfile | None,
@@ -722,7 +1021,19 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
             step["current"] = step["key"] == current_step
         return step_rows
 
-    launch_label = "Live in workspace" if messaging_profile and messaging_profile.can_send else "Await number assignment"
+    launch_readiness = _launch_readiness_view(
+        organization,
+        onboarding,
+        messaging_profile,
+        subscription_view=subscription_view,
+        a2p_status=_a2p_status_view(onboarding, messaging_profile),
+    )
+    if messaging_profile and messaging_profile.can_send:
+        launch_label = "Live in workspace"
+    elif bool(launch_readiness["awaiting_sender_assignment"]):
+        launch_label = "Await sender assignment"
+    else:
+        launch_label = "Await Twilio review"
     step_rows = [
         {
             "key": "account",
@@ -751,11 +1062,7 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
         {
             "key": "launch",
             "label": launch_label,
-            "detail": (
-                messaging_profile.from_number
-                if messaging_profile and messaging_profile.from_number
-                else "Platform support will finish number assignment after approval."
-            ),
+            "detail": str(launch_readiness["summary"]),
             "complete": messaging_profile is not None and messaging_profile.can_send,
         },
     ]
@@ -769,6 +1076,13 @@ def _setup_status_payload(organization: Organization) -> dict:
     messaging_profile = organization.messaging_profile
     subscription_view = _subscription_view(organization.subscription)
     a2p_status = _a2p_status_view(onboarding, messaging_profile)
+    launch_readiness = _launch_readiness_view(
+        organization,
+        onboarding,
+        messaging_profile,
+        subscription_view=subscription_view,
+        a2p_status=a2p_status,
+    )
     onboarding_status = (
         a2p_status["stage"]
         if _organization_uses_customer_managed_messaging(organization)
@@ -803,7 +1117,13 @@ def _setup_status_payload(organization: Organization) -> dict:
             "sender_review_status": messaging_profile.sender_review_status if messaging_profile else "pending",
             "from_number": messaging_profile.from_number if messaging_profile else None,
             "messaging_service_sid": messaging_profile.messaging_service_sid if messaging_profile else None,
+            "phone_number_sid": messaging_profile.phone_number_sid if messaging_profile else None,
             "can_send": messaging_profile.can_send if messaging_profile else False,
+        },
+        "launch_readiness": {
+            "heading": launch_readiness["heading"],
+            "awaiting_sender_assignment": launch_readiness["awaiting_sender_assignment"],
+            "awaiting_provider_activation": launch_readiness["awaiting_provider_activation"],
         },
     }
 
@@ -3494,12 +3814,22 @@ def platform_organizations_messaging_edit(organization_id):
         db.session.commit()
 
     def render_page():
+        current_profile = organization.messaging_profile or messaging_profile
+        current_onboarding = organization.a2p_onboarding
+        a2p_status = _a2p_status_view(current_onboarding, current_profile)
         return render_template(
             'platform/organization_messaging_form.html',
             organization=organization,
-            messaging_profile=organization.messaging_profile or messaging_profile,
-            onboarding=organization.a2p_onboarding,
-            a2p_status=_a2p_status_view(organization.a2p_onboarding, organization.messaging_profile or messaging_profile),
+            messaging_profile=current_profile,
+            onboarding=current_onboarding,
+            a2p_status=a2p_status,
+            launch_readiness=_launch_readiness_view(
+                organization,
+                current_onboarding,
+                current_profile,
+                a2p_status=a2p_status,
+            ),
+            provider_activity_entries=_provider_activity_timeline(organization.id),
         )
 
     if request.method == 'POST':
@@ -3669,15 +3999,18 @@ def platform_organizations_messaging_onboarding(organization_id):
         db.session.commit()
 
     def render_page():
+        current_onboarding = organization.a2p_onboarding or onboarding
+        current_profile = organization.messaging_profile or messaging_profile
+        a2p_status = _a2p_status_view(current_onboarding, current_profile)
         return render_template(
             'platform/organization_a2p_onboarding_form.html',
             organization=organization,
-            messaging_profile=messaging_profile,
-            onboarding=onboarding,
-            a2p_status=_a2p_status_view(onboarding, messaging_profile),
-            a2p_form_defaults=_a2p_form_defaults(onboarding),
+            messaging_profile=current_profile,
+            onboarding=current_onboarding,
+            a2p_status=a2p_status,
+            a2p_form_defaults=_a2p_form_defaults(current_onboarding),
             hosted_compliance_urls=hosted_a2p_compliance_urls(organization),
-            a2p_source_defaults=_a2p_source_defaults(organization, onboarding),
+            a2p_source_defaults=_a2p_source_defaults(organization, current_onboarding),
             business_industry_choices=a2p_business_industry_choices(),
             business_region_choices=a2p_business_region_choices(),
             business_type_choices=a2p_business_type_choices(),
@@ -3686,7 +4019,9 @@ def platform_organizations_messaging_onboarding(organization_id):
             registration_identifier_choices=a2p_registration_identifier_choices(),
             number_strategy_choices=a2p_number_strategy_choices(),
             campaign_use_case_choices=a2p_campaign_use_case_choices(),
-            customer_managed_a2p=messaging_profile.provider_mode == 'customer_managed',
+            customer_managed_a2p=current_profile.provider_mode == 'customer_managed',
+            provider_activity_entries=_provider_activity_timeline(organization.id),
+            retry_guidance=_retry_in_place_guidance(current_onboarding),
         )
 
     if request.method == 'POST':
@@ -4046,6 +4381,14 @@ def setup():
         current_step=current_step,
         setup_steps=_setup_steps_view(organization),
         setup_status=_setup_status_payload(organization),
+        launch_readiness=_launch_readiness_view(
+            organization,
+            onboarding,
+            messaging_profile,
+            subscription_view=_subscription_view(organization.subscription),
+            a2p_status=a2p_status,
+        ),
+        provider_activity_entries=_provider_activity_timeline(organization.id),
         subscription=organization.subscription,
         subscription_view=_subscription_view(organization.subscription),
         a2p_form_defaults=_a2p_form_defaults(onboarding),
@@ -4058,6 +4401,7 @@ def setup():
         registration_identifier_choices=a2p_registration_identifier_choices(),
         registration_path_choices=a2p_registration_path_choices(),
         campaign_use_case_choices=a2p_campaign_use_case_choices(),
+        retry_guidance=_retry_in_place_guidance(onboarding),
     )
 
 

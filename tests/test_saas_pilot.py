@@ -1,8 +1,9 @@
 import importlib
+import json
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +41,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             OrganizationInvitation,
             OrganizationMembership,
             OrganizationMessagingProfile,
+            OrganizationProviderAuditLog,
             PlatformServiceRestartRequest,
             OrganizationSubscription,
         )
@@ -59,6 +61,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.OrganizationInvitation = OrganizationInvitation
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
+        self.OrganizationProviderAuditLog = OrganizationProviderAuditLog
         self.PlatformServiceRestartRequest = PlatformServiceRestartRequest
         self.OrganizationSubscription = OrganizationSubscription
         self.organization_context = organization_context
@@ -430,8 +433,114 @@ class TestSaasPilotFoundation(unittest.TestCase):
         launch_response = self.client.get("/setup?step=launch")
 
         self.assertEqual(launch_response.status_code, 200)
-        self.assertIn(b"Twilio rejected the current packet.", launch_response.data)
+        self.assertIn(b"Needs packet correction", launch_response.data)
+        self.assertIn(b"Fix the CTA and compliance details before resubmitting.", launch_response.data)
         self.assertNotIn(b"Twilio review is in progress.", launch_response.data)
+
+    def test_owner_setup_launch_shows_recent_twilio_activity_and_sender_assignment_guidance(self) -> None:
+        self.subscription.status = "active"
+        self.messaging_profile.status = "pending"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        approved_at = datetime.utcnow()
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            approved_at=approved_at,
+            brand_status="approved",
+            campaign_status="approved",
+            campaign_sid="QEapproved123",
+            brand_registration_sid="BNapproved123",
+            registration_path="low_volume_standard",
+            number_strategy="platform_assign",
+            business_name="Acme LLC",
+            email="owner@acme.test",
+            first_name="Owner",
+            last_name="User",
+            campaign_description="Transactional reminders and support updates.",
+            message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
+            message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
+            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.add(
+            self.OrganizationProviderAuditLog(
+                organization_id=self.organization.id,
+                action="a2p_submit",
+                status="success",
+                message="Queued Twilio A2P onboarding (low_volume_standard).",
+                metadata_json=json.dumps(
+                    {
+                        "campaign_use_case": "ACCOUNT_NOTIFICATION",
+                        "messaging_service_sid": self.messaging_profile.messaging_service_sid,
+                        "submission_source_mode": "hosted_fallback",
+                    }
+                ),
+            )
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/setup?step=launch")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Await sender assignment", response.data)
+        self.assertIn(b"Assign a sender now inside the org Twilio subaccount", response.data)
+        self.assertIn(b"Recent Twilio activity", response.data)
+        self.assertIn(b"Submitted to Twilio", response.data)
+        self.assertIn(b"Hosted fallback", response.data)
+
+    def test_owner_setup_launch_marks_first_smoke_test_passed_after_successful_send(self) -> None:
+        self.subscription.status = "active"
+        approved_at = datetime.utcnow() - timedelta(hours=1)
+        self.messaging_profile.status = "active"
+        self.messaging_profile.provider_status = "active"
+        self.messaging_profile.sender_review_status = "approved"
+        self.messaging_profile.from_number = "+15550009999"
+        self.messaging_profile.phone_number_sid = "PNacme0001"
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            approved_at=approved_at,
+            brand_status="approved",
+            campaign_status="approved",
+            business_name="Acme LLC",
+            email="owner@acme.test",
+            first_name="Owner",
+            last_name="User",
+            campaign_description="Transactional reminders and support updates.",
+            message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
+            message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
+            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.add(
+            self.MessageLog(
+                organization_id=self.organization.id,
+                created_at=approved_at + timedelta(minutes=5),
+                message_body="Internal launch smoke test",
+                target="community",
+                status="sent",
+                total_recipients=1,
+                success_count=1,
+                failure_count=0,
+            )
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/setup?step=launch")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Workspace is live", response.data)
+        self.assertIn(b"First smoke test", response.data)
+        self.assertIn(b"Passed", response.data)
 
     def test_owner_setup_compliance_step_surfaces_rejected_a2p_failure_details(self) -> None:
         self.subscription.status = "active"
@@ -1717,6 +1826,66 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Twilio 30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
 
+    def test_platform_admin_messaging_page_shows_launch_checklist_and_recent_twilio_activity(self) -> None:
+        self.subscription.status = "active"
+        self.messaging_profile.status = "pending"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        approved_at = datetime.utcnow()
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            approved_at=approved_at,
+            brand_status="approved",
+            campaign_status="approved",
+            campaign_sid="QEapproved123",
+            brand_registration_sid="BNapproved123",
+            registration_path="low_volume_standard",
+            number_strategy="platform_assign",
+            submission_source_mode="hosted_fallback",
+            business_name="Acme LLC",
+            email="owner@acme.test",
+            first_name="Owner",
+            last_name="User",
+            campaign_description="Transactional reminders and support updates.",
+            message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
+            message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
+            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.add(
+            self.OrganizationProviderAuditLog(
+                organization_id=self.organization.id,
+                action="a2p_review_approved",
+                status="success",
+                message="Twilio approved the A2P registration.",
+                metadata_json=json.dumps(
+                    {
+                        "campaign_sid": "QEapproved123",
+                        "messaging_service_sid": self.messaging_profile.messaging_service_sid,
+                        "submission_source_mode": "hosted_fallback",
+                    }
+                ),
+            )
+        )
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Launch readiness", response.data)
+        self.assertIn(b"Await sender assignment", response.data)
+        self.assertIn(b"Next operator action", response.data)
+        self.assertIn(b"Assign a sender now inside the org Twilio subaccount", response.data)
+        self.assertIn(b"Recent Twilio activity", response.data)
+        self.assertIn(b"A2P approved", response.data)
+        self.assertIn(b"Hosted fallback", response.data)
+
     def test_platform_admin_onboarding_page_shows_a2p_failure_detail(self) -> None:
         onboarding = self.OrganizationA2POnboarding(
             organization_id=self.organization.id,
@@ -1737,6 +1906,29 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Twilio code:", response.data)
         self.assertIn(b"30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
+
+    def test_platform_admin_onboarding_page_shows_retry_guidance_for_same_campaign_failure(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="rejected",
+            brand_status="approved",
+            campaign_status="failed",
+            brand_registration_sid="BNacct123",
+            campaign_sid="QEacct123",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+            failure_code="30909",
+            last_error="CTA could not be verified.",
+            raw_status_json='{"campaign_use_case":"ACCOUNT_NOTIFICATION","campaign_failure_code":"30909","campaign_failure_reason":"CTA could not be verified."}',
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Retry guidance", response.data)
+        self.assertIn(b"edit and retry flow instead of delete-and-recreate", response.data)
 
     def test_platform_admin_a2p_onboarding_is_read_only_for_customer_managed_org(self) -> None:
         self.messaging_profile.provider_mode = "customer_managed"

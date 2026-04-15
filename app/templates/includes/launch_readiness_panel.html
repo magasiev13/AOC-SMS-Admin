@@ -1,0 +1,36 @@
+<div class="platform-note" role="note">
+    <div class="platform-note__title">{{ launch_readiness_title or 'Launch readiness' }}</div>
+    {% if launch_readiness_show_summary is not defined or launch_readiness_show_summary %}
+    <div class="platform-note__copy mt-2">{{ launch_readiness.summary }}</div>
+    {% endif %}
+    <div class="setup-summary-grid mt-3">
+        {% for item in launch_readiness["items"] %}
+        <div class="setup-summary-card">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.state_label }}</strong>
+            <div class="small text-muted mt-2">{{ item.detail }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if launch_readiness.awaiting_sender_assignment %}
+<div class="platform-note mt-4" role="note">
+    <div class="platform-note__title">Await sender assignment</div>
+    <div class="platform-note__copy">{{ launch_readiness.sender_action }}</div>
+</div>
+{% elif launch_readiness.awaiting_provider_activation %}
+<div class="platform-note mt-4" role="note">
+    <div class="platform-note__title">Await provider activation</div>
+    <div class="platform-note__copy">The sender is attached. Keep customer traffic paused until the provider status turns active.</div>
+</div>
+{% endif %}
+
+<div class="platform-note mt-4" role="note">
+    <div class="platform-note__title">First-send runbook</div>
+    <ol class="mb-0 ps-3 small text-muted">
+        {% for step in launch_readiness.runbook_steps %}
+        <li>{{ step }}</li>
+        {% endfor %}
+    </ol>
+</div>
