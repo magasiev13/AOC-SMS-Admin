@@ -95,13 +95,19 @@
                         <div class="platform-key-value"><code>{{ a2p_status.messaging_service_sid or messaging_profile.messaging_service_sid or 'Not configured yet' }}</code></div>
                     </div>
                     <div class="platform-key-item">
-                        <div class="platform-key-label">Campaign SID</div>
+                        <div class="platform-key-label">Service Campaign Association SID</div>
                         <div class="platform-key-value"><code>{{ a2p_status.campaign_sid or onboarding.campaign_sid or 'Not synced yet' }}</code></div>
                     </div>
                     <div class="platform-key-item">
-                        <div class="platform-key-label">Brand SID</div>
+                        <div class="platform-key-label">Brand Registration SID</div>
                         <div class="platform-key-value"><code>{{ a2p_status.brand_registration_sid or onboarding.brand_registration_sid or 'Not synced yet' }}</code></div>
                     </div>
+                    {% if a2p_status.console_campaign_id %}
+                    <div class="platform-key-item">
+                        <div class="platform-key-label">Console Campaign ID</div>
+                        <div class="platform-key-value"><code>{{ a2p_status.console_campaign_id }}</code></div>
+                    </div>
+                    {% endif %}
                     <div class="platform-key-item">
                         <div class="platform-key-label">Sender number</div>
                         <div class="platform-key-value">{{ messaging_profile.from_number or 'Not configured yet' }}</div>
@@ -453,6 +459,63 @@
 
             <div class="card app-card platform-side-card">
                 <div class="card-body">
+                    {% set recovery_state = a2p_status.recovery_state if a2p_status else None %}
+                    {% set recovery_live = recovery_state.live if recovery_state else {} %}
+                    {% set recovery_selected = recovery_state.selected if recovery_state else {} %}
+                    {% if recovery_state %}
+                    <div class="platform-note mb-3" role="note">
+                        <div class="platform-note__title">
+                            {% if recovery_state.type == 'provider_drift' %}
+                            Twilio state needs reconciliation
+                            {% elif recovery_state.type == 'missing_campaign' %}
+                            Campaign creation required
+                            {% else %}
+                            Temporary Twilio sync issue
+                            {% endif %}
+                        </div>
+                        <div class="platform-note__copy">{{ recovery_state.summary }}</div>
+                    </div>
+                    <div class="platform-shell__eyebrow mb-2">Stored vs Live Twilio State</div>
+                    <div class="platform-key-grid mb-3">
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Stored Messaging Service</div>
+                            <div class="platform-key-value"><code>{{ recovery_state.stored.messaging_service_sid or messaging_profile.messaging_service_sid or 'Not stored yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Selected Live Messaging Service</div>
+                            <div class="platform-key-value"><code>{{ recovery_selected.messaging_service_sid or 'Not detected yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Stored Brand Registration SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_state.stored.brand_registration_sid or onboarding.brand_registration_sid or 'Not stored yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Selected Live Brand Registration SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_selected.brand_registration_sid or 'Not detected yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Stored Customer Profile SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_state.stored.customer_profile_sid or onboarding.customer_profile_sid or 'Not stored yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Selected Live Customer Profile SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_selected.customer_profile_sid or 'Not detected yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Stored Trust Product SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_state.stored.trust_product_sid or onboarding.trust_product_sid or 'Not stored yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Selected Live Trust Product SID</div>
+                            <div class="platform-key-value"><code>{{ recovery_selected.trust_product_sid or 'Not detected yet' }}</code></div>
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if a2p_status and (a2p_status.campaign_sid or a2p_status.console_campaign_id) %}
+                    <p class="small text-muted mb-3">
+                        Twilio Console may show a <code>CM...</code> campaign ID while Twinevia stores the Messaging Service campaign association as <code>QE...</code>.
+                    </p>
+                    {% endif %}
                     <div class="platform-shell__eyebrow mb-2">Guidance</div>
                     <p class="small text-muted mb-3">
                         Promotional consent cannot be created from a phone number alone. Use a hosted web or QR opt-in with clear disclosures, then mirror existing consent into Twilio later if needed.
@@ -480,6 +543,77 @@
                     {% endif %}
                     <div class="platform-shell__eyebrow mb-3">Actions</div>
                     <div class="platform-form-actions">
+                        {% if a2p_status and a2p_status.can_reconcile %}
+                        <form method="POST" class="w-100">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="reconcile">
+                            <div class="small text-muted mb-2">Review the current live Twilio resources, then bind this org to the correct approved packet.</div>
+                            <div class="mb-2">
+                                <label class="form-label" for="reconcile_messaging_service_sid">Live Messaging Service</label>
+                                <select class="form-select form-select-sm" id="reconcile_messaging_service_sid" name="messaging_service_sid" required>
+                                    {% if recovery_live.services and recovery_live.services|length > 1 %}
+                                    <option value="">Select a live Messaging Service</option>
+                                    {% endif %}
+                                    {% for item in recovery_live.services or [] %}
+                                    <option value="{{ item.sid }}" {% if recovery_selected.messaging_service_sid == item.sid %}selected{% endif %}>{{ item.sid }}{% if item.friendly_name %} · {{ item.friendly_name }}{% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label" for="reconcile_customer_profile_sid">Live Customer Profile</label>
+                                <select class="form-select form-select-sm" id="reconcile_customer_profile_sid" name="customer_profile_sid" required>
+                                    {% if recovery_live.customer_profiles and recovery_live.customer_profiles|length > 1 %}
+                                    <option value="">Select a live Customer Profile</option>
+                                    {% endif %}
+                                    {% for item in recovery_live.customer_profiles or [] %}
+                                    <option value="{{ item.sid }}" {% if recovery_selected.customer_profile_sid == item.sid %}selected{% endif %}>{{ item.sid }}{% if item.friendly_name %} · {{ item.friendly_name }}{% endif %}{% if item.status %} · {{ item.status|replace('_', ' ') }}{% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label" for="reconcile_trust_product_sid">Live Trust Product</label>
+                                <select class="form-select form-select-sm" id="reconcile_trust_product_sid" name="trust_product_sid" required>
+                                    {% if recovery_live.trust_products and recovery_live.trust_products|length > 1 %}
+                                    <option value="">Select a live Trust Product</option>
+                                    {% endif %}
+                                    {% for item in recovery_live.trust_products or [] %}
+                                    <option value="{{ item.sid }}" {% if recovery_selected.trust_product_sid == item.sid %}selected{% endif %}>{{ item.sid }}{% if item.friendly_name %} · {{ item.friendly_name }}{% endif %}{% if item.status %} · {{ item.status|replace('_', ' ') }}{% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label" for="reconcile_brand_registration_sid">Live Brand Registration</label>
+                                <select class="form-select form-select-sm" id="reconcile_brand_registration_sid" name="brand_registration_sid" required>
+                                    {% if recovery_live.brands and recovery_live.brands|length > 1 %}
+                                    <option value="">Select a live Brand Registration</option>
+                                    {% endif %}
+                                    {% for item in recovery_live.brands or [] %}
+                                    <option value="{{ item.sid }}" {% if recovery_selected.brand_registration_sid == item.sid %}selected{% endif %}>{{ item.sid }}{% if item.status %} · {{ item.status|replace('_', ' ') }}{% endif %}{% if item.tcr_id %} · {{ item.tcr_id }}{% endif %}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="confirm_reconcile" name="confirm_reconcile">
+                                <label class="form-check-label" for="confirm_reconcile">I reviewed the live Twilio resources and want to rebind this org to them.</label>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Reconcile Twilio State</button>
+                        </form>
+                        {% endif %}
+                        {% if a2p_status and a2p_status.can_create_campaign %}
+                        <form method="POST" class="w-100">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="create_campaign">
+                            <div class="platform-note mb-2" role="note">
+                                <div class="platform-note__title">Fee warning</div>
+                                <div class="platform-note__copy">{{ a2p_status.campaign_fee_warning }}</div>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="confirm_campaign_create" name="confirm_campaign_create">
+                                <label class="form-check-label" for="confirm_campaign_create">I understand this may trigger another Twilio campaign vetting fee.</label>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Create Campaign</button>
+                        </form>
+                        {% endif %}
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="action" value="refresh">

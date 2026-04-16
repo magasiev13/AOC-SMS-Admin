@@ -240,11 +240,12 @@ class TestA2PTaskJobs(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.tasks import process_a2p_onboarding_job, reconcile_a2p_onboardings_job
+        from app.tasks import process_a2p_onboarding_job, reconcile_a2p_onboardings_job, sync_a2p_onboarding_status_job
 
         self.db = db
         self.process_a2p_onboarding_job = process_a2p_onboarding_job
         self.reconcile_a2p_onboardings_job = reconcile_a2p_onboardings_job
+        self.sync_a2p_onboarding_status_job = sync_a2p_onboarding_status_job
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config["TESTING"] = True
         self._ctx = self.app.app_context()
@@ -279,6 +280,27 @@ class TestA2PTaskJobs(unittest.TestCase):
             },
         )
         mock_process.assert_called_once_with(12, actor_user_id=99)
+
+    @patch("app.tasks.sync_a2p_onboarding_status")
+    def test_sync_a2p_onboarding_status_job_returns_status_summary(self, mock_sync) -> None:
+        mock_sync.return_value = type(
+            "Onboarding",
+            (),
+            {"onboarding_status": "pending", "brand_status": "approved", "campaign_status": "in_progress"},
+        )()
+
+        result = self.sync_a2p_onboarding_status_job(21, 77)
+
+        self.assertEqual(
+            result,
+            {
+                "organization_id": 21,
+                "onboarding_status": "pending",
+                "brand_status": "approved",
+                "campaign_status": "in_progress",
+            },
+        )
+        mock_sync.assert_called_once_with(21, actor_user_id=77)
 
     @patch("app.tasks.reconcile_pending_a2p_onboardings")
     def test_reconcile_a2p_onboardings_job_returns_service_summary(self, mock_reconcile) -> None:

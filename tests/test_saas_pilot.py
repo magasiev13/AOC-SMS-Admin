@@ -489,7 +489,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Await sender assignment", response.data)
-        self.assertIn(b"Assign a sender now inside the org Twilio subaccount", response.data)
+        self.assertIn(b"Save the target PN SID from the org Twilio subaccount", response.data)
         self.assertIn(b"Recent Twilio activity", response.data)
         self.assertIn(b"Submitted to Twilio", response.data)
         self.assertIn(b"Hosted fallback", response.data)
@@ -1712,9 +1712,13 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(mock_save_customer_managed_profile.call_args.kwargs["from_number"], "+15550001111")
         mock_sync_customer_managed_onboarding_state.assert_called_once()
 
-    @patch("app.routes.sync_sender_assignment")
     @patch("app.routes.release_sender")
-    def test_platform_organizations_messaging_edit_can_release_and_activate_sender(self, mock_release_sender, mock_sync_sender_assignment) -> None:
+    @patch("app.routes.finalize_sender_setup")
+    def test_platform_organizations_messaging_edit_can_release_save_service_address_and_finalize_sender(
+        self,
+        mock_finalize_sender_setup,
+        mock_release_sender,
+    ) -> None:
         other_org = self.Organization(name="Other Co", slug="other-co", status="active")
         other_subscription = self.OrganizationSubscription(
             organization=other_org,
@@ -1737,19 +1741,23 @@ class TestSaasPilotFoundation(unittest.TestCase):
             profile.from_number = None
             profile.phone_number_sid = None
             profile.inbound_identity = profile.messaging_service_sid
+            profile.set_sender_finalization_status("awaiting_number_purchase")
             profile.set_provider_status("pending")
             self.db.session.commit()
             return profile
 
-        def _sync_side_effect(organization_id, actor_user_id=None):
+        def _finalize_side_effect(organization_id, actor_user_id=None):
             profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).first()
+            profile.from_number = "+15550009999"
+            profile.phone_number_sid = "PN1234567890ABCDE"
             profile.inbound_identity = profile.from_number
+            profile.set_sender_finalization_status("active")
             profile.set_provider_status("active")
             self.db.session.commit()
             return profile
 
         mock_release_sender.side_effect = _release_side_effect
-        mock_sync_sender_assignment.side_effect = _sync_side_effect
+        mock_finalize_sender_setup.side_effect = _finalize_side_effect
 
         self._login_platform_admin()
 
@@ -1772,20 +1780,45 @@ class TestSaasPilotFoundation(unittest.TestCase):
             f"/platform/organizations/{other_org.id}/messaging",
             data={
                 "action": "save",
-                "sender_number": "+15550009999",
+                "number_strategy": "existing_subaccount_number",
                 "phone_number_sid": "PN1234567890ABCDE",
-                "sender_review_status": "approved",
-                "consent_acknowledged": "on",
+                "service_address_line1": "456 Other Street",
+                "service_address_city": "Denver",
+                "service_address_region": "CO",
+                "service_address_postal_code": "80203",
+                "service_address_country": "US",
             },
             follow_redirects=False,
         )
         self.assertEqual(assign_response.status_code, 302)
 
         self.db.session.refresh(other_messaging_profile)
+        self.assertEqual(other_messaging_profile.status, "pending")
+        self.assertEqual(other_messaging_profile.provider_status, "pending")
+        self.assertEqual(other_messaging_profile.service_address_line1, "456 Other Street")
+        self.assertEqual(other_messaging_profile.service_address_city, "Denver")
+        self.assertEqual(other_messaging_profile.service_address_region, "CO")
+        self.assertEqual(other_messaging_profile.service_address_postal_code, "80203")
+        self.assertEqual(other_messaging_profile.service_address_country, "US")
+        self.assertEqual(other_messaging_profile.messaging_service_sid, "MGother0001")
+        self.assertIsNone(other_messaging_profile.phone_number_sid)
+
+        self.db.session.refresh(other_org)
+        self.assertEqual(other_org.a2p_onboarding.number_strategy, "existing_subaccount_number")
+        self.assertEqual(other_org.a2p_onboarding.desired_phone_number_sid, "PN1234567890ABCDE")
+
+        finalize_response = self.client.post(
+            f"/platform/organizations/{other_org.id}/messaging",
+            data={"action": "finalize_sender"},
+            follow_redirects=False,
+        )
+        self.assertEqual(finalize_response.status_code, 302)
+        mock_finalize_sender_setup.assert_called_once_with(other_org.id, actor_user_id=self.platform_admin.id)
+
+        self.db.session.refresh(other_messaging_profile)
         self.assertEqual(other_messaging_profile.status, "active")
         self.assertEqual(other_messaging_profile.provider_status, "active")
         self.assertEqual(other_messaging_profile.from_number, "+15550009999")
-        self.assertEqual(other_messaging_profile.messaging_service_sid, "MGother0001")
         self.assertEqual(other_messaging_profile.phone_number_sid, "PN1234567890ABCDE")
         self.assertEqual(other_messaging_profile.inbound_identity, "+15550009999")
 
@@ -1881,7 +1914,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Launch readiness", response.data)
         self.assertIn(b"Await sender assignment", response.data)
         self.assertIn(b"Next operator action", response.data)
-        self.assertIn(b"Assign a sender now inside the org Twilio subaccount", response.data)
+        self.assertIn(b"Save the target PN SID from the org Twilio subaccount", response.data)
+        self.assertIn(b"Service address", response.data)
+        self.assertIn(b"Emergency address sync", response.data)
         self.assertIn(b"Recent Twilio activity", response.data)
         self.assertIn(b"A2P approved", response.data)
         self.assertIn(b"Hosted fallback", response.data)
@@ -1930,6 +1965,82 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Retry guidance", response.data)
         self.assertIn(b"edit and retry flow instead of delete-and-recreate", response.data)
 
+    def test_platform_admin_onboarding_page_shows_reconcile_and_fee_aware_campaign_actions(self) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="needs_action",
+            brand_status="approved",
+            customer_profile_sid="BUstale123",
+            trust_product_sid="BUtruststale123",
+            brand_registration_sid="BNstale123",
+            campaign_sid="QEstale123",
+            raw_status_json=json.dumps(
+                {
+                    "recovery_state": {
+                        "type": "provider_drift",
+                        "recommended_action": "reconcile",
+                        "summary": "Twilio still has approved resources, but the app is bound to stale identifiers.",
+                        "stored": {
+                            "messaging_service_sid": "MGstale123",
+                            "customer_profile_sid": "BUstale123",
+                            "trust_product_sid": "BUtruststale123",
+                            "brand_registration_sid": "BNstale123",
+                        },
+                        "live": {
+                            "services": [{"sid": "MGlive123", "friendly_name": "SMS"}],
+                            "customer_profiles": [{"sid": "BUcustomer123", "friendly_name": "Acme", "status": "twilio-approved"}],
+                            "trust_products": [{"sid": "BUtrust123", "friendly_name": "Acme", "status": "twilio-approved"}],
+                            "brands": [{"sid": "BNlive123", "status": "approved", "tcr_id": "TCR123"}],
+                        },
+                        "selected": {
+                            "messaging_service_sid": "MGlive123",
+                            "customer_profile_sid": "BUcustomer123",
+                            "trust_product_sid": "BUtrust123",
+                            "brand_registration_sid": "BNlive123",
+                        },
+                        "missing": {"messaging_service_sid": True},
+                        "only_missing_campaign": False,
+                        "observed_ids": {},
+                    }
+                }
+            ),
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Reconcile Twilio State", response.data)
+        self.assertIn(b"Stored vs Live Twilio State", response.data)
+        self.assertIn(b"Stored Brand Registration SID", response.data)
+        self.assertIn(b"Stored Customer Profile SID", response.data)
+        self.assertIn(b"Stored Trust Product SID", response.data)
+        self.assertIn(b"MGlive123", response.data)
+
+        onboarding.raw_status_json = json.dumps(
+            {
+                "recovery_state": {
+                    "type": "missing_campaign",
+                    "recommended_action": "create_campaign",
+                    "summary": "Twilio approved the brand package, but the Messaging Service has no campaign attached.",
+                    "stored": {},
+                    "live": {},
+                    "selected": {},
+                    "missing": {"campaign_sid": True},
+                    "only_missing_campaign": True,
+                    "observed_ids": {},
+                }
+            }
+        )
+        self.db.session.commit()
+
+        follow_up = self.client.get(f"/platform/organizations/{self.organization.id}/messaging/onboarding")
+        self.assertEqual(follow_up.status_code, 200)
+        self.assertIn(b"Create Campaign", follow_up.data)
+        self.assertIn(b"another Twilio campaign vetting fee", follow_up.data)
+
     def test_platform_admin_a2p_onboarding_is_read_only_for_customer_managed_org(self) -> None:
         self.messaging_profile.provider_mode = "customer_managed"
         self.messaging_profile.twilio_account_sid = "ACcust0001"
@@ -1943,7 +2054,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_status="verified",
             brand_registration_sid="BNcust0001",
             campaign_sid="QEcust0001",
-            raw_status_json='{"external_managed": true, "brand_status": "verified", "campaign_status": "verified", "messaging_service_sid": "MGcust0001", "phone_number_sid": "PNcust0001"}',
+            raw_status_json='{"external_managed": true, "brand_status": "verified", "campaign_status": "verified", "messaging_service_sid": "MGcust0001", "phone_number_sid": "PNcust0001", "console_campaign_id": "CMcust0001"}',
         )
         self.db.session.add(onboarding)
         self.db.session.commit()
@@ -1955,6 +2066,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Customer-managed A2P", response.data)
         self.assertIn(b"External A2P approved", response.data)
         self.assertIn(b"Back to Messaging Setup", response.data)
+        self.assertIn(b"Service Campaign Association SID", response.data)
+        self.assertIn(b"Brand Registration SID", response.data)
+        self.assertIn(b"Console Campaign ID", response.data)
+        self.assertIn(b"CMcust0001", response.data)
         self.assertNotIn(b"Legal Business Name", response.data)
         self.assertNotIn(b"Submit A2P Onboarding", response.data)
 
@@ -1966,12 +2081,20 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Manage A2P Onboarding", response.data)
         self.assertIn(b"Status: <strong>Not submitted yet</strong>", response.data)
+        self.assertIn(b"Finalize Sender Setup", response.data)
+        self.assertIn(b"Target Phone Number SID", response.data)
+        self.assertIn(b"Service Address Line 1", response.data)
 
     def test_platform_admin_messaging_page_does_not_render_none_field_values(self) -> None:
         self.messaging_profile.from_number = None
         self.messaging_profile.phone_number_sid = None
         self.messaging_profile.business_type = None
         self.messaging_profile.use_case = None
+        self.messaging_profile.service_address_line1 = None
+        self.messaging_profile.service_address_city = None
+        self.messaging_profile.service_address_region = None
+        self.messaging_profile.service_address_postal_code = None
+        self.messaging_profile.service_address_country = None
         self.db.session.commit()
 
         self._login_platform_admin()
@@ -2085,6 +2208,150 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"A2P Onboarding", response.data)
         self.assertIn(b"ops@acme.test", response.data)
         self.assertIn(b"Announcements", response.data)
+
+    @patch("app.routes.reconcile_a2p_twilio_state")
+    def test_platform_admin_reconcile_action_requires_confirmation_and_calls_service(self, mock_reconcile) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="needs_action",
+            raw_status_json=json.dumps(
+                {
+                    "recovery_state": {
+                        "type": "provider_drift",
+                        "recommended_action": "reconcile",
+                        "summary": "Twilio state drifted.",
+                        "stored": {},
+                        "live": {
+                            "services": [{"sid": "MGlive123"}],
+                            "customer_profiles": [{"sid": "BUcustomer123"}],
+                            "trust_products": [{"sid": "BUtrust123"}],
+                            "brands": [{"sid": "BNlive123"}],
+                        },
+                        "selected": {
+                            "messaging_service_sid": "MGlive123",
+                            "customer_profile_sid": "BUcustomer123",
+                            "trust_product_sid": "BUtrust123",
+                            "brand_registration_sid": "BNlive123",
+                        },
+                        "missing": {},
+                        "only_missing_campaign": False,
+                        "observed_ids": {},
+                    }
+                }
+            ),
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        self._login_platform_admin()
+
+        missing_confirmation = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={
+                "action": "reconcile",
+                "messaging_service_sid": "MGlive123",
+                "customer_profile_sid": "BUcustomer123",
+                "trust_product_sid": "BUtrust123",
+                "brand_registration_sid": "BNlive123",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(missing_confirmation.status_code, 200)
+        self.assertIn(b"Confirm the Twilio state reconcile", missing_confirmation.data)
+        mock_reconcile.assert_not_called()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={
+                "action": "reconcile",
+                "messaging_service_sid": "MGlive123",
+                "customer_profile_sid": "BUcustomer123",
+                "trust_product_sid": "BUtrust123",
+                "brand_registration_sid": "BNlive123",
+                "confirm_reconcile": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_reconcile.assert_called_once()
+
+    @patch("app.routes.create_missing_a2p_campaign")
+    def test_platform_admin_create_campaign_action_requires_confirmation_and_calls_service(self, mock_create_campaign) -> None:
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="needs_action",
+            brand_status="approved",
+            brand_registration_sid="BNlive123",
+            raw_status_json=json.dumps(
+                {
+                    "recovery_state": {
+                        "type": "missing_campaign",
+                        "recommended_action": "create_campaign",
+                        "summary": "Twilio approved the packet, but no campaign is attached.",
+                        "stored": {},
+                        "live": {},
+                        "selected": {},
+                        "missing": {"campaign_sid": True},
+                        "only_missing_campaign": True,
+                        "observed_ids": {},
+                    }
+                }
+            ),
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        self._login_platform_admin()
+
+        missing_confirmation = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={"action": "create_campaign"},
+            follow_redirects=False,
+        )
+        self.assertEqual(missing_confirmation.status_code, 200)
+        self.assertIn(b"Confirm campaign creation", missing_confirmation.data)
+        mock_create_campaign.assert_not_called()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging/onboarding",
+            data={
+                "action": "create_campaign",
+                "confirm_campaign_create": "on",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_create_campaign.assert_called_once()
+
+    @patch("app.routes.refresh_a2p_onboarding")
+    @patch("app.routes.validate_inbound_signature_detailed")
+    def test_trusthub_webhook_falls_back_to_subaccount_and_records_observed_ids(
+        self,
+        mock_validate,
+        mock_refresh,
+    ) -> None:
+        mock_validate.return_value = MagicMock(is_valid=True, reason="valid")
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="pending",
+            raw_status_json=json.dumps({"brand_tcr_id": "TCR123"}),
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+
+        response = self.client.post(
+            "/webhooks/twilio/trusthub-status",
+            data={
+                "AccountSid": self.messaging_profile.twilio_subaccount_sid,
+                "MessagingServiceSid": "MGlive123",
+                "BrandTcrId": "TCR123",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 204)
+        mock_refresh.assert_called_once_with(self.organization.id)
+        payload = json.loads(onboarding.raw_status_json)
+        self.assertEqual(payload["recovery_state"]["observed_ids"]["messaging_service_sid"], "MGlive123")
 
     def test_owner_cannot_access_platform_onboarding_route(self) -> None:
         self._login_owner()

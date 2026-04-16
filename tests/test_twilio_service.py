@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 class TestTwilioInboundSignatureValidation(unittest.TestCase):
@@ -136,6 +136,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         from app.models import (
             MessagingUsageRecord,
             Organization,
+            OrganizationA2POnboarding,
             OrganizationMessagingProfile,
             OrganizationProviderAuditLog,
             OrganizationSubscription,
@@ -144,6 +145,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         self.db = db
         self.Organization = Organization
+        self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
         self.OrganizationProviderAuditLog = OrganizationProviderAuditLog
         self.OrganizationSubscription = OrganizationSubscription
@@ -191,6 +193,25 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.db.session.add_all([organization, subscription, profile])
         self.db.session.commit()
         return organization, profile
+
+    def _create_a2p_onboarding(self, organization_id: int, **overrides):
+        onboarding_kwargs = {
+            "organization_id": organization_id,
+            "onboarding_status": "approved",
+            "brand_status": "approved",
+            "campaign_status": "approved",
+            "number_strategy": "auto_buy",
+            "address_country": "US",
+            "address_line1": "123 Main Street",
+            "address_city": "Denver",
+            "address_region": "CO",
+            "address_postal_code": "80202",
+        }
+        onboarding_kwargs.update(overrides)
+        onboarding = self.OrganizationA2POnboarding(**onboarding_kwargs)
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        return onboarding
 
     @patch("app.services.twilio_service.RequestValidator")
     def test_validate_inbound_signature_prefers_org_specific_auth_token(self, mock_validator) -> None:
@@ -426,12 +447,18 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         profile = sync_sender_assignment(organization.id, actor_user_id=99)
 
         service_context.phone_numbers.create.assert_called_once_with(phone_number_sid="PN0001")
+        subaccount_client.incoming_phone_numbers.assert_called_once_with("PN0001")
+        subaccount_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
+            sms_url="https://beta.example.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
         service_context.update.assert_called_once_with(
             inbound_request_url="https://beta.example.com/webhooks/twilio/inbound",
             inbound_method="POST",
             use_inbound_webhook_on_number=False,
         )
         self.assertEqual(profile.provider_status, "active")
+        self.assertEqual(profile.sender_finalization_status, "active")
         self.assertEqual(profile.inbound_identity, "+15550001111")
 
     @patch("app.services.twilio_service._build_subaccount_client")
@@ -465,6 +492,252 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization.id).one()
         self.assertEqual(profile.provider_status, "error")
         self.assertIn("belongs to this organization's Twilio subaccount", profile.last_provision_error)
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_auto_buys_attaches_and_syncs_emergency_address(self, mock_build_subaccount_client) -> None:
+        from app.services.twilio_service import finalize_sender_setup
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            provider_status="pending",
+            status="pending",
+        )
+        self._create_a2p_onboarding(organization.id, number_strategy="auto_buy")
+
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.create.return_value = SimpleNamespace(
+            sid="ADservice0001",
+            customer_name="Acme",
+            friendly_name="Acme Service Address",
+            street="123 Main Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            iso_country="US",
+            validated=True,
+            verified=True,
+            emergency_enabled=True,
+        )
+        subaccount_client.available_phone_numbers.return_value.local.list.return_value = [
+            SimpleNamespace(phone_number="+15550001111")
+        ]
+        subaccount_client.incoming_phone_numbers.create.return_value = SimpleNamespace(
+            sid="PNbuy0001",
+            phone_number="+15550001111",
+        )
+        phone_context = subaccount_client.incoming_phone_numbers.return_value
+        phone_context.fetch.return_value = SimpleNamespace(capabilities={"voice": True})
+        phone_context.update.side_effect = [
+            SimpleNamespace(sid="PNbuy0001", phone_number="+15550001111"),
+            SimpleNamespace(
+                sid="PNbuy0001",
+                phone_number="+15550001111",
+                emergency_address_sid="ADservice0001",
+                emergency_status="active",
+                emergency_address_status="registered",
+            ),
+        ]
+        service_context = subaccount_client.messaging.v1.services.return_value
+        service_context.phone_numbers.list.return_value = []
+
+        profile = finalize_sender_setup(organization.id, actor_user_id=7)
+
+        self.assertEqual(profile.provider_status, "active")
+        self.assertEqual(profile.sender_finalization_status, "active")
+        self.assertEqual(profile.phone_number_sid, "PNbuy0001")
+        self.assertEqual(profile.from_number, "+15550001111")
+        self.assertEqual(profile.twilio_address_sid, "ADservice0001")
+        self.assertEqual(profile.emergency_address_sid, "ADservice0001")
+        self.assertEqual(profile.emergency_address_status, "synced")
+        self.assertTrue(profile.can_send)
+        subaccount_client.addresses.create.assert_called_once()
+        subaccount_client.incoming_phone_numbers.create.assert_called_once_with(
+            phone_number="+15550001111",
+            address_sid="ADservice0001",
+        )
+        service_context.phone_numbers.create.assert_called_once_with(phone_number_sid="PNbuy0001")
+        self.assertEqual(phone_context.update.call_count, 2)
+        self.assertIn(
+            {
+                "sms_url": "https://beta.example.com/webhooks/twilio/inbound",
+                "sms_method": "POST",
+            },
+            [call.kwargs for call in phone_context.update.call_args_list],
+        )
+        self.assertIn(
+            {
+                "address_sid": "ADservice0001",
+                "emergency_address_sid": "ADservice0001",
+                "emergency_status": "Active",
+            },
+            [call.kwargs for call in phone_context.update.call_args_list],
+        )
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_requires_subaccount_owned_existing_number(self, mock_build_subaccount_client) -> None:
+        from app.services.twilio_service import finalize_sender_setup
+        from twilio.base.exceptions import TwilioRestException
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            provider_status="pending",
+            status="pending",
+        )
+        self._create_a2p_onboarding(
+            organization.id,
+            number_strategy="existing_subaccount_number",
+            desired_phone_number_sid="PNmissing0001",
+        )
+
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.create.return_value = SimpleNamespace(
+            sid="ADservice0001",
+            customer_name="Acme",
+            friendly_name="Acme Service Address",
+            street="123 Main Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            iso_country="US",
+            validated=True,
+            verified=True,
+            emergency_enabled=True,
+        )
+        subaccount_client.incoming_phone_numbers.return_value.fetch.side_effect = TwilioRestException(
+            404,
+            "/IncomingPhoneNumbers/PNmissing0001",
+            msg="resource not found",
+        )
+
+        profile = finalize_sender_setup(organization.id, actor_user_id=7)
+
+        self.assertEqual(profile.provider_status, "pending")
+        self.assertEqual(profile.sender_finalization_status, "awaiting_number_purchase")
+        self.assertIn("does not belong to this organization's Twilio subaccount", profile.sender_finalization_error or "")
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_blocks_activation_when_address_validation_fails(self, mock_build_subaccount_client) -> None:
+        from app.services.twilio_service import finalize_sender_setup
+        from twilio.base.exceptions import TwilioRestException
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            provider_status="pending",
+            status="pending",
+        )
+        self._create_a2p_onboarding(organization.id, number_strategy="auto_buy")
+
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.create.side_effect = TwilioRestException(
+            400,
+            "/Addresses",
+            msg="The address could not be validated.",
+        )
+
+        profile = finalize_sender_setup(organization.id, actor_user_id=7)
+
+        self.assertEqual(profile.provider_status, "pending")
+        self.assertEqual(profile.sender_finalization_status, "address_validation_failed")
+        self.assertIsNone(profile.emergency_address_status)
+        self.assertIn("could not validate the sender service address", profile.sender_finalization_error or "")
+        self.assertFalse(profile.can_send)
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_reuses_existing_resources_on_retry(self, mock_build_subaccount_client) -> None:
+        from app.models import utc_now
+        from app.services.twilio_service import finalize_sender_setup
+
+        organization, profile = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            phone_number_sid="PNexisting0001",
+            from_number="+15550002222",
+            provider_status="pending",
+            status="pending",
+            twilio_address_sid="ADexisting0001",
+            service_address_country="US",
+            service_address_line1="123 Main Street",
+            service_address_city="Denver",
+            service_address_region="CO",
+            service_address_postal_code="80202",
+            sender_review_status="approved",
+            consent_acknowledged_at=utc_now(),
+            sender_finalization_status="awaiting_emergency_address_sync",
+        )
+        self._create_a2p_onboarding(organization.id, number_strategy="auto_buy")
+
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.return_value.update.return_value = SimpleNamespace(
+            sid="ADexisting0001",
+            customer_name="Acme",
+            friendly_name="Acme Service Address",
+            street="123 Main Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            iso_country="US",
+            validated=True,
+            verified=True,
+            emergency_enabled=True,
+        )
+        phone_context = subaccount_client.incoming_phone_numbers.return_value
+        phone_context.fetch.return_value = SimpleNamespace(
+            sid="PNexisting0001",
+            phone_number="+15550002222",
+            capabilities={"voice": True},
+        )
+        phone_context.update.side_effect = [
+            SimpleNamespace(sid="PNexisting0001", phone_number="+15550002222"),
+            SimpleNamespace(
+                sid="PNexisting0001",
+                phone_number="+15550002222",
+                emergency_address_sid="ADexisting0001",
+                emergency_status="active",
+                emergency_address_status="registered",
+            ),
+        ]
+        service_context = subaccount_client.messaging.v1.services.return_value
+        service_context.phone_numbers.list.return_value = [
+            SimpleNamespace(phone_number="+15550002222", delete=MagicMock())
+        ]
+
+        refreshed_profile = finalize_sender_setup(organization.id, actor_user_id=11)
+
+        self.assertEqual(refreshed_profile.provider_status, "active")
+        self.assertEqual(refreshed_profile.sender_finalization_status, "active")
+        subaccount_client.addresses.create.assert_not_called()
+        subaccount_client.incoming_phone_numbers.create.assert_not_called()
+        service_context.phone_numbers.create.assert_not_called()
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_never_buys_number_before_a2p_approval(self, mock_build_subaccount_client) -> None:
+        from app.services.twilio_service import finalize_sender_setup
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            provider_status="pending",
+            status="pending",
+        )
+        self._create_a2p_onboarding(
+            organization.id,
+            onboarding_status="pending",
+            brand_status="approved",
+            campaign_status="in_progress",
+            number_strategy="auto_buy",
+        )
+
+        profile = finalize_sender_setup(organization.id, actor_user_id=7)
+
+        self.assertEqual(profile.provider_status, "pending")
+        self.assertEqual(profile.sender_finalization_status, "awaiting_a2p_approval")
+        mock_build_subaccount_client.assert_not_called()
 
     @patch("app.services.twilio_service._build_subaccount_client")
     def test_release_sender_detaches_existing_service_numbers(self, mock_build_subaccount_client) -> None:

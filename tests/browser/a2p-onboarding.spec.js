@@ -166,9 +166,11 @@ test('platform admin sees each seeded onboarding state and action availability',
   await openMessagingForOrg(page, 'Rejected Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
-  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Needs action');
+  await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Campaign creation required');
   await expect(page.getByText('Last onboarding error')).toBeVisible();
   await expect(page.getByText('Twilio rejected the registration because the campaign description was too vague.').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create Campaign' })).toBeVisible();
+  await expect(page.getByText(/may trigger another Twilio campaign vetting fee/i)).toBeVisible();
 
   await openMessagingForOrg(page, 'Error Bakery');
   await expect(page.getByText('Provider sync error')).toBeVisible();

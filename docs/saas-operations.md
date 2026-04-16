@@ -93,7 +93,9 @@ Organizations without their own public website can use the tenant-hosted complia
 
 For eligible EIN-backed businesses, the default A2P registration path is now `low_volume_standard`. Treat `standard` as the upgrade path when low-volume limits no longer fit the org's throughput or campaign posture.
 
-For failed A2P resubmissions, the worker now preflights the Twilio Messaging Service before it creates a replacement campaign. It automatically deletes the attached failed campaign only when Twilio requires a new campaign, such as a changed use case or a corrected brand association. If the failed campaign still matches the same use case and brand, the worker stops and surfaces guidance instead of silently deleting it and risking another paid vetting review.
+For platform-managed A2P, background sync is now non-destructive. It can detect provider drift, a missing campaign, or transient Twilio connectivity failures, but it does not auto-create a new campaign in the background. Platform admins must explicitly use `Reconcile Twilio State` when the app is bound to stale provider identifiers, and must explicitly use `Create Campaign` when the approved Twilio packet exists but the Messaging Service has no attached campaign.
+
+For platform-managed sender activation, the org service address is now the source of truth for sender provisioning. After A2P approval, use the organization messaging page to save or update the service address, choose the number strategy, and run `Finalize Sender Setup`. That workflow validates or updates the Twilio address, buys or reuses the sender number inside the org subaccount, binds inbound webhooks, syncs emergency-address registration, and only then flips the provider active.
 
 ## A2P Review To Go-Live
 
@@ -109,19 +111,48 @@ Those pages now show:
 
 - a launch-readiness checklist
 - recent Twilio/provider lifecycle activity from `organization_provider_audit_logs`
+- live vs stored Twilio resource comparisons when provider drift is detected
 - explicit post-approval sender guidance
+- explicit `Reconcile Twilio State` and `Create Campaign` actions when the app must not mutate Twilio automatically
 - retry guidance when a failed campaign should use an in-place Twilio edit/retry path instead of delete-and-recreate
+
+### Drift recovery
+
+If Twilio still shows an approved profile, trust product, and brand but the app says the org needs action:
+
+1. Open `/platform/organizations/<id>/messaging/onboarding`.
+2. Review the stored vs live Twilio SIDs shown in the recovery panel.
+3. Use `Reconcile Twilio State` to bind the org to the current live Messaging Service, Customer Profile, Trust Product, and Brand Registration in the same Twilio subaccount.
+4. If the selected Messaging Service has no attached campaign, use `Create Campaign` only after confirming the fee warning.
+5. Refresh the page again and confirm the app now shows the live Twilio identifiers and the expected review stage.
+
+Identifier notes:
+
+- `BU...` values are Trust Hub resources such as Customer Profile or Trust Product
+- `BN...` is the Brand Registration SID
+- `QE...` is the Messaging Service campaign association SID stored by the app
+- `CM...` is the console campaign ID Twilio may expose separately
+
+### Beta repair for `it-wingman-llc`
+
+The current beta incident should follow that same flow:
+
+1. Reconcile org `it-wingman-llc` to the live approved Twilio resources that already exist in its current subaccount.
+2. Do not rebuild the approved profile, trust product, or brand.
+3. Leave campaign creation as a separate explicit operator step after the rebind.
+4. Keep the pre-repair beta snapshot until post-repair verification confirms the org state is stable.
 
 ### First Controlled Send
 
 After Twilio approves the campaign, keep customer traffic paused until this manual runbook is complete:
 
 1. Confirm the approval has synced into the app and the launch-readiness checklist shows the campaign as approved.
-2. Attach the sender to the Messaging Service using the configured number strategy.
-3. Verify the provider status turns `active`.
-4. Send one controlled internal test message.
-5. Confirm inbound `STOP` and `HELP` handling still works as expected.
-6. Only then allow live customer traffic.
+2. Save or verify the org service address on the messaging page.
+3. Run `Finalize Sender Setup` using the configured number strategy.
+4. Verify the provider status turns `active` and emergency-address sync is complete.
+5. Send one controlled internal test message.
+6. Confirm inbound `STOP` and `HELP` handling still works as expected.
+7. Only then allow live customer traffic.
 
 If the campaign is approved but no sender is attached yet, the platform messaging page will show the exact next operator action based on the stored number strategy.
 

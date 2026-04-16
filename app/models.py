@@ -353,6 +353,21 @@ class OrganizationMessagingProfile(db.Model):
     provider_status = db.Column(db.String(20), nullable=False, default='pending')
     business_type = db.Column(db.String(80), nullable=True)
     use_case = db.Column(db.String(120), nullable=True)
+    service_address_country = db.Column(db.String(2), nullable=True)
+    service_address_line1 = db.Column(db.String(255), nullable=True)
+    service_address_line2 = db.Column(db.String(255), nullable=True)
+    service_address_city = db.Column(db.String(120), nullable=True)
+    service_address_region = db.Column(db.String(120), nullable=True)
+    service_address_postal_code = db.Column(db.String(32), nullable=True)
+    twilio_address_sid = db.Column(db.String(64), nullable=True)
+    twilio_address_json = db.Column(db.Text, nullable=True)
+    emergency_address_sid = db.Column(db.String(64), nullable=True)
+    emergency_address_status = db.Column(db.String(20), nullable=True)
+    emergency_address_last_error = db.Column(db.Text, nullable=True)
+    emergency_address_last_synced_at = db.Column(db.DateTime, nullable=True)
+    sender_finalization_status = db.Column(db.String(40), nullable=True)
+    sender_finalization_error = db.Column(db.Text, nullable=True)
+    sender_finalized_at = db.Column(db.DateTime, nullable=True)
     consent_acknowledged_at = db.Column(db.DateTime, nullable=True)
     sender_review_status = db.Column(db.String(20), nullable=False, default='pending')
     provisioning_started_at = db.Column(db.DateTime, nullable=True)
@@ -392,6 +407,59 @@ class OrganizationMessagingProfile(db.Model):
             raise ValueError("Provider status must be pending, provisioning, active, suspended, or error.")
         return normalized
 
+    @validates("service_address_country")
+    def _normalize_service_address_country(self, key, value):
+        normalized = (value or "").strip().upper()
+        if not normalized:
+            return None
+        if len(normalized) != 2:
+            raise ValueError("Service address country must be a 2-letter ISO country code.")
+        return normalized
+
+    @validates(
+        "service_address_line1",
+        "service_address_line2",
+        "service_address_city",
+        "service_address_region",
+        "service_address_postal_code",
+        "twilio_address_sid",
+        "emergency_address_sid",
+    )
+    def _normalize_messaging_text_fields(self, key, value):
+        normalized = (value or "").strip()
+        return normalized or None
+
+    @validates("emergency_address_status")
+    def _normalize_emergency_address_status(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {"pending", "synced", "not_required", "error"}:
+            raise ValueError("Emergency address status must be pending, synced, not_required, or error.")
+        return normalized
+
+    @validates("sender_finalization_status")
+    def _normalize_sender_finalization_status(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {
+            "awaiting_a2p_approval",
+            "awaiting_service_address",
+            "address_validation_failed",
+            "awaiting_number_purchase",
+            "awaiting_sender_attach",
+            "awaiting_emergency_address_sync",
+            "active",
+            "error",
+        }:
+            raise ValueError(
+                "Sender finalization status must be awaiting_a2p_approval, awaiting_service_address, "
+                "address_validation_failed, awaiting_number_purchase, awaiting_sender_attach, "
+                "awaiting_emergency_address_sync, active, or error."
+            )
+        return normalized
+
     @validates("sender_review_status")
     def _normalize_sender_review_status(self, key, value):
         normalized = (value or "").strip().lower()
@@ -416,6 +484,23 @@ class OrganizationMessagingProfile(db.Model):
         return self.from_number or self.messaging_service_sid
 
     @property
+    def service_address_complete(self) -> bool:
+        return bool(
+            self.service_address_country
+            and self.service_address_line1
+            and self.service_address_city
+            and self.service_address_region
+            and self.service_address_postal_code
+        )
+
+    @property
+    def effective_sender_finalization_status(self) -> str:
+        if self.provider_status == "active":
+            return "active"
+        normalized = (self.sender_finalization_status or "").strip().lower()
+        return normalized or "awaiting_a2p_approval"
+
+    @property
     def can_send(self) -> bool:
         return self.provider_status == 'active' and bool(self.active_sender_identity)
 
@@ -423,6 +508,12 @@ class OrganizationMessagingProfile(db.Model):
         normalized = self._normalize_provider_status("provider_status", value)
         self.provider_status = normalized
         self.status = normalized
+
+    def set_sender_finalization_status(self, value: str | None) -> None:
+        self.sender_finalization_status = self._normalize_sender_finalization_status(
+            "sender_finalization_status",
+            value,
+        )
 
     def __repr__(self):
         return f'<OrganizationMessagingProfile org={self.organization_id} status={self.provider_status}>'

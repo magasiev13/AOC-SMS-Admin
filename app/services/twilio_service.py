@@ -17,6 +17,7 @@ from app import db
 from app.models import (
     MessagingUsageRecord,
     Organization,
+    OrganizationA2POnboarding,
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationUsageBillingPeriod,
@@ -34,6 +35,17 @@ CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "active", "verified"}
 CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES = {"failed", "rejected", "deleted"}
 CUSTOMER_MANAGED_FAILED_BRAND_STATUSES = {"failed", "rejected", "registration_failed", "secondary_vetting_failed"}
+PLATFORM_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "verified"}
+PLATFORM_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
+EMERGENCY_ADDRESS_REGISTERED_STATUSES = {"registered"}
+SENDER_FINALIZATION_WAITING_STATUSES = {
+    "awaiting_a2p_approval",
+    "awaiting_service_address",
+    "address_validation_failed",
+    "awaiting_number_purchase",
+    "awaiting_sender_attach",
+    "awaiting_emergency_address_sync",
+}
 
 
 class TwilioTransientError(Exception):
@@ -47,6 +59,10 @@ class TwilioTransientError(Exception):
 
 class ProviderProvisioningError(RuntimeError):
     """Raised when provider lifecycle actions fail."""
+
+
+class PlatformSubaccountAuthRequiredError(ProviderProvisioningError):
+    """Raised when platform-managed Twilio reads require a stored subaccount auth token."""
 
 
 @dataclass(frozen=True)
@@ -198,7 +214,11 @@ def _provider_ready(profile: OrganizationMessagingProfile | None) -> bool:
     return profile is not None and profile.can_send
 
 
-def _build_subaccount_client(profile: OrganizationMessagingProfile) -> Client:
+def _build_subaccount_client_context(
+    profile: OrganizationMessagingProfile,
+    *,
+    require_stored_auth_token: bool = False,
+) -> tuple[Client, dict[str, object]]:
     if not profile.twilio_subaccount_sid:
         raise ValueError("Twilio subaccount is not provisioned for this organization.")
 
@@ -207,10 +227,37 @@ def _build_subaccount_client(profile: OrganizationMessagingProfile) -> Client:
         auth_token = decrypt_provider_secret(encrypted_token)
         if not auth_token:
             raise ValueError("Stored subaccount auth token is empty.")
-        return Client(profile.twilio_subaccount_sid, auth_token)
+        return Client(profile.twilio_subaccount_sid, auth_token), {
+            "twilio_read_account_sid": profile.twilio_subaccount_sid,
+            "twilio_subaccount_sid": profile.twilio_subaccount_sid,
+            "used_subaccount_auth_token": True,
+        }
+
+    if require_stored_auth_token:
+        raise PlatformSubaccountAuthRequiredError(
+            "Stored Twilio subaccount auth token is required for platform-managed A2P status sync. "
+            "Repair the Twilio subaccount credentials before refreshing status."
+        )
 
     master_account_sid, username, password = _master_rest_credentials()
-    return Client(username, password, profile.twilio_subaccount_sid)
+    return Client(username, password, profile.twilio_subaccount_sid), {
+        "twilio_read_account_sid": profile.twilio_subaccount_sid,
+        "twilio_subaccount_sid": profile.twilio_subaccount_sid,
+        "used_subaccount_auth_token": False,
+        "twilio_parent_account_sid": master_account_sid,
+    }
+
+
+def _build_subaccount_client(
+    profile: OrganizationMessagingProfile,
+    *,
+    require_stored_auth_token: bool = False,
+) -> Client:
+    client, _ = _build_subaccount_client_context(
+        profile,
+        require_stored_auth_token=require_stored_auth_token,
+    )
+    return client
 
 
 def _build_customer_managed_client(
@@ -278,6 +325,386 @@ def _configure_phone_number_webhook(
     client.incoming_phone_numbers(phone_number_sid).update(
         sms_url=_twilio_inbound_webhook_url(),
         sms_method="POST",
+    )
+
+
+def _clean_text(value: object) -> str | None:
+    normalized = (str(value or "")).strip()
+    return normalized or None
+
+
+def _clean_country_code(value: object) -> str | None:
+    normalized = _clean_text(value)
+    if not normalized:
+        return None
+    return normalized.upper()
+
+
+def seed_service_address_from_onboarding(
+    profile: OrganizationMessagingProfile,
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    actor_user_id: int | None = None,
+    overwrite: bool = False,
+) -> bool:
+    if onboarding is None:
+        return False
+
+    current_complete = profile.service_address_complete
+    if current_complete and not overwrite:
+        return False
+
+    fields = {
+        "service_address_country": _clean_country_code(onboarding.address_country),
+        "service_address_line1": _clean_text(onboarding.address_line1),
+        "service_address_line2": _clean_text(onboarding.address_line2),
+        "service_address_city": _clean_text(onboarding.address_city),
+        "service_address_region": _clean_text(onboarding.address_region),
+        "service_address_postal_code": _clean_text(onboarding.address_postal_code),
+    }
+    if not all(
+        (
+            fields["service_address_country"],
+            fields["service_address_line1"],
+            fields["service_address_city"],
+            fields["service_address_region"],
+            fields["service_address_postal_code"],
+        )
+    ):
+        return False
+
+    changed = False
+    for field_name, field_value in fields.items():
+        if getattr(profile, field_name) != field_value:
+            setattr(profile, field_name, field_value)
+            changed = True
+
+    if not changed:
+        return False
+
+    if profile.provider_status == "active":
+        profile.set_provider_status("pending")
+    if profile.effective_sender_finalization_status == "active":
+        profile.set_sender_finalization_status("awaiting_emergency_address_sync")
+    profile.sender_finalization_error = None
+    profile.emergency_address_last_error = None
+    _record_provider_audit(
+        profile.organization_id,
+        "service_address_saved",
+        actor_user_id=actor_user_id,
+        message="Seeded the sender service address from the A2P onboarding packet.",
+        metadata={
+            "source": "a2p_onboarding",
+            "service_address_country": profile.service_address_country,
+            "service_address_city": profile.service_address_city,
+            "service_address_region": profile.service_address_region,
+            "service_address_postal_code": profile.service_address_postal_code,
+        },
+    )
+    return True
+
+
+def _service_address_snapshot(profile: OrganizationMessagingProfile) -> dict[str, str | None]:
+    return {
+        "country": profile.service_address_country,
+        "line1": profile.service_address_line1,
+        "line2": profile.service_address_line2,
+        "city": profile.service_address_city,
+        "region": profile.service_address_region,
+        "postal_code": profile.service_address_postal_code,
+    }
+
+
+def _emergency_address_not_required(phone_resource: object) -> bool:
+    capabilities = getattr(phone_resource, "capabilities", None)
+    if isinstance(capabilities, dict) and capabilities:
+        voice_enabled = capabilities.get("voice")
+        if voice_enabled is False:
+            return True
+    return False
+
+
+def _serialize_twilio_address(address: object) -> str:
+    return json.dumps(
+        {
+            "sid": getattr(address, "sid", None),
+            "customer_name": getattr(address, "customer_name", None),
+            "friendly_name": getattr(address, "friendly_name", None),
+            "street": getattr(address, "street", None),
+            "street_secondary": getattr(address, "street_secondary", None),
+            "city": getattr(address, "city", None),
+            "region": getattr(address, "region", None),
+            "postal_code": getattr(address, "postal_code", None),
+            "iso_country": getattr(address, "iso_country", None),
+            "validated": getattr(address, "validated", None),
+            "verified": getattr(address, "verified", None),
+            "emergency_enabled": getattr(address, "emergency_enabled", None),
+        },
+        sort_keys=True,
+    )
+
+
+def _service_address_friendly_name(organization: Organization) -> str:
+    return f"{organization.name[:48]} Service Address"
+
+
+def _service_address_customer_name(organization: Organization) -> str:
+    return organization.name[:64]
+
+
+def _record_sender_finalization_step(
+    profile: OrganizationMessagingProfile,
+    action: str,
+    *,
+    actor_user_id: int | None = None,
+    status: str = "success",
+    message: str,
+    metadata: dict | None = None,
+) -> None:
+    _record_provider_audit(
+        profile.organization_id,
+        action,
+        actor_user_id=actor_user_id,
+        status=status,
+        message=message,
+        metadata=metadata,
+    )
+
+
+def _set_sender_finalization_state(
+    profile: OrganizationMessagingProfile,
+    status: str,
+    *,
+    error: str | None = None,
+    emergency_status: str | None = None,
+    actor_user_id: int | None = None,
+    audit_action: str | None = None,
+    audit_message: str | None = None,
+    metadata: dict | None = None,
+    provider_status: str | None = None,
+) -> None:
+    profile.set_sender_finalization_status(status)
+    profile.sender_finalization_error = error
+    profile.last_provision_error = error
+    if emergency_status is not None:
+        profile.emergency_address_status = emergency_status
+    if provider_status and profile.provider_status != "suspended":
+        profile.set_provider_status(provider_status)
+    elif profile.provider_status not in {"suspended", "error"} and status != "active":
+        profile.set_provider_status("pending")
+    if audit_action and audit_message:
+        _record_sender_finalization_step(
+            profile,
+            audit_action,
+            actor_user_id=actor_user_id,
+            status="error" if error else "success",
+            message=audit_message,
+            metadata=metadata,
+        )
+
+
+def _ensure_twilio_service_address(
+    organization: Organization,
+    profile: OrganizationMessagingProfile,
+    *,
+    client: Client,
+    actor_user_id: int | None = None,
+) -> object:
+    if not profile.service_address_complete:
+        raise ProviderProvisioningError("A complete service address is required before sender finalization can continue.")
+
+    payload = _service_address_snapshot(profile)
+    kwargs = {
+        "customer_name": _service_address_customer_name(organization),
+        "friendly_name": _service_address_friendly_name(organization),
+        "street": payload["line1"],
+        "street_secondary": payload["line2"] or None,
+        "city": payload["city"],
+        "region": payload["region"],
+        "postal_code": payload["postal_code"],
+        "iso_country": payload["country"],
+        "emergency_enabled": True,
+        "auto_correct_address": True,
+    }
+    try:
+        if profile.twilio_address_sid:
+            address = client.addresses(profile.twilio_address_sid).update(**kwargs)
+            action = "twilio_address_validated"
+            message = "Updated the Twilio sender service address."
+        else:
+            address = client.addresses.create(**kwargs)
+            action = "twilio_address_validated"
+            message = "Created the Twilio sender service address."
+    except TwilioRestException as exc:
+        detail = (getattr(exc, "msg", "") or str(exc)).strip()
+        raise ProviderProvisioningError(
+            f"Twilio could not validate the sender service address: {detail}"
+        ) from exc
+
+    profile.twilio_address_sid = getattr(address, "sid", None)
+    profile.twilio_address_json = _serialize_twilio_address(address)
+    profile.emergency_address_last_error = None
+    _record_sender_finalization_step(
+        profile,
+        action,
+        actor_user_id=actor_user_id,
+        message=message,
+        metadata={
+            "twilio_address_sid": profile.twilio_address_sid,
+            "service_address_country": profile.service_address_country,
+            "service_address_city": profile.service_address_city,
+            "service_address_region": profile.service_address_region,
+            "service_address_postal_code": profile.service_address_postal_code,
+        },
+    )
+    return address
+
+
+def _resolve_sender_assignment(
+    organization: Organization,
+    profile: OrganizationMessagingProfile,
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    client: Client,
+    actor_user_id: int | None = None,
+) -> tuple[str | None, str | None]:
+    strategy = ((onboarding.number_strategy if onboarding is not None else None) or "platform_assign").strip().lower()
+    if profile.phone_number_sid and profile.from_number:
+        return profile.phone_number_sid, profile.from_number
+
+    if strategy == "auto_buy":
+        country = current_app.config.get("TWILIO_A2P_NUMBER_COUNTRY") or "US"
+        desired_number = _clean_text(onboarding.desired_phone_number if onboarding is not None else None)
+        if desired_number:
+            purchased = client.incoming_phone_numbers.create(
+                phone_number=desired_number,
+                address_sid=profile.twilio_address_sid or None,
+            )
+        else:
+            near_number = _clean_text(onboarding.phone_number if onboarding is not None else None) or _clean_text(
+                onboarding.mobile_number if onboarding is not None else None
+            )
+            search_results = client.available_phone_numbers(country).local.list(
+                sms_enabled=True,
+                near_number=near_number or None,
+                exclude_all_address_required=False,
+                limit=1,
+            )
+            if not search_results:
+                raise ProviderProvisioningError("Twilio could not find a purchasable local SMS number for this organization.")
+            candidate = search_results[0]
+            purchased = client.incoming_phone_numbers.create(
+                phone_number=candidate.phone_number,
+                address_sid=profile.twilio_address_sid or None,
+            )
+        _record_sender_finalization_step(
+            profile,
+            "sender_number_purchased",
+            actor_user_id=actor_user_id,
+            message="Purchased a Twilio number in the organization subaccount for sender finalization.",
+            metadata={
+                "phone_number_sid": getattr(purchased, "sid", None),
+                "from_number": normalize_phone(getattr(purchased, "phone_number", None)),
+                "number_strategy": strategy,
+                "twilio_address_sid": profile.twilio_address_sid,
+            },
+        )
+        return getattr(purchased, "sid", None), normalize_phone(getattr(purchased, "phone_number", None))
+
+    target_phone_number_sid = (
+        _clean_text(onboarding.desired_phone_number_sid if onboarding is not None else None)
+        or profile.phone_number_sid
+    )
+    if not target_phone_number_sid:
+        raise ProviderProvisioningError("A phone number SID is required before sender finalization can continue.")
+
+    if strategy == "transfer_parent_number":
+        master_account_sid = current_app.config.get("TWILIO_ACCOUNT_SID")
+        master_client = _master_client()
+        phone_context = master_client.incoming_phone_numbers(target_phone_number_sid)
+        existing_number = phone_context.fetch()
+        if getattr(existing_number, "account_sid", None) != master_account_sid:
+            raise ProviderProvisioningError(
+                "Only parent-account numbers owned by this platform can be transferred automatically."
+            )
+        transferred = phone_context.update(
+            account_sid=profile.twilio_subaccount_sid,
+            sms_url=_twilio_inbound_webhook_url(),
+            sms_method="POST",
+            address_sid=profile.twilio_address_sid or None,
+        )
+        return getattr(transferred, "sid", None), normalize_phone(getattr(transferred, "phone_number", None))
+
+    try:
+        existing_number = client.incoming_phone_numbers(target_phone_number_sid).fetch()
+    except TwilioRestException as exc:
+        if getattr(exc, "status", None) == 404:
+            raise ProviderProvisioningError(
+                f"Phone number SID {target_phone_number_sid} does not belong to this organization's Twilio subaccount."
+            ) from exc
+        raise
+    return getattr(existing_number, "sid", None), normalize_phone(getattr(existing_number, "phone_number", None))
+
+
+def _sync_emergency_address(
+    profile: OrganizationMessagingProfile,
+    *,
+    client: Client,
+    actor_user_id: int | None = None,
+) -> None:
+    if not profile.phone_number_sid or not profile.twilio_address_sid:
+        raise ProviderProvisioningError("A phone number and validated Twilio service address are required for emergency sync.")
+
+    phone_context = client.incoming_phone_numbers(profile.phone_number_sid)
+    phone_resource = phone_context.fetch()
+    if _emergency_address_not_required(phone_resource):
+        profile.emergency_address_sid = None
+        profile.emergency_address_status = "not_required"
+        profile.emergency_address_last_error = None
+        profile.emergency_address_last_synced_at = utc_now()
+        _record_sender_finalization_step(
+            profile,
+            "emergency_address_synced",
+            actor_user_id=actor_user_id,
+            message="Skipped emergency address registration because Twilio reported that it is not required for this number.",
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "applicability": "not_required",
+            },
+        )
+        return
+
+    updated_number = phone_context.update(
+        address_sid=profile.twilio_address_sid,
+        emergency_address_sid=profile.twilio_address_sid,
+        emergency_status="Active",
+    )
+    emergency_address_sid = _clean_text(getattr(updated_number, "emergency_address_sid", None)) or profile.twilio_address_sid
+    emergency_status = _normalized_twilio_status(getattr(updated_number, "emergency_status", None))
+    emergency_address_status = _normalized_twilio_status(getattr(updated_number, "emergency_address_status", None))
+
+    profile.emergency_address_sid = emergency_address_sid
+    profile.emergency_address_last_synced_at = utc_now()
+    profile.emergency_address_last_error = None
+    if emergency_address_status in EMERGENCY_ADDRESS_REGISTERED_STATUSES or emergency_status == "active":
+        profile.emergency_address_status = "synced"
+        _record_sender_finalization_step(
+            profile,
+            "emergency_address_synced",
+            actor_user_id=actor_user_id,
+            message="Registered the Twilio emergency address for the sender number.",
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "emergency_address_sid": emergency_address_sid,
+                "emergency_status": emergency_status,
+                "emergency_address_status": emergency_address_status,
+            },
+        )
+        return
+
+    profile.emergency_address_status = "pending"
+    raise ProviderProvisioningError(
+        "Twilio accepted the sender number, but emergency address registration is still pending. Retry sender finalization after the number finishes emergency address registration."
     )
 
 
@@ -409,6 +836,7 @@ def _sync_service_sender(profile: OrganizationMessagingProfile, *, actor_user_id
     if not attached:
         service.phone_numbers.create(phone_number_sid=profile.phone_number_sid)
 
+    _configure_phone_number_webhook(provider_client, profile.phone_number_sid)
     _configure_service_webhooks(profile, client=provider_client)
     profile.inbound_identity = profile.from_number
     profile.provider_last_checked_at = utc_now()
@@ -607,6 +1035,7 @@ def ensure_messaging_profile(organization: Organization) -> OrganizationMessagin
         provider_mode="platform_managed",
         status="pending",
         provider_status="pending",
+        sender_finalization_status="awaiting_a2p_approval",
     )
     db.session.add(profile)
     db.session.flush()
@@ -831,8 +1260,12 @@ def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> 
         profile.provisioned_at = utc_now()
         profile.provider_last_checked_at = utc_now()
         if profile.from_number and profile.sender_review_status == "approved":
+            profile.set_sender_finalization_status("active")
             profile.set_provider_status("active")
         else:
+            profile.set_sender_finalization_status(
+                profile.sender_finalization_status or "awaiting_a2p_approval"
+            )
             profile.set_provider_status("pending")
 
         _record_provider_audit(
@@ -920,6 +1353,13 @@ def release_sender(organization_id: int, *, actor_user_id: int | None = None) ->
         profile.from_number = None
         profile.phone_number_sid = None
         profile.inbound_identity = profile.messaging_service_sid
+        profile.emergency_address_sid = None
+        profile.emergency_address_status = None
+        profile.emergency_address_last_error = None
+        profile.emergency_address_last_synced_at = None
+        profile.sender_finalization_error = None
+        profile.sender_finalized_at = None
+        profile.set_sender_finalization_status("awaiting_number_purchase")
         if profile.provider_status != "suspended":
             profile.set_provider_status("pending")
         _record_provider_audit(
@@ -950,6 +1390,227 @@ def release_sender(organization_id: int, *, actor_user_id: int | None = None) ->
         raise ProviderProvisioningError(str(exc)) from exc
 
 
+def _platform_managed_a2p_is_approved(onboarding: OrganizationA2POnboarding | None) -> bool:
+    if onboarding is None:
+        return False
+    brand_status = _normalized_twilio_status(onboarding.brand_status)
+    campaign_status = _normalized_twilio_status(onboarding.campaign_status)
+    return (
+        (onboarding.onboarding_status or "").strip().lower() == "approved"
+        or (
+            brand_status in PLATFORM_MANAGED_APPROVED_BRAND_STATUSES
+            and campaign_status in PLATFORM_MANAGED_APPROVED_CAMPAIGN_STATUSES
+        )
+    )
+
+
+def finalize_sender_setup(
+    organization_id: int,
+    *,
+    actor_user_id: int | None = None,
+) -> OrganizationMessagingProfile:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = ensure_messaging_profile(organization)
+    if profile.provider_mode != "platform_managed":
+        raise ProviderProvisioningError("Sender finalization is only available for platform-managed providers.")
+    if not profile.twilio_subaccount_sid or not profile.messaging_service_sid:
+        raise ProviderProvisioningError("Provision the Twilio provider before finalizing sender setup.")
+
+    onboarding = organization.a2p_onboarding
+    seed_service_address_from_onboarding(profile, onboarding, actor_user_id=actor_user_id)
+    db.session.flush()
+
+    if not _platform_managed_a2p_is_approved(onboarding):
+        _set_sender_finalization_state(
+            profile,
+            "awaiting_a2p_approval",
+            error=None,
+            actor_user_id=actor_user_id,
+        )
+        db.session.commit()
+        return profile
+
+    if not profile.service_address_complete:
+        _set_sender_finalization_state(
+            profile,
+            "awaiting_service_address",
+            error="Add the org service address before sender finalization can continue.",
+            actor_user_id=actor_user_id,
+            audit_action="sender_finalization_blocked",
+            audit_message="Sender finalization is waiting on a complete service address.",
+            metadata={"step": "service_address"},
+        )
+        db.session.commit()
+        return profile
+
+    try:
+        provider_client = _build_subaccount_client(profile, require_stored_auth_token=True)
+        current_step = "address_validation_failed"
+        address = _ensure_twilio_service_address(
+            organization,
+            profile,
+            client=provider_client,
+            actor_user_id=actor_user_id,
+        )
+
+        current_step = "awaiting_number_purchase"
+        phone_number_sid, from_number = _resolve_sender_assignment(
+            organization,
+            profile,
+            onboarding,
+            client=provider_client,
+            actor_user_id=actor_user_id,
+        )
+        if not phone_number_sid or not from_number:
+            raise ProviderProvisioningError("Twilio did not return a sender number that can be attached.")
+        profile.phone_number_sid = phone_number_sid
+        profile.from_number = from_number
+        profile.inbound_identity = from_number
+
+        current_step = "awaiting_sender_attach"
+        _sync_service_sender(profile, actor_user_id=actor_user_id)
+        _record_sender_finalization_step(
+            profile,
+            "sender_attached",
+            actor_user_id=actor_user_id,
+            message="Attached the sender number to the organization Messaging Service.",
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "from_number": profile.from_number,
+                "messaging_service_sid": profile.messaging_service_sid,
+            },
+        )
+        _record_sender_finalization_step(
+            profile,
+            "inbound_webhook_configured",
+            actor_user_id=actor_user_id,
+            message="Configured inbound webhook bindings for the Messaging Service and sender number.",
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "webhook_url": _twilio_inbound_webhook_url(),
+            },
+        )
+
+        profile.sender_review_status = "approved"
+        profile.consent_acknowledged_at = profile.consent_acknowledged_at or utc_now()
+
+        current_step = "awaiting_emergency_address_sync"
+        _set_sender_finalization_state(
+            profile,
+            "awaiting_emergency_address_sync",
+            error=None,
+            emergency_status="pending",
+            actor_user_id=actor_user_id,
+        )
+        _sync_emergency_address(profile, client=provider_client, actor_user_id=actor_user_id)
+
+        profile.provider_last_checked_at = utc_now()
+        profile.sender_finalized_at = utc_now()
+        profile.sender_finalization_error = None
+        profile.last_provision_error = None
+        profile.set_sender_finalization_status("active")
+        if profile.provider_status != "suspended":
+            profile.set_provider_status("active")
+        _record_sender_finalization_step(
+            profile,
+            "provider_activated",
+            actor_user_id=actor_user_id,
+            message="Sender finalization completed and live sending is enabled.",
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "from_number": profile.from_number,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "twilio_address_sid": getattr(address, "sid", None) or profile.twilio_address_sid,
+                "emergency_address_sid": profile.emergency_address_sid,
+            },
+        )
+        db.session.commit()
+        return profile
+    except PlatformSubaccountAuthRequiredError as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        profile = ensure_messaging_profile(organization)
+        _set_sender_finalization_state(
+            profile,
+            "error",
+            error=str(exc),
+            actor_user_id=actor_user_id,
+            audit_action="sender_finalization_failed",
+            audit_message=str(exc),
+            metadata={"step": "credentials"},
+            provider_status="error",
+        )
+        profile.provider_last_checked_at = utc_now()
+        db.session.commit()
+        return profile
+    except ProviderProvisioningError as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        profile = ensure_messaging_profile(organization)
+        target_status = locals().get("current_step", profile.effective_sender_finalization_status)
+        if target_status not in SENDER_FINALIZATION_WAITING_STATUSES and target_status != "address_validation_failed":
+            target_status = "error"
+        emergency_status = profile.emergency_address_status
+        if target_status == "address_validation_failed":
+            target_status = "address_validation_failed"
+        elif target_status == "awaiting_emergency_address_sync":
+            target_status = "awaiting_emergency_address_sync"
+            emergency_status = "error"
+        elif target_status == "awaiting_number_purchase":
+            target_status = "awaiting_number_purchase"
+        elif target_status == "awaiting_sender_attach":
+            target_status = "awaiting_sender_attach"
+        _set_sender_finalization_state(
+            profile,
+            target_status,
+            error=str(exc),
+            emergency_status=emergency_status,
+            actor_user_id=actor_user_id,
+            audit_action="sender_finalization_failed",
+            audit_message=str(exc),
+            metadata={
+                "step": target_status,
+                "phone_number_sid": profile.phone_number_sid,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "twilio_address_sid": profile.twilio_address_sid,
+            },
+        )
+        profile.provider_last_checked_at = utc_now()
+        db.session.commit()
+        return profile
+    except Exception as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        profile = ensure_messaging_profile(organization)
+        _set_sender_finalization_state(
+            profile,
+            "error",
+            error=str(exc),
+            actor_user_id=actor_user_id,
+            audit_action="sender_finalization_failed",
+            audit_message=str(exc),
+            metadata={
+                "phone_number_sid": profile.phone_number_sid,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "twilio_address_sid": profile.twilio_address_sid,
+            },
+            provider_status="error",
+        )
+        profile.provider_last_checked_at = utc_now()
+        db.session.commit()
+        raise ProviderProvisioningError(str(exc)) from exc
+
+
 def sync_sender_assignment(organization_id: int, *, actor_user_id: int | None = None) -> OrganizationMessagingProfile:
     organization = db.session.get(Organization, organization_id)
     if organization is None:
@@ -964,8 +1625,10 @@ def sync_sender_assignment(organization_id: int, *, actor_user_id: int | None = 
         _sync_service_sender(profile, actor_user_id=actor_user_id)
         if profile.provider_status != "suspended":
             if profile.sender_review_status == "approved" and profile.consent_acknowledged_at is not None:
+                profile.set_sender_finalization_status("active")
                 profile.set_provider_status("active")
             else:
+                profile.set_sender_finalization_status("awaiting_emergency_address_sync")
                 profile.set_provider_status("pending")
         db.session.commit()
         return profile
@@ -976,6 +1639,8 @@ def sync_sender_assignment(organization_id: int, *, actor_user_id: int | None = 
             raise
         profile = ensure_messaging_profile(organization)
         message = _sender_sync_error_message(exc, profile)
+        profile.set_sender_finalization_status("awaiting_sender_attach")
+        profile.sender_finalization_error = message
         profile.set_provider_status("error")
         profile.last_provision_error = message
         profile.provider_last_checked_at = utc_now()

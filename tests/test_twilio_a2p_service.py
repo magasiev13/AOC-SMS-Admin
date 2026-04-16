@@ -42,12 +42,15 @@ class TestTwilioA2PService(unittest.TestCase):
             _create_a2p_campaign,
             _sync_remote_status,
             _upsert_a2p_resources,
+            create_missing_a2p_campaign,
             describe_a2p_onboarding,
             ensure_a2p_onboarding,
             ingest_a2p_event_stream_payload,
             process_a2p_onboarding,
             ProviderProvisioningError,
+            reconcile_a2p_twilio_state,
             submit_a2p_onboarding,
+            sync_a2p_onboarding_status,
         )
 
         self.db = db
@@ -59,11 +62,14 @@ class TestTwilioA2PService(unittest.TestCase):
         self._create_a2p_campaign = _create_a2p_campaign
         self._sync_remote_status = _sync_remote_status
         self._upsert_a2p_resources = _upsert_a2p_resources
+        self.create_missing_a2p_campaign = create_missing_a2p_campaign
         self.describe_a2p_onboarding = describe_a2p_onboarding
         self.ensure_a2p_onboarding = ensure_a2p_onboarding
         self.ingest_a2p_event_stream_payload = ingest_a2p_event_stream_payload
         self.process_a2p_onboarding = process_a2p_onboarding
         self.submit_a2p_onboarding = submit_a2p_onboarding
+        self.reconcile_a2p_twilio_state = reconcile_a2p_twilio_state
+        self.sync_a2p_onboarding_status = sync_a2p_onboarding_status
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config["TESTING"] = True
@@ -78,6 +84,7 @@ class TestTwilioA2PService(unittest.TestCase):
             organization=self.organization,
             provider_mode="platform_managed",
             twilio_subaccount_sid="ACsub0001",
+            twilio_auth_token_encrypted=encrypt_provider_secret("subaccount-token"),
             messaging_service_sid="MGsub0001",
             status="pending",
             provider_status="pending",
@@ -170,6 +177,21 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.number_strategy, "auto_buy")
         self.assertEqual(onboarding.campaign_use_case, "MIXED")
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 42)
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_refresh_a2p_onboarding_queues_status_only_job(self, mock_get_queue) -> None:
+        from app.services.twilio_a2p_service import refresh_a2p_onboarding
+
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.campaign_sid = "QEcampaign123"
+        self.db.session.commit()
+
+        refresh_a2p_onboarding(self.organization.id, actor_user_id=55)
+
+        queue.enqueue.assert_called_once_with("app.tasks.sync_a2p_onboarding_status_job", self.organization.id, 55)
 
     def test_submit_a2p_onboarding_rejects_invalid_number_strategy_payload(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Choose a valid Twilio A2P number strategy."):
@@ -798,10 +820,17 @@ class TestTwilioA2PService(unittest.TestCase):
         mock_sleep.assert_called_once_with(5)
         self.assertEqual(onboarding.campaign_sid, "QEnew123")
 
-    @patch("app.services.twilio_a2p_service._build_subaccount_client")
-    def test_sync_remote_status_prefers_campaign_status_and_errors(self, mock_build_subaccount_client) -> None:
+    @patch("app.services.twilio_a2p_service._build_subaccount_client_context")
+    def test_sync_remote_status_prefers_campaign_status_and_errors(self, mock_build_subaccount_client_context) -> None:
         mock_client = MagicMock()
-        mock_build_subaccount_client.return_value = mock_client
+        mock_build_subaccount_client_context.return_value = (
+            mock_client,
+            {
+                "twilio_read_account_sid": "ACsub0001",
+                "twilio_subaccount_sid": "ACsub0001",
+                "used_subaccount_auth_token": True,
+            },
+        )
         mock_client.messaging.v1.brand_registrations.return_value.fetch.return_value = MagicMock(
             status="APPROVED",
             failure_reason=None,
@@ -810,6 +839,7 @@ class TestTwilioA2PService(unittest.TestCase):
         )
         mock_client.messaging.v1.services.return_value.us_app_to_person.return_value.fetch.return_value = MagicMock(
             campaign_status="FAILED",
+            campaign_id="CMcampaign123",
             errors=[
                 {"registrationerrorcode": "30909", "registrationerrordescription": "CTA could not be verified."},
                 {"registrationerrorcode": "30891", "registrationerrordescription": "Privacy policy URL is missing."},
@@ -828,6 +858,102 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(campaign_status, "failed")
         self.assertEqual(onboarding.failure_code, "30909")
         self.assertIn("CTA could not be verified", onboarding.raw_status_json or "")
+        self.assertIn("CMcampaign123", onboarding.raw_status_json or "")
+
+    @patch("app.services.twilio_a2p_service._inventory_subaccount_resources")
+    @patch("app.services.twilio_a2p_service._build_subaccount_client_context")
+    def test_sync_remote_status_classifies_stale_ids_as_missing_campaign(self, mock_build_subaccount_client_context, mock_inventory) -> None:
+        from twilio.base.exceptions import TwilioRestException
+
+        mock_client = MagicMock()
+        mock_build_subaccount_client_context.return_value = (
+            mock_client,
+            {
+                "twilio_read_account_sid": "ACsub0001",
+                "twilio_subaccount_sid": "ACsub0001",
+                "used_subaccount_auth_token": True,
+            },
+        )
+        mock_client.messaging.v1.brand_registrations.return_value.fetch.side_effect = (
+            TwilioRestException(404, "/v1/a2p/BrandRegistrations/BNstale123", msg="Brand not found", code=20404)
+        )
+        mock_inventory.return_value = {
+            "subaccount_sid": "ACsub0001",
+            "services": [
+                {
+                    "sid": "MGlive123",
+                    "friendly_name": "SMS",
+                    "status": "active",
+                    "campaigns": [],
+                    "campaign_count": 0,
+                }
+            ],
+            "customer_profiles": [{"sid": "BUcustomer123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "trust_products": [{"sid": "BUtrust123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "brands": [{"sid": "BNlive123", "status": "approved", "identity_status": "verified", "tcr_id": "TCR123"}],
+        }
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.customer_profile_sid = "BUstale123"
+        onboarding.trust_product_sid = "BUtruststale123"
+        onboarding.brand_registration_sid = "BNstale123"
+        onboarding.campaign_sid = "QEstale123"
+        self.db.session.commit()
+
+        brand_status, campaign_status = self._sync_remote_status(onboarding, self.messaging_profile, actor_user_id=41)
+
+        self.assertEqual(brand_status, "approved")
+        self.assertIsNone(campaign_status)
+        self.assertEqual(onboarding.onboarding_status, "needs_action")
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        recovery_state = json.loads(onboarding.raw_status_json)["recovery_state"]
+        self.assertEqual(recovery_state["type"], "missing_campaign")
+        self.assertEqual(recovery_state["recommended_action"], "create_campaign")
+        self.assertEqual(recovery_state["selected"]["messaging_service_sid"], "MGlive123")
+
+    @patch("app.services.twilio_a2p_service._create_a2p_campaign")
+    @patch("app.services.twilio_a2p_service._upsert_a2p_resources")
+    @patch("app.services.twilio_a2p_service._sync_remote_status", return_value=("approved", "in_progress"))
+    def test_sync_a2p_onboarding_status_clears_stale_transient_error_without_mutation(
+        self,
+        _mock_sync_remote_status,
+        mock_upsert,
+        mock_create_campaign,
+    ) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "error"
+        onboarding.brand_status = "approved"
+        onboarding.campaign_status = "in_progress"
+        onboarding.last_error = "Failed to resolve 'messaging.twilio.com'"
+        self.messaging_profile.provider_status = "error"
+        self.messaging_profile.last_provision_error = "Failed to resolve 'messaging.twilio.com'"
+        self.db.session.commit()
+
+        result = self.sync_a2p_onboarding_status(self.organization.id, actor_user_id=81)
+
+        self.assertEqual(result.onboarding_status, "pending")
+        self.assertEqual(result.brand_status, "approved")
+        self.assertEqual(result.campaign_status, "in_progress")
+        self.assertIsNone(result.last_error)
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        self.assertIsNone(self.messaging_profile.last_provision_error)
+        mock_upsert.assert_not_called()
+        mock_create_campaign.assert_not_called()
+
+    def test_sync_a2p_onboarding_status_marks_missing_subaccount_auth_as_needs_action(self) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.brand_status = "approved"
+        onboarding.campaign_status = "in_progress"
+        self.messaging_profile.twilio_auth_token_encrypted = None
+        self.db.session.commit()
+
+        result = self.sync_a2p_onboarding_status(self.organization.id, actor_user_id=82)
+
+        self.assertEqual(result.onboarding_status, "needs_action")
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        self.assertIn("Stored Twilio subaccount auth token is required", result.last_error or "")
 
     @patch("app.services.twilio_a2p_service._complete_number_setup")
     @patch("app.services.twilio_a2p_service._create_a2p_campaign")
@@ -877,6 +1003,64 @@ class TestTwilioA2PService(unittest.TestCase):
 
     @patch("app.services.twilio_a2p_service._complete_number_setup")
     @patch("app.services.twilio_a2p_service._create_a2p_campaign")
+    @patch("app.services.twilio_a2p_service._inventory_subaccount_resources")
+    @patch("app.services.twilio_a2p_service._sync_remote_status", return_value=("approved", None))
+    @patch("app.services.twilio_a2p_service._upsert_a2p_resources")
+    def test_process_a2p_onboarding_requires_explicit_campaign_creation_when_brand_ready(
+        self,
+        mock_upsert,
+        _mock_sync,
+        mock_inventory,
+        mock_create_campaign,
+        mock_complete_number_setup,
+    ) -> None:
+        def seed_resources(onboarding, _profile):
+            onboarding.customer_profile_sid = "BUcustomer123"
+            onboarding.trust_product_sid = "BUtrust123"
+            onboarding.brand_registration_sid = "BNbrand123"
+
+        mock_upsert.side_effect = seed_resources
+        mock_inventory.return_value = {
+            "subaccount_sid": "ACsub0001",
+            "services": [
+                {
+                    "sid": "MGsub0001",
+                    "friendly_name": "SMS",
+                    "status": "active",
+                    "campaigns": [],
+                    "campaign_count": 0,
+                }
+            ],
+            "customer_profiles": [{"sid": "BUcustomer123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "trust_products": [{"sid": "BUtrust123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "brands": [{"sid": "BNbrand123", "status": "approved", "identity_status": "verified", "tcr_id": "TCR123"}],
+        }
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.number_strategy = "auto_buy"
+        onboarding.business_name = "Acme"
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.onboarding_status = "queued"
+        self.db.session.commit()
+
+        result = self.process_a2p_onboarding(self.organization.id, actor_user_id=7)
+
+        self.assertEqual(result.onboarding_status, "needs_action")
+        self.assertEqual(result.brand_status, "approved")
+        self.assertIsNone(result.campaign_sid)
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        self.assertEqual(json.loads(result.raw_status_json)["recovery_state"]["recommended_action"], "create_campaign")
+        mock_create_campaign.assert_not_called()
+        mock_complete_number_setup.assert_not_called()
+
+    @patch("app.services.twilio_a2p_service._complete_number_setup")
+    @patch("app.services.twilio_a2p_service._create_a2p_campaign")
     @patch("app.services.twilio_a2p_service._sync_remote_status")
     @patch("app.services.twilio_a2p_service._upsert_a2p_resources")
     def test_process_a2p_onboarding_marks_profile_active_when_brand_and_campaign_are_ready(
@@ -886,18 +1070,24 @@ class TestTwilioA2PService(unittest.TestCase):
         mock_create_campaign,
         mock_complete_number_setup,
     ) -> None:
+        from app.models import utc_now
+
         def seed_resources(onboarding, _profile):
             onboarding.customer_profile_sid = "BUcustomer123"
             onboarding.trust_product_sid = "BUtrust123"
             onboarding.brand_registration_sid = "BNbrand123"
-
-        def seed_campaign(onboarding, _profile, *, actor_user_id=None):
-            self.assertEqual(actor_user_id, 7)
             onboarding.campaign_sid = "QEcampaign123"
 
         mock_upsert.side_effect = seed_resources
-        mock_create_campaign.side_effect = seed_campaign
-        mock_sync.side_effect = [("approved", None), ("approved", "approved")]
+        mock_sync.return_value = ("approved", "approved")
+        def complete_number_setup(_onboarding, profile, _actor_user_id):
+            profile.from_number = "+15550001111"
+            profile.phone_number_sid = "PNready123"
+            profile.sender_review_status = "approved"
+            profile.consent_acknowledged_at = utc_now()
+            profile.set_sender_finalization_status("active")
+
+        mock_complete_number_setup.side_effect = complete_number_setup
 
         onboarding = self.ensure_a2p_onboarding(self.organization)
         onboarding.registration_path = "standard"
@@ -920,8 +1110,108 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertIsNotNone(result.approved_at)
         self.assertEqual(self.messaging_profile.provider_status, "active")
         mock_upsert.assert_called_once()
-        mock_create_campaign.assert_called_once()
+        mock_create_campaign.assert_not_called()
         mock_complete_number_setup.assert_called_once()
+
+    @patch("app.services.twilio_a2p_service._sync_remote_status", side_effect=RuntimeError("Failed to resolve 'messaging.twilio.com'"))
+    @patch("app.services.twilio_a2p_service._upsert_a2p_resources")
+    def test_process_a2p_onboarding_marks_transient_provider_connectivity_without_generic_error(
+        self,
+        _mock_upsert,
+        _mock_sync,
+    ) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.registration_path = "standard"
+        onboarding.number_strategy = "auto_buy"
+        onboarding.business_name = "Acme"
+        onboarding.email = "ops@acme.test"
+        onboarding.first_name = "Jane"
+        onboarding.last_name = "Doe"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        onboarding.onboarding_status = "pending"
+        onboarding.submitted_at = self.organization.created_at
+        self.db.session.commit()
+
+        result = self.process_a2p_onboarding(self.organization.id, actor_user_id=7)
+
+        self.assertEqual(result.onboarding_status, "pending")
+        self.assertEqual(self.messaging_profile.provider_status, "pending")
+        recovery_state = json.loads(result.raw_status_json)["recovery_state"]
+        self.assertEqual(recovery_state["type"], "transient_connectivity")
+        self.assertEqual(recovery_state["recommended_action"], "refresh")
+
+    @patch("app.services.twilio_a2p_service._inventory_subaccount_resources")
+    def test_reconcile_a2p_twilio_state_preserves_subaccount_and_form_data(self, mock_inventory) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "needs_action"
+        onboarding.business_name = "Acme"
+        onboarding.legal_business_name = "Acme"
+        onboarding.public_brand_name = "Acme"
+        onboarding.customer_profile_sid = "BUstale123"
+        onboarding.trust_product_sid = "BUtruststale123"
+        onboarding.brand_registration_sid = "BNstale123"
+        onboarding.campaign_sid = "QEstale123"
+        onboarding.campaign_description = "Community updates"
+        onboarding.message_flow = "Users opt in."
+        onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
+        self.db.session.commit()
+
+        mock_inventory.return_value = {
+            "subaccount_sid": "ACsub0001",
+            "services": [
+                {
+                    "sid": "MGlive123",
+                    "friendly_name": "SMS",
+                    "status": "active",
+                    "campaigns": [],
+                    "campaign_count": 0,
+                }
+            ],
+            "customer_profiles": [{"sid": "BUcustomer123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "trust_products": [{"sid": "BUtrust123", "friendly_name": "Acme", "status": "twilio-approved"}],
+            "brands": [{"sid": "BNlive123", "status": "approved", "identity_status": "verified", "tcr_id": "TCR123"}],
+        }
+
+        result = self.reconcile_a2p_twilio_state(
+            self.organization.id,
+            messaging_service_sid="MGlive123",
+            customer_profile_sid="BUcustomer123",
+            trust_product_sid="BUtrust123",
+            brand_registration_sid="BNlive123",
+            actor_user_id=9,
+        )
+
+        self.assertEqual(self.messaging_profile.twilio_subaccount_sid, "ACsub0001")
+        self.assertEqual(self.messaging_profile.messaging_service_sid, "MGlive123")
+        self.assertEqual(result.customer_profile_sid, "BUcustomer123")
+        self.assertEqual(result.trust_product_sid, "BUtrust123")
+        self.assertEqual(result.brand_registration_sid, "BNlive123")
+        self.assertEqual(result.business_name, "Acme")
+        self.assertEqual(json.loads(result.raw_status_json)["recovery_state"]["type"], "missing_campaign")
+
+    @patch("app.services.twilio_a2p_service._apply_status_snapshot")
+    @patch("app.services.twilio_a2p_service._sync_remote_status", return_value=("approved", "submitted"))
+    @patch("app.services.twilio_a2p_service._create_a2p_campaign")
+    def test_create_missing_a2p_campaign_requires_explicit_service_call(
+        self,
+        mock_create_campaign,
+        _mock_sync,
+        mock_apply_status_snapshot,
+    ) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "needs_action"
+        onboarding.brand_status = "approved"
+        onboarding.brand_registration_sid = "BNbrand123"
+        onboarding.campaign_sid = None
+        self.db.session.commit()
+
+        result = self.create_missing_a2p_campaign(self.organization.id, actor_user_id=12)
+
+        self.assertIs(result, onboarding)
+        mock_create_campaign.assert_called_once_with(onboarding, self.messaging_profile, actor_user_id=12)
+        mock_apply_status_snapshot.assert_called_once()
 
     @patch(
         "app.services.twilio_a2p_service._upsert_a2p_resources",
@@ -993,6 +1283,37 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(duplicate_summary["events_duplicate"], 1)
         self.assertEqual(stale_summary["events_out_of_order"], 1)
         self.assertEqual(onboarding.brand_status, "verified")
+        queue.enqueue.assert_not_called()
+
+    @patch("app.services.twilio_a2p_service.get_queue")
+    def test_ingest_a2p_event_stream_payload_falls_back_to_subaccount_and_records_observed_ids(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.raw_status_json = json.dumps({"brand_tcr_id": "TCR123"})
+        self.messaging_profile.messaging_service_sid = "MGstale123"
+        self.db.session.commit()
+
+        summary = self.ingest_a2p_event_stream_payload(
+            {
+                "id": "evt-campaign-fallback",
+                "type": "com.twilio.messaging.a2p.campaign-registration.campaign-approved",
+                "data": {
+                    "accountsid": "ACsub0001",
+                    "messageservicesid": "MGlive123",
+                    "campaignsid": "QElive123",
+                    "campaignregistrationstatus": "APPROVED",
+                    "updateddate": 400,
+                },
+            }
+        )
+
+        self.assertEqual(summary["events_applied"], 1)
+        recovery_state = json.loads(onboarding.raw_status_json)["recovery_state"]
+        self.assertEqual(recovery_state["observed_ids"]["messaging_service_sid"], "MGlive123")
+        self.assertEqual(recovery_state["observed_ids"]["campaign_sid"], "QElive123")
         queue.enqueue.assert_not_called()
 
     def test_ingest_a2p_event_stream_payload_marks_rejected_on_campaign_failure(self) -> None:
@@ -1085,6 +1406,33 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(view["stage"], "submitted")
         self.assertIn("queued", view["summary"].lower())
 
+    def test_describe_a2p_onboarding_surfaces_provider_drift_recovery_actions(self) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "needs_action"
+        onboarding.brand_status = "approved"
+        onboarding.raw_status_json = json.dumps(
+            {
+                "recovery_state": {
+                    "type": "provider_drift",
+                    "recommended_action": "reconcile",
+                    "summary": "Twilio still has approved resources, but the app is bound to stale identifiers.",
+                    "stored": {"messaging_service_sid": "MGstale123"},
+                    "live": {"services": [{"sid": "MGlive123"}]},
+                    "selected": {"messaging_service_sid": "MGlive123"},
+                    "missing": {"messaging_service_sid": True},
+                    "only_missing_campaign": False,
+                    "observed_ids": {},
+                }
+            }
+        )
+
+        view = self.describe_a2p_onboarding(onboarding, self.messaging_profile)
+
+        self.assertEqual(view["stage"], "needs_action")
+        self.assertTrue(view["can_reconcile"])
+        self.assertFalse(view["can_create_campaign"])
+        self.assertIn("reconcile", view["next_step"].lower())
+
     def test_describe_a2p_onboarding_surfaces_customer_managed_failure(self) -> None:
         self.messaging_profile.provider_mode = "customer_managed"
         self.messaging_profile.provider_status = "error"
@@ -1106,6 +1454,7 @@ class TestTwilioA2PService(unittest.TestCase):
                 "campaign_status": "failed",
                 "campaign_failure_reason": "CTA could not be verified.",
                 "campaign_failure_code": "30909",
+                "console_campaign_id": "CMconsole123",
                 "brand_status": "verified",
                 "messaging_service_sid": "MGcust0001",
                 "phone_number_sid": "PNcust0001",
@@ -1117,6 +1466,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(view["stage"], "needs_action")
         self.assertEqual(view["failure_code"], "30909")
         self.assertIn("CTA", view["summary"])
+        self.assertEqual(view["console_campaign_id"], "CMconsole123")
 
 
 if __name__ == "__main__":

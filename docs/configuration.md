@@ -111,7 +111,7 @@ When `SAAS_BASE_URL` is set, the app also exposes tenant-hosted SMS compliance p
 
 The self-serve A2P flow defaults eligible EIN-backed businesses to `low_volume_standard` and defaults the campaign posture to `ACCOUNT_NOTIFICATION`. Organizations can still move to `standard` later when they need more throughput or explicitly request the upgrade.
 
-When an org resubmits after a failed Twilio campaign review, the app inspects the Messaging Service before creating a replacement campaign. It only auto-deletes the attached failed campaign when Twilio requires a new campaign, such as a use-case change or a brand-side correction. If the failed campaign still matches the same use case and brand, the app refuses to recreate it automatically so operators do not accidentally trigger another paid vetting cycle.
+When an org drifts away from the live Twilio A2P resources, the app now stores a recovery snapshot instead of silently rebuilding state. Background refresh is status-only: it reads Twilio state through the org's stored subaccount auth token, clears stale transient errors when the stored subaccount packet is still valid, and can detect stale provider identifiers, a missing campaign, or transient Twilio connectivity failures. It does not auto-create a new campaign or silently swap A2P resources. Platform admins must explicitly reconcile live Twilio resources and explicitly create a campaign from the onboarding page when a new Twilio vetting cycle would be triggered.
 
 ## Database
 
@@ -150,6 +150,12 @@ Important runtime distinction:
 | `TWILIO_A2P_FAKE_QUEUE` | `0` | Test/development A2P queueing aid. |
 | `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables `/webhooks/twilio/a2p-events`. |
 | `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the A2P Event Streams sink. |
+
+Operational note:
+
+- Twinevia stores the Messaging Service campaign association SID as `campaign_sid` (`QE...`)
+- Twilio Console may also expose a separate console campaign ID (`CM...`) in status metadata
+- status refresh requires the org's stored subaccount auth token for platform-managed A2P reads; it does not infer tenant state from the parent account
 
 ## Billing And Stripe
 

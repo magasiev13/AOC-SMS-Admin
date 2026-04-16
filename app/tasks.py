@@ -15,6 +15,7 @@ from app.services.twilio_service import (
 from app.services.twilio_a2p_service import (
     process_a2p_onboarding,
     reconcile_pending_a2p_onboardings,
+    sync_a2p_onboarding_status,
 )
 
 
@@ -232,6 +233,19 @@ def process_a2p_onboarding_job(organization_id: int, actor_user_id: int | None =
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         onboarding = process_a2p_onboarding(organization_id, actor_user_id=actor_user_id)
+        return {
+            "organization_id": organization_id,
+            "onboarding_status": onboarding.onboarding_status,
+            "brand_status": onboarding.brand_status,
+            "campaign_status": onboarding.campaign_status,
+        }
+
+
+def sync_a2p_onboarding_status_job(organization_id: int, actor_user_id: int | None = None) -> dict:
+    """Run the non-destructive Twilio A2P status refresh for one organization."""
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    with app.app_context():
+        onboarding = sync_a2p_onboarding_status(organization_id, actor_user_id=actor_user_id)
         return {
             "organization_id": organization_id,
             "onboarding_status": onboarding.onboarding_status,

@@ -146,6 +146,14 @@ Also verify:
 - `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` is a primary `BU...` profile
 - optional Event Streams auth token matches the webhook sender when using `/webhooks/twilio/a2p-events`
 
+If the Twilio dashboard still shows approved resources but the app says the org needs action:
+
+- open the platform A2P onboarding page and review the stored vs live Twilio identifiers
+- confirm the page is reading the org's own Twilio subaccount state, not the parent account
+- use `Reconcile Twilio State` to bind the org back to the current live subaccount resources
+- if the only missing piece is the campaign, use `Create Campaign` explicitly after reviewing the fee warning
+- do not reset the approved Twilio profile/trust product/brand just because the app stored stale SIDs
+
 ## Stripe And Billing
 
 ### Stripe webhook failures

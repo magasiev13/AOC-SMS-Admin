@@ -48,7 +48,11 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-shell__summary-meta')).toBeVisible();
   await expect(page.getByText('Platform-managed Twilio', { exact: true })).toBeVisible();
-  await expect(page.locator('form button.btn-primary')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Finalize Sender Setup' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Provider Settings' })).toBeVisible();
+  await expect(page.getByLabel('Service Address Line 1')).toBeVisible();
+  await expect(page.getByLabel('Number Strategy')).toBeVisible();
+  await expect(page.locator('.platform-key-label', { hasText: 'Emergency address sync' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
   await expect(page.locator('.platform-shell__summary')).toBeVisible();

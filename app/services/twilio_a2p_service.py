@@ -23,15 +23,19 @@ from app.models import (
 from app.queue import get_queue
 from app.services.provider_secret_service import decrypt_provider_secret, encrypt_provider_secret
 from app.services.twilio_service import (
+    PlatformSubaccountAuthRequiredError,
     ProviderProvisioningError,
     _build_subaccount_client,
+    _build_subaccount_client_context,
     _client_for_profile,
     _configure_service_webhooks,
     _master_client,
     _record_provider_audit,
     _twilio_inbound_webhook_url,
     ensure_messaging_profile,
+    finalize_sender_setup,
     provision_org,
+    seed_service_address_from_onboarding,
     sync_sender_assignment,
 )
 
@@ -169,6 +173,25 @@ A2P_REVIEWING_STATUSES = {"pending", "pending-review", "processing", "queued", "
 A2P_EVENT_STREAM_RECENT_EVENT_LIMIT = 20
 A2P_CAMPAIGN_RECREATE_DELAY_SECONDS = 5
 A2P_CAMPAIGN_ASSOCIATION_CONFLICT_FRAGMENT = "already a campaign associated with this messaging service"
+A2P_RECOVERY_STATE_KEY = "recovery_state"
+A2P_RECONCILED_PROFILE_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
+A2P_RECONCILED_TRUST_PRODUCT_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
+A2P_TRANSIENT_PROVIDER_ERROR_FRAGMENTS = (
+    "failed to resolve",
+    "temporary failure in name resolution",
+    "name resolution",
+    "max retries exceeded",
+    "timed out",
+    "read timed out",
+    "connection aborted",
+    "connection reset",
+    "connection refused",
+    "connecttimeouterror",
+    "readtimeouterror",
+    "httpsconnectionpool",
+    "api.twilio.com",
+    "messaging.twilio.com",
+)
 
 
 @dataclass(frozen=True)
@@ -841,8 +864,26 @@ def _status_value(raw_value: Any) -> str | None:
     return normalized.lower() or None
 
 
+def _sender_activation_ready(profile: OrganizationMessagingProfile) -> bool:
+    emergency_ready = profile.emergency_address_status in {"synced", "not_required"} or (
+        profile.effective_sender_finalization_status == "active"
+    )
+    return bool(
+        profile.from_number
+        and profile.phone_number_sid
+        and profile.sender_review_status == "approved"
+        and profile.consent_acknowledged_at is not None
+        and emergency_ready
+    )
+
+
 def _friendly_provider_error_message(raw_message: str) -> str:
     message = (raw_message or "").strip()
+    if _looks_like_transient_provider_error(message):
+        return (
+            "Twilio could not be reached during the latest status sync. Preserve the current approved state, "
+            "then retry the refresh after connectivity stabilizes."
+        )
     if "Secondary Customer Profile for direct_customer can only be created through Twilio console." in message:
         return (
             "Twilio rejected automated secondary profile creation because the parent account is still set up as a "
@@ -850,6 +891,301 @@ def _friendly_provider_error_message(raw_message: str) -> str:
             "in Twilio Trust Hub or through Twilio Support, then retry onboarding."
         )
     return message
+
+
+def _twilio_rest_error_code(exc: TwilioRestException) -> str | None:
+    for attribute in ("code", "error_code"):
+        value = getattr(exc, attribute, None)
+        normalized = _clean_text(value)
+        if normalized:
+            return normalized
+    details = getattr(exc, "details", None)
+    if isinstance(details, dict):
+        normalized = _clean_text(details.get("code"))
+        if normalized:
+            return normalized
+    return None
+
+
+def _is_twilio_not_found_error(exc: TwilioRestException) -> bool:
+    if getattr(exc, "status", None) == 404:
+        return True
+    if _twilio_rest_error_code(exc) == "20404":
+        return True
+    message = (_clean_text(getattr(exc, "msg", None)) or _clean_text(str(exc)) or "").lower()
+    return "not found" in message
+
+
+def _looks_like_transient_provider_error(raw_message: str | None) -> bool:
+    message = (raw_message or "").strip().lower()
+    return any(fragment in message for fragment in A2P_TRANSIENT_PROVIDER_ERROR_FRAGMENTS)
+
+
+def _is_transient_provider_exception(exc: Exception) -> bool:
+    return _looks_like_transient_provider_error(str(exc))
+
+
+def _service_summary(service: Any) -> dict[str, Any]:
+    return {
+        "sid": _clean_text(getattr(service, "sid", None)),
+        "friendly_name": _clean_text(getattr(service, "friendly_name", None)),
+        "status": _status_value(getattr(service, "status", None)),
+    }
+
+
+def _customer_profile_summary(customer_profile: Any) -> dict[str, Any]:
+    return {
+        "sid": _clean_text(getattr(customer_profile, "sid", None)),
+        "friendly_name": _clean_text(getattr(customer_profile, "friendly_name", None)),
+        "status": _status_value(getattr(customer_profile, "status", None)),
+    }
+
+
+def _trust_product_summary(trust_product: Any) -> dict[str, Any]:
+    return {
+        "sid": _clean_text(getattr(trust_product, "sid", None)),
+        "friendly_name": _clean_text(getattr(trust_product, "friendly_name", None)),
+        "status": _status_value(getattr(trust_product, "status", None)),
+    }
+
+
+def _brand_summary(brand: Any) -> dict[str, Any]:
+    return {
+        "sid": _clean_text(getattr(brand, "sid", None)),
+        "status": _status_value(getattr(brand, "status", None)),
+        "identity_status": _status_value(getattr(brand, "identity_status", None)),
+        "tcr_id": _clean_text(getattr(brand, "tcr_id", None)),
+    }
+
+
+def _matching_item(items: list[dict[str, Any]], sid: str | None) -> dict[str, Any] | None:
+    if not sid:
+        return None
+    normalized_sid = sid.strip()
+    for item in items:
+        if item.get("sid") == normalized_sid:
+            return item
+    return None
+
+
+def _preferred_item(
+    items: list[dict[str, Any]],
+    *,
+    current_sid: str | None = None,
+    approved_statuses: set[str] | None = None,
+    reviewing_statuses: set[str] | None = None,
+) -> dict[str, Any] | None:
+    current_match = _matching_item(items, current_sid)
+    if current_match is not None:
+        return current_match
+
+    approved_statuses = approved_statuses or set()
+    reviewing_statuses = reviewing_statuses or set()
+    for item in items:
+        status = _status_value(item.get("status")) or _status_value(item.get("identity_status"))
+        if status in approved_statuses:
+            return item
+    for item in items:
+        status = _status_value(item.get("status")) or _status_value(item.get("identity_status"))
+        if status in reviewing_statuses:
+            return item
+    return items[0] if items else None
+
+
+def _inventory_subaccount_resources(profile: OrganizationMessagingProfile) -> dict[str, Any]:
+    client, read_context = _build_subaccount_client_context(
+        profile,
+        require_stored_auth_token=True,
+    )
+    services: list[dict[str, Any]] = []
+    for service in client.messaging.v1.services.list(limit=20):
+        summary = _service_summary(service)
+        campaigns = [
+            _existing_campaign_summary(campaign)
+            for campaign in client.messaging.v1.services(summary["sid"]).us_app_to_person.list(limit=20)
+        ] if summary.get("sid") else []
+        summary["campaigns"] = campaigns
+        summary["campaign_count"] = len(campaigns)
+        services.append(summary)
+
+    customer_profiles = [
+        _customer_profile_summary(customer_profile)
+        for customer_profile in client.trusthub.v1.customer_profiles.list(limit=20)
+    ]
+    trust_products = [
+        _trust_product_summary(trust_product)
+        for trust_product in client.trusthub.v1.trust_products.list(limit=20)
+    ]
+    brands = [
+        _brand_summary(brand)
+        for brand in client.messaging.v1.brand_registrations.list(limit=20)
+    ]
+    return {
+        "subaccount_sid": profile.twilio_subaccount_sid,
+        "read_context": read_context,
+        "services": services,
+        "customer_profiles": customer_profiles,
+        "trust_products": trust_products,
+        "brands": brands,
+    }
+
+
+def _stored_a2p_identifiers(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+) -> dict[str, Any]:
+    return {
+        "subaccount_sid": profile.twilio_subaccount_sid,
+        "messaging_service_sid": profile.messaging_service_sid,
+        "customer_profile_sid": onboarding.customer_profile_sid,
+        "trust_product_sid": onboarding.trust_product_sid,
+        "brand_registration_sid": onboarding.brand_registration_sid,
+        "campaign_sid": onboarding.campaign_sid,
+        "phone_number_sid": profile.phone_number_sid,
+    }
+
+
+def _resource_sid_options(items: list[dict[str, Any]]) -> set[str]:
+    return {item.get("sid") for item in items if item.get("sid")}
+
+
+def _console_campaign_id(value: Any) -> str | None:
+    return _clean_text(value)
+
+
+def _twilio_read_context(onboarding: OrganizationA2POnboarding) -> dict[str, Any]:
+    status_payload = _load_status_payload(onboarding)
+    read_context = status_payload.get("twilio_read_context")
+    return read_context if isinstance(read_context, dict) else {}
+
+
+def _store_twilio_read_context(
+    onboarding: OrganizationA2POnboarding,
+    *,
+    read_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    status_payload = _load_status_payload(onboarding)
+    if read_context:
+        status_payload["twilio_read_context"] = read_context
+    else:
+        status_payload.pop("twilio_read_context", None)
+    return status_payload
+
+
+def _store_console_campaign_id(
+    onboarding: OrganizationA2POnboarding,
+    console_campaign_id: str | None,
+) -> dict[str, Any]:
+    status_payload = _load_status_payload(onboarding)
+    normalized_console_campaign_id = _console_campaign_id(console_campaign_id)
+    if normalized_console_campaign_id:
+        status_payload["console_campaign_id"] = normalized_console_campaign_id
+    else:
+        status_payload.pop("console_campaign_id", None)
+    return status_payload
+
+
+def _recovery_state(onboarding: OrganizationA2POnboarding) -> dict[str, Any]:
+    status_payload = _load_status_payload(onboarding)
+    recovery_state = status_payload.get(A2P_RECOVERY_STATE_KEY)
+    return recovery_state if isinstance(recovery_state, dict) else {}
+
+
+def _set_recovery_state(onboarding: OrganizationA2POnboarding, recovery_state: dict[str, Any]) -> None:
+    status_payload = _load_status_payload(onboarding)
+    status_payload[A2P_RECOVERY_STATE_KEY] = recovery_state
+    _store_status_payload(onboarding, status_payload)
+
+
+def _clear_recovery_state(onboarding: OrganizationA2POnboarding) -> None:
+    status_payload = _load_status_payload(onboarding)
+    if A2P_RECOVERY_STATE_KEY in status_payload:
+        status_payload.pop(A2P_RECOVERY_STATE_KEY, None)
+        _store_status_payload(onboarding, status_payload)
+
+
+def _recovery_state_metadata(recovery_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "recovery_type": recovery_state.get("type"),
+        "recommended_action": recovery_state.get("recommended_action"),
+        "stored": recovery_state.get("stored"),
+        "selected": recovery_state.get("selected"),
+    }
+
+
+def _build_recovery_state(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    recovery_type: str,
+    inventory: dict[str, Any],
+    summary: str,
+    observed_ids: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    stored = _stored_a2p_identifiers(onboarding, profile)
+    selected_service = _preferred_item(
+        inventory.get("services", []),
+        current_sid=profile.messaging_service_sid,
+    )
+    selected_customer_profile = _preferred_item(
+        inventory.get("customer_profiles", []),
+        current_sid=onboarding.customer_profile_sid,
+        approved_statuses=A2P_RECONCILED_PROFILE_APPROVED_STATUSES,
+        reviewing_statuses=A2P_REVIEWING_STATUSES,
+    )
+    selected_trust_product = _preferred_item(
+        inventory.get("trust_products", []),
+        current_sid=onboarding.trust_product_sid,
+        approved_statuses=A2P_RECONCILED_TRUST_PRODUCT_APPROVED_STATUSES,
+        reviewing_statuses=A2P_REVIEWING_STATUSES,
+    )
+    selected_brand = _preferred_item(
+        inventory.get("brands", []),
+        current_sid=onboarding.brand_registration_sid,
+        approved_statuses=A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES,
+        reviewing_statuses=A2P_REVIEWING_STATUSES,
+    )
+    selected_campaign = _preferred_item(
+        list(selected_service.get("campaigns", [])) if selected_service is not None else [],
+        current_sid=onboarding.campaign_sid,
+        approved_statuses=A2P_CAMPAIGN_APPROVED_STATUSES,
+        reviewing_statuses=A2P_REVIEWING_STATUSES,
+    )
+
+    missing = {
+        "messaging_service_sid": bool(profile.messaging_service_sid) and profile.messaging_service_sid not in _resource_sid_options(inventory.get("services", [])),
+        "customer_profile_sid": bool(onboarding.customer_profile_sid) and onboarding.customer_profile_sid not in _resource_sid_options(inventory.get("customer_profiles", [])),
+        "trust_product_sid": bool(onboarding.trust_product_sid) and onboarding.trust_product_sid not in _resource_sid_options(inventory.get("trust_products", [])),
+        "brand_registration_sid": bool(onboarding.brand_registration_sid) and onboarding.brand_registration_sid not in _resource_sid_options(inventory.get("brands", [])),
+        "campaign_sid": bool(onboarding.campaign_sid) and onboarding.campaign_sid not in _resource_sid_options(list(selected_service.get("campaigns", [])) if selected_service is not None else []),
+    }
+    only_missing_campaign = bool(
+        selected_service
+        and selected_customer_profile
+        and selected_trust_product
+        and selected_brand
+        and not selected_campaign
+    )
+    recommended_action = "create_campaign" if recovery_type == "missing_campaign" or only_missing_campaign else "reconcile"
+
+    return {
+        "type": recovery_type,
+        "recommended_action": recommended_action,
+        "summary": summary,
+        "detected_at": utc_now().isoformat(),
+        "stored": stored,
+        "live": inventory,
+        "selected": {
+            "messaging_service_sid": selected_service.get("sid") if selected_service else None,
+            "customer_profile_sid": selected_customer_profile.get("sid") if selected_customer_profile else None,
+            "trust_product_sid": selected_trust_product.get("sid") if selected_trust_product else None,
+            "brand_registration_sid": selected_brand.get("sid") if selected_brand else None,
+            "campaign_sid": selected_campaign.get("sid") if selected_campaign else None,
+        },
+        "missing": missing,
+        "only_missing_campaign": only_missing_campaign,
+        "observed_ids": observed_ids or {},
+    }
 
 
 def _humanize_status(value: str | None, *, fallback: str) -> str:
@@ -889,6 +1225,10 @@ def _existing_campaign_summary(campaign: Any) -> dict[str, Any]:
     failure_reason, failure_code = _failure_details_from_errors(getattr(campaign, "errors", None))
     if not failure_reason:
         failure_reason = _clean_text(getattr(campaign, "failure_reason", None))
+    console_campaign_id = (
+        _console_campaign_id(getattr(campaign, "campaign_id", None))
+        or _console_campaign_id(getattr(campaign, "external_campaign_id", None))
+    )
     return {
         "sid": _clean_text(getattr(campaign, "sid", None)),
         "status": _status_value(getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None)),
@@ -896,6 +1236,7 @@ def _existing_campaign_summary(campaign: Any) -> dict[str, Any]:
         "use_case": _campaign_use_case_value(
             getattr(campaign, "us_app_to_person_usecase", None) or getattr(campaign, "campaign_usecase", None)
         ),
+        "console_campaign_id": console_campaign_id,
         "failure_reason": failure_reason,
         "failure_code": failure_code,
         "errors": getattr(campaign, "errors", None),
@@ -911,6 +1252,8 @@ def _store_existing_campaign_snapshot(
     status_payload = _load_status_payload(onboarding)
     status_payload["campaign_status"] = summary.get("status")
     status_payload["campaign_use_case"] = summary.get("use_case")
+    if summary.get("console_campaign_id"):
+        status_payload["console_campaign_id"] = summary.get("console_campaign_id")
     status_payload["campaign_errors"] = summary.get("errors")
     if preserve_failure:
         status_payload["campaign_failure_reason"] = summary.get("failure_reason")
@@ -1092,16 +1435,175 @@ def _a2p_audit_metadata(
     onboarding: OrganizationA2POnboarding,
     profile: OrganizationMessagingProfile,
 ) -> dict[str, Any]:
+    status_payload = _load_status_payload(onboarding)
+    read_context = _twilio_read_context(onboarding)
     return {
         "brand_registration_sid": onboarding.brand_registration_sid,
         "campaign_sid": onboarding.campaign_sid,
         "campaign_use_case": onboarding.campaign_use_case,
+        "console_campaign_id": _console_campaign_id(status_payload.get("console_campaign_id")),
+        "customer_profile_sid": onboarding.customer_profile_sid,
         "failure_code": onboarding.failure_code,
         "messaging_service_sid": profile.messaging_service_sid,
         "phone_number_sid": profile.phone_number_sid,
         "provider_status": profile.provider_status,
         "submission_source_mode": onboarding.submission_source_mode,
+        "trust_product_sid": onboarding.trust_product_sid,
+        "twilio_read_account_sid": _clean_text(read_context.get("twilio_read_account_sid")),
+        "twilio_subaccount_sid": _clean_text(read_context.get("twilio_subaccount_sid")) or profile.twilio_subaccount_sid,
+        "used_subaccount_auth_token": read_context.get("used_subaccount_auth_token"),
     }
+
+
+def _set_non_destructive_error_state(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    onboarding_status: str,
+    brand_status: str | None,
+    campaign_status: str | None,
+    error_message: str | None,
+) -> None:
+    _set_status(
+        onboarding,
+        profile,
+        onboarding_status=onboarding_status,
+        brand_status=brand_status,
+        campaign_status=campaign_status,
+        verification_status=onboarding.verification_status,
+        error_message=error_message,
+        provider_status_on_error=None,
+    )
+    if profile.provider_status != "suspended" and not profile.can_send:
+        profile.set_provider_status("pending")
+
+
+def _record_recovery_detection(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    recovery_type: str,
+    summary: str,
+    recovery_state: dict[str, Any],
+    actor_user_id: int | None = None,
+) -> None:
+    action = {
+        "provider_drift": "a2p_drift_detected",
+        "missing_campaign": "a2p_missing_campaign_detected",
+        "transient_connectivity": "a2p_transient_provider_failure",
+    }.get(recovery_type, "a2p_drift_detected")
+    _record_provider_audit(
+        onboarding.organization_id,
+        action,
+        actor_user_id=actor_user_id,
+        status="pending" if recovery_type != "transient_connectivity" else "error",
+        message=summary,
+        metadata={
+            **_a2p_audit_metadata(onboarding, profile),
+            **_recovery_state_metadata(recovery_state),
+        },
+    )
+
+
+def _mark_recovery_required(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    recovery_type: str,
+    summary: str,
+    inventory: dict[str, Any],
+    brand_status: str | None = None,
+    campaign_status: str | None = None,
+    observed_ids: dict[str, Any] | None = None,
+    actor_user_id: int | None = None,
+) -> None:
+    recovery_state = _build_recovery_state(
+        onboarding,
+        profile,
+        recovery_type=recovery_type,
+        inventory=inventory,
+        summary=summary,
+        observed_ids=observed_ids,
+    )
+    _set_recovery_state(onboarding, recovery_state)
+    _set_non_destructive_error_state(
+        onboarding,
+        profile,
+        onboarding_status="needs_action",
+        brand_status=brand_status or onboarding.brand_status,
+        campaign_status=campaign_status or onboarding.campaign_status,
+        error_message=summary,
+    )
+    _record_recovery_detection(
+        onboarding,
+        profile,
+        recovery_type=recovery_type,
+        summary=summary,
+        recovery_state=recovery_state,
+        actor_user_id=actor_user_id,
+    )
+
+
+def _mark_transient_connectivity_issue(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    summary: str,
+    actor_user_id: int | None = None,
+) -> None:
+    if onboarding.onboarding_status == "processing":
+        onboarding.onboarding_status = "pending" if onboarding.submitted_at else "queued"
+    recovery_state = {
+        "type": "transient_connectivity",
+        "recommended_action": "refresh",
+        "summary": summary,
+        "detected_at": utc_now().isoformat(),
+        "stored": _stored_a2p_identifiers(onboarding, profile),
+        "live": {},
+        "selected": {},
+        "missing": {},
+        "only_missing_campaign": False,
+        "observed_ids": {},
+    }
+    _set_recovery_state(onboarding, recovery_state)
+    onboarding.last_error = summary
+    onboarding.last_synced_at = utc_now()
+    profile.provider_last_checked_at = utc_now()
+    profile.last_provision_error = summary
+    _record_recovery_detection(
+        onboarding,
+        profile,
+        recovery_type="transient_connectivity",
+        summary=summary,
+        recovery_state=recovery_state,
+        actor_user_id=actor_user_id,
+    )
+
+
+def _mark_subaccount_auth_required_issue(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    summary: str,
+    actor_user_id: int | None = None,
+) -> None:
+    _clear_recovery_state(onboarding)
+    _set_non_destructive_error_state(
+        onboarding,
+        profile,
+        onboarding_status="needs_action",
+        brand_status=onboarding.brand_status,
+        campaign_status=onboarding.campaign_status,
+        error_message=summary,
+    )
+    _record_provider_audit(
+        onboarding.organization_id,
+        "a2p_subaccount_auth_required",
+        actor_user_id=actor_user_id,
+        status="error",
+        message=summary,
+        metadata=_a2p_audit_metadata(onboarding, profile),
+    )
 
 
 def _record_review_transition_audit(
@@ -1336,6 +1838,119 @@ def _event_stream_timestamp(data: dict[str, Any]) -> int:
     return 0
 
 
+def _event_value(data: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = _clean_text(data.get(key))
+        if value:
+            return value
+    return None
+
+
+def _find_onboarding_by_subaccount_sid(account_sid: str | None) -> tuple[OrganizationA2POnboarding | None, OrganizationMessagingProfile | None]:
+    if not account_sid:
+        return None, None
+    profile = OrganizationMessagingProfile.query.filter_by(twilio_subaccount_sid=account_sid).first()
+    if profile is not None and profile.organization is not None:
+        return profile.organization.a2p_onboarding, profile
+    return None, None
+
+
+def _find_onboarding_by_brand_tcr_id(
+    brand_tcr_id: str | None,
+    *,
+    account_sid: str | None = None,
+) -> tuple[OrganizationA2POnboarding | None, OrganizationMessagingProfile | None]:
+    if not brand_tcr_id:
+        return None, None
+
+    onboardings = OrganizationA2POnboarding.query.filter(
+        OrganizationA2POnboarding.raw_status_json.contains(brand_tcr_id)
+    ).all()
+    for onboarding in onboardings:
+        organization = db.session.get(Organization, onboarding.organization_id)
+        profile = organization.messaging_profile if organization is not None else None
+        if profile is None:
+            continue
+        if account_sid and profile.twilio_subaccount_sid != account_sid:
+            continue
+        return onboarding, profile
+    return None, None
+
+
+def _record_observed_identifier_drift(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    observed_ids: dict[str, Any],
+    actor_user_id: int | None = None,
+) -> None:
+    normalized_observed_ids = {key: value for key, value in observed_ids.items() if _clean_text(value)}
+    if not normalized_observed_ids:
+        return
+
+    console_campaign_id = _console_campaign_id(normalized_observed_ids.get("console_campaign_id"))
+    if console_campaign_id:
+        status_payload = _store_console_campaign_id(onboarding, console_campaign_id)
+        _store_status_payload(onboarding, status_payload)
+
+    stored = _stored_a2p_identifiers(onboarding, profile)
+    stored_brand_tcr_id = _clean_text(_load_status_payload(onboarding).get("brand_tcr_id"))
+    differences = {}
+    for key, value in normalized_observed_ids.items():
+        if key == "console_campaign_id":
+            continue
+        if key == "brand_tcr_id":
+            if value != stored_brand_tcr_id:
+                differences[key] = value
+            continue
+        stored_value = stored.get(key)
+        if stored_value and stored_value != value:
+            differences[key] = value
+
+    if not differences:
+        return
+
+    recovery_state = _recovery_state(onboarding)
+    existing_observed_ids = recovery_state.get("observed_ids", {}) if recovery_state else {}
+    merged_observed_ids = {**existing_observed_ids, **normalized_observed_ids}
+    if existing_observed_ids == merged_observed_ids and recovery_state:
+        return
+
+    if not recovery_state:
+        recovery_state = {
+            "type": "provider_drift",
+            "recommended_action": "reconcile",
+            "summary": "Twilio callbacks reported provider identifiers that differ from the stored app state.",
+            "detected_at": utc_now().isoformat(),
+            "stored": stored,
+            "live": {},
+            "selected": {},
+            "missing": {},
+            "only_missing_campaign": False,
+            "observed_ids": merged_observed_ids,
+        }
+    else:
+        recovery_state["observed_ids"] = merged_observed_ids
+        recovery_state["summary"] = (
+            recovery_state.get("summary")
+            or "Twilio callbacks reported provider identifiers that differ from the stored app state."
+        )
+        recovery_state["type"] = recovery_state.get("type") or "provider_drift"
+        recovery_state["recommended_action"] = recovery_state.get("recommended_action") or "reconcile"
+    _set_recovery_state(onboarding, recovery_state)
+    _record_provider_audit(
+        onboarding.organization_id,
+        "a2p_drift_detected",
+        actor_user_id=actor_user_id,
+        status="pending",
+        message="Twilio callbacks reported live identifiers that differ from the stored onboarding state.",
+        metadata={
+            **_a2p_audit_metadata(onboarding, profile),
+            "observed_ids": merged_observed_ids,
+        },
+    )
+
+
 def _find_onboarding_for_event(event_type: str, data: dict[str, Any]) -> tuple[OrganizationA2POnboarding | None, OrganizationMessagingProfile | None]:
     topic = _event_stream_topic(event_type)
     if topic is None:
@@ -1363,6 +1978,22 @@ def _find_onboarding_for_event(event_type: str, data: dict[str, Any]) -> tuple[O
         profile = OrganizationMessagingProfile.query.filter_by(phone_number_sid=phone_number_sid).first()
         if profile is not None and profile.organization is not None:
             return profile.organization.a2p_onboarding, profile
+
+    messaging_service_sid = _event_value(data, "messagingservicesid", "messageservicesid", "service_sid")
+    if messaging_service_sid:
+        profile = OrganizationMessagingProfile.query.filter_by(messaging_service_sid=messaging_service_sid).first()
+        if profile is not None and profile.organization is not None:
+            return profile.organization.a2p_onboarding, profile
+
+    account_sid = _event_value(data, "accountsid", "account_sid")
+    onboarding, profile = _find_onboarding_by_subaccount_sid(account_sid)
+    if onboarding is not None or profile is not None:
+        return onboarding, profile
+
+    brand_tcr_id = _event_value(data, "brandtcrid", "brand_tcr_id", "tcrid", "brandtcr_id")
+    onboarding, profile = _find_onboarding_by_brand_tcr_id(brand_tcr_id, account_sid=account_sid)
+    if onboarding is not None or profile is not None:
+        return onboarding, profile
 
     return None, None
 
@@ -1520,18 +2151,18 @@ def _apply_status_snapshot(
 
         if allow_number_setup:
             _complete_number_setup(onboarding, profile, actor_user_id)
+            sender_ready = _sender_activation_ready(profile)
             onboarding.onboarding_status = "approved"
-            onboarding.approved_at = utc_now()
+            onboarding.approved_at = onboarding.approved_at or utc_now()
             if onboarding.brand_registration_mode == "standard":
                 onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
             onboarding.last_synced_at = utc_now()
             onboarding.verification_status = number_status or onboarding.verification_status
             onboarding.last_error = None
-            profile.sender_review_status = "approved"
-            profile.consent_acknowledged_at = profile.consent_acknowledged_at or utc_now()
             if profile.provider_status != "suspended":
-                profile.set_provider_status("active")
-            profile.last_provision_error = None
+                profile.set_provider_status("active" if sender_ready else "pending")
+            if sender_ready:
+                profile.last_provision_error = None
             _record_review_transition_audit(
                 onboarding,
                 profile,
@@ -1542,10 +2173,11 @@ def _apply_status_snapshot(
             )
             return
 
+        sender_ready = _sender_activation_ready(profile)
         _set_status(
             onboarding,
             profile,
-            onboarding_status="approved" if profile.can_send else "pending",
+            onboarding_status="approved" if sender_ready else "pending",
             brand_status=normalized_brand_status,
             campaign_status=normalized_campaign_status,
             verification_status=number_status or onboarding.verification_status,
@@ -1553,7 +2185,7 @@ def _apply_status_snapshot(
         if onboarding.brand_registration_mode == "standard" and onboarding.onboarding_status == "approved":
             onboarding.upgraded_at = onboarding.upgraded_at or utc_now()
         if profile.provider_status != "suspended":
-            profile.set_provider_status("active" if profile.can_send else "pending")
+            profile.set_provider_status("active" if sender_ready else "pending")
         _record_review_transition_audit(
             onboarding,
             profile,
@@ -1912,7 +2544,9 @@ def _save_form_data(
     )
     profile.business_type = form_data.business_type
     profile.use_case = form_data.campaign_description[:120]
+    seed_service_address_from_onboarding(profile, onboarding, overwrite=False)
     if queue_submission:
+        _clear_recovery_state(onboarding)
         should_reset_campaign = (
             onboarding.onboarding_status in {"rejected", "error", "canceled"}
             or _status_value(onboarding.campaign_status) in A2P_CAMPAIGN_FAILURE_STATUSES
@@ -2056,6 +2690,87 @@ def save_a2p_onboarding_draft(
     return onboarding
 
 
+def sync_a2p_onboarding_status(
+    organization_id: int,
+    *,
+    actor_user_id: int | None = None,
+) -> OrganizationA2POnboarding:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    profile = organization.messaging_profile or ensure_messaging_profile(organization)
+
+    try:
+        brand_status, campaign_status = _sync_remote_status(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+        )
+        onboarding.brand_status = brand_status
+        onboarding.campaign_status = campaign_status
+        profile.provider_last_checked_at = utc_now()
+        if _recovery_state(onboarding):
+            db.session.commit()
+            return onboarding
+        _apply_status_snapshot(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+            allow_number_setup=False,
+        )
+        db.session.commit()
+        return onboarding
+    except Exception as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+        profile = organization.messaging_profile or ensure_messaging_profile(organization)
+
+        if isinstance(exc, PlatformSubaccountAuthRequiredError):
+            _mark_subaccount_auth_required_issue(
+                onboarding,
+                profile,
+                summary=str(exc),
+                actor_user_id=actor_user_id,
+            )
+            db.session.commit()
+            return onboarding
+
+        if _is_transient_provider_exception(exc):
+            _mark_transient_connectivity_issue(
+                onboarding,
+                profile,
+                summary=_friendly_provider_error_message(str(exc)),
+                actor_user_id=actor_user_id,
+            )
+            db.session.commit()
+            return onboarding
+
+        error_message = _friendly_provider_error_message(str(exc))
+        _set_non_destructive_error_state(
+            onboarding,
+            profile,
+            onboarding_status="needs_action",
+            brand_status=onboarding.brand_status,
+            campaign_status=onboarding.campaign_status,
+            error_message=error_message,
+        )
+        _record_provider_audit(
+            organization.id,
+            "a2p_refresh_failed",
+            actor_user_id=actor_user_id,
+            status="error",
+            message=error_message,
+            metadata=_a2p_audit_metadata(onboarding, profile),
+        )
+        db.session.commit()
+        return onboarding
+
+
 def refresh_a2p_onboarding(organization_id: int, *, actor_user_id: int | None = None) -> OrganizationA2POnboarding:
     organization = db.session.get(Organization, organization_id)
     if organization is None:
@@ -2067,6 +2782,7 @@ def refresh_a2p_onboarding(organization_id: int, *, actor_user_id: int | None = 
         raise ProviderProvisioningError("Canceled Twilio A2P onboarding cannot be refreshed.")
     onboarding.onboarding_status = "queued"
     onboarding.last_error = None
+    _clear_recovery_state(onboarding)
     db.session.commit()
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
     _record_provider_audit(
@@ -2083,7 +2799,7 @@ def refresh_a2p_onboarding(organization_id: int, *, actor_user_id: int | None = 
     )
     db.session.commit()
     try:
-        _queue_job("app.tasks.process_a2p_onboarding_job", organization.id, actor_user_id)
+        _queue_job("app.tasks.sync_a2p_onboarding_status_job", organization.id, actor_user_id)
     except Exception as exc:
         current_app.logger.exception(
             "Failed to queue Twilio A2P refresh for organization_id=%s: %s",
@@ -2118,6 +2834,173 @@ def cancel_a2p_onboarding(organization_id: int, *, actor_user_id: int | None = N
     return onboarding
 
 
+def _required_inventory_item(
+    items: list[dict[str, Any]],
+    sid: str | None,
+    *,
+    label: str,
+) -> dict[str, Any]:
+    match = _matching_item(items, sid)
+    if match is None:
+        raise ProviderProvisioningError(f"Select a valid live Twilio {label} before reconciling state.")
+    return match
+
+
+def reconcile_a2p_twilio_state(
+    organization_id: int,
+    *,
+    messaging_service_sid: str,
+    customer_profile_sid: str,
+    trust_product_sid: str,
+    brand_registration_sid: str,
+    actor_user_id: int | None = None,
+) -> OrganizationA2POnboarding:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    if profile.provider_mode == "customer_managed":
+        raise ProviderProvisioningError("Customer-managed Twilio workspaces do not use platform A2P reconciliation.")
+    if not profile.twilio_subaccount_sid:
+        raise ProviderProvisioningError("Twilio subaccount must exist before A2P state can be reconciled.")
+
+    inventory = _inventory_subaccount_resources(profile)
+    service = _required_inventory_item(inventory.get("services", []), messaging_service_sid, label="Messaging Service")
+    customer_profile = _required_inventory_item(
+        inventory.get("customer_profiles", []),
+        customer_profile_sid,
+        label="Customer Profile",
+    )
+    trust_product = _required_inventory_item(
+        inventory.get("trust_products", []),
+        trust_product_sid,
+        label="Trust Product",
+    )
+    brand = _required_inventory_item(
+        inventory.get("brands", []),
+        brand_registration_sid,
+        label="Brand Registration",
+    )
+    live_campaign = _preferred_item(
+        list(service.get("campaigns", [])),
+        current_sid=onboarding.campaign_sid,
+        approved_statuses=A2P_CAMPAIGN_APPROVED_STATUSES,
+        reviewing_statuses=A2P_REVIEWING_STATUSES,
+    )
+
+    profile.messaging_service_sid = service["sid"]
+    profile.inbound_identity = profile.from_number or service["sid"]
+    onboarding.customer_profile_sid = customer_profile["sid"]
+    onboarding.trust_product_sid = trust_product["sid"]
+    onboarding.brand_registration_sid = brand["sid"]
+    onboarding.brand_status = _status_value(brand.get("status")) or _status_value(brand.get("identity_status"))
+    onboarding.failure_code = None
+    onboarding.last_error = None
+
+    status_payload = _load_status_payload(onboarding)
+    status_payload["brand_status"] = onboarding.brand_status
+    status_payload["brand_tcr_id"] = brand.get("tcr_id")
+    status_payload["messaging_service_sid"] = service["sid"]
+    status_payload.pop("campaign_failure_reason", None)
+    status_payload.pop("campaign_failure_code", None)
+    status_payload.pop("campaign_errors", None)
+
+    if live_campaign is not None:
+        onboarding.campaign_sid = live_campaign.get("sid")
+        onboarding.campaign_status = _status_value(live_campaign.get("status"))
+        status_payload["campaign_status"] = onboarding.campaign_status
+        status_payload["campaign_use_case"] = live_campaign.get("use_case")
+        status_payload.pop(A2P_RECOVERY_STATE_KEY, None)
+        _clear_recovery_state(onboarding)
+        _store_status_payload(onboarding, status_payload)
+        _apply_status_snapshot(
+            onboarding,
+            profile,
+            actor_user_id=actor_user_id,
+            allow_number_setup=False,
+        )
+    else:
+        onboarding.campaign_sid = None
+        onboarding.campaign_status = None
+        status_payload["campaign_status"] = None
+        _store_status_payload(onboarding, status_payload)
+        _mark_recovery_required(
+            onboarding,
+            profile,
+            recovery_type="missing_campaign",
+            summary=(
+                "Twilio state is now aligned to the current approved resources. The only remaining step is to create a campaign explicitly."
+            ),
+            inventory=inventory,
+            brand_status=onboarding.brand_status,
+            campaign_status=None,
+            actor_user_id=actor_user_id,
+        )
+
+    _record_provider_audit(
+        organization.id,
+        "a2p_reconcile_confirmed",
+        actor_user_id=actor_user_id,
+        message="Rebound the org to the current live Twilio A2P resources.",
+        metadata={
+            **_a2p_audit_metadata(onboarding, profile),
+            "customer_profile_sid": onboarding.customer_profile_sid,
+            "trust_product_sid": onboarding.trust_product_sid,
+            "brand_registration_sid": onboarding.brand_registration_sid,
+        },
+    )
+    db.session.commit()
+    return onboarding
+
+
+def create_missing_a2p_campaign(
+    organization_id: int,
+    *,
+    actor_user_id: int | None = None,
+) -> OrganizationA2POnboarding:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+    profile = organization.messaging_profile or ensure_messaging_profile(organization)
+    if profile.provider_mode == "customer_managed":
+        raise ProviderProvisioningError("Customer-managed Twilio workspaces do not use platform campaign creation.")
+    if not onboarding.brand_registration_sid or not profile.messaging_service_sid:
+        raise ProviderProvisioningError("Reconcile Twilio state before creating a campaign.")
+    recovery_state = _recovery_state(onboarding)
+    if recovery_state and recovery_state.get("recommended_action") == "reconcile":
+        raise ProviderProvisioningError("Reconcile Twilio state before creating a new campaign.")
+    effective_brand_status = _status_value(onboarding.brand_status) or _status_value(_load_status_payload(onboarding).get("brand_status"))
+    if effective_brand_status not in A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES:
+        raise ProviderProvisioningError("Twilio brand approval must complete before a campaign can be created.")
+    if onboarding.campaign_sid and _status_value(onboarding.campaign_status) not in A2P_CAMPAIGN_FAILURE_STATUSES:
+        raise ProviderProvisioningError("This org already has a Twilio campaign attached.")
+
+    _create_a2p_campaign(onboarding, profile, actor_user_id=actor_user_id)
+    brand_status, campaign_status = _sync_remote_status(onboarding, profile, actor_user_id=actor_user_id)
+    onboarding.brand_status = brand_status
+    onboarding.campaign_status = campaign_status
+    _apply_status_snapshot(
+        onboarding,
+        profile,
+        actor_user_id=actor_user_id,
+        allow_number_setup=False,
+    )
+    _record_provider_audit(
+        organization.id,
+        "a2p_campaign_create_confirmed",
+        actor_user_id=actor_user_id,
+        status="pending",
+        message="Created a new Twilio A2P campaign after explicit platform confirmation.",
+        metadata=_a2p_audit_metadata(onboarding, profile),
+    )
+    db.session.commit()
+    return onboarding
+
+
 def _ensure_provider_resources(organization: Organization) -> OrganizationMessagingProfile:
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
     if not profile.twilio_subaccount_sid or not profile.messaging_service_sid:
@@ -2134,6 +3017,7 @@ def _set_status(
     campaign_status: str | None = None,
     verification_status: str | None = None,
     error_message: str | None = None,
+    provider_status_on_error: str | None = "error",
 ) -> None:
     onboarding.onboarding_status = onboarding_status
     onboarding.brand_status = brand_status
@@ -2146,9 +3030,10 @@ def _set_status(
     profile.provider_last_checked_at = utc_now()
     if not error_message:
         profile.last_provision_error = None
-    if error_message and profile.provider_status != "suspended":
-        profile.set_provider_status("error")
+    if error_message:
         profile.last_provision_error = error_message
+    if error_message and profile.provider_status != "suspended" and provider_status_on_error:
+        profile.set_provider_status(provider_status_on_error)
 
 
 def _create_end_user(client, *, friendly_name: str, type_name: str, attributes: dict[str, Any]):
@@ -2226,7 +3111,7 @@ def _ensure_trusthub_address(onboarding: OrganizationA2POnboarding, client) -> s
 
 
 def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> None:
-    client = _build_subaccount_client(profile)
+    client = _build_subaccount_client(profile, require_stored_auth_token=True)
     status_payload = _load_status_payload(onboarding)
     primary_customer_profile_sid = (current_app.config.get("TWILIO_PRIMARY_CUSTOMER_PROFILE_SID") or "").strip()
     business_registration_number = (
@@ -2428,7 +3313,7 @@ def _create_a2p_campaign(
         campaign_use_case,
         _json_loads_list(onboarding.message_samples_json) or [onboarding.campaign_description or onboarding.business_name],
     )
-    client = _build_subaccount_client(profile)
+    client = _build_subaccount_client(profile, require_stored_auth_token=True)
     service_context = client.messaging.v1.services(profile.messaging_service_sid)
     us_app_to_person = service_context.us_app_to_person
     _prepare_service_for_campaign_create(
@@ -2483,7 +3368,7 @@ def _create_a2p_campaign(
 
 
 def _buy_phone_number(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile):
-    subaccount_client = _build_subaccount_client(profile)
+    subaccount_client = _build_subaccount_client(profile, require_stored_auth_token=True)
     country = current_app.config.get("TWILIO_A2P_NUMBER_COUNTRY") or "US"
     if onboarding.desired_phone_number:
         purchased = subaccount_client.incoming_phone_numbers.create(
@@ -2532,69 +3417,114 @@ def _transfer_parent_number(onboarding: OrganizationA2POnboarding, profile: Orga
 def _attach_existing_number(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> tuple[str, str]:
     if not onboarding.desired_phone_number_sid:
         raise ProviderProvisioningError("Phone number SID is required for the existing-number path.")
-    subaccount_client = _build_subaccount_client(profile)
+    subaccount_client = _build_subaccount_client(profile, require_stored_auth_token=True)
     existing_number = subaccount_client.incoming_phone_numbers(onboarding.desired_phone_number_sid).fetch()
     return existing_number.sid, existing_number.phone_number
 
 
-def _sync_remote_status(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile) -> tuple[str | None, str | None]:
-    client = _build_subaccount_client(profile)
+def _sync_remote_status(
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+    *,
+    actor_user_id: int | None = None,
+) -> tuple[str | None, str | None]:
+    client, read_context = _build_subaccount_client_context(
+        profile,
+        require_stored_auth_token=True,
+    )
     brand_status = None
     campaign_status = None
     brand_failure_code = None
     campaign_failure_code = None
-    status_payload = _load_status_payload(onboarding)
+    status_payload = _store_twilio_read_context(onboarding, read_context=read_context)
+    _store_status_payload(onboarding, status_payload)
 
-    if onboarding.brand_registration_sid:
-        brand = client.messaging.v1.brand_registrations(onboarding.brand_registration_sid).fetch()
-        brand_status = _status_value(getattr(brand, "status", None))
-        brand_failure_reason, brand_failure_code = _failure_details_from_errors(getattr(brand, "errors", None))
-        if not brand_failure_reason:
-            brand_failure_reason = _clean_text(getattr(brand, "failure_reason", None))
-        status_payload["brand_status"] = brand_status
-        status_payload["brand_failure_reason"] = brand_failure_reason
-        status_payload["brand_failure_code"] = brand_failure_code
-        status_payload["brand_tcr_id"] = getattr(brand, "tcr_id", None)
-    if onboarding.campaign_sid and profile.messaging_service_sid:
-        campaign = client.messaging.v1.services(profile.messaging_service_sid).us_app_to_person(onboarding.campaign_sid).fetch()
-        campaign_status = _status_value(getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None))
-        campaign_failure_reason, campaign_failure_code = _failure_details_from_errors(getattr(campaign, "errors", None))
-        if not campaign_failure_reason:
-            campaign_failure_reason = _clean_text(getattr(campaign, "failure_reason", None))
-        status_payload["campaign_status"] = campaign_status
-        status_payload["campaign_use_case"] = _campaign_use_case_value(
-            getattr(campaign, "us_app_to_person_usecase", None) or getattr(campaign, "campaign_usecase", None)
+    try:
+        if onboarding.brand_registration_sid:
+            brand = client.messaging.v1.brand_registrations(onboarding.brand_registration_sid).fetch()
+            brand_status = _status_value(getattr(brand, "status", None))
+            brand_failure_reason, brand_failure_code = _failure_details_from_errors(getattr(brand, "errors", None))
+            if not brand_failure_reason:
+                brand_failure_reason = _clean_text(getattr(brand, "failure_reason", None))
+            status_payload["brand_status"] = brand_status
+            status_payload["brand_failure_reason"] = brand_failure_reason
+            status_payload["brand_failure_code"] = brand_failure_code
+            status_payload["brand_tcr_id"] = getattr(brand, "tcr_id", None)
+        if onboarding.campaign_sid and profile.messaging_service_sid:
+            campaign = client.messaging.v1.services(profile.messaging_service_sid).us_app_to_person(onboarding.campaign_sid).fetch()
+            campaign_status = _status_value(getattr(campaign, "campaign_status", None) or getattr(campaign, "status", None))
+            campaign_failure_reason, campaign_failure_code = _failure_details_from_errors(getattr(campaign, "errors", None))
+            if not campaign_failure_reason:
+                campaign_failure_reason = _clean_text(getattr(campaign, "failure_reason", None))
+            status_payload["campaign_status"] = campaign_status
+            status_payload["campaign_use_case"] = _campaign_use_case_value(
+                getattr(campaign, "us_app_to_person_usecase", None) or getattr(campaign, "campaign_usecase", None)
+            )
+            console_campaign_id = (
+                _console_campaign_id(getattr(campaign, "campaign_id", None))
+                or _console_campaign_id(getattr(campaign, "external_campaign_id", None))
+            )
+            if console_campaign_id:
+                status_payload["console_campaign_id"] = console_campaign_id
+            status_payload["campaign_errors"] = getattr(campaign, "errors", None)
+            status_payload["campaign_failure_reason"] = campaign_failure_reason
+            status_payload["campaign_failure_code"] = campaign_failure_code
+    except TwilioRestException as exc:
+        if not _is_twilio_not_found_error(exc):
+            raise
+
+        inventory = _inventory_subaccount_resources(profile)
+        recovery_state = _build_recovery_state(
+            onboarding,
+            profile,
+            recovery_type="provider_drift",
+            inventory=inventory,
+            summary="Twilio provider state no longer matches the identifiers stored in the app.",
         )
-        status_payload["campaign_errors"] = getattr(campaign, "errors", None)
-        status_payload["campaign_failure_reason"] = campaign_failure_reason
-        status_payload["campaign_failure_code"] = campaign_failure_code
+        selected_brand_sid = recovery_state.get("selected", {}).get("brand_registration_sid")
+        selected_campaign_sid = recovery_state.get("selected", {}).get("campaign_sid")
+        selected_brand = _matching_item(inventory.get("brands", []), selected_brand_sid)
+        selected_service = _matching_item(inventory.get("services", []), recovery_state.get("selected", {}).get("messaging_service_sid"))
+        selected_campaign = _matching_item(
+            list(selected_service.get("campaigns", [])) if selected_service is not None else [],
+            selected_campaign_sid,
+        )
+        brand_status = _status_value((selected_brand or {}).get("status")) or _status_value((selected_brand or {}).get("identity_status")) or brand_status
+        campaign_status = _status_value((selected_campaign or {}).get("status")) or campaign_status
+        recovery_type = "missing_campaign" if recovery_state.get("only_missing_campaign") else "provider_drift"
+        summary = (
+            "Twilio still has approved A2P resources in the subaccount, but the app is bound to stale identifiers. "
+            "Review the live resources and reconcile the Twilio state from the platform."
+        )
+        if recovery_type == "missing_campaign":
+            summary = (
+                "Twilio still has the approved brand package in the subaccount, but the selected Messaging Service has no attached campaign. "
+                "Reconcile the live resources first, then create the campaign explicitly."
+            )
+        _mark_recovery_required(
+            onboarding,
+            profile,
+            recovery_type=recovery_type,
+            summary=summary,
+            inventory=inventory,
+            brand_status=brand_status,
+            campaign_status=campaign_status,
+            actor_user_id=actor_user_id,
+        )
+        onboarding.failure_code = None
+        return brand_status, campaign_status
 
     onboarding.failure_code = campaign_failure_code or brand_failure_code or None
-
+    status_payload.pop(A2P_RECOVERY_STATE_KEY, None)
+    _clear_recovery_state(onboarding)
     _store_status_payload(onboarding, status_payload)
     return brand_status, campaign_status
 
 
 def _complete_number_setup(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile, actor_user_id: int | None) -> None:
-    if profile.from_number and profile.phone_number_sid:
-        return
     if onboarding.number_strategy == "platform_assign":
         return
-
-    if onboarding.number_strategy == "auto_buy":
-        phone_number_sid, from_number = _buy_phone_number(onboarding, profile)
-    elif onboarding.number_strategy == "transfer_parent_number":
-        phone_number_sid, from_number = _transfer_parent_number(onboarding, profile)
-    else:
-        phone_number_sid, from_number = _attach_existing_number(onboarding, profile)
-
-    profile.phone_number_sid = phone_number_sid
-    profile.from_number = from_number
-    profile.inbound_identity = from_number
-    profile.sender_review_status = "approved"
-    profile.consent_acknowledged_at = profile.consent_acknowledged_at or utc_now()
-    _configure_service_webhooks(profile, client=_build_subaccount_client(profile))
-    sync_sender_assignment(profile.organization_id, actor_user_id=actor_user_id)
+    finalize_sender_setup(profile.organization_id, actor_user_id=actor_user_id)
 
 
 def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = None) -> OrganizationA2POnboarding:
@@ -2619,19 +3549,54 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
         db.session.commit()
         ensure_a2p_event_stream_subscription(organization, profile)
         db.session.commit()
-        brand_status, campaign_status = _sync_remote_status(onboarding, profile)
+        brand_status, campaign_status = _sync_remote_status(onboarding, profile, actor_user_id=actor_user_id)
         onboarding.brand_status = brand_status
         onboarding.campaign_status = campaign_status
         profile.provider_last_checked_at = utc_now()
+        if _recovery_state(onboarding):
+            db.session.commit()
+            return onboarding
         normalized_brand_status = _status_value(brand_status) or "pending"
         brand_ready_for_campaign = normalized_brand_status in A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES
         if brand_ready_for_campaign and not onboarding.campaign_sid:
-            _create_a2p_campaign(onboarding, profile, actor_user_id=actor_user_id)
+            inventory = _inventory_subaccount_resources(profile)
+            recovery_type = "missing_campaign"
+            summary = (
+                "Twilio approved the brand package, but the Messaging Service still needs an explicit campaign create step. "
+                "Review the live resources, then confirm campaign creation from the platform."
+            )
+            recovery_state = _build_recovery_state(
+                onboarding,
+                profile,
+                recovery_type=recovery_type,
+                inventory=inventory,
+                summary=summary,
+            )
+            selected_service_sid = recovery_state.get("selected", {}).get("messaging_service_sid")
+            selected_service = _matching_item(inventory.get("services", []), selected_service_sid)
+            selected_campaign = _matching_item(
+                list(selected_service.get("campaigns", [])) if selected_service is not None else [],
+                recovery_state.get("selected", {}).get("campaign_sid"),
+            )
+            if selected_campaign is not None:
+                recovery_type = "provider_drift"
+                summary = (
+                    "Twilio already has a live A2P campaign attached to the selected Messaging Service, but the app is not bound to it. "
+                    "Reconcile the Twilio state from the platform before continuing."
+                )
+            _mark_recovery_required(
+                onboarding,
+                profile,
+                recovery_type=recovery_type,
+                summary=summary,
+                inventory=inventory,
+                brand_status=brand_status,
+                campaign_status=_status_value((selected_campaign or {}).get("status")),
+                actor_user_id=actor_user_id,
+            )
+            onboarding.failure_code = None
             db.session.commit()
-            brand_status, campaign_status = _sync_remote_status(onboarding, profile)
-            onboarding.brand_status = brand_status
-            onboarding.campaign_status = campaign_status
-            profile.provider_last_checked_at = utc_now()
+            return onboarding
         _apply_status_snapshot(
             onboarding,
             profile,
@@ -2647,6 +3612,24 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
             raise
         onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
         profile = organization.messaging_profile or ensure_messaging_profile(organization)
+        if isinstance(exc, PlatformSubaccountAuthRequiredError):
+            _mark_subaccount_auth_required_issue(
+                onboarding,
+                profile,
+                summary=str(exc),
+                actor_user_id=actor_user_id,
+            )
+            db.session.commit()
+            return onboarding
+        if _is_transient_provider_exception(exc):
+            _mark_transient_connectivity_issue(
+                onboarding,
+                profile,
+                summary=_friendly_provider_error_message(str(exc)),
+                actor_user_id=actor_user_id,
+            )
+            db.session.commit()
+            return onboarding
         error_message = _friendly_provider_error_message(str(exc))
         _set_status(
             onboarding,
@@ -2695,6 +3678,7 @@ def describe_a2p_onboarding(
             if status_payload.get("campaign_sid")
             else (onboarding.campaign_sid if onboarding is not None else None)
         )
+        console_campaign_id = _console_campaign_id(status_payload.get("console_campaign_id"))
         messaging_service_sid = (
             status_payload.get("messaging_service_sid")
             if status_payload.get("messaging_service_sid")
@@ -2760,6 +3744,7 @@ def describe_a2p_onboarding(
             "event_streams_enabled": a2p_event_streams_enabled(),
             "external_managed": True,
             "campaign_sid": campaign_sid,
+            "console_campaign_id": console_campaign_id,
             "brand_registration_sid": (
                 status_payload.get("brand_registration_sid")
                 if status_payload.get("brand_registration_sid")
@@ -2767,6 +3752,11 @@ def describe_a2p_onboarding(
             ),
             "messaging_service_sid": messaging_service_sid,
             "phone_number_sid": phone_number_sid,
+            "recovery_state": None,
+            "can_reconcile": False,
+            "can_create_campaign": False,
+            "campaign_fee_warning": None,
+            "twilio_read_context": _twilio_read_context(onboarding) if onboarding is not None else {},
         }
 
     if onboarding is None or onboarding.onboarding_status == "draft":
@@ -2788,6 +3778,12 @@ def describe_a2p_onboarding(
             "show_wait_state": False,
             "event_streams_enabled": bool(current_app.config.get("TWILIO_A2P_EVENT_STREAMS_ENABLED")),
             "external_managed": False,
+            "recovery_state": None,
+            "can_reconcile": False,
+            "can_create_campaign": False,
+            "campaign_fee_warning": None,
+            "console_campaign_id": None,
+            "twilio_read_context": {},
         }
 
     brand_status = _status_value(onboarding.brand_status)
@@ -2797,8 +3793,50 @@ def describe_a2p_onboarding(
     failure_code = _latest_failure_code(onboarding)
     has_submission = onboarding.onboarding_status not in {"draft", "canceled"}
     can_send = bool(profile is not None and profile.can_send)
+    recovery_state = _recovery_state(onboarding)
+    recovery_type = _clean_text(recovery_state.get("type"), lowercase=True) if recovery_state else None
+    synthetic_missing_campaign = (
+        recovery_type is None
+        and
+        brand_status in A2P_BRAND_READY_FOR_CAMPAIGN_STATUSES
+        and not onboarding.campaign_sid
+        and campaign_status not in A2P_CAMPAIGN_APPROVED_STATUSES
+    )
 
-    if onboarding.onboarding_status == "canceled":
+    if recovery_type == "provider_drift":
+        stage = "needs_action"
+        badge = "danger"
+        title = "Twilio state needs reconciliation"
+        summary = (
+            recovery_state.get("summary")
+            if recovery_state
+            else "Twilio still has live resources, but the app is bound to stale identifiers."
+        )
+        next_step = "Review the live Twilio resources and use Reconcile Twilio state before making more A2P changes."
+        eta = "Live SMS stays paused until the app is rebound to the correct Twilio resources."
+    elif recovery_type == "missing_campaign" or synthetic_missing_campaign:
+        stage = "needs_action"
+        badge = "danger"
+        title = "Campaign creation required"
+        summary = (
+            recovery_state.get("summary")
+            if recovery_state
+            else "Twilio approved the brand package, but the Messaging Service does not have a campaign attached yet."
+        )
+        next_step = "Confirm the live Twilio resources, then create the campaign explicitly from the platform."
+        eta = "Live SMS stays paused until the new campaign enters review."
+    elif recovery_type == "transient_connectivity":
+        stage = "reviewing"
+        badge = "warning text-dark"
+        title = "Temporary Twilio sync issue"
+        summary = (
+            recovery_state.get("summary")
+            if recovery_state
+            else "Twilio could not be reached during the latest status refresh."
+        )
+        next_step = "Retry Refresh Status after Twilio connectivity stabilizes. Do not reset approved resources."
+        eta = "Retry after connectivity stabilizes."
+    elif onboarding.onboarding_status == "canceled":
         stage = "canceled"
         badge = "secondary"
         title = "Canceled"
@@ -2866,6 +3904,16 @@ def describe_a2p_onboarding(
         "show_wait_state": stage in {"submitted", "reviewing", "needs_action"} and not can_send,
         "event_streams_enabled": a2p_event_streams_enabled(),
         "external_managed": False,
+        "recovery_state": recovery_state or None,
+        "can_reconcile": bool(recovery_state and recovery_state.get("recommended_action") == "reconcile"),
+        "can_create_campaign": bool(recovery_state and recovery_state.get("recommended_action") == "create_campaign") or synthetic_missing_campaign,
+        "campaign_fee_warning": (
+            "Creating a new Twilio campaign may trigger another campaign vetting fee. Confirm the approved packet is correct before continuing."
+            if ((recovery_state and recovery_state.get("recommended_action") == "create_campaign") or synthetic_missing_campaign)
+            else None
+        ),
+        "console_campaign_id": _console_campaign_id(_load_status_payload(onboarding).get("console_campaign_id")),
+        "twilio_read_context": _twilio_read_context(onboarding),
     }
 
 
@@ -2915,6 +3963,19 @@ def ingest_a2p_event_stream_payload(payload: Any) -> dict[str, int]:
             summary["events_ignored"] += 1
             continue
 
+        _record_observed_identifier_drift(
+            onboarding,
+            profile,
+            observed_ids={
+                "subaccount_sid": _event_value(data, "accountsid", "account_sid"),
+                "messaging_service_sid": _event_value(data, "messagingservicesid", "messageservicesid", "service_sid"),
+                "brand_registration_sid": _clean_text(data.get("brandsid")),
+                "campaign_sid": _clean_text(data.get("campaignsid")),
+                "console_campaign_id": _event_value(data, "campaignid", "campaign_id", "externalcampaignid", "external_campaign_id"),
+                "phone_number_sid": _clean_text(data.get("phonenumbersid")),
+                "brand_tcr_id": _event_value(data, "brandtcrid", "brand_tcr_id", "tcrid", "brandtcr_id"),
+            },
+        )
         status_payload, event_stream, recent_event_ids = _event_stream_state(onboarding)
         event_id = _clean_text(event.get("id"))
         if event_id and event_id in recent_event_ids:

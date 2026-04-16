@@ -20,6 +20,7 @@
 ) %}
 {% set customer_service_sid = request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') or '' %}
 {% set current_account_sid = request.form.get('twilio_account_sid', messaging_profile.twilio_account_sid if messaging_profile else '') or '' %}
+{% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'platform_assign') or 'platform_assign' %}
 <div class="platform-shell">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
@@ -30,7 +31,7 @@
                     {% if provider_is_customer_managed %}
                     Validate the customer-owned Twilio account, sender, and Messaging Service exactly as they exist today.
                     {% else %}
-                    Provision the platform-managed Twilio account first, then attach an approved sender and confirm compliance before live sending is enabled.
+                    Provision the platform-managed Twilio account first, then let {{ product_name }} validate the service address, attach the sender, sync emergency registration, and unlock live sending.
                     {% endif %}
                 </p>
             </div>
@@ -38,7 +39,13 @@
         <div class="platform-shell__summary-meta">
             <div class="platform-shell__summary-identity">
                 <span class="platform-directory__slug"><code>{{ organization.slug }}</code></span>
-                <span class="platform-shell__summary-context">Sender review {{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}</span>
+                <span class="platform-shell__summary-context">
+                    {% if provider_is_customer_managed %}
+                    Sender review {{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}
+                    {% else %}
+                    Finalization {{ messaging_profile.effective_sender_finalization_status if messaging_profile else 'awaiting_a2p_approval' }}
+                    {% endif %}
+                </span>
             </div>
             <div class="platform-shell__summary-badges">
                 <span class="badge bg-{{ 'success' if messaging_profile and messaging_profile.provider_status == 'active' else ('danger' if messaging_profile and messaging_profile.provider_status == 'error' else ('secondary' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'warning text-dark')) }}">
@@ -61,7 +68,7 @@
                             {% if provider_is_customer_managed %}
                             This workspace keeps its own Twilio account. The platform validates the customer account, sender number, Messaging Service, and inbound webhook without creating a subaccount or new A2P packet.
                             {% else %}
-                            This workspace gets its own Twilio subaccount and Messaging Service. Provision first, then assign an approved sender number inside that organization account.
+                            This workspace gets its own Twilio subaccount and Messaging Service. Provision first, save the org service address, then run sender finalization so the app can buy or attach the number, sync the emergency address, and activate the provider.
                             {% endif %}
                         </div>
                     </div>
@@ -115,6 +122,16 @@
                     </div>
                     {% endif %}
 
+                    {% if not provider_is_customer_managed and messaging_profile and messaging_profile.sender_finalization_error %}
+                    <div class="platform-note platform-note--warning mb-4" role="status">
+                        <div class="platform-note__title">Sender finalization</div>
+                        <div class="platform-note__copy">
+                            <strong>{{ messaging_profile.effective_sender_finalization_status.replace('_', ' ') }}</strong>
+                            · {{ messaging_profile.sender_finalization_error }}
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <div class="mb-4">
                         {% set launch_readiness_title = 'Launch readiness' %}
                         {% include 'includes/launch_readiness_panel.html' %}
@@ -133,8 +150,14 @@
                             <div class="platform-key-value">{{ messaging_profile.provider_mode if messaging_profile else selected_provider_mode }}</div>
                         </div>
                         <div class="platform-key-item">
-                            <div class="platform-key-label">Sender review</div>
-                            <div class="platform-key-value">{{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}</div>
+                            <div class="platform-key-label">{{ 'Sender review' if provider_is_customer_managed else 'Sender finalization' }}</div>
+                            <div class="platform-key-value">
+                                {% if provider_is_customer_managed %}
+                                {{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}
+                                {% else %}
+                                {{ messaging_profile.effective_sender_finalization_status if messaging_profile else 'awaiting_a2p_approval' }}
+                                {% endif %}
+                            </div>
                         </div>
                         <div class="platform-key-item">
                             <div class="platform-key-label">{{ 'Twilio account' if provider_is_customer_managed else 'Twilio subaccount' }}</div>
@@ -160,6 +183,22 @@
                             <div class="platform-key-label">Phone number SID</div>
                             <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
                         </div>
+                        {% if not provider_is_customer_managed %}
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Service address</div>
+                            <div class="platform-key-value">
+                                {% if messaging_profile and messaging_profile.service_address_complete %}
+                                {{ messaging_profile.service_address_line1 }}, {{ messaging_profile.service_address_city }}, {{ messaging_profile.service_address_region }} {{ messaging_profile.service_address_postal_code }}
+                                {% else %}
+                                Not saved yet
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Emergency address sync</div>
+                            <div class="platform-key-value">{{ messaging_profile.emergency_address_status if messaging_profile and messaging_profile.emergency_address_status else 'pending' }}</div>
+                        </div>
+                        {% endif %}
                     </div>
 
                     <div class="platform-form-actions mb-4">
@@ -189,6 +228,19 @@
                             </button>
                         </form>
                         {% if not provider_is_customer_managed %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="finalize_sender">
+                            <button
+                                type="submit"
+                                class="btn btn-primary"
+                                {% if not messaging_profile or not messaging_profile.twilio_subaccount_sid or not messaging_profile.messaging_service_sid %}
+                                disabled
+                                {% endif %}
+                            >
+                                Finalize Sender Setup
+                            </button>
+                        </form>
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="action" value="release_sender">
@@ -242,56 +294,96 @@
 
                         <div class="row g-3 mt-1" data-platform-managed-fields {% if provider_is_customer_managed %}hidden{% endif %}>
                             <div class="col-md-6">
-                                <label class="form-label" for="sender_number">Approved Sender Number</label>
-                                <input
-                                    class="form-control"
-                                id="sender_number"
-                                name="sender_number"
-                                placeholder="+15551234567"
-                                {% if provider_is_customer_managed %}disabled{% endif %}
-                                value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
-                            >
+                                <label class="form-label" for="number_strategy">Number Strategy</label>
+                                <select class="form-select" id="number_strategy" name="number_strategy" {% if provider_is_customer_managed %}disabled{% endif %}>
+                                    {% for value, label in number_strategy_choices %}
+                                    <option value="{{ value }}" {% if selected_number_strategy == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
                                 <div class="form-text">
-                                    Enter the live sender number after you assign it inside the organization subaccount.
+                                    `auto_buy` is the default SaaS path. Manual PN strategies stay available when you already know the number that should be attached.
                                 </div>
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label" for="phone_number_sid">Phone Number SID</label>
+                                <label class="form-label" for="phone_number_sid">Target Phone Number SID</label>
                                 <input
                                     class="form-control"
                                 id="phone_number_sid"
                                 name="phone_number_sid"
                                 placeholder="PNxxxxxxxx"
                                 {% if provider_is_customer_managed %}disabled{% endif %}
-                                value="{{ request.form.get('phone_number_sid', messaging_profile.phone_number_sid if messaging_profile else '') or '' }}"
+                                value="{{ request.form.get('phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') or '' }}"
                             >
                                 <div class="form-text">
-                                    This PN SID must already belong to the organization's Twilio subaccount.
+                                    Required for `existing_subaccount_number`, `transfer_parent_number`, and manual `platform_assign`. Leave blank for `auto_buy`.
                                 </div>
                             </div>
                             <div class="col-md-6">
-                                <label class="form-label" for="sender_review_status">Sender Review Status</label>
-                                {% set selected_sender_review_status = request.form.get('sender_review_status', messaging_profile.sender_review_status if messaging_profile else 'pending') or 'pending' %}
-                                <select class="form-select" id="sender_review_status" name="sender_review_status" {% if provider_is_customer_managed %}disabled{% endif %}>
-                                    <option value="pending" {% if selected_sender_review_status == 'pending' %}selected{% endif %}>pending</option>
-                                    <option value="approved" {% if selected_sender_review_status == 'approved' %}selected{% endif %}>approved</option>
-                                    <option value="rejected" {% if selected_sender_review_status == 'rejected' %}selected{% endif %}>rejected</option>
-                                </select>
+                                <label class="form-label" for="service_address_line1">Service Address Line 1</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_line1"
+                                    name="service_address_line1"
+                                    placeholder="123 Main Street"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_line1', messaging_profile.service_address_line1 if messaging_profile else '') or '' }}"
+                                >
                             </div>
-                            <div class="col-md-6 d-flex align-items-end">
-                                <div class="form-check">
-                                    <input
-                                        class="form-check-input"
-                                        type="checkbox"
-                                        id="consent_acknowledged"
-                                        name="consent_acknowledged"
-                                        {% if provider_is_customer_managed %}disabled{% endif %}
-                                        {% if request.form.get('consent_acknowledged') == 'on' or (request.method != 'POST' and messaging_profile and messaging_profile.consent_acknowledged_at) %}checked{% endif %}
-                                    >
-                                    <label class="form-check-label" for="consent_acknowledged">
-                                        Consent and compliance review completed
-                                    </label>
-                                </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="service_address_line2">Service Address Line 2</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_line2"
+                                    name="service_address_line2"
+                                    placeholder="Suite 200"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_line2', messaging_profile.service_address_line2 if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="service_address_city">City</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_city"
+                                    name="service_address_city"
+                                    placeholder="Denver"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_city', messaging_profile.service_address_city if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="service_address_region">State / Province</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_region"
+                                    name="service_address_region"
+                                    placeholder="CO"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_region', messaging_profile.service_address_region if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label" for="service_address_postal_code">Postal Code</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_postal_code"
+                                    name="service_address_postal_code"
+                                    placeholder="80202"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_postal_code', messaging_profile.service_address_postal_code if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label" for="service_address_country">Country</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_country"
+                                    name="service_address_country"
+                                    placeholder="US"
+                                    maxlength="2"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_country', messaging_profile.service_address_country if messaging_profile else '') or '' }}"
+                                >
                             </div>
                         </div>
 
@@ -386,8 +478,10 @@
                             </li>
                             <li><strong>Messaging service</strong><span>{{ 'ready' if messaging_profile and messaging_profile.messaging_service_sid else 'missing' }}</span></li>
                             <li><strong>Sender assigned</strong><span>{{ sender_assignment_state }}</span></li>
-                            <li><strong>Compliance acknowledged</strong><span>{{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else ('external' if provider_is_customer_managed else 'missing') }}</span></li>
-                            <li><strong>Sender approved</strong><span>{{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else ('external' if provider_is_customer_managed else 'missing') }}</span></li>
+                            <li><strong>Service address</strong><span>{{ 'ready' if provider_is_customer_managed else ('ready' if messaging_profile and messaging_profile.service_address_complete else 'missing') }}</span></li>
+                            <li><strong>Emergency address</strong><span>{{ 'external' if provider_is_customer_managed else (messaging_profile.emergency_address_status if messaging_profile and messaging_profile.emergency_address_status else 'pending') }}</span></li>
+                            <li><strong>Compliance acknowledged</strong><span>{{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else ('external' if provider_is_customer_managed else 'managed') }}</span></li>
+                            <li><strong>Sender approved</strong><span>{{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else ('external' if provider_is_customer_managed else 'managed') }}</span></li>
                             <li><strong>Live sending</strong><span>{{ 'enabled' if messaging_profile and messaging_profile.can_send else 'disabled' }}</span></li>
                         </ul>
                     </div>
