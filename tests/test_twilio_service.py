@@ -259,6 +259,27 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(profile.sender_finalization_status, "awaiting_emergency_address_sync")
         self.assertEqual(profile.provider_status, "pending")
 
+    def test_send_message_returns_browser_fake_result_when_enabled(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        self.app.config["TWILIO_BROWSER_FAKE_SENDS"] = True
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="complimentary",
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive0001",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0001",
+        )
+
+        result = get_twilio_service(organization.id).send_message("+15550002222", "Browser fake send")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["account_sid"], "ACactive0001")
+        self.assertTrue(str(result["sid"]).startswith("SM"))
+        self.assertEqual(result["num_segments"], "1")
+
     def test_twilio_imported_service_address_cannot_override_app_input(self) -> None:
         from app.services.twilio_service import save_service_address_from_twilio_import
 
@@ -318,6 +339,16 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.list.return_value = [
             SimpleNamespace(sid="PNcust0001", phone_number="+15550001111")
         ]
+        customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
+            sid="PNcust0001",
+            phone_number="+15550001111",
+            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
+        customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
+            sid="MGcustAbc123",
+            use_inbound_webhook_on_number=False,
+        )
         customer_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = [
             SimpleNamespace(
                 sid="QEcust0001",
@@ -334,28 +365,80 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             twilio_account_sid="ACcust0001",
             twilio_auth_token="customer-token",
             from_number="+15550001111",
-            messaging_service_sid="MGcust0001",
+            messaging_service_sid="MGCUSTABC123",
             business_type="Nonprofit",
             use_case="Announcements",
             actor_user_id=42,
         )
 
         self.assertEqual(profile.provider_mode, "customer_managed")
-        self.assertEqual(profile.provider_status, "active")
+        self.assertEqual(profile.provider_status, "pending")
         self.assertEqual(profile.twilio_account_sid, "ACCUST0001")
         self.assertIsNone(profile.twilio_subaccount_sid)
         self.assertEqual(profile.phone_number_sid, "PNcust0001")
-        self.assertEqual(profile.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(profile.messaging_service_sid, "MGcustAbc123")
         self.assertEqual(profile.from_number, "+15550001111")
         self.assertEqual(profile.sender_review_status, "approved")
-        self.assertIsNotNone(profile.consent_acknowledged_at)
+        self.assertIsNone(profile.consent_acknowledged_at)
         self.assertEqual(decrypt_provider_secret(profile.twilio_auth_token_encrypted), "customer-token")
-        self.assertEqual(validation.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(validation.messaging_service_sid, "MGcustAbc123")
         self.assertEqual(validation.campaign_status, "verified")
+        customer_client.incoming_phone_numbers.assert_called_once_with("PNcust0001")
+        customer_client.messaging.v1.services.return_value.update.assert_not_called()
+        customer_client.incoming_phone_numbers.return_value.update.assert_not_called()
+        self.assertEqual(
+            validation.current_phone_sms_url,
+            "https://sms.theitwingman.com/webhooks/twilio/inbound",
+        )
+        self.assertEqual(validation.current_phone_sms_method, "POST")
+        self.assertEqual(validation.current_service_use_inbound_webhook_on_number, False)
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_save_customer_managed_profile_activation_binds_webhook_and_marks_active(self, mock_build_customer_client) -> None:
+        from app.services.twilio_service import save_customer_managed_profile
+
+        organization, _ = self._create_org_with_profile()
+        customer_client = mock_build_customer_client.return_value
+        customer_client.incoming_phone_numbers.list.return_value = [
+            SimpleNamespace(sid="PNcust0001", phone_number="+15550001111")
+        ]
+        customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
+            sid="PNcust0001",
+            phone_number="+15550001111",
+            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
+        customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
+            sid="MGcustAbc123",
+            use_inbound_webhook_on_number=False,
+        )
+        customer_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = [
+            SimpleNamespace(
+                sid="QEcust0001",
+                status="VERIFIED",
+                brand_registration_sid="BNcust0001",
+            )
+        ]
+        customer_client.messaging.v1.brand_registrations.return_value.fetch.return_value = SimpleNamespace(
+            status="VERIFIED"
+        )
+
+        profile, _validation = save_customer_managed_profile(
+            organization.id,
+            twilio_account_sid="ACcust0001",
+            twilio_auth_token="customer-token",
+            from_number="+15550001111",
+            messaging_service_sid="MGCUSTABC123",
+            bind_inbound_webhook=True,
+            activation_complete=True,
+        )
+
+        self.assertEqual(profile.provider_status, "active")
+        self.assertEqual(profile.sender_review_status, "approved")
+        self.assertIsNotNone(profile.consent_acknowledged_at)
         customer_client.messaging.v1.services.return_value.update.assert_called_once_with(
             use_inbound_webhook_on_number=True
         )
-        customer_client.incoming_phone_numbers.assert_called_once_with("PNcust0001")
         customer_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
             sms_url="https://beta.example.com/webhooks/twilio/inbound",
             sms_method="POST",
@@ -417,6 +500,16 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.list.return_value = [
             SimpleNamespace(sid="PNcust0001", phone_number="+15550001111")
         ]
+        customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
+            sid="PNcust0001",
+            phone_number="+15550001111",
+            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
+        customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
+            sid="MGcustAbc123",
+            use_inbound_webhook_on_number=False,
+        )
         customer_client.messaging.v1.services.return_value.us_app_to_person.list.return_value = [
             SimpleNamespace(
                 sid="QEcust0001",
@@ -434,15 +527,76 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             twilio_account_sid="ACcust0001",
             twilio_auth_token="customer-token",
             from_number="+15550001111",
-            messaging_service_sid="MGcust0001",
+            messaging_service_sid="MGCUSTABC123",
         )
 
         self.assertEqual(profile.provider_status, "error")
         self.assertEqual(profile.sender_review_status, "rejected")
-        self.assertEqual(profile.messaging_service_sid, "MGCUST0001")
+        self.assertEqual(profile.messaging_service_sid, "MGcustAbc123")
         self.assertEqual(validation.campaign_status, "failed")
         self.assertEqual(validation.campaign_failure_code, "30909")
         self.assertIn("CTA", validation.campaign_failure_reason or "")
+
+    @patch("app.services.twilio_service._build_customer_managed_client")
+    def test_rollback_customer_managed_profile_restores_previous_webhook_target(self, mock_build_customer_client) -> None:
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import rollback_customer_managed_profile
+
+        organization, profile = self._create_org_with_profile(
+            provider_mode="customer_managed",
+            twilio_account_sid="ACcust0001",
+            twilio_auth_token_encrypted=encrypt_provider_secret("customer-token"),
+            messaging_service_sid="MGCUST0001",
+            phone_number_sid="PNcust0001",
+            from_number="+15550001111",
+            provider_status="active",
+            status="active",
+            sender_review_status="approved",
+        )
+        self._create_a2p_onboarding(
+            organization.id,
+            raw_status_json='{"customer_managed_activation":{"activation_completed":true,"activation_state":"active","phone_number_sid":"PNcust0001","pre_activation_phone_sms_url":"https://sms.theitwingman.com/webhooks/twilio/inbound","pre_activation_phone_sms_method":"POST","pre_activation_service_use_inbound_webhook_on_number":false},"campaign_status":"verified","brand_status":"verified"}',
+        )
+
+        customer_client = mock_build_customer_client.return_value
+
+        rolled_back = rollback_customer_managed_profile(organization.id, actor_user_id=12)
+
+        self.assertEqual(rolled_back.provider_status, "pending")
+        self.assertEqual(rolled_back.sender_review_status, "approved")
+        customer_client.messaging.v1.services.return_value.update.assert_called_once_with(
+            use_inbound_webhook_on_number=False
+        )
+        customer_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
+            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_method="POST",
+        )
+        onboarding = self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).one()
+        self.assertIn('"activation_state": "rolled_back"', onboarding.raw_status_json)
+
+    @patch("app.services.twilio_service._master_client")
+    def test_resume_org_keeps_customer_managed_provider_pending_until_activation_completed(self, mock_master_client) -> None:
+        from app.services.twilio_service import resume_org
+
+        organization, profile = self._create_org_with_profile(
+            provider_mode="customer_managed",
+            twilio_account_sid="ACcust0001",
+            messaging_service_sid="MGCUST0001",
+            phone_number_sid="PNcust0001",
+            from_number="+15550001111",
+            provider_status="suspended",
+            status="suspended",
+            sender_review_status="approved",
+        )
+        self._create_a2p_onboarding(
+            organization.id,
+            raw_status_json='{"customer_managed_activation":{"activation_completed":false,"activation_state":"validated"}}',
+        )
+
+        resumed = resume_org(organization.id, actor_user_id=9)
+
+        self.assertEqual(resumed.provider_status, "pending")
+        mock_master_client.return_value.api.v2010.accounts.update.assert_not_called()
 
     @patch("app.services.twilio_service._configure_service_webhooks")
     @patch("app.services.twilio_service._build_subaccount_client")

@@ -42,6 +42,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             OrganizationMembership,
             OrganizationMessagingProfile,
             OrganizationProviderAuditLog,
+            OrganizationTestRecipient,
             PlatformServiceRestartRequest,
             OrganizationSubscription,
         )
@@ -62,6 +63,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
         self.OrganizationProviderAuditLog = OrganizationProviderAuditLog
+        self.OrganizationTestRecipient = OrganizationTestRecipient
         self.PlatformServiceRestartRequest = PlatformServiceRestartRequest
         self.OrganizationSubscription = OrganizationSubscription
         self.organization_context = organization_context
@@ -258,6 +260,30 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.db.session.commit()
         return organization, subscription, messaging_profile, user
 
+    def test_validate_org_messaging_profile_input_rejects_case_insensitive_duplicate_service_sid(self) -> None:
+        from app.routes import _validate_org_messaging_profile_input
+
+        _, _, messaging_profile, _ = self._create_customer_managed_workspace(
+            slug="customer-managed-duplicate-service",
+            username="customer-managed-duplicate-service",
+            email="customer-managed-duplicate-service@acme.test",
+        )
+        messaging_profile.messaging_service_sid = "MGcustAbc123"
+        messaging_profile.inbound_identity = "MGcustAbc123"
+        self.db.session.commit()
+
+        error, normalized_sender, normalized_service_sid = _validate_org_messaging_profile_input(
+            None,
+            "MGCUSTABC123",
+        )
+
+        self.assertEqual(
+            error,
+            "That Twilio Messaging Service SID is already assigned to another organization.",
+        )
+        self.assertIsNone(normalized_sender)
+        self.assertIsNone(normalized_service_sid)
+
     def test_dashboard_send_requires_active_subscription(self) -> None:
         self._login_owner()
 
@@ -356,6 +382,12 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(organization.a2p_onboarding)
         self.assertEqual(organization.a2p_onboarding.onboarding_status, "draft")
         self.assertEqual(organization.a2p_onboarding.number_strategy, "auto_buy")
+        recipients = self.OrganizationTestRecipient.query.filter_by(
+            organization_id=organization.id
+        ).all()
+        self.assertEqual(len(recipients), 1)
+        self.assertEqual(recipients[0].phone, "+15550000077")
+        self.assertEqual(recipients[0].label, "Beta Owner")
 
     def test_owner_setup_defaults_new_org_number_strategy_to_auto_buy(self) -> None:
         self._login_owner()
@@ -1319,6 +1351,49 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(self.owner.role, "admin")
         self.assertEqual(membership.role, "owner")
 
+    def test_platform_admin_can_reset_password_for_imported_saas_user_without_email(self) -> None:
+        imported_user = self.AppUser(
+            username="magasiev-aoc",
+            email=None,
+            full_name="Imported Owner",
+            phone="+15550000088",
+            role="admin",
+            must_change_password=False,
+        )
+        imported_user.set_password("Imported-pass1!")
+        self.db.session.add(imported_user)
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=self.organization.id,
+                user_id=imported_user.id,
+                role="owner",
+            )
+        )
+        self.db.session.commit()
+
+        original_password_hash = imported_user.password_hash
+        self._login_platform_admin()
+        response = self.client.post(
+            f"/users/{imported_user.id}/edit",
+            data={
+                "username": "magasiev-aoc",
+                "email": "",
+                "full_name": "Imported Owner",
+                "role": "admin",
+                "phone": "+15550000088",
+                "password": "Imported-reset1!",
+                "must_change_password": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(imported_user)
+        self.assertIsNone(imported_user.email)
+        self.assertTrue(imported_user.must_change_password)
+        self.assertNotEqual(imported_user.password_hash, original_password_hash)
+
     def test_users_list_shows_pending_invitation_accept_link(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -1678,14 +1753,25 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.db.session.refresh(self.subscription)
         self.assertEqual(self.subscription.status, "complimentary")
 
+    @patch("app.routes.ensure_a2p_event_stream_subscription")
     @patch("app.routes._sync_customer_managed_onboarding_state")
     @patch("app.routes.save_customer_managed_profile")
     def test_platform_organizations_messaging_edit_can_save_customer_managed_provider(
         self,
         mock_save_customer_managed_profile,
         mock_sync_customer_managed_onboarding_state,
+        mock_ensure_a2p_event_stream_subscription,
     ) -> None:
         self._login_platform_admin()
+        self.messaging_profile.provider_mode = "customer_managed"
+        self.messaging_profile.twilio_account_sid = None
+        self.messaging_profile.twilio_subaccount_sid = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.from_number = None
+        self.messaging_profile.sender_review_status = "pending"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.status = "pending"
+        self.db.session.commit()
         validation_result = SimpleNamespace(
             account_sid="ACcust0001",
             phone_number_sid="PNcust0001",
@@ -1697,6 +1783,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
+            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_method="POST",
+            current_service_use_inbound_webhook_on_number=False,
         )
         mock_save_customer_managed_profile.return_value = (self.messaging_profile, validation_result)
 
@@ -1719,7 +1808,181 @@ class TestSaasPilotFoundation(unittest.TestCase):
         mock_save_customer_managed_profile.assert_called_once()
         self.assertEqual(mock_save_customer_managed_profile.call_args.kwargs["twilio_account_sid"], "ACcust0001")
         self.assertEqual(mock_save_customer_managed_profile.call_args.kwargs["from_number"], "+15550001111")
+        self.assertFalse(mock_save_customer_managed_profile.call_args.kwargs["activation_complete"])
         mock_sync_customer_managed_onboarding_state.assert_called_once()
+        self.assertNotIn("bind_inbound_webhook", mock_sync_customer_managed_onboarding_state.call_args.kwargs)
+        mock_ensure_a2p_event_stream_subscription.assert_not_called()
+
+    @patch("app.routes._customer_managed_auth_token_for_save", return_value="customer-token")
+    @patch("app.routes.ensure_a2p_event_stream_subscription")
+    @patch("app.routes._sync_customer_managed_onboarding_state")
+    @patch("app.routes.save_customer_managed_profile")
+    def test_platform_organizations_messaging_edit_can_activate_customer_managed_provider(
+        self,
+        mock_save_customer_managed_profile,
+        mock_sync_customer_managed_onboarding_state,
+        mock_ensure_a2p_event_stream_subscription,
+        _mock_customer_managed_auth_token_for_save,
+    ) -> None:
+        self._login_platform_admin()
+        self.messaging_profile.provider_mode = "customer_managed"
+        self.messaging_profile.twilio_account_sid = "ACcust0001"
+        self.messaging_profile.twilio_subaccount_sid = None
+        self.messaging_profile.messaging_service_sid = "MGcust0001"
+        self.messaging_profile.phone_number_sid = "PNcust0001"
+        self.messaging_profile.from_number = "+15550001111"
+        self.messaging_profile.sender_review_status = "approved"
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.status = "pending"
+        self.db.session.commit()
+        validation_result = SimpleNamespace(
+            account_sid="ACcust0001",
+            phone_number_sid="PNcust0001",
+            from_number="+15550001111",
+            messaging_service_sid="MGcust0001",
+            campaign_sid="QEcust0001",
+            campaign_status="verified",
+            campaign_failure_reason=None,
+            campaign_failure_code=None,
+            brand_registration_sid="BNcust0001",
+            brand_status="verified",
+            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_method="POST",
+            current_service_use_inbound_webhook_on_number=False,
+        )
+        mock_save_customer_managed_profile.return_value = (self.messaging_profile, validation_result)
+        mock_ensure_a2p_event_stream_subscription.side_effect = lambda organization, profile: setattr(profile, "event_stream_status", "configured")
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={"action": "activate_customer_managed"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_save_customer_managed_profile.assert_called_once()
+        self.assertTrue(mock_save_customer_managed_profile.call_args.kwargs["bind_inbound_webhook"])
+        self.assertFalse(mock_save_customer_managed_profile.call_args.kwargs["activation_complete"])
+        self.assertEqual(mock_sync_customer_managed_onboarding_state.call_count, 2)
+        first_call = mock_sync_customer_managed_onboarding_state.call_args_list[0]
+        second_call = mock_sync_customer_managed_onboarding_state.call_args_list[1]
+        self.assertTrue(first_call.kwargs["bind_inbound_webhook"])
+        self.assertFalse(first_call.kwargs["activation_complete"])
+        self.assertTrue(second_call.kwargs["bind_inbound_webhook"])
+        self.assertTrue(second_call.kwargs["activation_complete"])
+        self.db.session.refresh(self.messaging_profile)
+        self.assertEqual(self.messaging_profile.provider_status, "active")
+        self.assertTrue(self.messaging_profile.can_send)
+
+    @patch("app.routes.rollback_customer_managed_profile")
+    def test_platform_organizations_messaging_edit_can_restore_customer_managed_webhook(
+        self,
+        mock_rollback_customer_managed_profile,
+    ) -> None:
+        self._login_platform_admin()
+        self.messaging_profile.provider_mode = "customer_managed"
+        self.messaging_profile.provider_status = "active"
+        self.messaging_profile.status = "active"
+        self.messaging_profile.twilio_account_sid = "ACcust0001"
+        self.messaging_profile.twilio_subaccount_sid = None
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={"action": "rollback_customer_managed"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_rollback_customer_managed_profile.assert_called_once_with(
+            self.organization.id,
+            actor_user_id=self.platform_admin.id,
+        )
+
+    def test_platform_organizations_messaging_edit_shows_platform_test_send_when_org_can_send(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        response = self.client.get(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Platform Test Send", response.data)
+
+    @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_can_send_operational_test(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "platform_test_send",
+                "platform_test_phone": "+15550001234",
+                "platform_test_body": "Operational test",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_send_operational_test_message.assert_called_once_with(
+            self.organization.id,
+            to_number="+15550001234",
+            body="Operational test",
+            actor_user_id=self.platform_admin.id,
+        )
+
+    def test_sync_customer_managed_onboarding_state_keeps_external_identifiers_out_of_unique_columns(self) -> None:
+        from app.routes import _sync_customer_managed_onboarding_state
+
+        organization, _, _, _ = self._create_customer_managed_workspace(
+            slug="customer-managed-sync",
+            username="customer-managed-sync",
+            email="customer-managed-sync@acme.test",
+        )
+
+        validation_result = SimpleNamespace(
+            account_sid="ACcust0001",
+            phone_number_sid="PNcust0001",
+            from_number="+15550001111",
+            messaging_service_sid="MGcust0001",
+            campaign_sid="QEcust0001",
+            campaign_status="verified",
+            campaign_failure_reason=None,
+            campaign_failure_code=None,
+            brand_registration_sid="BNcust0001",
+            brand_status="verified",
+            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_method="POST",
+            current_service_use_inbound_webhook_on_number=False,
+        )
+
+        _sync_customer_managed_onboarding_state(organization, validation_result)
+        self.db.session.commit()
+
+        onboarding = self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
+        self.assertIsNotNone(onboarding)
+        self.assertIsNone(onboarding.campaign_sid)
+        self.assertIsNone(onboarding.brand_registration_sid)
+        self.assertEqual(onboarding.campaign_status, "verified")
+        self.assertEqual(onboarding.brand_status, "verified")
+        self.assertEqual(onboarding.onboarding_status, "approved")
+
+        status_payload = json.loads(onboarding.raw_status_json)
+        self.assertEqual(status_payload["campaign_sid"], "QEcust0001")
+        self.assertEqual(status_payload["brand_registration_sid"], "BNcust0001")
+        self.assertEqual(status_payload["messaging_service_sid"], "MGcust0001")
+        self.assertEqual(
+            status_payload["customer_managed_activation"]["activation_state"],
+            "validated",
+        )
 
     @patch("app.routes.release_sender")
     @patch("app.routes.finalize_sender_setup")
@@ -2100,7 +2363,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Customer-managed A2P", response.data)
-        self.assertIn(b"External A2P approved", response.data)
+        self.assertIn(b"External Twilio active", response.data)
         self.assertIn(b"Back to Messaging Setup", response.data)
         self.assertIn(b"Service Campaign Association SID", response.data)
         self.assertIn(b"Brand Registration SID", response.data)
@@ -2464,6 +2727,12 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(membership)
         self.assertEqual(membership.organization_id, self.organization.id)
         self.assertEqual(membership.role, "owner")
+        recipients = self.OrganizationTestRecipient.query.filter_by(
+            organization_id=self.organization.id
+        ).all()
+        self.assertEqual(len(recipients), 1)
+        self.assertEqual(recipients[0].phone, "+15550000003")
+        self.assertEqual(recipients[0].label, "New Owner")
 
     def test_invitation_accept_rejects_platform_admin_email(self) -> None:
         invitation = self.OrganizationInvitation(

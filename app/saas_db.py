@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime
 
 from sqlalchemy import create_engine, func, inspect
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +16,7 @@ from app.saas_migrations.runner import ensure_saas_schema_ready, inspect_saas_mi
 from app.services.legacy_import_service import (
     import_legacy_sqlite_snapshot,
     import_legacy_sqlite_snapshot_into_new_org,
+    sync_legacy_sqlite_snapshot_into_existing_org,
 )
 
 
@@ -202,6 +204,11 @@ def main() -> None:
         metavar="LEGACY_SQLITE_PATH",
         help="Import a legacy SQLite snapshot into a newly created org inside an existing SaaS database.",
     )
+    action.add_argument(
+        "--sync-legacy-into-org",
+        metavar="LEGACY_SQLITE_PATH",
+        help="Idempotently sync a legacy SQLite snapshot into an existing SaaS org.",
+    )
     parser.add_argument("--organization-name", default="Legacy Production", help="Default imported organization name.")
     parser.add_argument("--organization-slug", default="legacy-production", help="Default imported organization slug.")
     parser.add_argument(
@@ -220,6 +227,15 @@ def main() -> None:
         default=[],
         metavar="OLD=NEW",
         help="Rename an imported legacy username to avoid conflicts. May be provided more than once.",
+    )
+    parser.add_argument(
+        "--since",
+        help="Baseline timestamp for legacy syncs in ISO-8601 format. Defaults to the latest completed import for the org.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute the legacy sync result inside a transaction and roll it back before exiting.",
     )
     args = parser.parse_args()
 
@@ -276,6 +292,42 @@ def main() -> None:
                 subscription_status=args.subscription_status,
                 provider_mode=args.provider_mode,
                 username_remaps=username_remaps,
+                logger=logger,
+            )
+            print(json.dumps(summary, indent=2, sort_keys=True, default=str))
+
+        if args.sync_legacy_into_org:
+            run_pending_saas_migrations(engine, logger)
+            ensure_saas_schema_ready(engine)
+            username_remaps: dict[str, str] = {}
+            for mapping in args.username_remap:
+                source, separator, target = (mapping or "").partition("=")
+                if not separator:
+                    raise RuntimeError(
+                        f"Invalid --username-remap value {mapping!r}. Use OLD=NEW."
+                    )
+                source = source.strip()
+                target = target.strip()
+                if not source or not target:
+                    raise RuntimeError(
+                        f"Invalid --username-remap value {mapping!r}. Use OLD=NEW."
+                    )
+                username_remaps[source] = target
+            since = None
+            if args.since:
+                normalized_since = args.since.strip()
+                if not normalized_since:
+                    raise RuntimeError("Invalid --since value. Use an ISO-8601 timestamp.")
+                try:
+                    since = datetime.fromisoformat(normalized_since.replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise RuntimeError("Invalid --since value. Use an ISO-8601 timestamp.") from exc
+            summary = sync_legacy_sqlite_snapshot_into_existing_org(
+                legacy_db_path=args.sync_legacy_into_org,
+                organization_slug=args.organization_slug,
+                username_remaps=username_remaps,
+                since=since,
+                dry_run=args.dry_run,
                 logger=logger,
             )
             print(json.dumps(summary, indent=2, sort_keys=True, default=str))

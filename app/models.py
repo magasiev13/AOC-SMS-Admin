@@ -169,6 +169,18 @@ class Organization(db.Model):
         uselist=False,
         cascade='all, delete-orphan',
     )
+    test_recipients = db.relationship(
+        'OrganizationTestRecipient',
+        back_populates='organization',
+        cascade='all, delete-orphan',
+        order_by='OrganizationTestRecipient.created_at',
+    )
+    settings_audit_logs = db.relationship(
+        'OrganizationSettingsAuditLog',
+        back_populates='organization',
+        cascade='all, delete-orphan',
+        order_by='OrganizationSettingsAuditLog.created_at',
+    )
 
     @validates("name")
     def _normalize_name(self, key, value):
@@ -717,6 +729,75 @@ class OrganizationProviderAuditLog(db.Model):
         return f'<OrganizationProviderAuditLog org={self.organization_id} action={self.action}>'
 
 
+class OrganizationTestRecipient(db.Model):
+    """Owner-managed internal test recipients for workspace sends."""
+    __tablename__ = 'organization_test_recipients'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    label = db.Column(db.String(120), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='test_recipients')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'phone', name='ux_org_test_recipients_org_phone'),
+    )
+
+    @validates("phone")
+    def _normalize_phone(self, key, value):
+        normalized = normalize_phone(value)
+        if not validate_phone(normalized):
+            raise ValueError("Test recipient phone must be a valid E.164 number.")
+        return normalized
+
+    @validates("label")
+    def _normalize_label(self, key, value):
+        normalized = (value or "").strip()
+        return normalized[:120] or None
+
+    def __repr__(self):
+        return f'<OrganizationTestRecipient org={self.organization_id} phone={self.phone}>'
+
+
+class OrganizationSettingsAuditLog(db.Model):
+    """Audit trail for workspace-owned settings changes."""
+    __tablename__ = 'organization_settings_audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    category = db.Column(db.String(40), nullable=False, index=True)
+    action = db.Column(db.String(40), nullable=False, index=True)
+    metadata_json = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    organization = db.relationship('Organization', back_populates='settings_audit_logs')
+    actor_user = db.relationship('AppUser')
+
+    @validates("category", "action")
+    def _normalize_category_fields(self, key, value):
+        normalized = (value or "").strip().lower()
+        if not normalized:
+            raise ValueError(f"{key.replace('_', ' ').title()} is required.")
+        return normalized[:40]
+
+    @property
+    def metadata_payload(self) -> dict:
+        if not self.metadata_json:
+            return {}
+        try:
+            payload = json.loads(self.metadata_json)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def __repr__(self):
+        return f'<OrganizationSettingsAuditLog org={self.organization_id} category={self.category} action={self.action}>'
+
+
 class MessagingUsageRecord(db.Model):
     """Per-message usage ledger for outbound billing reconciliation."""
     __tablename__ = 'messaging_usage_records'
@@ -918,6 +999,7 @@ class MessageLog(db.Model):
     target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
     status = db.Column(db.String(20), default='sent')  # 'processing', 'sent', 'failed'
+    test_mode = db.Column(db.Boolean, default=False, nullable=False)
     total_recipients = db.Column(db.Integer, default=0)
     success_count = db.Column(db.Integer, default=0)
     failure_count = db.Column(db.Integer, default=0)
@@ -1132,7 +1214,9 @@ class ScheduledMessage(db.Model):
     target = db.Column(db.String(20), nullable=False)  # 'community' or 'event'
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True)
     status = db.Column(db.String(20), default='pending')  # 'pending', 'processing', 'sent', 'failed', 'expired', 'cancelled'
-    test_mode = db.Column(db.Boolean, default=False)  # If true, send only to admin test phone
+    test_mode = db.Column(db.Boolean, default=False)
+    test_recipient_selection_mode = db.Column(db.String(20), nullable=True)
+    test_recipient_snapshot_json = db.Column(db.Text, nullable=True)
     attempt_count = db.Column(db.Integer, nullable=False, default=0)
     last_attempt_at = db.Column(db.DateTime, nullable=True)
     next_retry_at = db.Column(db.DateTime, nullable=True)
@@ -1144,6 +1228,15 @@ class ScheduledMessage(db.Model):
     event = db.relationship('Event')
     message_log = db.relationship('MessageLog')
     organization = db.relationship('Organization')
+
+    @validates("test_recipient_selection_mode")
+    def _normalize_test_recipient_selection_mode(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {"one", "all"}:
+            raise ValueError("Test recipient selection mode must be one or all.")
+        return normalized
 
     def __repr__(self):
         return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'

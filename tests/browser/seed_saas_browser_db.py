@@ -48,7 +48,9 @@ def main() -> None:
         OrganizationInvitation,
         OrganizationMembership,
         OrganizationMessagingProfile,
+        OrganizationSettingsAuditLog,
         OrganizationSubscription,
+        OrganizationTestRecipient,
         utc_now,
     )
     from app.migrations.runner import run_pending_migrations
@@ -690,6 +692,29 @@ def main() -> None:
                     token="browser-staff-invite-token",
                     invited_by_user_id=owner.id,
                     expires_at=now + timedelta(days=7),
+                ),
+            ]
+        )
+
+        db.session.add_all(
+            [
+                OrganizationTestRecipient(
+                    organization_id=active_org.id,
+                    phone="+17205550121",
+                    label="Board Chair",
+                ),
+                OrganizationTestRecipient(
+                    organization_id=active_org.id,
+                    phone="+17205550122",
+                    label="Ops Lead",
+                ),
+                OrganizationSettingsAuditLog(
+                    organization_id=active_org.id,
+                    actor_user_id=owner.id,
+                    category="test_recipients",
+                    action="replace",
+                    metadata_json='{"before_count":0,"after_count":2,"after_phones":["+1•••0121","+1•••0122"]}',
+                    created_at=now - timedelta(hours=2),
                 ),
             ]
         )

@@ -164,6 +164,7 @@ class Config:
     TWILIO_PRIMARY_CUSTOMER_PROFILE_SID = os.environ.get('TWILIO_PRIMARY_CUSTOMER_PROFILE_SID')
     TWILIO_A2P_NUMBER_COUNTRY = (os.environ.get('TWILIO_A2P_NUMBER_COUNTRY') or 'US').strip().upper() or 'US'
     TWILIO_A2P_FAKE_QUEUE = _env_bool('TWILIO_A2P_FAKE_QUEUE', '0')
+    TWILIO_BROWSER_FAKE_SENDS = _env_bool('TWILIO_BROWSER_FAKE_SENDS', '0')
     TWILIO_A2P_EVENT_STREAMS_ENABLED = _env_bool('TWILIO_A2P_EVENT_STREAMS_ENABLED', '0')
     TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN = os.environ.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN')
     INBOUND_AUTO_REPLY_ENABLED = _env_bool('INBOUND_AUTO_REPLY_ENABLED', '1')
@@ -180,9 +181,6 @@ class Config:
     STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
     STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
     STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID')
-    
-    # Admin test phone for testing messages before full blast
-    ADMIN_TEST_PHONE = os.environ.get('ADMIN_TEST_PHONE')
     
     # Admin login credentials
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')

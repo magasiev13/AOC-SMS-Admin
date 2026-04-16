@@ -6,6 +6,7 @@ Run with: pytest tests/test_scheduled_messages.py -v
 import os
 import unittest
 import importlib
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
@@ -225,6 +226,69 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         db.session.expire_all()
         updated = db.session.get(ScheduledMessage, msg_id)
         self.assertEqual(updated.status, "processing")
+
+    def test_test_mode_uses_saved_snapshot_and_marks_log_as_test(self):
+        past_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Snapshot test message",
+            target="community",
+            scheduled_at=past_time,
+            status="pending",
+            test_mode=True,
+            test_recipient_selection_mode="one",
+            test_recipient_snapshot_json=json.dumps(
+                [{"phone": "+15550001111", "name": "Board Chair"}]
+            ),
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        mock_result = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15550001111", "status": "sent", "sid": "SMsnap-1"}],
+        }
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.return_value = mock_result
+            mock_twilio.return_value = mock_service
+
+            send_scheduled_messages(self.app)
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "sent")
+        log = db.session.get(MessageLog, updated.message_log_id)
+        self.assertTrue(log.test_mode)
+        mock_twilio.return_value.send_bulk.assert_called_once_with(
+            [{"phone": "+15550001111", "name": "Board Chair"}],
+            "Snapshot test message",
+            raise_on_transient=True,
+        )
+
+    def test_test_mode_without_snapshot_fails_clearly(self):
+        past_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Legacy test message",
+            target="community",
+            scheduled_at=past_time,
+            status="pending",
+            test_mode=True,
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            send_scheduled_messages(self.app)
+            mock_twilio.assert_not_called()
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "failed")
+        self.assertIn("predates saved test-recipient snapshots", updated.error_message)
 
     def test_transient_failure_requeues_with_backoff(self):
         """Transient provider failures should return message to pending with retry metadata."""

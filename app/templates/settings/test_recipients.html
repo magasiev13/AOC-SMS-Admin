@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}Test Recipients - {{ product_name }}{% endblock %}
+
+{% block page_title %}Test Recipients{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Test Recipients</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Back to Send
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-xl-8">
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+                    <div>
+                        <div class="text-muted small text-uppercase mb-1">Workspace testing</div>
+                        <h5 class="mb-1">Internal test recipients</h5>
+                        <p class="text-muted mb-0">
+                            These recipients are available in dashboard test mode for {{ organization.name }}.
+                            Staff can send to this list, but only owners can change it.
+                        </p>
+                    </div>
+                    <div class="text-muted small">
+                        <strong>{{ saved_recipient_count }}</strong> saved
+                        <span class="mx-1">·</span>
+                        Up to {{ max_test_recipients }}
+                    </div>
+                </div>
+
+                <form method="POST" id="testRecipientsForm" data-recipient-limit="{{ max_test_recipients }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="vstack gap-3" id="recipientRows">
+                        {% for row in recipient_rows %}
+                        <div class="border rounded-3 p-3 recipient-row">
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-5">
+                                    <label class="form-label" data-recipient-label="label">Label</label>
+                                    <input
+                                        class="form-control"
+                                        type="text"
+                                        data-recipient-field="label"
+                                        name="recipient_label[]"
+                                        maxlength="120"
+                                        value="{{ row.label }}"
+                                        placeholder="Board chair, IT admin, Ops lead"
+                                    >
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label" data-recipient-label="phone">Phone</label>
+                                    <input
+                                        class="form-control"
+                                        type="tel"
+                                        data-recipient-field="phone"
+                                        name="recipient_phone[]"
+                                        value="{{ row.phone }}"
+                                        placeholder="+15551234567"
+                                        inputmode="tel"
+                                    >
+                                </div>
+                                <div class="col-md-2 d-grid">
+                                    <button type="button" class="btn btn-outline-danger" data-remove-recipient>
+                                        <i class="bi bi-trash me-1"></i>Remove
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap mt-4">
+                        <div class="small text-muted">
+                            Save one recipient for a single-recipient test send, or multiple recipients for an owner-approved internal test list.
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-outline-secondary" id="addRecipientRowBtn">
+                                <i class="bi bi-plus-lg me-1"></i>Add Recipient
+                            </button>
+                            <button type="submit" class="btn btn-primary">
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-xl-4">
+        <div class="card app-card mb-4">
+            <div class="card-body">
+                <div class="text-muted small text-uppercase mb-2">How it works</div>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item px-0">
+                        Dashboard test mode sends only to this saved list.
+                    </li>
+                    <li class="list-group-item px-0">
+                        Scheduled test sends capture a snapshot at scheduling time.
+                    </li>
+                    <li class="list-group-item px-0">
+                        Platform admins have a separate operational test send outside this page.
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card app-card">
+            <div class="card-body">
+                <div class="text-muted small text-uppercase mb-2">Recent Changes</div>
+                {% if recent_test_recipient_audit_entries %}
+                <div class="vstack gap-3">
+                    {% for entry in recent_test_recipient_audit_entries %}
+                    {% set metadata = entry.metadata_payload %}
+                    <div class="border rounded-3 p-3">
+                        <div class="fw-semibold mb-1">
+                            {{ entry.actor_user.username if entry.actor_user else 'System' }}
+                        </div>
+                        <div class="small text-muted mb-2">
+                            {{ entry.created_at|localtime('%Y-%m-%d %H:%M') if entry.created_at else '-' }}
+                        </div>
+                        <div class="small">
+                            {{ metadata.get('before_count', 0) }} saved
+                            <span class="mx-1">→</span>
+                            {{ metadata.get('after_count', 0) }} saved
+                        </div>
+                        {% if metadata.get('after_phones') %}
+                        <div class="small text-muted mt-2">
+                            {{ metadata.get('after_phones')|join(', ') }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="small text-muted">
+                    No recipient changes have been recorded yet.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<template id="recipientRowTemplate">
+    <div class="border rounded-3 p-3 recipient-row">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label" data-recipient-label="label">Label</label>
+                <input class="form-control" type="text" data-recipient-field="label" name="recipient_label[]" maxlength="120" placeholder="Board chair, IT admin, Ops lead">
+            </div>
+            <div class="col-md-5">
+                <label class="form-label" data-recipient-label="phone">Phone</label>
+                <input class="form-control" type="tel" data-recipient-field="phone" name="recipient_phone[]" placeholder="+15551234567" inputmode="tel">
+            </div>
+            <div class="col-md-2 d-grid">
+                <button type="button" class="btn btn-outline-danger" data-remove-recipient>
+                    <i class="bi bi-trash me-1"></i>Remove
+                </button>
+            </div>
+        </div>
+    </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const testRecipientsForm = document.getElementById('testRecipientsForm');
+    const recipientRows = document.getElementById('recipientRows');
+    const addRecipientRowBtn = document.getElementById('addRecipientRowBtn');
+    const recipientRowTemplate = document.getElementById('recipientRowTemplate');
+    const recipientLimit = Number(testRecipientsForm?.dataset.recipientLimit || 25);
+
+    function refreshRecipientRowIds() {
+        recipientRows.querySelectorAll('.recipient-row').forEach((row, index) => {
+            const labelInput = row.querySelector('[data-recipient-field="label"]');
+            const phoneInput = row.querySelector('[data-recipient-field="phone"]');
+            const labelLabel = row.querySelector('[data-recipient-label="label"]');
+            const phoneLabel = row.querySelector('[data-recipient-label="phone"]');
+
+            if (labelInput && labelLabel) {
+                const labelId = `recipientLabel${index}`;
+                labelInput.id = labelId;
+                labelLabel.setAttribute('for', labelId);
+            }
+
+            if (phoneInput && phoneLabel) {
+                const phoneId = `recipientPhone${index}`;
+                phoneInput.id = phoneId;
+                phoneLabel.setAttribute('for', phoneId);
+            }
+        });
+    }
+
+    function wireRecipientRow(row) {
+        const removeButton = row.querySelector('[data-remove-recipient]');
+        if (!removeButton) {
+            return;
+        }
+        removeButton.addEventListener('click', function () {
+            const rows = recipientRows.querySelectorAll('.recipient-row');
+            if (rows.length <= 1) {
+                row.querySelectorAll('input').forEach((input) => {
+                    input.value = '';
+                });
+                refreshRecipientRowIds();
+                return;
+            }
+            row.remove();
+            refreshRecipientRowIds();
+        });
+    }
+
+    function addRecipientRow() {
+        const rows = recipientRows.querySelectorAll('.recipient-row');
+        if (rows.length >= recipientLimit) {
+            return;
+        }
+        const fragment = recipientRowTemplate.content.cloneNode(true);
+        const row = fragment.querySelector('.recipient-row');
+        wireRecipientRow(row);
+        recipientRows.appendChild(fragment);
+        refreshRecipientRowIds();
+    }
+
+    recipientRows.querySelectorAll('.recipient-row').forEach(wireRecipientRow);
+    refreshRecipientRowIds();
+    addRecipientRowBtn?.addEventListener('click', addRecipientRow);
+</script>
+{% endblock %}

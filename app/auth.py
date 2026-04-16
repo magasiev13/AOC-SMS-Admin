@@ -26,6 +26,7 @@ from app.services.auth_security_service import (
 )
 from app.services.billing_service import organization_can_send
 from app.services.security_alert_service import send_security_alert
+from app.services.test_recipient_service import seed_owner_test_recipient
 
 
 login_manager = LoginManager()
@@ -52,6 +53,7 @@ TENANT_ENDPOINT_PREFIXES = (
     "main.survey_flow",
     "main.survey_flows",
     "main.team_",
+    "main.test_recipients",
 )
 
 OWNER_SETUP_ALLOWED_ENDPOINTS = {
@@ -473,6 +475,8 @@ def signup():
             business_regions_json='["USA_AND_CANADA"]',
         )
         db.session.add_all([organization, user, membership, subscription, messaging_profile, onboarding])
+        db.session.flush()
+        seed_owner_test_recipient(organization.id, user)
         db.session.commit()
         return _complete_login(user, remember=True, client_ip=_get_client_ip())
 

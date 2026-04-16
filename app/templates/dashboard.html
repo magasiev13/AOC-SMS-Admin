@@ -227,16 +227,76 @@
                                     </div>
                                 </div>
 
-                                {% if admin_test_phone %}
+                                {% if config.SAAS_MODE %}
                                 <div class="mb-3">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
-                                        <label class="form-check-label" for="testMode">
-                                            <i class="bi bi-bug me-1"></i><strong>Test Mode</strong> - Send only to my phone ({{ admin_test_phone }})
-                                        </label>
+                                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
+                                            <label class="form-check-label" for="testMode">
+                                                <i class="bi bi-bug me-1"></i><strong>Test Mode</strong>
+                                            </label>
+                                            <div class="form-text">
+                                                Send to saved internal test recipients instead of the live audience.
+                                            </div>
+                                        </div>
+                                        <div class="text-muted small">
+                                            {% if current_user_is_workspace_owner %}
+                                            <a href="{{ url_for('main.test_recipients_settings') }}" class="btn btn-sm btn-outline-secondary">Manage test recipients</a>
+                                            {% elif saved_test_recipient_count %}
+                                            {{ saved_test_recipient_count }} saved test recipient{{ '' if saved_test_recipient_count == 1 else 's' }}
+                                            {% else %}
+                                            Owner setup required
+                                            {% endif %}
+                                        </div>
                                     </div>
-                                    <div class="form-text text-warning">
-                                        <i class="bi bi-exclamation-triangle me-1"></i>Uncheck to send to all recipients
+
+                                    <div class="border rounded-3 p-3 mt-3" id="testModeOptions" style="display: none;">
+                                        {% if saved_test_recipient_count > 0 %}
+                                        <div class="mb-3">
+                                            <div class="form-label mb-2">Test recipients</div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeOne" value="one" checked>
+                                                <label class="form-check-label" for="testRecipientModeOne">
+                                                    Send to one saved recipient
+                                                </label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeAll" value="all">
+                                                <label class="form-check-label" for="testRecipientModeAll">
+                                                    Send to all saved test recipients
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        {% if saved_test_recipient_count == 1 %}
+                                        <input type="hidden" name="test_recipient_phone" value="{{ saved_test_recipients[0].phone }}">
+                                        <div class="small text-muted" id="singleTestRecipientSummary">
+                                            Sending to <strong>{{ saved_test_recipients[0].display_label }}</strong>
+                                            <span class="ms-1"><code>{{ saved_test_recipients[0].phone }}</code></span>
+                                        </div>
+                                        {% else %}
+                                        <div class="mb-0" id="singleTestRecipientWrapper">
+                                            <label for="testRecipientPhone" class="form-label">Saved recipient</label>
+                                            <select class="form-select" id="testRecipientPhone" name="test_recipient_phone">
+                                                <option value="">-- Select a saved test recipient --</option>
+                                                {% for recipient in saved_test_recipients %}
+                                                <option value="{{ recipient.phone }}">
+                                                    {{ recipient.display_label }} · {{ recipient.phone }}
+                                                </option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        {% endif %}
+                                        {% else %}
+                                        <div class="small text-muted">
+                                            {% if current_user_is_workspace_owner %}
+                                            Add at least one internal test recipient before using test mode.
+                                            <a href="{{ url_for('main.test_recipients_settings') }}" class="ms-1">Open Test Recipients</a>
+                                            {% else %}
+                                            An owner must configure internal test recipients before staff can use test mode.
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
                                     </div>
                                 </div>
                                 {% endif %}
@@ -551,6 +611,12 @@
     const scheduleTime = document.getElementById('schedule_time');
     const clientTimezone = document.getElementById('client_timezone');
     const timezoneHint = document.getElementById('timezoneHint');
+    const testMode = document.getElementById('testMode');
+    const testModeOptions = document.getElementById('testModeOptions');
+    const testRecipientModeOne = document.getElementById('testRecipientModeOne');
+    const testRecipientModeAll = document.getElementById('testRecipientModeAll');
+    const testRecipientPhone = document.getElementById('testRecipientPhone');
+    const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
 
     function getCookieValue(name) {
         const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -619,11 +685,42 @@
         }
     }
 
+    function updateTestModeRecipientControls() {
+        if (!testModeOptions) {
+            return;
+        }
+        const selectingOneRecipient = testRecipientModeOne && testRecipientModeOne.checked;
+        if (singleTestRecipientWrapper) {
+            singleTestRecipientWrapper.style.display = selectingOneRecipient ? 'block' : 'none';
+        }
+        if (testRecipientPhone) {
+            testRecipientPhone.required = Boolean(testMode && testMode.checked && selectingOneRecipient);
+        }
+    }
+
+    function toggleTestModeOptions() {
+        if (!testMode || !testModeOptions) {
+            return;
+        }
+        testModeOptions.style.display = testMode.checked ? 'block' : 'none';
+        updateTestModeRecipientControls();
+    }
+
     targetEvent.addEventListener('change', toggleEventSelect);
     targetCommunity.addEventListener('change', toggleEventSelect);
     scheduleLater.addEventListener('change', toggleSchedule);
+    if (testMode) {
+        testMode.addEventListener('change', toggleTestModeOptions);
+    }
+    if (testRecipientModeOne) {
+        testRecipientModeOne.addEventListener('change', updateTestModeRecipientControls);
+    }
+    if (testRecipientModeAll) {
+        testRecipientModeAll.addEventListener('change', updateTestModeRecipientControls);
+    }
     toggleEventSelect();
     toggleSchedule();
+    toggleTestModeOptions();
 
     function setValidationError(message) {
         if (!sendFormError) {
@@ -643,6 +740,9 @@
         scheduleDate.classList.remove('is-invalid');
         scheduleTime.classList.remove('is-invalid');
         document.getElementById('event_id').classList.remove('is-invalid');
+        if (testRecipientPhone) {
+            testRecipientPhone.classList.remove('is-invalid');
+        }
         setValidationError('');
         if (sendFormStatus) {
             sendFormStatus.textContent = '';
@@ -675,6 +775,11 @@
                 errors.push('Schedule time is required when scheduling.');
                 scheduleTime.classList.add('is-invalid');
             }
+        }
+
+        if (testMode && testMode.checked && testRecipientPhone && testRecipientModeOne && testRecipientModeOne.checked && !testRecipientPhone.value) {
+            errors.push('Choose one saved test recipient before using test mode.');
+            testRecipientPhone.classList.add('is-invalid');
         }
 
         if (errors.length > 0) {
