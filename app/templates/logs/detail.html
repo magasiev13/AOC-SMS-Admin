@@ -35,6 +35,10 @@
                     
                     <dt>Target</dt>
                     <dd>
+                        {% if log.test_mode %}
+                        <span class="badge bg-warning text-dark mb-1">Test</span>
+                        <br>
+                        {% endif %}
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
                             {{ log.target }}
                         </span>

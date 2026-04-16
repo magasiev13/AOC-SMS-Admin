@@ -17,6 +17,8 @@ REQUIRED_TABLES = (
     "organization_memberships",
     "organization_subscriptions",
     "organization_messaging_profiles",
+    "organization_test_recipients",
+    "organization_settings_audit_logs",
     "organization_provider_audit_logs",
     "messaging_usage_records",
     "organization_usage_billing_periods",

@@ -32,6 +32,8 @@ from app.services.twilio_service import (
     _master_client,
     _record_provider_audit,
     _twilio_inbound_webhook_url,
+    customer_managed_activation_complete,
+    customer_managed_activation_state,
     ensure_messaging_profile,
     finalize_sender_setup,
     provision_org,
@@ -3689,16 +3691,28 @@ def describe_a2p_onboarding(
             if status_payload.get("phone_number_sid")
             else profile.phone_number_sid
         )
-        if can_send or (
+        activation_complete = customer_managed_activation_complete(onboarding, profile=profile)
+        activation_state = customer_managed_activation_state(onboarding, profile=profile)
+        approved_externally = (
             brand_status in A2P_BRAND_APPROVED_STATUSES
             and campaign_status in A2P_CAMPAIGN_APPROVED_STATUSES
-        ):
+        )
+        if can_send or activation_complete:
             stage = "approved"
             badge = "success"
-            title = "External A2P approved"
-            summary = "This workspace uses a customer-managed Twilio account with an approved external brand and campaign."
-            next_step = "Keep A2P and messaging compliance managed in the customer Twilio account."
+            title = "External Twilio active"
+            summary = "This workspace uses a customer-managed Twilio account and Twinevia is already the live inbound destination."
+            next_step = "Keep A2P, sender compliance, and Messaging Service ownership managed in the customer Twilio account."
             eta = "Ready immediately."
+        elif approved_externally:
+            stage = "activation_pending"
+            badge = "warning text-dark"
+            title = "External Twilio approved, activation pending"
+            summary = (
+                "Twilio shows an approved external brand and campaign, but Twinevia has not taken over inbound routing yet."
+            )
+            next_step = "Run Activate External Twilio when you are ready to move the inbound webhook and event-stream sync into Twinevia."
+            eta = "Ready after activation."
         elif failure_reason or (
             brand_status in A2P_BRAND_FAILURE_STATUSES
             or campaign_status in A2P_CAMPAIGN_FAILURE_STATUSES
@@ -3740,11 +3754,12 @@ def describe_a2p_onboarding(
             "last_checked_at": onboarding.last_synced_at if onboarding is not None else profile.provider_last_checked_at,
             "has_submission": bool(campaign_sid or messaging_service_sid or phone_number_sid),
             "is_waiting": stage == "reviewing",
-            "show_wait_state": stage in {"reviewing", "needs_action"} and not can_send,
+            "show_wait_state": stage in {"reviewing", "needs_action", "activation_pending"} and not can_send,
             "event_streams_enabled": a2p_event_streams_enabled(),
             "external_managed": True,
             "campaign_sid": campaign_sid,
             "console_campaign_id": console_campaign_id,
+            "activation_state": activation_state,
             "brand_registration_sid": (
                 status_payload.get("brand_registration_sid")
                 if status_payload.get("brand_registration_sid")

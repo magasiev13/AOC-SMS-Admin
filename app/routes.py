@@ -94,8 +94,19 @@ from app.services.recipient_service import (
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
 )
+from app.services.test_recipient_service import (
+    TEST_RECIPIENT_MAX_COUNT,
+    build_test_recipient_snapshot,
+    count_test_recipients,
+    normalize_test_recipient_selection_mode,
+    recent_test_recipient_audit_entries,
+    replace_test_recipients,
+    seed_owner_test_recipient,
+    test_recipient_view_rows,
+)
 from app.services.twilio_service import validate_inbound_signature_detailed
 from app.services.twilio_a2p_service import (
+    a2p_event_streams_enabled,
     a2p_business_industry_choices,
     a2p_business_region_choices,
     a2p_business_type_choices,
@@ -118,14 +129,18 @@ from app.services.twilio_a2p_service import (
     _record_observed_identifier_drift,
 )
 from app.services.twilio_service import (
+    customer_managed_activation_complete,
+    customer_managed_activation_state,
     ensure_messaging_profile,
     finalize_sender_setup,
     ProviderProvisioningError,
     provision_org,
     release_sender,
+    rollback_customer_managed_profile,
     resolve_number_strategy,
     resolve_messaging_profile,
     resume_org,
+    send_operational_test_message,
     save_service_address_from_app_input,
     save_customer_managed_profile,
     suspend_org,
@@ -166,7 +181,7 @@ def _normalize_org_messaging_values(
     messaging_service_sid: str | None,
 ) -> tuple[str | None, str | None]:
     normalized_sender = normalize_phone(sender_number) if sender_number else None
-    normalized_service_sid = messaging_service_sid.strip().upper() if messaging_service_sid else None
+    normalized_service_sid = messaging_service_sid.strip() if messaging_service_sid else None
     return normalized_sender or None, normalized_service_sid or None
 
 def _messaging_profile_status(
@@ -353,7 +368,7 @@ def _validate_org_messaging_profile_input(
     if sender_number and not validate_phone(normalized_sender):
         return 'Dedicated sender number must be a valid E.164 phone number.', None, None
 
-    if normalized_service_sid and not normalized_service_sid.startswith('MG'):
+    if normalized_service_sid and not normalized_service_sid.upper().startswith('MG'):
         return 'Twilio Messaging Service SID must start with MG.', None, None
 
     if normalized_sender:
@@ -362,17 +377,23 @@ def _validate_org_messaging_profile_input(
             return 'That sender number is already assigned to another organization.', None, None
 
     if normalized_service_sid:
-        duplicate_service = OrganizationMessagingProfile.query.filter_by(
-            messaging_service_sid=normalized_service_sid
+        duplicate_service = OrganizationMessagingProfile.query.filter(
+            func.upper(OrganizationMessagingProfile.messaging_service_sid) == normalized_service_sid.upper()
         ).first()
         if duplicate_service and (existing_profile is None or duplicate_service.organization_id != existing_profile.organization_id):
             return 'That Twilio Messaging Service SID is already assigned to another organization.', None, None
 
     inbound_identity = normalized_sender or normalized_service_sid
     if inbound_identity:
-        duplicate_inbound_identity = OrganizationMessagingProfile.query.filter_by(
-            inbound_identity=inbound_identity
-        ).first()
+        duplicate_inbound_identity_query = OrganizationMessagingProfile.query
+        if normalized_sender:
+            duplicate_inbound_identity = duplicate_inbound_identity_query.filter_by(
+                inbound_identity=inbound_identity
+            ).first()
+        else:
+            duplicate_inbound_identity = duplicate_inbound_identity_query.filter(
+                func.upper(OrganizationMessagingProfile.inbound_identity) == inbound_identity.upper()
+            ).first()
         if duplicate_inbound_identity and (
             existing_profile is None
             or duplicate_inbound_identity.organization_id != existing_profile.organization_id
@@ -410,6 +431,9 @@ def _customer_managed_auth_token_for_save(
 def _sync_customer_managed_onboarding_state(
     organization: Organization,
     validation_result,
+    *,
+    bind_inbound_webhook: bool = False,
+    activation_complete: bool = False,
 ) -> None:
     onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
     campaign_status = (validation_result.campaign_status or "").strip().lower() or None
@@ -417,7 +441,8 @@ def _sync_customer_managed_onboarding_state(
     failure_reason = (validation_result.campaign_failure_reason or "").strip() or None
     failure_code = (validation_result.campaign_failure_code or "").strip() or None
 
-    onboarding.raw_status_json = json.dumps(
+    status_payload = _json_dict(onboarding.raw_status_json)
+    status_payload.update(
         {
             "external_managed": True,
             "provider_mode": "customer_managed",
@@ -431,13 +456,30 @@ def _sync_customer_managed_onboarding_state(
             "campaign_failure_code": failure_code,
             "brand_registration_sid": validation_result.brand_registration_sid,
             "brand_status": validation_result.brand_status,
-        },
-        sort_keys=True,
+        }
     )
-    onboarding.campaign_sid = validation_result.campaign_sid or onboarding.campaign_sid
-    onboarding.brand_registration_sid = (
-        validation_result.brand_registration_sid or onboarding.brand_registration_sid
-    )
+    activation_payload = status_payload.get("customer_managed_activation")
+    if not isinstance(activation_payload, dict):
+        activation_payload = {}
+    activation_payload["validation_completed"] = True
+    activation_payload["validated_at"] = utc_now().isoformat()
+    activation_payload["phone_number_sid"] = validation_result.phone_number_sid
+    if bind_inbound_webhook:
+        activation_payload["activation_completed"] = activation_complete
+        activation_payload["activation_state"] = "active" if activation_complete else "validating_cutover"
+        activation_payload["activated_at"] = utc_now().isoformat() if activation_complete else activation_payload.get("activated_at")
+        activation_payload["pre_activation_phone_sms_url"] = validation_result.current_phone_sms_url
+        activation_payload["pre_activation_phone_sms_method"] = validation_result.current_phone_sms_method
+        activation_payload["pre_activation_service_use_inbound_webhook_on_number"] = (
+            validation_result.current_service_use_inbound_webhook_on_number
+        )
+    elif not activation_complete:
+        activation_payload["activation_completed"] = False
+        activation_payload["activation_state"] = "validated"
+    status_payload["customer_managed_activation"] = activation_payload
+    onboarding.raw_status_json = json.dumps(status_payload, sort_keys=True)
+    # Customer-managed Twilio state is stored in raw_status_json so externally owned
+    # identifiers do not collide with platform-managed unique constraints.
     onboarding.campaign_status = campaign_status or onboarding.campaign_status or "approved"
     onboarding.brand_status = brand_status or onboarding.brand_status or "approved"
     onboarding.last_synced_at = utc_now()
@@ -454,6 +496,27 @@ def _sync_customer_managed_onboarding_state(
         onboarding.onboarding_status = "pending"
         onboarding.last_error = None
         onboarding.failure_code = None
+
+
+def _customer_managed_validation_preserves_activation(
+    messaging_profile: OrganizationMessagingProfile,
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    twilio_account_sid: str | None,
+    sender_number: str | None,
+    messaging_service_sid: str | None,
+) -> bool:
+    if not customer_managed_activation_complete(onboarding, profile=messaging_profile):
+        return False
+    normalized_sender, normalized_service_sid = _normalize_org_messaging_values(
+        sender_number,
+        messaging_service_sid,
+    )
+    return (
+        ((twilio_account_sid or "").strip().upper() or None) == ((messaging_profile.twilio_account_sid or "").strip().upper() or None)
+        and normalized_sender == messaging_profile.from_number
+        and ((normalized_service_sid or "").upper() or None) == ((messaging_profile.messaging_service_sid or "").upper() or None)
+    )
 
 
 def _remove_env_key_in_place(env_path: str, key: str) -> bool | None:
@@ -1053,6 +1116,14 @@ def _current_organization() -> Organization | None:
     if not organization_id:
         return None
     return db.session.get(Organization, organization_id)
+
+
+def _current_user_is_workspace_owner() -> bool:
+    return bool(
+        saas_mode_enabled()
+        and not getattr(current_user, 'is_platform_admin', False)
+        and getattr(current_user, 'organization_role', None) == 'owner'
+    )
 
 
 def _current_subscription() -> OrganizationSubscription | None:
@@ -2666,6 +2737,26 @@ def _parse_message_log_details(raw_details: str | None) -> list[dict]:
     return [dict(item) for item in candidates if isinstance(item, dict)]
 
 
+def _message_log_details_payload_is_valid(raw_details: str | None) -> bool:
+    if not raw_details:
+        return True
+
+    try:
+        payload = json.loads(raw_details)
+    except json.JSONDecodeError:
+        return False
+
+    if isinstance(payload, list):
+        return True
+
+    if not isinstance(payload, dict):
+        return False
+
+    nested = payload.get('details')
+    results = payload.get('results')
+    return isinstance(nested, list) or isinstance(results, list)
+
+
 def _survey_form_events() -> list[Event]:
     return Event.query.order_by(Event.date.desc(), Event.title.asc()).all()
 
@@ -2767,7 +2858,6 @@ def dashboard():
     client_timezone = unquote(client_timezone_raw).strip() if client_timezone_raw else ''
     dashboard_timezone = client_timezone or app_timezone
     events = Event.query.order_by(Event.date.desc()).all()
-    admin_test_phone = current_app.config.get('ADMIN_TEST_PHONE')
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""
@@ -2885,6 +2975,7 @@ def dashboard():
         staff_membership_count = 0
         pending_staff_invitation_count = 0
         users_missing_email = []
+        saved_test_recipients = []
         if organization is not None:
             staff_membership_count = (
                 OrganizationMembership.query
@@ -2904,6 +2995,8 @@ def dashboard():
                 .order_by(AppUser.username.asc())
                 .all()
             )
+            if saas_mode_enabled():
+                saved_test_recipients = test_recipient_view_rows(organization.id)
         team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
         workspace_activation_tasks = _workspace_activation_tasks(
             subscription_view=subscription_view,
@@ -2945,6 +3038,9 @@ def dashboard():
             'can_send_messages': can_send_messages,
             'send_disabled_reason': send_disabled_reason,
             'users_missing_email': users_missing_email,
+            'saved_test_recipients': saved_test_recipients,
+            'saved_test_recipient_count': len(saved_test_recipients),
+            'current_user_is_workspace_owner': _current_user_is_workspace_owner(),
             'dashboard_is_empty': (
                 total_recipients == 0
                 and latest_log is None
@@ -2962,7 +3058,6 @@ def dashboard():
         return render_template(
             'dashboard.html',
             events=events,
-            admin_test_phone=admin_test_phone,
             app_timezone=app_timezone,
             **build_dashboard_context()
         )
@@ -2978,11 +3073,17 @@ def dashboard():
         target = request.form.get('target', 'community')
         event_id = request.form.get('event_id', type=int)
         test_mode = request.form.get('test_mode') == 'on'
+        test_recipient_selection_mode = normalize_test_recipient_selection_mode(
+            request.form.get('test_recipient_selection_mode')
+        )
+        test_recipient_phone = request.form.get('test_recipient_phone', '').strip()
         include_unsubscribe = request.form.get('include_unsubscribe') == 'on'
         schedule_later = request.form.get('schedule_later') == 'on'
         schedule_date = request.form.get('schedule_date', '').strip()
         schedule_time = request.form.get('schedule_time', '').strip()
         client_timezone = request.form.get('client_timezone', '').strip()
+        test_recipient_snapshot_json = None
+        test_recipient_data = None
         
         if not message_body:
             flash('Message body is required.', 'error')
@@ -3001,6 +3102,32 @@ def dashboard():
         if target == 'event' and not event_id:
             flash('Please select an event.', 'error')
             return render_dashboard()
+
+        if test_mode:
+            if not saas_mode_enabled():
+                flash('Test mode is only available in Twinevia SaaS workspaces.', 'error')
+                return render_dashboard()
+            try:
+                (
+                    test_recipient_selection_mode,
+                    test_recipient_snapshot_json,
+                    test_recipient_data,
+                ) = build_test_recipient_snapshot(
+                    _current_organization_id(),
+                    selection_mode=test_recipient_selection_mode,
+                    selected_phone=test_recipient_phone,
+                )
+            except ValueError as exc:
+                if 'No saved test recipients' in str(exc):
+                    flash(
+                        'Add at least one internal test recipient before using test mode.'
+                        if _current_user_is_workspace_owner()
+                        else 'An owner must configure at least one internal test recipient before staff can use test mode.',
+                        'error',
+                    )
+                else:
+                    flash(str(exc), 'error')
+                return render_dashboard()
         
         # Handle scheduled message
         if schedule_later:
@@ -3039,7 +3166,13 @@ def dashboard():
                     target=target,
                     event_id=event_id if target == 'event' else None,
                     scheduled_at=scheduled_utc,
-                    test_mode=test_mode
+                    test_mode=test_mode,
+                    test_recipient_selection_mode=(
+                        test_recipient_selection_mode if test_mode else None
+                    ),
+                    test_recipient_snapshot_json=(
+                        test_recipient_snapshot_json if test_mode else None
+                    ),
                 )
                 db.session.add(scheduled)
                 db.session.commit()
@@ -3052,12 +3185,8 @@ def dashboard():
                 return render_dashboard()
         
         # Immediate send
-        # Test mode: send only to admin phone
         if test_mode:
-            if not admin_test_phone:
-                flash('ADMIN_TEST_PHONE not configured. Add it to your .env file.', 'error')
-                return render_dashboard()
-            recipient_data = [{'phone': admin_test_phone, 'name': 'Admin Test'}]
+            recipient_data = test_recipient_data or []
         else:
             # Get recipients based on target
             if target == 'community':
@@ -3078,7 +3207,7 @@ def dashboard():
         
         if not recipient_data:
             if test_mode:
-                flash('No recipients found for the selected target.', 'error')
+                flash('No internal test recipients were resolved for this test send.', 'error')
             else:
                 flash('All recipients are unsubscribed or no recipients were found.', 'error')
             return render_dashboard()
@@ -3107,6 +3236,7 @@ def dashboard():
             target=target,
             event_id=event_id if target == 'event' else None,
             status='processing',
+            test_mode=test_mode,
             total_recipients=len(recipient_data),
             success_count=0,
             failure_count=0,
@@ -3282,7 +3412,8 @@ def users_edit(user_id):
         if not username:
             flash('Username is required.', 'error')
             return render_template('users/form.html', user=user)
-        if saas_mode_enabled() and not email:
+        email_required = saas_mode_enabled() and (bool(user.email) or user.is_platform_admin)
+        if email_required and not email:
             flash('Email is required in SaaS mode.', 'error')
             return render_template('users/form.html', user=user)
 
@@ -3639,6 +3770,72 @@ def security_contact():
     return render_template('auth/security_contact.html')
 
 
+@bp.route('/settings/test-recipients', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def test_recipients_settings():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+    if not _current_user_is_workspace_owner():
+        abort(403)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    def _raw_form_rows() -> list[dict[str, str]]:
+        labels = request.form.getlist('recipient_label[]')
+        phones = request.form.getlist('recipient_phone[]')
+        total_rows = max(len(labels), len(phones))
+        rows = []
+        for index in range(total_rows):
+            rows.append(
+                {
+                    'label': labels[index].strip() if index < len(labels) else '',
+                    'phone': phones[index].strip() if index < len(phones) else '',
+                }
+            )
+        return rows
+
+    def render_page(*, form_rows: list[dict[str, str]] | None = None):
+        current_rows = form_rows if form_rows is not None else [
+            {
+                'label': row['label'],
+                'phone': row['phone'],
+            }
+            for row in test_recipient_view_rows(organization.id)
+        ]
+        if not current_rows:
+            current_rows = [{'label': '', 'phone': ''}]
+        return render_template(
+            'settings/test_recipients.html',
+            organization=organization,
+            recipient_rows=current_rows,
+            saved_recipient_count=count_test_recipients(organization.id),
+            max_test_recipients=TEST_RECIPIENT_MAX_COUNT,
+            recent_test_recipient_audit_entries=recent_test_recipient_audit_entries(organization.id),
+        )
+
+    if request.method == 'POST':
+        submitted_rows = _raw_form_rows()
+        try:
+            replace_test_recipients(
+                organization.id,
+                submitted_rows,
+                actor_user_id=current_user.id,
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return render_page(form_rows=submitted_rows)
+
+        flash('Internal test recipients updated.', 'success')
+        return redirect(url_for('main.test_recipients_settings'))
+
+    return render_page()
+
+
 @bp.route('/platform/organizations')
 @login_required
 def platform_organizations_list():
@@ -3965,6 +4162,7 @@ def platform_organizations_messaging_edit(organization_id):
         current_profile = organization.messaging_profile or messaging_profile
         current_onboarding = organization.a2p_onboarding
         a2p_status = _a2p_status_view(current_onboarding, current_profile)
+        customer_managed_active = current_profile.provider_mode == 'customer_managed'
         return render_template(
             'platform/organization_messaging_form.html',
             organization=organization,
@@ -3979,6 +4177,17 @@ def platform_organizations_messaging_edit(organization_id):
             ),
             number_strategy_choices=a2p_number_strategy_choices(),
             provider_activity_entries=_provider_activity_timeline(organization.id),
+            customer_managed_activation_state=(
+                customer_managed_activation_state(current_onboarding, profile=current_profile)
+                if customer_managed_active
+                else None
+            ),
+            customer_managed_activation_complete=(
+                customer_managed_activation_complete(current_onboarding, profile=current_profile)
+                if customer_managed_active
+                else False
+            ),
+            platform_test_send_ready=_organization_can_transmit_messages(organization),
         )
 
     if request.method == 'POST':
@@ -4023,6 +4232,109 @@ def platform_organizations_messaging_edit(organization_id):
                         'error',
                     )
                 return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'activate_customer_managed':
+                if messaging_profile.provider_mode != 'customer_managed':
+                    raise ProviderProvisioningError(
+                        'Customer-managed activation is only available for customer-managed workspaces.'
+                    )
+                if not messaging_profile.twilio_account_sid or not messaging_profile.from_number:
+                    raise ProviderProvisioningError(
+                        'Validate the external Twilio account, sender, and Messaging Service before activation.'
+                    )
+                if messaging_profile.sender_review_status != 'approved':
+                    raise ProviderProvisioningError(
+                        'Twilio must show an approved external brand and campaign before activation can move inbound routing.'
+                    )
+
+                activation_bound = False
+                try:
+                    stored_auth_token = _customer_managed_auth_token_for_save(
+                        messaging_profile,
+                        requested_account_sid=messaging_profile.twilio_account_sid,
+                        raw_auth_token="",
+                    )
+                    if not stored_auth_token:
+                        raise ProviderProvisioningError(
+                            'A stored Twilio auth token is required before activation can continue.'
+                        )
+                    messaging_profile, validation_result = save_customer_managed_profile(
+                        organization.id,
+                        twilio_account_sid=messaging_profile.twilio_account_sid,
+                        twilio_auth_token=stored_auth_token,
+                        from_number=messaging_profile.from_number or '',
+                        messaging_service_sid=messaging_profile.messaging_service_sid,
+                        business_type=messaging_profile.business_type,
+                        use_case=messaging_profile.use_case,
+                        actor_user_id=current_user.id,
+                        bind_inbound_webhook=True,
+                        activation_complete=False,
+                    )
+                    activation_bound = True
+                    _sync_customer_managed_onboarding_state(
+                        organization,
+                        validation_result,
+                        bind_inbound_webhook=True,
+                        activation_complete=False,
+                    )
+                    db.session.flush()
+                    ensure_a2p_event_stream_subscription(organization, messaging_profile)
+                    if a2p_event_streams_enabled() and messaging_profile.event_stream_status == 'error':
+                        raise ProviderProvisioningError(
+                            messaging_profile.event_stream_error
+                            or 'Twilio Event Streams could not be configured for this customer-managed workspace.'
+                        )
+                    messaging_profile.set_provider_status('active')
+                    messaging_profile.sender_review_status = 'approved'
+                    messaging_profile.consent_acknowledged_at = messaging_profile.consent_acknowledged_at or utc_now()
+                    messaging_profile.provider_last_checked_at = utc_now()
+                    messaging_profile.last_provision_error = None
+                    _sync_customer_managed_onboarding_state(
+                        organization,
+                        validation_result,
+                        bind_inbound_webhook=True,
+                        activation_complete=True,
+                    )
+                    db.session.commit()
+                except ProviderProvisioningError as exc:
+                    if activation_bound:
+                        try:
+                            rollback_customer_managed_profile(organization.id, actor_user_id=current_user.id)
+                        except ProviderProvisioningError:
+                            current_app.logger.warning(
+                                'Automatic rollback failed for customer-managed activation organization_id=%s.',
+                                organization.id,
+                                exc_info=True,
+                            )
+                    flash(
+                        'Customer-managed activation failed before Twinevia could safely take over inbound routing. '
+                        f'{exc}',
+                        'error',
+                    )
+                    return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+
+                flash('Customer-managed Twilio activated and inbound routing now points at Twinevia.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'rollback_customer_managed':
+                if messaging_profile.provider_mode != 'customer_managed':
+                    raise ProviderProvisioningError(
+                        'Customer-managed rollback is only available for customer-managed workspaces.'
+                    )
+                rollback_customer_managed_profile(organization.id, actor_user_id=current_user.id)
+                flash('Customer-managed inbound routing was restored to the pre-activation destination.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+            if action == 'platform_test_send':
+                if not _organization_can_transmit_messages(organization):
+                    raise ProviderProvisioningError(
+                        'This organization is not ready for a live operational test send yet.'
+                    )
+                send_operational_test_message(
+                    organization.id,
+                    to_number=request.form.get('platform_test_phone', ''),
+                    body=request.form.get('platform_test_body', ''),
+                    actor_user_id=current_user.id,
+                )
+                flash('Platform operational test send completed.', 'success')
+                return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
         except ProviderProvisioningError as exc:
             flash(str(exc), 'error')
             return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
@@ -4057,6 +4369,13 @@ def platform_organizations_messaging_edit(organization_id):
                 flash('Twilio auth token is required to validate customer-managed providers.', 'error')
                 return render_page()
             try:
+                preserve_activation = _customer_managed_validation_preserves_activation(
+                    messaging_profile,
+                    organization.a2p_onboarding,
+                    twilio_account_sid=twilio_account_sid,
+                    sender_number=normalized_sender,
+                    messaging_service_sid=normalized_service_sid,
+                )
                 messaging_profile, validation_result = save_customer_managed_profile(
                     organization.id,
                     twilio_account_sid=twilio_account_sid,
@@ -4066,14 +4385,18 @@ def platform_organizations_messaging_edit(organization_id):
                     business_type=business_type,
                     use_case=use_case,
                     actor_user_id=current_user.id,
+                    activation_complete=preserve_activation,
                 )
-                ensure_a2p_event_stream_subscription(organization, messaging_profile)
-                _sync_customer_managed_onboarding_state(organization, validation_result)
+                _sync_customer_managed_onboarding_state(
+                    organization,
+                    validation_result,
+                    activation_complete=preserve_activation,
+                )
                 db.session.commit()
             except ProviderProvisioningError as exc:
                 flash(str(exc), 'error')
                 return render_page()
-            flash('Customer-managed Twilio settings validated and synced.', 'success')
+            flash('Customer-managed Twilio settings validated. Inbound routing is unchanged until activation.', 'success')
             return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
 
         if not messaging_profile.messaging_service_sid:
@@ -4347,6 +4670,8 @@ def invitation_accept(token):
         db.session.add(membership)
         invitation.status = 'accepted'
         invitation.accepted_at = utc_now()
+        if invitation.role == 'owner':
+            seed_owner_test_recipient(invitation.organization_id, user)
         db.session.commit()
 
         session.clear()
@@ -5389,7 +5714,7 @@ def log_detail(log_id):
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)
-    if log.details and not details:
+    if log.details and not details and not _message_log_details_payload_is_valid(log.details):
         current_app.logger.warning(
             'MessageLog details payload unusable for log_id=%s.',
             log_id,

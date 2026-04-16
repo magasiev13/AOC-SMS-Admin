@@ -175,12 +175,13 @@ Operational note:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ADMIN_TEST_PHONE` | unset | Test-mode send target. |
 | `ADMIN_USERNAME` | `admin` | Bootstrap admin username. |
 | `ADMIN_EMAIL` | unset | Optional bootstrap email. |
 | `ADMIN_PASSWORD` | unset | Required for first admin bootstrap in legacy production and for first SaaS platform-admin provisioning. |
 | `TWINEVIA_SAAS_ENV_FILE` | unset | Optional SaaS-specific env-file override used when production password changes remove bootstrap `ADMIN_PASSWORD`. |
 | `PLAYWRIGHT_ARTIFACT_DIR` | empty | Overrides browser artifact output location. |
+
+Workspace test recipients are tenant-scoped data managed from the Twinevia UI, not a server-level environment variable.
 
 Compatibility note:
 

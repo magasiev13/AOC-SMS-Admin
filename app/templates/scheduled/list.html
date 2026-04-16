@@ -137,7 +137,12 @@
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
                     <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
-                    <div class="text-muted small">{{ msg.target }}</div>
+                    <div class="text-muted small">
+                        {% if msg.test_mode %}
+                        <span class="badge bg-warning text-dark me-1">Test</span>
+                        {% endif %}
+                        {{ msg.target }}
+                    </div>
                     <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
@@ -264,8 +269,10 @@
                         <span class="badge bg-secondary">Cancelled</span>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ 'Community' if msg.target == 'community' else 'Event' }}">
-                        {% if msg.target == 'community' %}
+                    <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
+                        {% if msg.test_mode %}
+                        <span class="badge bg-warning text-dark">Test</span>
+                        {% elif msg.target == 'community' %}
                         <span class="badge bg-primary">Community</span>
                         {% else %}
                         <span class="badge bg-info">Event</span>
@@ -313,7 +320,14 @@
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
                     <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
-                    <div class="text-muted small">{{ msg.status|capitalize }} · {{ msg.target }}</div>
+                    <div class="text-muted small">
+                        {{ msg.status|capitalize }}
+                        <span class="mx-1">·</span>
+                        {% if msg.test_mode %}
+                        <span class="badge bg-warning text-dark me-1">Test</span>
+                        {% endif %}
+                        {{ msg.target }}
+                    </div>
                     <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
@@ -345,7 +359,13 @@
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Scheduled:</strong> {{ msg.scheduled_at|localtime }}</p>
-            <p class="mb-2"><strong>Target:</strong> {{ msg.target }}</p>
+            <p class="mb-2">
+                <strong>Target:</strong>
+                {% if msg.test_mode %}
+                <span class="badge bg-warning text-dark ms-1">Test</span>
+                {% endif %}
+                <span class="ms-1">{{ msg.target }}</span>
+            </p>
             <p class="mb-0"><strong>Message:</strong> {{ msg.message_body }}</p>
         </div>
     </div>

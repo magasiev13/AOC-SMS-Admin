@@ -71,7 +71,11 @@
                 {% set target_sort = target_label ~ (': ' ~ log.event.title if log.event else '') %}
                 <tr>
                     <td data-sort-value="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ log.created_at|localtime }}</td>
-                    <td data-sort-value="{{ target_sort }}">
+                    <td data-sort-value="{{ ('Test: ' if log.test_mode else '') ~ target_sort }}">
+                        {% if log.test_mode %}
+                        <span class="badge bg-warning text-dark mb-1">Test</span>
+                        <br>
+                        {% endif %}
                         <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
                             {{ log.target }}
                         </span>
@@ -145,6 +149,9 @@
                     <div>
                         <h6 class="mb-1">{{ log.created_at|localtime }}</h6>
                         <div class="text-muted small">
+                            {% if log.test_mode %}
+                            <span class="badge bg-warning text-dark me-1">Test</span>
+                            {% endif %}
                             {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
                         </div>
                         <div class="mt-1">

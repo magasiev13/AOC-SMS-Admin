@@ -510,3 +510,104 @@ class TestLegacyImportService(unittest.TestCase):
                 )
 
             self.assertIn("Message SID conflict importing legacy inbox message 'SMlegacy0001'", str(ctx.exception))
+
+    def test_sync_legacy_sqlite_snapshot_into_existing_org_supports_dry_run_and_apply(self) -> None:
+        from app import create_app, db
+        from app.models import AppUser, CommunityMember, InboxMessage, InboxThread, MessageLog, Organization
+        from app.services.legacy_import_service import (
+            import_legacy_sqlite_snapshot_into_new_org,
+            sync_legacy_sqlite_snapshot_into_existing_org,
+        )
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        with app.app_context():
+            import_legacy_sqlite_snapshot_into_new_org(
+                legacy_db_path=self.legacy_db_path,
+                organization_name="AOC",
+                organization_slug="aoc",
+                subscription_status="complimentary",
+                provider_mode="customer_managed",
+                username_remaps={"magasiev13": "magasiev-aoc"},
+            )
+
+            with sqlite3.connect(self.legacy_db_path) as connection:
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = 'pbkdf2:sha256:1$sync$hash', must_change_password = 1
+                    WHERE username = 'kfolyan'
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO community_members (id, name, phone, created_at)
+                    VALUES (2, 'Client Two', '+15551110002', '2025-02-20 09:00:00')
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO unsubscribed_contacts (id, name, phone, reason, source, created_at)
+                    VALUES (2, 'Opted Out Again', '+15553330002', 'STOP', 'inbound', '2025-02-20 10:00:00')
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO message_logs (id, created_at, message_body, target, event_id, status, total_recipients, success_count, failure_count, details)
+                    VALUES (2, '2025-02-20 11:00:00', 'Second legacy message', 'community', NULL, 'sent', 1, 1, 0, '[]')
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO inbox_threads (id, phone, contact_name, unread_count, last_message_at, last_message_preview, last_direction, created_at, updated_at)
+                    VALUES (2, '+15554440002', 'Second Inbox Contact', 0, '2025-02-20 12:00:00', 'Follow up', 'outbound', '2025-02-20 12:00:00', '2025-02-20 12:01:00')
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO inbox_messages (id, thread_id, phone, direction, body, message_sid, automation_source, automation_source_id, matched_keyword, delivery_status, delivery_error, raw_payload, created_at)
+                    VALUES (2, 2, '+15554440002', 'outbound', 'Follow up', 'SMlegacy0002', NULL, NULL, NULL, 'sent', NULL, '{"Body":"Follow up"}', '2025-02-20 12:00:00')
+                    """
+                )
+                connection.commit()
+
+            organization = Organization.query.filter_by(slug="aoc").one()
+            imported_user = AppUser.query.filter_by(username="kfolyan").one()
+            original_password_hash = imported_user.password_hash
+
+            dry_run_summary = sync_legacy_sqlite_snapshot_into_existing_org(
+                legacy_db_path=self.legacy_db_path,
+                organization_slug="aoc",
+                username_remaps={"magasiev13": "magasiev-aoc"},
+                dry_run=True,
+            )
+
+            self.assertTrue(dry_run_summary["dry_run"])
+            self.assertEqual(dry_run_summary["target_counts_before"]["community_members"], 1)
+            self.assertEqual(dry_run_summary["target_counts_after"]["community_members"], 2)
+            self.assertEqual(dry_run_summary["target_counts_after"]["unsubscribed_contacts"], 2)
+            self.assertEqual(dry_run_summary["target_counts_after"]["message_logs"], 2)
+            self.assertEqual(dry_run_summary["target_counts_after"]["inbox_threads"], 2)
+            self.assertEqual(dry_run_summary["target_counts_after"]["inbox_messages"], 2)
+            self.assertEqual(CommunityMember.query.filter_by(organization_id=organization.id).count(), 1)
+            self.assertEqual(MessageLog.query.filter_by(organization_id=organization.id).count(), 1)
+            self.assertEqual(InboxThread.query.filter_by(organization_id=organization.id).count(), 1)
+            self.assertEqual(InboxMessage.query.filter_by(organization_id=organization.id).count(), 1)
+            db.session.expire_all()
+            self.assertEqual(AppUser.query.filter_by(username="kfolyan").one().password_hash, original_password_hash)
+
+            apply_summary = sync_legacy_sqlite_snapshot_into_existing_org(
+                legacy_db_path=self.legacy_db_path,
+                organization_slug="aoc",
+                username_remaps={"magasiev13": "magasiev-aoc"},
+                dry_run=False,
+            )
+
+            self.assertFalse(apply_summary["dry_run"])
+            self.assertEqual(apply_summary["count_mismatches_after"], {})
+            self.assertEqual(CommunityMember.query.filter_by(organization_id=organization.id).count(), 2)
+            self.assertEqual(MessageLog.query.filter_by(organization_id=organization.id).count(), 2)
+            self.assertEqual(InboxThread.query.filter_by(organization_id=organization.id).count(), 2)
+            self.assertEqual(InboxMessage.query.filter_by(organization_id=organization.id).count(), 2)
+            db.session.expire_all()
+            self.assertEqual(AppUser.query.filter_by(username="kfolyan").one().password_hash, "pbkdf2:sha256:1$sync$hash")
+            self.assertTrue(AppUser.query.filter_by(username="kfolyan").one().must_change_password)

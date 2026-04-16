@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -27,6 +28,7 @@ from app.services.provider_secret_service import (
     decrypt_provider_secret,
     encrypt_provider_secret,
 )
+from app.services.test_recipient_service import mask_phone_for_audit
 from app.utils import normalize_phone, render_message_template
 
 
@@ -90,6 +92,111 @@ class CustomerManagedValidationResult:
     campaign_failure_code: str | None
     brand_registration_sid: str | None
     brand_status: str | None
+    current_phone_sms_url: str | None = None
+    current_phone_sms_method: str | None = None
+    current_service_use_inbound_webhook_on_number: bool | None = None
+
+
+def _json_dict(value: str | None) -> dict[str, Any]:
+    normalized = (value or "").strip()
+    if not normalized:
+        return {}
+    try:
+        payload = json.loads(normalized)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _customer_managed_status_payload(onboarding: OrganizationA2POnboarding | None) -> dict[str, Any]:
+    if onboarding is None:
+        return {}
+    return _json_dict(onboarding.raw_status_json)
+
+
+def _customer_managed_activation_payload(
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    create: bool = False,
+) -> dict[str, Any]:
+    payload = _customer_managed_status_payload(onboarding)
+    activation = payload.get("customer_managed_activation")
+    if isinstance(activation, dict):
+        return activation
+    if not create:
+        return {}
+    activation = {}
+    payload["customer_managed_activation"] = activation
+    if onboarding is not None:
+        onboarding.raw_status_json = json.dumps(payload, sort_keys=True)
+    return activation
+
+
+def _store_customer_managed_status_payload(
+    onboarding: OrganizationA2POnboarding,
+    payload: dict[str, Any],
+) -> None:
+    onboarding.raw_status_json = json.dumps(payload, sort_keys=True)
+
+
+def customer_managed_activation_complete(
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    profile: OrganizationMessagingProfile | None = None,
+) -> bool:
+    activation = _customer_managed_activation_payload(onboarding)
+    if activation.get("activation_completed") is True:
+        return True
+    if profile is not None and profile.provider_mode == "customer_managed" and profile.provider_status == "active":
+        return True
+    return False
+
+
+def customer_managed_activation_state(
+    onboarding: OrganizationA2POnboarding | None,
+    *,
+    profile: OrganizationMessagingProfile | None = None,
+) -> str:
+    activation = _customer_managed_activation_payload(onboarding)
+    normalized = str(activation.get("activation_state") or "").strip().lower()
+    if normalized:
+        return normalized
+    if customer_managed_activation_complete(onboarding, profile=profile):
+        return "active"
+    if activation.get("validation_completed") is True:
+        return "validated"
+    return "unvalidated"
+
+
+def _customer_managed_provider_status(
+    *,
+    campaign_status: str | None,
+    brand_status: str | None,
+    activation_complete: bool,
+) -> tuple[str, str, str | None]:
+    campaign_is_approved = (
+        campaign_status in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES
+        if campaign_status is not None
+        else False
+    )
+    brand_is_approved = (
+        brand_status in CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES
+        if brand_status is not None
+        else True
+    )
+    review_failed = (
+        campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES
+        or brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES
+    )
+    sender_review_status = "approved" if campaign_is_approved and brand_is_approved else ("rejected" if review_failed else "pending")
+    provider_status = "active" if activation_complete and sender_review_status == "approved" else ("error" if review_failed else "pending")
+    failure_message = None
+    if review_failed:
+        if campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES:
+            failure_message = "The customer-managed Messaging Service campaign needs correction in Twilio."
+        elif brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES:
+            failure_message = "The customer-managed Twilio brand needs correction in Twilio."
+    return provider_status, sender_review_status, failure_message
 
 
 def _decimal_value(value: object, default: str = "0") -> Decimal:
@@ -319,13 +426,33 @@ def _configure_service_webhooks(profile: OrganizationMessagingProfile, *, client
     )
 
 
+def _update_phone_number_webhook(
+    client: Client,
+    phone_number_sid: str,
+    *,
+    sms_url: str | None,
+    sms_method: str | None = None,
+) -> None:
+    if not phone_number_sid:
+        raise ProviderProvisioningError("A phone number SID is required to bind the inbound webhook.")
+    update_kwargs: dict[str, Any] = {
+        "sms_url": sms_url or "",
+    }
+    normalized_method = (sms_method or "").strip().upper()
+    if normalized_method:
+        update_kwargs["sms_method"] = normalized_method
+    elif sms_url is None:
+        update_kwargs["sms_method"] = "POST"
+    client.incoming_phone_numbers(phone_number_sid).update(**update_kwargs)
+
+
 def _configure_phone_number_webhook(
     client: Client,
     phone_number_sid: str,
 ) -> None:
-    if not phone_number_sid:
-        raise ProviderProvisioningError("A phone number SID is required to bind the inbound webhook.")
-    client.incoming_phone_numbers(phone_number_sid).update(
+    _update_phone_number_webhook(
+        client,
+        phone_number_sid,
         sms_url=_twilio_inbound_webhook_url(),
         sms_method="POST",
     )
@@ -1023,7 +1150,25 @@ class TwilioService:
         status = getattr(error, "status", None)
         return status in {429} or (isinstance(status, int) and status >= 500)
 
+    def _browser_fake_send_result(self, *, to_number: str, body: str) -> dict:
+        fingerprint = f"{self.account_sid}|{to_number}|{body}|{self.messaging_service_sid or self.from_number or ''}"
+        fake_sid = f"SM{hashlib.sha1(fingerprint.encode('utf-8')).hexdigest()[:32]}"
+        segment_count = max(1, (len(body or "") + 159) // 160)
+        return {
+            "success": True,
+            "sid": fake_sid,
+            "status": "sent",
+            "error": None,
+            "account_sid": self.account_sid,
+            "num_segments": str(segment_count),
+            "provider_price": None,
+            "provider_currency": "usd",
+        }
+
     def send_message(self, to_number: str, body: str, raise_on_transient: bool = False) -> dict:
+        if current_app.config.get("TWILIO_BROWSER_FAKE_SENDS"):
+            return self._browser_fake_send_result(to_number=to_number, body=body)
+
         create_params = {
             "body": body,
             "to": to_number,
@@ -1123,6 +1268,81 @@ def get_twilio_service(organization_id: int | None = None) -> TwilioService:
     return get_messaging_provider(organization_id=organization_id)
 
 
+def send_operational_test_message(
+    organization_id: int,
+    *,
+    to_number: str,
+    body: str,
+    actor_user_id: int | None = None,
+) -> dict[str, object]:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = ensure_messaging_profile(organization)
+    normalized_to = normalize_phone(to_number)
+    message_body = (body or "").strip()
+
+    if not normalized_to:
+        raise ProviderProvisioningError("Enter a valid E.164 phone number for the operational test send.")
+    if not message_body:
+        raise ProviderProvisioningError("Message body is required for the operational test send.")
+    if not profile.can_send:
+        raise ProviderProvisioningError("This organization is not ready for a live operational test send yet.")
+
+    audit_metadata = {
+        "destination": mask_phone_for_audit(normalized_to),
+        "message_length": len(message_body),
+        "provider_mode": profile.provider_mode,
+    }
+
+    try:
+        result = get_twilio_service(organization_id).send_message(
+            normalized_to,
+            message_body,
+            raise_on_transient=True,
+        )
+    except Exception as exc:
+        _record_provider_audit(
+            organization_id,
+            "operational_test_send",
+            status="error",
+            actor_user_id=actor_user_id,
+            message=str(exc),
+            metadata=audit_metadata,
+        )
+        db.session.commit()
+        raise ProviderProvisioningError(str(exc)) from exc
+
+    if not result.get("success"):
+        message = str(result.get("error") or "Twilio rejected the operational test send.")
+        _record_provider_audit(
+            organization_id,
+            "operational_test_send",
+            status="error",
+            actor_user_id=actor_user_id,
+            message=message,
+            metadata=audit_metadata,
+        )
+        db.session.commit()
+        raise ProviderProvisioningError(message)
+
+    _record_provider_audit(
+        organization_id,
+        "operational_test_send",
+        actor_user_id=actor_user_id,
+        message="Sent a platform operational test message.",
+        metadata={
+            **audit_metadata,
+            "message_sid": result.get("sid"),
+            "provider_status": result.get("status"),
+            "provider_account_sid": result.get("account_sid"),
+        },
+    )
+    db.session.commit()
+    return result
+
+
 def ensure_messaging_profile(organization: Organization) -> OrganizationMessagingProfile:
     profile = organization.messaging_profile
     if profile is not None:
@@ -1149,6 +1369,8 @@ def save_customer_managed_profile(
     business_type: str | None = None,
     use_case: str | None = None,
     actor_user_id: int | None = None,
+    bind_inbound_webhook: bool = False,
+    activation_complete: bool = False,
 ) -> tuple[OrganizationMessagingProfile, CustomerManagedValidationResult]:
     organization = db.session.get(Organization, organization_id)
     if organization is None:
@@ -1158,7 +1380,7 @@ def save_customer_managed_profile(
     normalized_account_sid = (twilio_account_sid or "").strip().upper()
     normalized_auth_token = (twilio_auth_token or "").strip()
     normalized_from_number = normalize_phone(from_number)
-    normalized_service_sid = (messaging_service_sid or "").strip().upper() or None
+    normalized_service_sid = (messaging_service_sid or "").strip() or None
 
     if not normalized_account_sid.startswith("AC"):
         raise ProviderProvisioningError("Customer-managed Twilio account SID must start with AC.")
@@ -1166,7 +1388,7 @@ def save_customer_managed_profile(
         raise ProviderProvisioningError("Customer-managed Twilio auth token is required.")
     if not normalized_from_number:
         raise ProviderProvisioningError("A valid E.164 sender number is required.")
-    if normalized_service_sid and not normalized_service_sid.startswith("MG"):
+    if normalized_service_sid and not normalized_service_sid.upper().startswith("MG"):
         raise ProviderProvisioningError("Twilio Messaging Service SID must start with MG.")
 
     profile.set_provider_status("provisioning")
@@ -1190,15 +1412,20 @@ def save_customer_managed_profile(
                 f"Twilio could not resolve a phone number SID for {normalized_from_number}."
             )
 
+        resolved_phone_resource = customer_client.incoming_phone_numbers(resolved_number.sid).fetch()
+
         campaign_sid = None
         campaign_status = None
         campaign_failure_reason = None
         campaign_failure_code = None
         brand_registration_sid = None
         brand_status = None
+        service_use_inbound_webhook_on_number = None
+        resolved_service_sid = normalized_service_sid
         if normalized_service_sid:
             service_context = customer_client.messaging.v1.services(normalized_service_sid)
-            service_context.fetch()
+            service_resource = service_context.fetch()
+            resolved_service_sid = getattr(service_resource, "sid", None) or normalized_service_sid
             campaign_sid, campaign_status, brand_registration_sid, campaign_failure_reason, campaign_failure_code = _resolve_customer_managed_campaign(
                 service_context
             )
@@ -1207,38 +1434,31 @@ def save_customer_managed_profile(
                     "The customer-managed Messaging Service does not have an attached A2P campaign."
                 )
             brand_status = _fetch_customer_managed_brand_status(customer_client, brand_registration_sid)
+            service_use_inbound_webhook_on_number = getattr(
+                service_resource,
+                "use_inbound_webhook_on_number",
+                None,
+            )
+
+        if normalized_service_sid and bind_inbound_webhook:
             service_context.update(use_inbound_webhook_on_number=True)
 
-        _configure_phone_number_webhook(customer_client, resolved_number.sid)
+        if bind_inbound_webhook:
+            _configure_phone_number_webhook(customer_client, resolved_number.sid)
 
-        campaign_is_approved = (
-            campaign_status in CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES
-            if campaign_status is not None
-            else False
+        provider_status, sender_review_status, failure_message = _customer_managed_provider_status(
+            campaign_status=campaign_status,
+            brand_status=brand_status,
+            activation_complete=activation_complete,
         )
-        brand_is_approved = (
-            brand_status in CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES
-            if brand_status is not None
-            else True
-        )
-        review_failed = (
-            campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES
-            or brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES
-        )
-        provider_status = "active" if campaign_is_approved and brand_is_approved else ("error" if review_failed else "pending")
-        sender_review_status = "approved" if provider_status == "active" else ("rejected" if review_failed else "pending")
-        failure_message = campaign_failure_reason
-        if review_failed and not failure_message:
-            if campaign_status in CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES:
-                failure_message = "The customer-managed Messaging Service campaign needs correction in Twilio."
-            elif brand_status in CUSTOMER_MANAGED_FAILED_BRAND_STATUSES:
-                failure_message = "The customer-managed Twilio brand needs correction in Twilio."
+        if campaign_failure_reason and failure_message is None:
+            failure_message = campaign_failure_reason
 
         profile.provider_mode = "customer_managed"
         profile.twilio_account_sid = normalized_account_sid
         profile.twilio_subaccount_sid = None
         profile.twilio_auth_token_encrypted = encrypt_provider_secret(normalized_auth_token)
-        profile.messaging_service_sid = normalized_service_sid
+        profile.messaging_service_sid = resolved_service_sid
         profile.from_number = resolved_number.phone_number or normalized_from_number
         profile.phone_number_sid = resolved_number.sid
         profile.inbound_identity = resolved_number.phone_number or normalized_from_number
@@ -1249,16 +1469,20 @@ def save_customer_managed_profile(
             profile.consent_acknowledged_at = utc_now()
         profile.provisioned_at = profile.provisioned_at or utc_now()
         profile.provider_last_checked_at = utc_now()
-        profile.last_provision_error = failure_message if review_failed else None
+        profile.last_provision_error = failure_message if sender_review_status == "rejected" else None
         profile.set_provider_status(provider_status)
         _record_provider_audit(
             organization.id,
             "customer_managed_validate",
             actor_user_id=actor_user_id,
-            message="Validated customer-managed Twilio configuration and bound inbound webhook.",
+            message=(
+                "Validated customer-managed Twilio configuration and bound the inbound webhook."
+                if bind_inbound_webhook
+                else "Validated customer-managed Twilio configuration without changing inbound routing."
+            ),
             metadata={
                 "twilio_account_sid": normalized_account_sid,
-                "messaging_service_sid": normalized_service_sid,
+                "messaging_service_sid": resolved_service_sid,
                 "from_number": profile.from_number,
                 "phone_number_sid": profile.phone_number_sid,
                 "campaign_sid": campaign_sid,
@@ -1268,6 +1492,11 @@ def save_customer_managed_profile(
                 "brand_registration_sid": brand_registration_sid,
                 "brand_status": brand_status,
                 "provider_status": provider_status,
+                "bind_inbound_webhook": bind_inbound_webhook,
+                "activation_complete": activation_complete,
+                "current_phone_sms_url": getattr(resolved_phone_resource, "sms_url", None),
+                "current_phone_sms_method": getattr(resolved_phone_resource, "sms_method", None),
+                "current_service_use_inbound_webhook_on_number": service_use_inbound_webhook_on_number,
             },
         )
         db.session.commit()
@@ -1275,13 +1504,16 @@ def save_customer_managed_profile(
             account_sid=normalized_account_sid,
             phone_number_sid=profile.phone_number_sid,
             from_number=profile.from_number,
-            messaging_service_sid=normalized_service_sid,
+            messaging_service_sid=resolved_service_sid,
             campaign_sid=campaign_sid,
             campaign_status=campaign_status,
             campaign_failure_reason=campaign_failure_reason,
             campaign_failure_code=campaign_failure_code,
             brand_registration_sid=brand_registration_sid,
             brand_status=brand_status,
+            current_phone_sms_url=getattr(resolved_phone_resource, "sms_url", None),
+            current_phone_sms_method=getattr(resolved_phone_resource, "sms_method", None),
+            current_service_use_inbound_webhook_on_number=service_use_inbound_webhook_on_number,
         )
     except Exception as exc:
         db.session.rollback()
@@ -1304,6 +1536,127 @@ def save_customer_managed_profile(
                 "twilio_account_sid": normalized_account_sid,
                 "messaging_service_sid": normalized_service_sid,
                 "from_number": normalized_from_number,
+            },
+        )
+        db.session.commit()
+        raise ProviderProvisioningError(str(exc)) from exc
+
+
+def rollback_customer_managed_profile(
+    organization_id: int,
+    *,
+    actor_user_id: int | None = None,
+) -> OrganizationMessagingProfile:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = ensure_messaging_profile(organization)
+    if profile.provider_mode != "customer_managed":
+        raise ProviderProvisioningError("Rollback is only available for customer-managed providers.")
+    if not profile.twilio_account_sid:
+        raise ProviderProvisioningError("Customer-managed Twilio account SID is missing.")
+
+    auth_token = decrypt_provider_secret(profile.twilio_auth_token_encrypted)
+    if not auth_token:
+        raise ProviderProvisioningError("Stored customer-managed auth token is empty.")
+
+    onboarding = organization.a2p_onboarding
+    activation = _customer_managed_activation_payload(onboarding)
+    if not activation:
+        raise ProviderProvisioningError("No stored customer-managed activation snapshot is available for rollback.")
+
+    phone_number_sid = _clean_text(profile.phone_number_sid) or _clean_text(activation.get("phone_number_sid"))
+    if not phone_number_sid:
+        raise ProviderProvisioningError("A stored phone number SID is required before rollback can restore the webhook.")
+
+    previous_phone_sms_url = _clean_text(activation.get("pre_activation_phone_sms_url"))
+    previous_phone_sms_method = _clean_text(activation.get("pre_activation_phone_sms_method")) or "POST"
+    previous_service_use_inbound = activation.get("pre_activation_service_use_inbound_webhook_on_number")
+
+    try:
+        customer_client = _build_customer_managed_client(
+            account_sid=profile.twilio_account_sid,
+            auth_token=auth_token,
+        )
+        if profile.messaging_service_sid and isinstance(previous_service_use_inbound, bool):
+            customer_client.messaging.v1.services(profile.messaging_service_sid).update(
+                use_inbound_webhook_on_number=previous_service_use_inbound
+            )
+        _update_phone_number_webhook(
+            customer_client,
+            phone_number_sid,
+            sms_url=previous_phone_sms_url,
+            sms_method=previous_phone_sms_method,
+        )
+
+        status_payload = _customer_managed_status_payload(onboarding)
+        campaign_status = _clean_text(status_payload.get("campaign_status")) or _clean_text(
+            onboarding.campaign_status if onboarding is not None else None
+        )
+        brand_status = _clean_text(status_payload.get("brand_status")) or _clean_text(
+            onboarding.brand_status if onboarding is not None else None
+        )
+        provider_status, sender_review_status, failure_message = _customer_managed_provider_status(
+            campaign_status=campaign_status.lower() if campaign_status else None,
+            brand_status=brand_status.lower() if brand_status else None,
+            activation_complete=False,
+        )
+
+        profile.sender_review_status = sender_review_status
+        profile.provider_last_checked_at = utc_now()
+        profile.last_provision_error = failure_message if sender_review_status == "rejected" else None
+        profile.set_provider_status(provider_status)
+
+        if onboarding is not None:
+            payload = _customer_managed_status_payload(onboarding)
+            activation_payload = _customer_managed_activation_payload(onboarding, create=True)
+            activation_payload["activation_completed"] = False
+            activation_payload["activation_state"] = "rolled_back"
+            activation_payload["rolled_back_at"] = utc_now().isoformat()
+            activation_payload["restored_phone_sms_url"] = previous_phone_sms_url
+            activation_payload["restored_phone_sms_method"] = previous_phone_sms_method
+            activation_payload["restored_service_use_inbound_webhook_on_number"] = previous_service_use_inbound
+            payload["customer_managed_activation"] = activation_payload
+            _store_customer_managed_status_payload(onboarding, payload)
+
+        _record_provider_audit(
+            organization.id,
+            "customer_managed_rollback",
+            actor_user_id=actor_user_id,
+            message="Restored the customer-managed inbound webhook to the pre-activation destination.",
+            metadata={
+                "twilio_account_sid": profile.twilio_account_sid,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "phone_number_sid": phone_number_sid,
+                "restored_phone_sms_url": previous_phone_sms_url,
+                "restored_phone_sms_method": previous_phone_sms_method,
+                "restored_service_use_inbound_webhook_on_number": previous_service_use_inbound,
+                "provider_status": provider_status,
+            },
+        )
+        db.session.commit()
+        return profile
+    except Exception as exc:
+        db.session.rollback()
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise
+        profile = ensure_messaging_profile(organization)
+        profile.provider_mode = "customer_managed"
+        profile.provider_last_checked_at = utc_now()
+        profile.last_provision_error = str(exc)
+        profile.set_provider_status("error")
+        _record_provider_audit(
+            organization.id,
+            "customer_managed_rollback",
+            actor_user_id=actor_user_id,
+            status="error",
+            message=str(exc),
+            metadata={
+                "twilio_account_sid": profile.twilio_account_sid,
+                "messaging_service_sid": profile.messaging_service_sid,
+                "phone_number_sid": profile.phone_number_sid,
             },
         )
         db.session.commit()
@@ -1426,7 +1779,16 @@ def resume_org(organization_id: int, *, actor_user_id: int | None = None) -> Org
         _master_client().api.v2010.accounts(profile.twilio_subaccount_sid).update(status="active")
     profile.suspended_at = None
     profile.provider_last_checked_at = utc_now()
-    if profile.from_number and profile.sender_review_status == "approved":
+    activation_complete = customer_managed_activation_complete(
+        organization.a2p_onboarding,
+        profile=profile,
+    )
+    provider_ready = (
+        bool(profile.from_number)
+        and profile.sender_review_status == "approved"
+        and (profile.provider_mode != "customer_managed" or activation_complete)
+    )
+    if provider_ready:
         profile.set_provider_status("active")
     else:
         profile.set_provider_status("pending")

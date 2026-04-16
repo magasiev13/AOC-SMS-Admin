@@ -127,6 +127,7 @@ def _upsert_message_log_for_scheduled_send(
             message_body=scheduled.message_body,
             target=scheduled.target,
             event_id=scheduled.event_id,
+            test_mode=bool(scheduled.test_mode),
             total_recipients=result_total,
             success_count=result_success,
             failure_count=result_failure,
@@ -138,6 +139,7 @@ def _upsert_message_log_for_scheduled_send(
         return log
 
     existing_rows = _load_log_detail_rows(log.details)
+    log.test_mode = bool(scheduled.test_mode)
     merged_rows = existing_rows + detail_rows
     merged_success, merged_failure = _count_detail_outcomes(merged_rows)
 
@@ -275,6 +277,7 @@ def send_scheduled_messages(app):
             filter_suppressed_recipients,
             filter_unsubscribed_recipients,
         )
+        from app.services.test_recipient_service import load_test_recipient_snapshot
         from app.services.suppression_service import process_failure_details
         from app.utils import normalize_phone
         now = utc_now().replace(tzinfo=None)
@@ -415,19 +418,24 @@ def send_scheduled_messages(app):
                 continue
             try:
                 with organization_context(scheduled.organization_id):
-                    # Test mode: send only to admin phone
                     if scheduled.test_mode:
-                        admin_phone = current_app.config.get('ADMIN_TEST_PHONE')
-                        if not admin_phone:
+                        try:
+                            recipient_data = load_test_recipient_snapshot(
+                                scheduled.test_recipient_snapshot_json
+                            )
+                        except ValueError as exc:
                             scheduled.status = 'failed'
-                            scheduled.error_message = 'ADMIN_TEST_PHONE not configured'
+                            scheduled.error_message = str(exc)
                             scheduled.sent_at = now
                             scheduled.next_retry_at = None
                             db.session.commit()
                             failed_count += 1
-                            logger.error("[Scheduler] Message id=%d FAILED: ADMIN_TEST_PHONE not configured", scheduled.id)
+                            logger.error(
+                                "[Scheduler] Message id=%d FAILED: %s",
+                                scheduled.id,
+                                exc,
+                            )
                             continue
-                        recipient_data = [{'phone': admin_phone, 'name': 'Admin Test'}]
                     elif scheduled.target == 'community':
                         members = CommunityMember.query.all()
                         recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]

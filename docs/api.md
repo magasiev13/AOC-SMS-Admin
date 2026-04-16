@@ -121,6 +121,7 @@ Dashboard POST supports:
 | `/users/<user_id>/delete` | `POST` | Workspace admin or platform admin | Deletes a user with role-safety checks. |
 | `/team/invite` | `GET`, `POST` | Workspace owner/admin | Creates an invitation-based team member. |
 | `/team/invitations/<invitation_id>/revoke` | `POST` | Workspace owner/admin | Revokes a pending invitation. |
+| `/settings/test-recipients` | `GET`, `POST` | Workspace owner | Owner-managed saved internal test recipients for workspace test sends. |
 | `/security/events` | `GET` | Admin | Auth/security event viewer with filters. |
 
 ## Community Recipient Management

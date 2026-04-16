@@ -7,7 +7,7 @@ Twinevia has one ORM model module, `app/models.py`, but two practical data shape
 
 ## Model Domains
 
-`app/models.py` currently defines 28 ORM models.
+`app/models.py` currently defines 30 ORM models.
 
 ### Identity And Access
 
@@ -30,6 +30,7 @@ Twinevia has one ORM model module, `app/models.py`, but two practical data shape
 | `MessagingUsageRecord` | `messaging_usage_records` | Per-message outbound usage and cost reconciliation |
 | `OrganizationUsageBillingPeriod` | `organization_usage_billing_periods` | Closed-period overage summary |
 | `PlatformServiceRestartRequest` | `platform_service_restart_requests` | Durable restart queue entries for host-level operations |
+| `OrganizationSettingsAuditLog` | `organization_settings_audit_logs` | Tenant-scoped audit trail for owner-managed workspace settings |
 
 ### Messaging Provider And Compliance
 
@@ -52,6 +53,7 @@ Twinevia has one ORM model module, `app/models.py`, but two practical data shape
 | `ScheduledMessage` | `scheduled_messages` | Future sends and retry state |
 | `InboxThread` | `inbox_threads` | Shared inbox conversation thread |
 | `InboxMessage` | `inbox_messages` | Inbound/outbound message in a thread |
+| `OrganizationTestRecipient` | `organization_test_recipients` | Owner-managed saved internal test recipients |
 | `KeywordAutomationRule` | `keyword_automation_rules` | Keyword-triggered auto-replies |
 | `SurveyFlow` | `survey_flows` | Keyword-started survey definitions |
 | `SurveySession` | `survey_sessions` | Per-phone survey progress |
@@ -69,8 +71,10 @@ The following workspace tables are tenant-scoped in SaaS mode:
 - `inbox_threads`
 - `keyword_automation_rules`
 - `message_logs`
+- `organization_settings_audit_logs`
 - `organization_invitations`
 - `organization_subscriptions`
+- `organization_test_recipients`
 - `scheduled_messages`
 - `suppressed_contacts`
 - `survey_flows`
@@ -96,6 +100,8 @@ Platform tables such as `organizations`, `users`, `platform_service_restart_requ
 - one `Organization` has one `OrganizationSubscription`
 - one `Organization` has one `OrganizationMessagingProfile`
 - one `Organization` has one `OrganizationA2POnboarding`
+- one `Organization` has many `OrganizationTestRecipient`
+- one `Organization` has many `OrganizationSettingsAuditLog`
 
 ### Messaging relationships
 
@@ -119,7 +125,9 @@ Platform tables such as `organizations`, `users`, `platform_service_restart_requ
 ### Workspace lifecycle
 
 - `message_logs.status`: `processing`, `sent`, `failed`
+- `message_logs.test_mode`: marks workspace test sends in logs and detail views
 - `scheduled_messages.status`: `pending`, `processing`, `sent`, `failed`, `expired`, `cancelled`
+- `scheduled_messages.test_recipient_selection_mode`: `one`, `all`, or null for non-test sends
 - `survey_sessions.status`: `active`, `completed`, `cancelled`
 
 ## Operational Invariants

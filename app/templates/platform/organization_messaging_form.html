@@ -21,6 +21,8 @@
 {% set customer_service_sid = request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') or '' %}
 {% set current_account_sid = request.form.get('twilio_account_sid', messaging_profile.twilio_account_sid if messaging_profile else '') or '' %}
 {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') or 'auto_buy' %}
+{% set customer_activation_state_value = customer_managed_activation_state or 'unvalidated' %}
+{% set customer_activation_ready = provider_is_customer_managed and messaging_profile and messaging_profile.twilio_account_sid and messaging_profile.from_number and messaging_profile.sender_review_status == 'approved' %}
 <div class="platform-shell">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
@@ -29,7 +31,7 @@
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
                 <p class="platform-shell__summary-copy">
                     {% if provider_is_customer_managed %}
-                    Validate the customer-owned Twilio account, sender, and Messaging Service exactly as they exist today.
+                    Validate the customer-owned Twilio account, sender, and Messaging Service exactly as they exist today, then activate cutover only when you are ready for Twinevia to take over inbound routing.
                     {% else %}
                     Provision the platform-managed Twilio account first, then let {{ product_name }} validate the service address, attach the sender, sync emergency registration, and unlock live sending.
                     {% endif %}
@@ -66,7 +68,7 @@
                         </div>
                         <div class="platform-note__copy">
                             {% if provider_is_customer_managed %}
-                            This workspace keeps its own Twilio account. The platform validates the customer account, sender number, Messaging Service, and inbound webhook without creating a subaccount or new A2P packet.
+                            This workspace keeps its own Twilio account. Step 1 validates the external account, sender number, and Messaging Service without touching inbound routing. Step 2 activates Twinevia as the inbound webhook destination and enables Twilio event-stream sync.
                             {% else %}
                             This workspace gets its own Twilio subaccount and Messaging Service. Provision first, save the org service address, then run sender finalization so the app can buy or attach the number, sync the emergency address, and activate the provider.
                             {% endif %}
@@ -119,6 +121,16 @@
                     <div class="platform-note platform-note--danger mb-4" role="alert">
                         <div class="platform-note__title">Provider sync error</div>
                         <div class="platform-note__copy">{{ messaging_profile.last_provision_error }}</div>
+                    </div>
+                    {% endif %}
+
+                    {% if provider_is_customer_managed %}
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">Customer-managed cutover</div>
+                        <div class="platform-note__copy">
+                            Current state: <strong>{{ customer_activation_state_value.replace('_', ' ') }}</strong>.
+                            Validate first to store the approved external Twilio resources without interrupting the legacy app. Activate only during the cutover window when you want Twinevia to own inbound SMS.
+                        </div>
                     </div>
                     {% endif %}
 
@@ -183,6 +195,12 @@
                             <div class="platform-key-label">Phone number SID</div>
                             <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
                         </div>
+                        {% if provider_is_customer_managed %}
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Activation state</div>
+                            <div class="platform-key-value">{{ customer_activation_state_value }}</div>
+                        </div>
+                        {% endif %}
                         {% if not provider_is_customer_managed %}
                         <div class="platform-key-item">
                             <div class="platform-key-label">Service address</div>
@@ -227,6 +245,34 @@
                                 {{ 'Resume Provider' if messaging_profile and messaging_profile.provider_status == 'suspended' else 'Suspend Provider' }}
                             </button>
                         </form>
+                        {% if provider_is_customer_managed %}
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="activate_customer_managed">
+                            <button
+                                type="submit"
+                                class="btn btn-primary"
+                                {% if not customer_activation_ready or customer_managed_activation_complete %}
+                                disabled
+                                {% endif %}
+                            >
+                                Activate External Twilio
+                            </button>
+                        </form>
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="rollback_customer_managed">
+                            <button
+                                type="submit"
+                                class="btn btn-outline-danger"
+                                {% if not customer_managed_activation_complete %}
+                                disabled
+                                {% endif %}
+                            >
+                                Restore Legacy Webhook
+                            </button>
+                        </form>
+                        {% endif %}
                         {% if not provider_is_customer_managed %}
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -414,7 +460,7 @@
                                     {% if messaging_profile and messaging_profile.twilio_account_sid %}
                                     Leave blank to keep the currently stored token for the same account SID.
                                     {% else %}
-                                    Required to validate the external Twilio account and bind the inbound webhook.
+                                    Required to validate the external Twilio account. Activation happens as a separate cutover step.
                                     {% endif %}
                                 </div>
                             </div>
@@ -450,13 +496,61 @@
 
                         <div class="platform-form-actions mt-4">
                             <button type="submit" class="btn btn-primary">
-                                {{ 'Validate Customer-Managed Twilio' if provider_is_customer_managed else ('Save Provider Settings' if provider_configured else 'Save Draft Settings') }}
+                                {{ 'Validate External Twilio' if provider_is_customer_managed else ('Save Provider Settings' if provider_configured else 'Save Draft Settings') }}
                             </button>
                             <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
                         </div>
                     </form>
                 </div>
             </div>
+
+            {% if platform_test_send_ready %}
+            <div class="card app-card platform-section-card mt-4">
+                <div class="card-body">
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">Platform Test Send</div>
+                        <div class="platform-note__copy">
+                            Send one operational test directly through this organization’s active provider. This does not use the workspace’s saved internal test recipients and does not create a tenant blast log.
+                        </div>
+                    </div>
+
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="platform_test_send">
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label" for="platform_test_phone">Destination</label>
+                                <input
+                                    class="form-control"
+                                    id="platform_test_phone"
+                                    name="platform_test_phone"
+                                    placeholder="+15551234567"
+                                    inputmode="tel"
+                                >
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label" for="platform_test_body">Message</label>
+                                <textarea
+                                    class="form-control"
+                                    id="platform_test_body"
+                                    name="platform_test_body"
+                                    rows="3"
+                                    maxlength="1600"
+                                    placeholder="Platform operational test from Twinevia."
+                                ></textarea>
+                            </div>
+                        </div>
+
+                        <div class="platform-form-actions mt-4">
+                            <button type="submit" class="btn btn-primary">
+                                Send Operational Test
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <aside class="platform-shell__side">
@@ -482,6 +576,9 @@
                             <li><strong>Emergency address</strong><span>{{ 'external' if provider_is_customer_managed else (messaging_profile.emergency_address_status if messaging_profile and messaging_profile.emergency_address_status else 'pending') }}</span></li>
                             <li><strong>Compliance acknowledged</strong><span>{{ 'ready' if messaging_profile and messaging_profile.consent_acknowledged_at else ('external' if provider_is_customer_managed else 'managed') }}</span></li>
                             <li><strong>Sender approved</strong><span>{{ 'ready' if messaging_profile and messaging_profile.sender_review_status == 'approved' else ('external' if provider_is_customer_managed else 'managed') }}</span></li>
+                            {% if provider_is_customer_managed %}
+                            <li><strong>Cutover</strong><span>{{ customer_activation_state_value }}</span></li>
+                            {% endif %}
                             <li><strong>Live sending</strong><span>{{ 'enabled' if messaging_profile and messaging_profile.can_send else 'disabled' }}</span></li>
                         </ul>
                     </div>
