@@ -468,7 +468,7 @@ def signup():
             business_name=organization_name,
             email=email,
             notification_email=email,
-            number_strategy="platform_assign",
+            number_strategy="auto_buy",
             onboarding_status="draft",
             business_regions_json='["USA_AND_CANADA"]',
         )

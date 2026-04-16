@@ -123,8 +123,10 @@ from app.services.twilio_service import (
     ProviderProvisioningError,
     provision_org,
     release_sender,
+    resolve_number_strategy,
     resolve_messaging_profile,
     resume_org,
+    save_service_address_from_app_input,
     save_customer_managed_profile,
     suspend_org,
 )
@@ -767,7 +769,7 @@ def _sender_assignment_action(
     if finalization_status == "awaiting_emergency_address_sync":
         return "Retry Finalize Sender Setup after Twilio finishes emergency address registration."
 
-    strategy = (onboarding.number_strategy if onboarding is not None else "platform_assign") or "platform_assign"
+    strategy = resolve_number_strategy(onboarding)
     if strategy == "platform_assign":
         return "Save the target PN SID from the org Twilio subaccount, then run Finalize Sender Setup."
     if strategy == "auto_buy":
@@ -1327,7 +1329,7 @@ def _setup_submit_payload_from_onboarding(onboarding: OrganizationA2POnboarding)
     return {
         "registration_path": onboarding.registration_path or "low_volume_standard",
         "brand_registration_mode": onboarding.brand_registration_mode or str(source_defaults["brand_registration_mode"]),
-        "number_strategy": onboarding.number_strategy or "platform_assign",
+        "number_strategy": resolve_number_strategy(onboarding),
         "business_name": onboarding.business_name or "",
         "legal_business_name": str(source_defaults["legal_business_name"]),
         "public_brand_name": str(source_defaults["public_brand_name"]),
@@ -4080,21 +4082,12 @@ def platform_organizations_messaging_edit(organization_id):
 
         onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
         strategy_values = {value for value, _label in a2p_number_strategy_choices()}
-        selected_number_strategy = (request.form.get('number_strategy') or onboarding.number_strategy or 'platform_assign').strip().lower()
+        selected_number_strategy = (request.form.get('number_strategy') or resolve_number_strategy(onboarding)).strip().lower()
         if selected_number_strategy not in strategy_values:
             flash('Choose a valid number strategy before saving sender setup.', 'error')
             return render_page()
         target_phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
         service_address_fields = _service_address_form_payload(request.form)
-        previous_service_address = _service_address_snapshot(messaging_profile)
-        service_address_changed = previous_service_address != (
-            service_address_fields["service_address_country"],
-            service_address_fields["service_address_line1"],
-            service_address_fields["service_address_line2"],
-            service_address_fields["service_address_city"],
-            service_address_fields["service_address_region"],
-            service_address_fields["service_address_postal_code"],
-        )
 
         messaging_profile.provider_mode = 'platform_managed'
         messaging_profile.twilio_account_sid = None
@@ -4102,12 +4095,6 @@ def platform_organizations_messaging_edit(organization_id):
             messaging_profile.twilio_auth_token_encrypted = None
         messaging_profile.business_type = business_type
         messaging_profile.use_case = use_case
-        messaging_profile.service_address_country = service_address_fields["service_address_country"]
-        messaging_profile.service_address_line1 = service_address_fields["service_address_line1"]
-        messaging_profile.service_address_line2 = service_address_fields["service_address_line2"]
-        messaging_profile.service_address_city = service_address_fields["service_address_city"]
-        messaging_profile.service_address_region = service_address_fields["service_address_region"]
-        messaging_profile.service_address_postal_code = service_address_fields["service_address_postal_code"]
         messaging_profile.provider_last_checked_at = utc_now()
         onboarding.number_strategy = selected_number_strategy
         onboarding.desired_phone_number_sid = (
@@ -4115,54 +4102,14 @@ def platform_organizations_messaging_edit(organization_id):
             if selected_number_strategy in {"existing_subaccount_number", "transfer_parent_number", "platform_assign"}
             else None
         )
-
-        if service_address_changed:
-            if messaging_profile.provider_status != 'suspended':
-                messaging_profile.set_provider_status('pending')
-            if messaging_profile.service_address_complete:
-                next_finalization_status = (
-                    'awaiting_emergency_address_sync'
-                    if messaging_profile.from_number and messaging_profile.phone_number_sid
-                    else (
-                        'awaiting_number_purchase'
-                        if (
-                            onboarding.onboarding_status == 'approved'
-                            or (
-                                (onboarding.brand_status or '').strip().lower() in {'approved', 'verified', 'registered', 'vetting_verified'}
-                                and (onboarding.campaign_status or '').strip().lower() in {'approved', 'verified'}
-                            )
-                        )
-                        else 'awaiting_a2p_approval'
-                    )
-                )
-                messaging_profile.set_sender_finalization_status(next_finalization_status)
-                messaging_profile.sender_finalization_error = None
-                messaging_profile.emergency_address_status = 'pending'
-                messaging_profile.emergency_address_last_error = None
-            else:
-                messaging_profile.set_sender_finalization_status('awaiting_service_address')
-                messaging_profile.sender_finalization_error = 'Add the org service address before sender finalization can continue.'
-                messaging_profile.emergency_address_status = None
-                messaging_profile.emergency_address_last_error = None
-            db.session.add(
-                OrganizationProviderAuditLog(
-                    organization_id=organization.id,
-                    actor_user_id=current_user.id,
-                    action='service_address_saved',
-                    status='success',
-                    message='Saved the sender service address for platform-managed finalization.',
-                    metadata_json=json.dumps(
-                        {
-                            'number_strategy': onboarding.number_strategy,
-                            'service_address_country': messaging_profile.service_address_country,
-                            'service_address_city': messaging_profile.service_address_city,
-                            'service_address_region': messaging_profile.service_address_region,
-                            'service_address_postal_code': messaging_profile.service_address_postal_code,
-                        },
-                        sort_keys=True,
-                    ),
-                )
-            )
+        save_service_address_from_app_input(
+            messaging_profile,
+            service_address_fields=service_address_fields,
+            onboarding=onboarding,
+            actor_user_id=current_user.id,
+            audit_message='Saved the sender service address for platform-managed finalization.',
+            audit_source='platform_messaging_form',
+        )
 
         try:
             db.session.commit()

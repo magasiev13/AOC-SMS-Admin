@@ -56,9 +56,9 @@ The local acceptance signal must still cover these product outcomes:
 
 ## Beta Snapshot Gate
 
-Use one reusable control tenant by default:
+Use `IT Wingman LLC` as the reusable greenlight tenant:
 
-- slug: `public-readiness-control`
+- slug: `it-wingman-llc`
 
 Collect snapshots at meaningful milestones:
 
@@ -72,7 +72,7 @@ Run:
 
 ```bash
 ./run/public_readiness_beta_snapshot.sh \
-  --org-slug public-readiness-control \
+  --org-slug it-wingman-llc \
   --label baseline
 ```
 
@@ -117,7 +117,7 @@ Use:
 
 ```bash
 ./run/beta_cutover.sh \
-  --org-slug public-readiness-control \
+  --org-slug it-wingman-llc \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```

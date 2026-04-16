@@ -38,6 +38,7 @@ instance/
 *.swo
 .codex/
 .playwright/
+.playwright-cli/
 node_modules/
 playwright-report/
 output/playwright/report/

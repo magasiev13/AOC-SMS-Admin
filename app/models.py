@@ -359,6 +359,7 @@ class OrganizationMessagingProfile(db.Model):
     service_address_city = db.Column(db.String(120), nullable=True)
     service_address_region = db.Column(db.String(120), nullable=True)
     service_address_postal_code = db.Column(db.String(32), nullable=True)
+    service_address_source_mode = db.Column(db.String(20), nullable=True, default="app_input")
     twilio_address_sid = db.Column(db.String(64), nullable=True)
     twilio_address_json = db.Column(db.Text, nullable=True)
     emergency_address_sid = db.Column(db.String(64), nullable=True)
@@ -438,6 +439,15 @@ class OrganizationMessagingProfile(db.Model):
             raise ValueError("Emergency address status must be pending, synced, not_required, or error.")
         return normalized
 
+    @validates("service_address_source_mode")
+    def _normalize_service_address_source_mode(self, key, value):
+        if value is None:
+            return None
+        normalized = (value or "").strip().lower()
+        if normalized not in {"app_input", "twilio_import"}:
+            raise ValueError("Service address source mode must be app_input or twilio_import.")
+        return normalized
+
     @validates("sender_finalization_status")
     def _normalize_sender_finalization_status(self, key, value):
         if value is None:
@@ -492,6 +502,11 @@ class OrganizationMessagingProfile(db.Model):
             and self.service_address_region
             and self.service_address_postal_code
         )
+
+    @property
+    def effective_service_address_source_mode(self) -> str:
+        normalized = (self.service_address_source_mode or "").strip().lower()
+        return normalized or "app_input"
 
     @property
     def effective_sender_finalization_status(self) -> str:

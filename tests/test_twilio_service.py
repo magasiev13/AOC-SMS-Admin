@@ -213,6 +213,81 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.db.session.commit()
         return onboarding
 
+    def test_seed_service_address_from_onboarding_marks_app_input_and_clears_stale_twilio_state(self) -> None:
+        from app.models import utc_now
+        from app.services.twilio_service import seed_service_address_from_onboarding
+
+        organization, profile = self._create_org_with_profile(
+            provider_status="active",
+            status="active",
+            phone_number_sid="PNexisting0001",
+            from_number="+15550001111",
+            service_address_country="US",
+            service_address_line1="9 Imported Road",
+            service_address_city="Boulder",
+            service_address_region="CO",
+            service_address_postal_code="80301",
+            service_address_source_mode="twilio_import",
+            twilio_address_sid="ADstale0001",
+            twilio_address_json='{"sid":"ADstale0001"}',
+            emergency_address_sid="ADstale0001",
+            emergency_address_status="synced",
+            emergency_address_last_error="stale error",
+            sender_finalization_status="active",
+            sender_finalized_at=utc_now(),
+        )
+        onboarding = self._create_a2p_onboarding(
+            organization.id,
+            address_line1="123 Main Street",
+            address_city="Denver",
+            address_region="CO",
+            address_postal_code="80202",
+        )
+
+        changed = seed_service_address_from_onboarding(profile, onboarding, actor_user_id=7)
+
+        self.assertTrue(changed)
+        self.assertEqual(profile.service_address_line1, "123 Main Street")
+        self.assertEqual(profile.service_address_city, "Denver")
+        self.assertEqual(profile.service_address_source_mode, "app_input")
+        self.assertIsNone(profile.twilio_address_sid)
+        self.assertIsNone(profile.twilio_address_json)
+        self.assertIsNone(profile.emergency_address_sid)
+        self.assertIsNone(profile.emergency_address_status)
+        self.assertIsNone(profile.emergency_address_last_error)
+        self.assertIsNone(profile.sender_finalized_at)
+        self.assertEqual(profile.sender_finalization_status, "awaiting_emergency_address_sync")
+        self.assertEqual(profile.provider_status, "pending")
+
+    def test_twilio_imported_service_address_cannot_override_app_input(self) -> None:
+        from app.services.twilio_service import save_service_address_from_twilio_import
+
+        _, profile = self._create_org_with_profile(
+            service_address_country="US",
+            service_address_line1="123 Main Street",
+            service_address_city="Denver",
+            service_address_region="CO",
+            service_address_postal_code="80202",
+            service_address_source_mode="app_input",
+        )
+
+        changed = save_service_address_from_twilio_import(
+            profile,
+            service_address_fields={
+                "service_address_country": "US",
+                "service_address_line1": "999 Imported Lane",
+                "service_address_line2": None,
+                "service_address_city": "Boulder",
+                "service_address_region": "CO",
+                "service_address_postal_code": "80301",
+            },
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(profile.service_address_line1, "123 Main Street")
+        self.assertEqual(profile.service_address_city, "Denver")
+        self.assertEqual(profile.service_address_source_mode, "app_input")
+
     @patch("app.services.twilio_service.RequestValidator")
     def test_validate_inbound_signature_prefers_org_specific_auth_token(self, mock_validator) -> None:
         from app.services.provider_secret_service import encrypt_provider_secret
@@ -616,7 +691,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         profile = finalize_sender_setup(organization.id, actor_user_id=7)
 
         self.assertEqual(profile.provider_status, "pending")
-        self.assertEqual(profile.sender_finalization_status, "awaiting_number_purchase")
+        self.assertEqual(profile.sender_finalization_status, "awaiting_sender_attach")
         self.assertIn("does not belong to this organization's Twilio subaccount", profile.sender_finalization_error or "")
 
     @patch("app.services.twilio_service._build_subaccount_client")

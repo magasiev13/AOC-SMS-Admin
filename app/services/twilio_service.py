@@ -46,6 +46,9 @@ SENDER_FINALIZATION_WAITING_STATUSES = {
     "awaiting_sender_attach",
     "awaiting_emergency_address_sync",
 }
+DEFAULT_NEW_ORG_NUMBER_STRATEGY = "auto_buy"
+SERVICE_ADDRESS_SOURCE_APP_INPUT = "app_input"
+SERVICE_ADDRESS_SOURCE_TWILIO_IMPORT = "twilio_import"
 
 
 class TwilioTransientError(Exception):
@@ -340,6 +343,118 @@ def _clean_country_code(value: object) -> str | None:
     return normalized.upper()
 
 
+def resolve_number_strategy(onboarding: OrganizationA2POnboarding | None) -> str:
+    return ((onboarding.number_strategy if onboarding is not None else None) or DEFAULT_NEW_ORG_NUMBER_STRATEGY).strip().lower()
+
+
+def _service_address_fields_changed(
+    profile: OrganizationMessagingProfile,
+    service_address_fields: dict[str, str | None],
+) -> bool:
+    return any(getattr(profile, field_name) != field_value for field_name, field_value in service_address_fields.items())
+
+
+def _apply_service_address_fields(
+    profile: OrganizationMessagingProfile,
+    service_address_fields: dict[str, str | None],
+) -> bool:
+    changed = False
+    for field_name, field_value in service_address_fields.items():
+        if getattr(profile, field_name) != field_value:
+            setattr(profile, field_name, field_value)
+            changed = True
+    return changed
+
+
+def _next_sender_finalization_waiting_state(
+    profile: OrganizationMessagingProfile,
+    onboarding: OrganizationA2POnboarding | None,
+) -> tuple[str, str | None]:
+    if not profile.service_address_complete:
+        return "awaiting_service_address", "Add the org service address before sender finalization can continue."
+    if not _platform_managed_a2p_is_approved(onboarding):
+        return "awaiting_a2p_approval", None
+    if profile.phone_number_sid and profile.from_number:
+        return "awaiting_emergency_address_sync", None
+    if resolve_number_strategy(onboarding) == DEFAULT_NEW_ORG_NUMBER_STRATEGY:
+        return "awaiting_number_purchase", None
+    return "awaiting_sender_attach", None
+
+
+def _reset_service_address_dependent_state(
+    profile: OrganizationMessagingProfile,
+    onboarding: OrganizationA2POnboarding | None,
+) -> None:
+    next_status, next_error = _next_sender_finalization_waiting_state(profile, onboarding)
+    profile.twilio_address_sid = None
+    profile.twilio_address_json = None
+    profile.emergency_address_sid = None
+    profile.emergency_address_status = None
+    profile.emergency_address_last_error = None
+    profile.emergency_address_last_synced_at = None
+    profile.sender_finalized_at = None
+    profile.set_sender_finalization_status(next_status)
+    profile.sender_finalization_error = next_error
+    profile.last_provision_error = next_error
+    if profile.provider_status != "suspended":
+        profile.set_provider_status("pending")
+
+
+def save_service_address_from_app_input(
+    profile: OrganizationMessagingProfile,
+    *,
+    service_address_fields: dict[str, str | None],
+    onboarding: OrganizationA2POnboarding | None = None,
+    actor_user_id: int | None = None,
+    audit_message: str,
+    audit_source: str,
+) -> bool:
+    fields_changed = _service_address_fields_changed(profile, service_address_fields)
+    source_changed = profile.effective_service_address_source_mode != SERVICE_ADDRESS_SOURCE_APP_INPUT
+    if not fields_changed and not source_changed:
+        return False
+
+    _apply_service_address_fields(profile, service_address_fields)
+    profile.service_address_source_mode = SERVICE_ADDRESS_SOURCE_APP_INPUT
+    if fields_changed:
+        _reset_service_address_dependent_state(profile, onboarding)
+
+    _record_provider_audit(
+        profile.organization_id,
+        "service_address_saved",
+        actor_user_id=actor_user_id,
+        message=audit_message,
+        metadata={
+            "source": audit_source,
+            "number_strategy": resolve_number_strategy(onboarding) if onboarding is not None else None,
+            "service_address_source_mode": profile.effective_service_address_source_mode,
+            "service_address_country": profile.service_address_country,
+            "service_address_city": profile.service_address_city,
+            "service_address_region": profile.service_address_region,
+            "service_address_postal_code": profile.service_address_postal_code,
+        },
+    )
+    return True
+
+
+def save_service_address_from_twilio_import(
+    profile: OrganizationMessagingProfile,
+    *,
+    service_address_fields: dict[str, str | None],
+) -> bool:
+    if profile.effective_service_address_source_mode == SERVICE_ADDRESS_SOURCE_APP_INPUT:
+        return False
+
+    fields_changed = _service_address_fields_changed(profile, service_address_fields)
+    source_changed = profile.effective_service_address_source_mode != SERVICE_ADDRESS_SOURCE_TWILIO_IMPORT
+    if not fields_changed and not source_changed:
+        return False
+
+    _apply_service_address_fields(profile, service_address_fields)
+    profile.service_address_source_mode = SERVICE_ADDRESS_SOURCE_TWILIO_IMPORT
+    return True
+
+
 def seed_service_address_from_onboarding(
     profile: OrganizationMessagingProfile,
     onboarding: OrganizationA2POnboarding | None,
@@ -350,8 +465,11 @@ def seed_service_address_from_onboarding(
     if onboarding is None:
         return False
 
-    current_complete = profile.service_address_complete
-    if current_complete and not overwrite:
+    if (
+        profile.service_address_complete
+        and profile.effective_service_address_source_mode == SERVICE_ADDRESS_SOURCE_APP_INPUT
+        and not overwrite
+    ):
         return False
 
     fields = {
@@ -373,35 +491,14 @@ def seed_service_address_from_onboarding(
     ):
         return False
 
-    changed = False
-    for field_name, field_value in fields.items():
-        if getattr(profile, field_name) != field_value:
-            setattr(profile, field_name, field_value)
-            changed = True
-
-    if not changed:
-        return False
-
-    if profile.provider_status == "active":
-        profile.set_provider_status("pending")
-    if profile.effective_sender_finalization_status == "active":
-        profile.set_sender_finalization_status("awaiting_emergency_address_sync")
-    profile.sender_finalization_error = None
-    profile.emergency_address_last_error = None
-    _record_provider_audit(
-        profile.organization_id,
-        "service_address_saved",
+    return save_service_address_from_app_input(
+        profile,
+        service_address_fields=fields,
+        onboarding=onboarding,
         actor_user_id=actor_user_id,
-        message="Seeded the sender service address from the A2P onboarding packet.",
-        metadata={
-            "source": "a2p_onboarding",
-            "service_address_country": profile.service_address_country,
-            "service_address_city": profile.service_address_city,
-            "service_address_region": profile.service_address_region,
-            "service_address_postal_code": profile.service_address_postal_code,
-        },
+        audit_message="Seeded the sender service address from the A2P onboarding packet.",
+        audit_source="a2p_onboarding",
     )
-    return True
 
 
 def _service_address_snapshot(profile: OrganizationMessagingProfile) -> dict[str, str | None]:
@@ -568,7 +665,7 @@ def _resolve_sender_assignment(
     client: Client,
     actor_user_id: int | None = None,
 ) -> tuple[str | None, str | None]:
-    strategy = ((onboarding.number_strategy if onboarding is not None else None) or "platform_assign").strip().lower()
+    strategy = resolve_number_strategy(onboarding)
     if profile.phone_number_sid and profile.from_number:
         return profile.phone_number_sid, profile.from_number
 
@@ -1348,6 +1445,7 @@ def release_sender(organization_id: int, *, actor_user_id: int | None = None) ->
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
     profile = ensure_messaging_profile(organization)
+    onboarding = organization.a2p_onboarding
     try:
         _detach_service_senders(profile, actor_user_id=actor_user_id)
         profile.from_number = None
@@ -1359,7 +1457,10 @@ def release_sender(organization_id: int, *, actor_user_id: int | None = None) ->
         profile.emergency_address_last_synced_at = None
         profile.sender_finalization_error = None
         profile.sender_finalized_at = None
-        profile.set_sender_finalization_status("awaiting_number_purchase")
+        next_status, next_error = _next_sender_finalization_waiting_state(profile, onboarding)
+        profile.set_sender_finalization_status(next_status)
+        profile.sender_finalization_error = next_error
+        profile.last_provision_error = next_error
         if profile.provider_status != "suspended":
             profile.set_provider_status("pending")
         _record_provider_audit(
@@ -1456,7 +1557,11 @@ def finalize_sender_setup(
             actor_user_id=actor_user_id,
         )
 
-        current_step = "awaiting_number_purchase"
+        current_step = (
+            "awaiting_number_purchase"
+            if resolve_number_strategy(onboarding) == DEFAULT_NEW_ORG_NUMBER_STRATEGY
+            else "awaiting_sender_attach"
+        )
         phone_number_sid, from_number = _resolve_sender_assignment(
             organization,
             profile,

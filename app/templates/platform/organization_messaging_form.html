@@ -20,7 +20,7 @@
 ) %}
 {% set customer_service_sid = request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') or '' %}
 {% set current_account_sid = request.form.get('twilio_account_sid', messaging_profile.twilio_account_sid if messaging_profile else '') or '' %}
-{% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'platform_assign') or 'platform_assign' %}
+{% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') or 'auto_buy' %}
 <div class="platform-shell">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">

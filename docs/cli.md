@@ -190,7 +190,7 @@ Collects read-only beta evidence for one organization slug and label:
 
 ```bash
 ./run/public_readiness_beta_snapshot.sh \
-  --org-slug public-readiness-control \
+  --org-slug it-wingman-llc \
   --label baseline
 ```
 
@@ -206,7 +206,7 @@ Orchestrates the safe beta cutover flow for the existing Twinevia SaaS host:
 
 ```bash
 ./run/beta_cutover.sh \
-  --org-slug public-readiness-control \
+  --org-slug it-wingman-llc \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```

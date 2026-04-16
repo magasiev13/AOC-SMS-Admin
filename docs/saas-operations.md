@@ -181,12 +181,14 @@ For the production-like beta host, use the repo wrapper from your operator machi
 
 ```bash
 ./run/beta_cutover.sh \
-  --org-slug public-readiness-control \
+  --org-slug it-wingman-llc \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
 
 This wrapper preserves the current beta `DATABASE_URL`, `REDIS_URL`, and `/opt/twinevia-saas/.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy.
+
+For new organizations, the app-saved sender service address is the source of truth. Imported Twilio address state may be observed for diagnostics, but it must not silently override app-entered service-address fields.
 
 ## Timers And Background Jobs
 

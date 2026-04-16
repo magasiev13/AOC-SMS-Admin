@@ -355,6 +355,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(organization.messaging_profile.provider_mode, "platform_managed")
         self.assertIsNotNone(organization.a2p_onboarding)
         self.assertEqual(organization.a2p_onboarding.onboarding_status, "draft")
+        self.assertEqual(organization.a2p_onboarding.number_strategy, "auto_buy")
+
+    def test_owner_setup_defaults_new_org_number_strategy_to_auto_buy(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup?step=compliance")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'name="number_strategy" value="auto_buy"', response.data)
 
     def test_customer_managed_owner_setup_is_read_only_and_does_not_create_a2p_draft(self) -> None:
         organization, _, _, user = self._create_customer_managed_workspace(
@@ -1730,8 +1739,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
             provider_mode="platform_managed",
             twilio_subaccount_sid="ACsub_other",
             messaging_service_sid="MGother0001",
-            status="pending",
-            provider_status="pending",
+            status="active",
+            provider_status="active",
+            service_address_source_mode="twilio_import",
+            twilio_address_sid="ADstale0001",
+            twilio_address_json='{"sid":"ADstale0001"}',
+            emergency_address_sid="ADstale0001",
+            emergency_address_status="synced",
+            emergency_address_last_error="stale error",
+            sender_finalization_status="active",
         )
         self.db.session.add_all([other_org, other_subscription, other_messaging_profile])
         self.db.session.commit()
@@ -1800,8 +1816,15 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(other_messaging_profile.service_address_region, "CO")
         self.assertEqual(other_messaging_profile.service_address_postal_code, "80203")
         self.assertEqual(other_messaging_profile.service_address_country, "US")
+        self.assertEqual(other_messaging_profile.service_address_source_mode, "app_input")
         self.assertEqual(other_messaging_profile.messaging_service_sid, "MGother0001")
         self.assertIsNone(other_messaging_profile.phone_number_sid)
+        self.assertIsNone(other_messaging_profile.twilio_address_sid)
+        self.assertIsNone(other_messaging_profile.twilio_address_json)
+        self.assertIsNone(other_messaging_profile.emergency_address_sid)
+        self.assertIsNone(other_messaging_profile.emergency_address_status)
+        self.assertIsNone(other_messaging_profile.emergency_address_last_error)
+        self.assertEqual(other_messaging_profile.sender_finalization_status, "awaiting_a2p_approval")
 
         self.db.session.refresh(other_org)
         self.assertEqual(other_org.a2p_onboarding.number_strategy, "existing_subaccount_number")
@@ -1858,6 +1881,19 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Twilio 30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
+
+    def test_platform_admin_messaging_page_defaults_blank_org_to_auto_buy(self) -> None:
+        organization, _ = self._create_support_organization(
+            name="Blank Co",
+            slug="blank-co",
+            owner_email="blank@acme.test",
+        )
+        self._login_platform_admin()
+
+        response = self.client.get(f"/platform/organizations/{organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data, rb'<option value="auto_buy" selected>')
 
     def test_platform_admin_messaging_page_shows_launch_checklist_and_recent_twilio_activity(self) -> None:
         self.subscription.status = "active"

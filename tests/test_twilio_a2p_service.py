@@ -179,6 +179,45 @@ class TestTwilioA2PService(unittest.TestCase):
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 42)
 
     @patch("app.services.twilio_a2p_service.get_queue")
+    def test_submit_a2p_onboarding_promotes_imported_service_address_to_app_input(self, mock_get_queue) -> None:
+        queue = MagicMock()
+        mock_get_queue.return_value = queue
+        self.messaging_profile.service_address_country = "US"
+        self.messaging_profile.service_address_line1 = "9 Imported Road"
+        self.messaging_profile.service_address_city = "Boulder"
+        self.messaging_profile.service_address_region = "CO"
+        self.messaging_profile.service_address_postal_code = "80301"
+        self.messaging_profile.service_address_source_mode = "twilio_import"
+        self.messaging_profile.twilio_address_sid = "ADimported0001"
+        self.messaging_profile.twilio_address_json = '{"sid":"ADimported0001"}'
+        self.messaging_profile.emergency_address_sid = "ADimported0001"
+        self.messaging_profile.emergency_address_status = "synced"
+        self.messaging_profile.emergency_address_last_error = "stale error"
+        self.db.session.commit()
+
+        self.submit_a2p_onboarding(
+            self.organization.id,
+            self._valid_submission_payload(
+                address_line1="123 Main Street",
+                address_city="Denver",
+                address_region="CO",
+                address_postal_code="80202",
+            ),
+            actor_user_id=42,
+        )
+
+        self.db.session.refresh(self.messaging_profile)
+        self.assertEqual(self.messaging_profile.service_address_line1, "123 Main Street")
+        self.assertEqual(self.messaging_profile.service_address_city, "Denver")
+        self.assertEqual(self.messaging_profile.service_address_source_mode, "app_input")
+        self.assertIsNone(self.messaging_profile.twilio_address_sid)
+        self.assertIsNone(self.messaging_profile.twilio_address_json)
+        self.assertIsNone(self.messaging_profile.emergency_address_sid)
+        self.assertIsNone(self.messaging_profile.emergency_address_status)
+        self.assertIsNone(self.messaging_profile.emergency_address_last_error)
+        self.assertEqual(self.messaging_profile.sender_finalization_status, "awaiting_a2p_approval")
+
+    @patch("app.services.twilio_a2p_service.get_queue")
     def test_refresh_a2p_onboarding_queues_status_only_job(self, mock_get_queue) -> None:
         from app.services.twilio_a2p_service import refresh_a2p_onboarding
 
