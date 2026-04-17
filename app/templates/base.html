@@ -416,9 +416,17 @@
                 return;
             }
 
+            const topbar = mobileNav.closest('.app-topbar');
             const collapseInstance = bootstrap.Collapse.getOrCreateInstance(mobileNav, { toggle: false });
+            const syncOffset = () => {
+                if (!topbar) {
+                    return;
+                }
+                mobileNav.style.setProperty('--app-mobile-nav-offset', `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+            };
             const syncBodyState = (isOpen) => {
                 document.body.classList.toggle('app-mobile-nav-open', isOpen);
+                syncOffset();
             };
 
             mobileNav.addEventListener('show.bs.collapse', () => syncBodyState(true));
@@ -433,6 +441,8 @@
                 linkEl.addEventListener('click', () => collapseInstance.hide());
             });
 
+            window.addEventListener('resize', syncOffset);
+            syncOffset();
             syncBodyState(mobileNav.classList.contains('show'));
         }
 

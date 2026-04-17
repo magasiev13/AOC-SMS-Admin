@@ -15,8 +15,16 @@ async function elementTop(locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().top));
 }
 
+async function elementBottom(locator) {
+  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().bottom));
+}
+
 async function elementLeft(locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().left));
+}
+
+async function backgroundColor(locator) {
+  return locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 }
 
 test('platform admin desktop surfaces use the shared shell and aligned actions', async ({ page }) => {
@@ -136,4 +144,42 @@ test('platform admin mobile surfaces keep 44px action targets', async ({ page })
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   expect(await elementHeight(page.getByRole('button', { name: 'Create Business Account' }))).toBeGreaterThanOrEqual(44);
+});
+
+test('platform mobile navigation opens as one consistent surface', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, 'platform@browser.test', 'Platform-pass1!');
+  await page.goto('/platform');
+
+  await page.getByRole('button', { name: 'Toggle navigation' }).click();
+
+  const topbar = page.locator('.app-topbar');
+  const mobileNav = page.locator('[data-mobile-nav]');
+  const mobileNavPanel = page.locator('[data-mobile-nav-panel]');
+
+  await expect(page.locator('body')).toHaveClass(/app-mobile-nav-open/);
+  await expect(mobileNav).toHaveClass(/show/);
+  await expect(mobileNavPanel).toBeVisible();
+  expect(await backgroundColor(topbar)).toContain('255, 255, 255');
+  expect((await elementTop(mobileNavPanel)) - (await elementBottom(topbar))).toBeLessThanOrEqual(12);
+  expect(await elementHeight(mobileNavPanel.locator('.app-nav-link').first())).toBeGreaterThanOrEqual(44);
+});
+
+test('workspace mobile navigation keeps the shared shell treatment', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+
+  await page.getByRole('button', { name: 'Toggle navigation' }).click();
+
+  const topbar = page.locator('.app-topbar');
+  const mobileNav = page.locator('[data-mobile-nav]');
+  const mobileNavPanel = page.locator('[data-mobile-nav-panel]');
+
+  await expect(page.locator('body')).toHaveClass(/app-mobile-nav-open/);
+  await expect(mobileNav).toHaveClass(/show/);
+  await expect(mobileNavPanel.getByPlaceholder('Search contacts')).toBeVisible();
+  expect(await backgroundColor(topbar)).toContain('255, 255, 255');
+  expect((await elementTop(mobileNavPanel)) - (await elementBottom(topbar))).toBeLessThanOrEqual(12);
+  expect(await elementHeight(mobileNavPanel.locator('.app-nav-link').first())).toBeGreaterThanOrEqual(44);
 });

@@ -30,6 +30,8 @@
   --inbox-thread-active-meta: #334155;
   --inbox-thread-hover-bg: #f4f6ff;
   --inbox-error-on-primary-text: #fef3c7;
+  --mobile-nav-backdrop: rgba(15, 23, 42, 0.18);
+  --mobile-nav-panel-shadow: 0 1rem 2.5rem rgba(15, 23, 42, 0.16);
 
   --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   --gradient-success: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
@@ -300,22 +302,26 @@ h6,
 }
 
 .app-mobile-nav {
-  background: rgba(15, 23, 42, 0.48);
+  background: var(--mobile-nav-backdrop);
+  backdrop-filter: blur(14px);
   position: fixed;
-  inset: 0;
-  padding: calc(4.5rem + var(--space-2)) var(--space-3) var(--space-3);
+  inset: var(--app-mobile-nav-offset, 4.75rem) 0 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
   z-index: 1040;
+  overflow-y: auto;
 }
 
 .app-mobile-nav-panel {
-  background-color: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--elevation-2);
-  width: min(22rem, 100%);
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  border-radius: 1rem;
+  box-shadow: var(--mobile-nav-panel-shadow);
+  width: min(22.5rem, 100%);
   max-width: 100%;
   margin: 0 0 0 auto;
   text-align: left;
+  backdrop-filter: blur(20px);
+  overflow: hidden;
 }
 
 .app-mobile-nav-panel .app-search,
@@ -329,6 +335,7 @@ h6,
 
 .app-mobile-nav-panel .nav {
   align-items: flex-start;
+  gap: var(--space-1);
 }
 
 .app-mobile-nav-panel .app-nav-link {
@@ -336,6 +343,9 @@ h6,
   width: 100%;
   color: var(--color-text);
   background-color: transparent;
+  min-height: 2.75rem;
+  padding: 0.7rem var(--space-3);
+  border-radius: 0.85rem;
 }
 
 .app-mobile-nav-panel .app-nav-link:hover {
@@ -3314,15 +3324,21 @@ code {
 @media (max-width: 991.98px) {
   .app-mobile-nav-panel {
     padding: var(--space-3) !important;
-    max-height: calc(100dvh - 5.25rem);
+    max-height: calc(100dvh - var(--app-mobile-nav-offset, 4.75rem) - var(--space-3));
     overflow-y: auto;
-    border-top-right-radius: 1.1rem;
-    border-bottom-right-radius: 1.1rem;
   }
 
   .app-mobile-nav-panel .nav {
     display: flex;
     gap: var(--space-1);
+  }
+
+  .app-mobile-nav-panel .app-search {
+    margin-bottom: var(--space-2);
+  }
+
+  .app-mobile-nav-panel .app-search .form-control {
+    min-height: 2.9rem;
   }
 }
 
@@ -4301,6 +4317,11 @@ a:focus-visible,
 .app-topbar {
   background: rgba(246, 248, 251, 0.96);
   backdrop-filter: blur(18px);
+}
+
+.app-mobile-nav-open .app-topbar {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: none;
 }
 
 .app-topbar .brand-icon,
