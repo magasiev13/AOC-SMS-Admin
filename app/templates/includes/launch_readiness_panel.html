@@ -14,6 +14,7 @@
     </div>
 </div>
 
+{% if launch_readiness_show_follow_up is not defined or launch_readiness_show_follow_up %}
 {% if launch_readiness.awaiting_sender_assignment %}
 <div class="platform-note mt-4" role="note">
     <div class="platform-note__title">Await sender assignment</div>
@@ -25,7 +26,9 @@
     <div class="platform-note__copy">The sender is attached. Keep customer traffic paused until the provider status turns active.</div>
 </div>
 {% endif %}
+{% endif %}
 
+{% if launch_readiness_show_runbook is not defined or launch_readiness_show_runbook %}
 <div class="platform-note mt-4" role="note">
     <div class="platform-note__title">First-send runbook</div>
     <ol class="mb-0 ps-3 small text-muted">
@@ -34,3 +37,4 @@
         {% endfor %}
     </ol>
 </div>
+{% endif %}

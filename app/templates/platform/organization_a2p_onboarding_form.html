@@ -12,7 +12,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="platform-shell">
+<div class="platform-shell platform-shell--compact">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
             <div class="platform-shell__summary-body">
@@ -20,9 +20,9 @@
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
                 <p class="platform-shell__summary-copy">
                     {% if customer_managed_a2p %}
-                    This workspace keeps A2P registration in the customer's Twilio account. Review the external brand, campaign, and sender state here without submitting a platform-managed packet.
+                    Review the external brand, campaign, and sender state here without submitting a platform-managed packet.
                     {% else %}
-                    Submit and monitor the registration package here. Keep messaging setup separate, then return once carrier review is complete.
+                    Submit the registration packet here, then return to messaging when review completes.
                     {% endif %}
                 </p>
             </div>
@@ -73,10 +73,6 @@
                 </div>
                 {% endif %}
 
-                <div class="mb-4">
-                    {% include 'includes/provider_activity_timeline.html' %}
-                </div>
-
                 {% if customer_managed_a2p %}
                 <div class="platform-note mb-4" role="note">
                     <div class="platform-note__title">Customer-managed A2P</div>
@@ -118,9 +114,9 @@
                     </div>
                 </div>
 
-                <div class="platform-form-actions mt-4">
-                    <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-primary">Back to Messaging Setup</a>
-                </div>
+                    <div class="platform-form-actions mt-4">
+                        <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-primary">Back to Messaging Setup</a>
+                    </div>
                 {% else %}
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -432,6 +428,10 @@
                     </div>
                 </form>
                 {% endif %}
+
+                <div class="mt-4">
+                    {% include 'includes/provider_activity_timeline.html' %}
+                </div>
             </div>
         </div>
     </div>
@@ -516,29 +516,20 @@
                         Twilio Console may show a <code>CM...</code> campaign ID while Twinevia stores the Messaging Service campaign association as <code>QE...</code>.
                     </p>
                     {% endif %}
-                    <div class="platform-shell__eyebrow mb-2">Guidance</div>
-                    <p class="small text-muted mb-3">
-                        Promotional consent cannot be created from a phone number alone. Use a hosted web or QR opt-in with clear disclosures, then mirror existing consent into Twilio later if needed.
-                    </p>
-                    <p class="small text-muted mb-3">
-                        Hosted defaults for this workspace:
-                        <a href="{{ hosted_compliance_urls.privacy_policy_url }}" target="_blank" rel="noopener">privacy</a>,
-                        <a href="{{ hosted_compliance_urls.terms_and_conditions_url }}" target="_blank" rel="noopener">terms</a>,
-                        <a href="{{ hosted_compliance_urls.cta_proof_url }}" target="_blank" rel="noopener">opt-in proof</a>.
-                    </p>
-                    <p class="small text-muted mb-3">
-                        {% if customer_managed_a2p %}
-                        This workspace inherits its approved brand and campaign from the customer Twilio account. Keep webhook, Messaging Service, and number changes aligned there first.
-                        {% elif a2p_status and a2p_status.event_streams_enabled %}
-                        Event Streams can update this page automatically as Twilio emits brand, campaign, and number events.
-                        {% else %}
-                        Use Refresh Status when Event Streams are not configured yet. The background reconcile job will keep polling Twilio.
-                        {% endif %}
-                    </p>
                     {% if retry_guidance %}
                     <div class="platform-note mb-3" role="note">
                         <div class="platform-note__title">Retry guidance</div>
                         <div class="platform-note__copy">{{ retry_guidance }}</div>
+                    </div>
+                    {% endif %}
+                    {% if not customer_managed_a2p %}
+                    <div class="platform-note mb-3" role="note">
+                        <div class="platform-note__title">Hosted compliance links</div>
+                        <div class="platform-note__copy">
+                            <a href="{{ hosted_compliance_urls.privacy_policy_url }}" target="_blank" rel="noopener">privacy</a>,
+                            <a href="{{ hosted_compliance_urls.terms_and_conditions_url }}" target="_blank" rel="noopener">terms</a>,
+                            <a href="{{ hosted_compliance_urls.cta_proof_url }}" target="_blank" rel="noopener">opt-in proof</a>
+                        </div>
                     </div>
                     {% endif %}
                     <div class="platform-shell__eyebrow mb-3">Actions</div>

@@ -11,6 +11,14 @@ async function elementHeight(locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
 }
 
+async function elementTop(locator) {
+  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+}
+
+async function elementLeft(locator) {
+  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().left));
+}
+
 test('platform admin desktop surfaces use the shared shell and aligned actions', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await login(page, 'platform@browser.test', 'Platform-pass1!');
@@ -40,6 +48,10 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   await expect(firstRow.getByText('Manage provider')).toHaveCount(0);
   await expect(firstRow.getByText('View checklist')).toHaveCount(0);
 
+  const suspendedRow = page.locator('.platform-directory__row').filter({ hasText: 'Suspended Bakery' }).first();
+  await expect(suspendedRow).toBeVisible();
+  await expect(suspendedRow.getByText(/^3\/6 core steps complete$/)).toHaveCount(1);
+
   const checklistSummaries = page.locator('.platform-inline-details summary');
   if (await checklistSummaries.count()) {
     await expect(checklistSummaries.first()).toHaveText('Checklist');
@@ -51,35 +63,64 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
 
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
+  await expect(page.getByText('Create the next business account and keep telecom provisioning on the managed path.')).toHaveCount(0);
+  await expect(page.getByText('Name the workspace and send the first owner invite.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create Business Account' })).toBeVisible();
   expect(await elementHeight(page.getByRole('button', { name: 'Create Business Account' }))).toBeGreaterThanOrEqual(44);
 
   await page.goto(accessHref);
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-shell__summary-meta')).toBeVisible();
+  await expect(page.getByText('Platform support stays invite-only. Use staff invites for team help, and reissue the owner invite only when initial onboarding is blocked.')).toHaveCount(0);
+  await expect(page.locator('.platform-shell__summary-copy')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Create Staff Invite' })).toBeVisible();
+  expect(await elementLeft(page.getByRole('button', { name: 'Create Staff Invite' }))).toBeLessThan(
+    await elementLeft(page.getByRole('button', { name: 'Grant Complimentary Billing' })),
+  );
   expect(await elementHeight(page.getByRole('button', { name: 'Create Staff Invite' }))).toBeGreaterThanOrEqual(44);
 
   await page.goto(messagingHref);
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-shell__summary-meta')).toBeVisible();
+  await expect(page.getByText('Provision the platform-managed Twilio account first, then let Twinevia validate the service address, attach the sender, sync emergency registration, and unlock live sending.')).toHaveCount(0);
+  await expect(page.getByText('Provision the provider, save the service address, then finalize the sender.')).toBeVisible();
   await expect(page.getByText('Platform-managed Twilio', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Finalize Sender Setup' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save Provider Settings' })).toBeVisible();
   await expect(page.getByLabel('Service Address Line 1')).toBeVisible();
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.locator('.platform-key-label', { hasText: 'Emergency address sync' })).toBeVisible();
+  expect(await elementTop(page.getByLabel('Service Address Line 1'))).toBeLessThan(780);
+  expect(await elementTop(page.getByLabel('Service Address Line 1'))).toBeLessThan(
+    await elementTop(page.getByText('Recent Twilio activity').first()),
+  );
 
   await page.getByRole('link', { name: 'Manage A2P Onboarding' }).click();
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-shell__summary-meta')).toBeVisible();
+  await expect(page.getByText('Submit and monitor the registration package here. Keep messaging setup separate, then return once carrier review is complete.')).toHaveCount(0);
+  await expect(page.getByText('Submit the registration packet here, then return to messaging when review completes.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Submit A2P Onboarding' })).toBeVisible();
+  await expect(page.getByText('Guidance')).toHaveCount(0);
+  expect(await elementTop(page.getByLabel('Legal Business Name'))).toBeLessThan(780);
+  expect(await elementTop(page.getByLabel('Legal Business Name'))).toBeLessThan(
+    await elementTop(page.getByText('Recent Twilio activity').first()),
+  );
   expect(await elementHeight(page.getByRole('button', { name: 'Submit A2P Onboarding' }))).toBeGreaterThanOrEqual(44);
 });
 
 test('platform admin mobile surfaces keep 44px action targets', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, 'platform@browser.test', 'Platform-pass1!');
+
+  await page.goto('/platform');
+  await expect(page.locator('.platform-home-summary-strip')).toBeVisible();
+  await expect(page.locator('.platform-home-kicker')).toHaveCount(0);
+  await expect(page.locator('.platform-home-worklist__item').first()).toBeVisible();
+  await expect(page.locator('[aria-labelledby="platform-home-needs-attention"]').getByRole('link', { name: 'Organizations' })).toHaveCount(0);
+  await expect(page.locator('.platform-home-worklist__item').first().locator('.platform-home-worklist__headline')).toHaveText(
+    'Open the billing portal and resolve the payment issue.',
+  );
 
   await page.goto('/platform/organizations');
   await expect(page.locator('.card-list-item.platform-org-card').first()).toBeVisible();

@@ -47,6 +47,7 @@
             {% set owner_state_label = 'Invite pending' if owner_invite_pending else ('Owner joined' if onboarding.owner_joined else 'No invite') %}
             {% set owner_state_badge = 'warning text-dark' if owner_invite_pending else ('success' if onboarding.owner_joined else 'secondary') %}
             {% set messaging_summary = messaging.summary if messaging.title == 'Ready' else (messaging.detail or messaging.summary) %}
+            {% set show_progress_subtext = launch_incomplete and onboarding.headline != progress_text %}
             <article class="platform-directory__row platform-directory__row--compact">
                 <div class="platform-directory__cell platform-directory__cell--organization">
                     <div class="platform-directory__name-row">
@@ -62,7 +63,7 @@
 
                 <div class="platform-directory__cell platform-directory__cell--status">
                     <div class="platform-directory__headline">{{ onboarding.headline }}</div>
-                    {% if launch_incomplete %}
+                    {% if show_progress_subtext %}
                     <p class="platform-directory__subtext">{{ progress_text }}</p>
                     {% endif %}
                     {% if launch_incomplete %}
@@ -158,6 +159,7 @@
         {% set owner_state_label = 'Invite pending' if owner_invite_pending else ('Owner joined' if onboarding.owner_joined else 'No invite') %}
         {% set owner_state_badge = 'warning text-dark' if owner_invite_pending else ('success' if onboarding.owner_joined else 'secondary') %}
         {% set messaging_summary = messaging.summary if messaging.title == 'Ready' else (messaging.detail or messaging.summary) %}
+        {% set show_progress_subtext = launch_incomplete and onboarding.headline != progress_text %}
         <article class="card-list-item platform-org-card">
             <div class="platform-org-card__header">
                 <div>
@@ -177,8 +179,10 @@
                 <div class="platform-org-card__section">
                     <div class="platform-org-card__label">Launch status</div>
                     <div class="platform-org-card__value">{{ onboarding.headline }}</div>
-                    {% if launch_incomplete %}
+                    {% if show_progress_subtext %}
                     <div class="small text-muted">{{ progress_text }}</div>
+                    {% endif %}
+                    {% if launch_incomplete %}
                     <details class="platform-inline-details">
                         <summary>Checklist</summary>
                         <ul class="platform-checklist">

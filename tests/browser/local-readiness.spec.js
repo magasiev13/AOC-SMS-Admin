@@ -21,10 +21,36 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(page.locator('.app-page-title')).toHaveText('Platform');
   await expect(page.getByRole('link', { name: 'Platform' })).toBeVisible();
   await expect(page.locator('.app-nav .app-nav-link').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('.platform-home-summary-strip')).toBeVisible();
+  await expect(page.locator('.platform-home-kicker')).toHaveCount(0);
+  await expect(page.getByText('Manage organizations, onboarding, and provider readiness.')).toHaveCount(0);
+  await expect(page.getByText('Use this workspace to create business accounts, review onboarding blockers, manage platform access, and finish provider setup.')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
+  await expect(page.locator('[aria-labelledby="platform-home-needs-attention"]').getByRole('link', { name: 'Organizations' })).toHaveCount(0);
+  const firstWorklistItem = page.locator('.platform-home-worklist__item').first();
+  await expect(firstWorklistItem).toBeVisible();
+  await expect(firstWorklistItem.locator('.platform-home-worklist__headline')).toHaveText('Open the billing portal and resolve the payment issue.');
+  await expect(firstWorklistItem.locator('.platform-home-worklist__support')).toHaveText('3/6 core steps · Billing: Payment issue · Messaging: Suspended');
+  await expect(firstWorklistItem.getByText(/^3\/6 core steps complete$/)).toHaveCount(0);
+  await expect(firstWorklistItem.getByRole('link', { name: 'Access' })).toBeVisible();
+  await expect(firstWorklistItem.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
+  await expect(page.locator('.platform-home-utilities')).toBeVisible();
+  await expect(page.locator('.platform-home-utilities').getByRole('link', { name: 'Organizations' })).toBeVisible();
+  await expect(page.locator('.platform-home-utilities').getByRole('link', { name: 'Users' })).toBeVisible();
+  await expect(page.locator('.platform-home-utilities').getByRole('link', { name: 'Security Events' })).toBeVisible();
+  const recentSuspendedItem = page.locator('.platform-home-recent-item').filter({ hasText: 'Suspended Bakery' }).first();
+  await expect(recentSuspendedItem).toBeVisible();
+  await expect(recentSuspendedItem.locator('.platform-home-recent-item__meta')).toHaveText(
+    'Open the billing portal and resolve the payment issue.',
+  );
+  await expect(recentSuspendedItem.getByText(/^3\/6 core steps complete$/)).toHaveCount(0);
+  await expect(page.getByText('Open Organization Directory')).toHaveCount(0);
+  await expect(page.getByText('Review Users')).toHaveCount(0);
+  await expect(page.getByText('Review Security Events')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Restart SaaS Services' })).toBeVisible();
   await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
   await expect(
-    page.locator('.card-body .small.mt-3').filter({ hasText: 'Restart request queued. Waiting for the host processor.' }),
+    page.locator('.platform-home-status').getByText('Restart request queued. Waiting for the host processor.'),
   ).toBeVisible();
   await expect(page.getByText('Last request: Queued')).toBeVisible();
   await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
@@ -46,6 +72,8 @@ test('platform admin can review onboarding progress and owner invite access', as
 
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();
+  await expect(page.getByText('Create the next business account and keep telecom provisioning on the managed path.')).toHaveCount(0);
+  await expect(page.getByText('Name the workspace and send the first owner invite.')).toBeVisible();
   await expect(page.getByText(/Platform-managed Twilio by default/)).toBeVisible();
   await expect(page.getByText(/Twilio subaccounts and messaging services are provisioned later/)).toBeVisible();
   await expect(page.getByLabel('Initial Role')).toHaveCount(0);

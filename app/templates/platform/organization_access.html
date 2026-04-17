@@ -16,15 +16,12 @@
 {% endblock %}
 
 {% block content %}
-<div class="platform-shell">
+<div class="platform-shell platform-shell--compact">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
             <div class="platform-shell__summary-body">
                 <div class="platform-shell__eyebrow">Organization access</div>
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
-                <p class="platform-shell__summary-copy">
-                    Platform support stays invite-only. Use staff invites for team help, and reissue the owner invite only when initial onboarding is blocked.
-                </p>
             </div>
         </div>
         <div class="platform-shell__summary-meta">
@@ -89,7 +86,7 @@
             </div>
         </div>
 
-        <div class="card app-card platform-table-card">
+        <div class="card app-card platform-table-card mb-4">
             <div class="card-header">Pending Invitations</div>
             <div class="card-body p-0">
                 {% if pending_invitation_rows %}
@@ -143,6 +140,35 @@
                 {% endif %}
             </div>
         </div>
+
+        <div class="card app-card platform-section-card">
+            <div class="card-body">
+                <div class="platform-shell__eyebrow mb-2">Invite Staff Member</div>
+                <p class="text-muted small">
+                    Create an org-scoped staff invite without becoming a member of the organization yourself.
+                </p>
+                <form method="POST" action="{{ url_for('main.platform_organizations_invite_staff', organization_id=organization.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label" for="email">Staff Email</label>
+                        <input
+                            class="form-control"
+                            id="email"
+                            name="email"
+                            type="email"
+                            required
+                            autocomplete="email"
+                            placeholder="staff@example.com"
+                            value="{{ staff_invite_email }}"
+                        >
+                    </div>
+                    <div class="small text-muted mb-3">
+                        The invited user will finish account setup from the invite link and join as Staff.
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Staff Invite</button>
+                </form>
+            </div>
+        </div>
     </div>
 
     <aside class="platform-shell__side">
@@ -163,35 +189,6 @@
                         <button type="submit" class="btn {{ 'btn-outline-danger' if billing.is_complimentary else 'btn-outline-primary' }}">
                             {{ 'Clear Complimentary Billing' if billing.is_complimentary else 'Grant Complimentary Billing' }}
                         </button>
-                    </form>
-                </div>
-            </div>
-
-            <div class="card app-card mb-4 platform-side-card">
-                <div class="card-body">
-                    <div class="platform-shell__eyebrow mb-2">Invite Staff Member</div>
-                    <p class="text-muted small">
-                        Create an org-scoped staff invite without becoming a member of the organization yourself.
-                    </p>
-                    <form method="POST" action="{{ url_for('main.platform_organizations_invite_staff', organization_id=organization.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <div class="mb-3">
-                            <label class="form-label" for="email">Staff Email</label>
-                            <input
-                                class="form-control"
-                                id="email"
-                                name="email"
-                                type="email"
-                                required
-                                autocomplete="email"
-                                placeholder="staff@example.com"
-                                value="{{ staff_invite_email }}"
-                            >
-                        </div>
-                        <div class="small text-muted mb-3">
-                            The invited user will finish account setup from the invite link and join as Staff.
-                        </div>
-                        <button type="submit" class="btn btn-primary">Create Staff Invite</button>
                     </form>
                 </div>
             </div>

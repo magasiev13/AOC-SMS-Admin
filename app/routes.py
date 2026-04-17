@@ -2015,6 +2015,94 @@ def _platform_restart_status_view() -> dict | None:
     }
 
 
+def _platform_home_action_view(row: dict) -> dict:
+    organization = row['organization']
+    provider_needs_attention = row['messaging']['title'] != 'Ready'
+    access_action = {
+        'label': 'Access',
+        'url': url_for('main.platform_organizations_access', organization_id=organization.id),
+    }
+    messaging_action = {
+        'label': 'Messaging' if organization.messaging_profile else 'Set up provider',
+        'url': url_for('main.platform_organizations_messaging_edit', organization_id=organization.id),
+    }
+    if provider_needs_attention:
+        primary_action = messaging_action
+        secondary_action = access_action
+    else:
+        primary_action = access_action
+        secondary_action = messaging_action
+    return {
+        'primary_action': primary_action,
+        'secondary_action': secondary_action,
+    }
+
+
+def _platform_home_blocker_headline(row: dict) -> str:
+    onboarding = row['onboarding']
+    billing = row['billing']
+    messaging = row['messaging']
+    generic_headline = f"{onboarding['completed_required']}/{onboarding['required_total']} core steps complete"
+    incomplete_required_step = next(
+        (
+            step for step in onboarding['steps']
+            if not step['optional'] and not step['complete']
+        ),
+        None,
+    )
+    primary_blocker = None
+    if not billing['can_send']:
+        primary_blocker = billing.get('next_step')
+    if not primary_blocker and messaging['title'] != 'Ready':
+        primary_blocker = messaging.get('detail') or messaging.get('summary')
+    if not primary_blocker and incomplete_required_step is not None:
+        primary_blocker = incomplete_required_step.get('detail') or incomplete_required_step.get('label')
+    if not primary_blocker and onboarding['headline'] != generic_headline:
+        primary_blocker = onboarding['headline']
+    if not primary_blocker:
+        primary_blocker = onboarding['headline']
+    return primary_blocker
+
+
+def _platform_home_attention_row_view(row: dict) -> dict:
+    onboarding = row['onboarding']
+    billing = row['billing']
+    messaging = row['messaging']
+    progress_text = f"{onboarding['completed_required']}/{onboarding['required_total']} core steps"
+    status_parts = []
+    if onboarding['completed_required'] < onboarding['required_total']:
+        status_parts.append(progress_text)
+    status_parts.append(f"Billing: {billing['title']}")
+    status_parts.append(f"Messaging: {messaging['title']}")
+    view = dict(row)
+    view.update(
+        _platform_home_action_view(row),
+        headline=_platform_home_blocker_headline(row),
+        status_line=' · '.join(status_parts),
+    )
+    return view
+
+
+def _platform_home_recent_row_view(row: dict) -> dict:
+    onboarding = row['onboarding']
+    billing = row['billing']
+    messaging = row['messaging']
+    view = dict(row)
+    view.update(
+        access_url=url_for('main.platform_organizations_access', organization_id=row['organization'].id),
+        status_line=(
+            _platform_home_blocker_headline(row)
+            if (
+                onboarding['completed_required'] < onboarding['required_total']
+                or not billing['can_send']
+                or messaging['title'] != 'Ready'
+            )
+            else f"{billing['title']} · {messaging['title']}"
+        ),
+    )
+    return view
+
+
 def _platform_home_context() -> dict:
     organization_rows = _platform_organization_rows()
     total_organizations = len(organization_rows)
@@ -2052,8 +2140,8 @@ def _platform_home_context() -> dict:
             'onboarding_incomplete': onboarding_incomplete,
             'missing_live_messaging': missing_live_messaging,
         },
-        'attention_rows': attention_rows,
-        'recent_rows': organization_rows[:5],
+        'attention_rows': [_platform_home_attention_row_view(row) for row in attention_rows],
+        'recent_rows': [_platform_home_recent_row_view(row) for row in organization_rows[:5]],
         'service_restart': {
             'enabled': bool(current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED')),
             'last_result': _platform_restart_status_view(),

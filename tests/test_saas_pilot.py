@@ -702,7 +702,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Platform Admin", response.data)
+        self.assertNotIn(b"Platform Admin", response.data)
         self.assertIn(b"/platform/organizations", response.data)
         self.assertIn(b"bi-buildings", response.data)
         self.assertNotIn(b'href="/community"', response.data)
@@ -716,8 +716,78 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Needs attention", response.data)
+        self.assertIn(b"System utilities", response.data)
+        self.assertNotIn(b"Platform Admin", response.data)
+        self.assertNotIn(b"Manage organizations, onboarding, and provider readiness.", response.data)
         self.assertIn(b"Restart SaaS Services", response.data)
         self.assertIn(b"/platform/operations/restart-services", response.data)
+
+    def test_platform_home_prioritizes_billing_blocker_headline(self) -> None:
+        blocked_org = self.Organization(name="Billing Blocked Co", slug="billing-blocked-co", status="active")
+        blocked_subscription = self.OrganizationSubscription(
+            organization=blocked_org,
+            stripe_customer_id="cus_blocked_test",
+            stripe_subscription_id="sub_blocked_test",
+            stripe_price_id="price_test_123",
+            status="past_due",
+        )
+        blocked_messaging = self.OrganizationMessagingProfile(
+            organization=blocked_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACblocked0001",
+            messaging_service_sid="MGblocked0001",
+            phone_number_sid="PNblocked0001",
+            from_number="+15550007777",
+            inbound_identity="+15550007777",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+        )
+        self.db.session.add_all([blocked_org, blocked_subscription, blocked_messaging])
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Billing Blocked Co", response.data)
+        self.assertGreaterEqual(
+            response.data.count(b"Open the billing portal and resolve the payment issue."),
+            2,
+        )
+
+    def test_platform_home_prioritizes_messaging_blocker_headline(self) -> None:
+        blocked_org = self.Organization(name="Messaging Blocked Co", slug="messaging-blocked-co", status="active")
+        blocked_subscription = self.OrganizationSubscription(
+            organization=blocked_org,
+            stripe_customer_id="cus_message_test",
+            stripe_subscription_id="sub_message_test",
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        blocked_messaging = self.OrganizationMessagingProfile(
+            organization=blocked_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACmessage0001",
+            messaging_service_sid="MGmessage0001",
+            status="error",
+            provider_status="error",
+            sender_review_status="pending",
+            last_provision_error="Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.",
+        )
+        self.db.session.add_all([blocked_org, blocked_subscription, blocked_messaging])
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Messaging Blocked Co", response.data)
+        self.assertGreaterEqual(
+            response.data.count(b"Twilio A2P onboarding could not be queued. Check Redis/RQ and retry."),
+            2,
+        )
 
     def test_owner_does_not_see_platform_organizations_nav_link(self) -> None:
         self._login_owner()
@@ -1426,6 +1496,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"core steps complete", response.data)
+        self.assertEqual(response.data.count(b"5/6 core steps complete"), 2)
         self.assertIn(b"Open invite", response.data)
         self.assertIn(b"Access", response.data)
         self.assertIn(f"https://app.example.com/invites/{invitation.token}".encode(), response.data)
@@ -2211,8 +2282,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Launch readiness", response.data)
-        self.assertIn(b"Await sender assignment", response.data)
-        self.assertIn(b"Next operator action", response.data)
+        self.assertNotIn(b"Await sender assignment", response.data)
+        self.assertNotIn(b"Next operator action", response.data)
         self.assertIn(b"Save the target PN SID from the org Twilio subaccount", response.data)
         self.assertIn(b"Service address", response.data)
         self.assertIn(b"Emergency address sync", response.data)
@@ -3076,6 +3147,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Queued", response.data)
         self.assertIn(b"Restart queued. The SaaS services are restarting.", response.data)
 
@@ -3099,6 +3171,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Succeeded", response.data)
         self.assertIn(b"Restart completed successfully.", response.data)
 
@@ -3122,6 +3195,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Failed", response.data)
         self.assertIn(b"Restart failed.", response.data)
 
