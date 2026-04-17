@@ -2520,6 +2520,23 @@ def _workspace_summary_view(
     return summary
 
 
+def _workspace_send_disabled_reason(
+    *,
+    subscription_view: dict,
+    a2p_status_view: dict | None = None,
+) -> str | None:
+    if not subscription_view['can_send']:
+        return subscription_view['next_step']
+    if not a2p_status_view:
+        return None
+
+    title = str(a2p_status_view.get('title') or '').strip()
+    next_step = str(a2p_status_view.get('next_step') or '').strip()
+    if title and next_step and next_step.lower() not in title.lower():
+        return f'{title}. {next_step}'
+    return title or next_step or None
+
+
 def _billing_surface_view(
     *,
     organization: Organization | None,
@@ -3607,10 +3624,9 @@ def dashboard():
         can_send_messages = _organization_can_transmit_messages(organization) if saas_mode_enabled() else True
         send_disabled_reason = None
         if saas_mode_enabled() and organization is not None and not can_send_messages:
-            send_disabled_reason = (
-                subscription_view['next_step']
-                if not subscription_view['can_send']
-                else a2p_status_view['next_step']
+            send_disabled_reason = _workspace_send_disabled_reason(
+                subscription_view=subscription_view,
+                a2p_status_view=a2p_status_view,
             )
 
         return {
