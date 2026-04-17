@@ -101,6 +101,32 @@ def _validate_saas_billing_config(app: Flask) -> None:
             )
 
 
+def _validate_explicit_production_runtime(app: Flask) -> None:
+    if os.environ.get("FLASK_ENV", "").lower() != "production":
+        return
+
+    errors: list[str] = []
+    if app.config.get("DEBUG"):
+        errors.append("FLASK_DEBUG must be unset or 0 when FLASK_ENV=production.")
+
+    if app.config.get("SAAS_MODE"):
+        database_uri = str(app.config.get("SQLALCHEMY_DATABASE_URI") or "").strip().lower()
+        if not database_uri.startswith("postgresql"):
+            errors.append("Production SaaS requires PostgreSQL DATABASE_URL; SQLite is not supported for live deploys.")
+
+        for flag_name in (
+            "STRIPE_FAKE_CHECKOUT_ENABLED",
+            "TWILIO_BROWSER_FAKE_SENDS",
+            "TWILIO_A2P_FAKE_QUEUE",
+        ):
+            if app.config.get(flag_name):
+                errors.append(f"{flag_name} must be disabled (0) when FLASK_ENV=production.")
+
+    if errors:
+        details = "\n - ".join(errors)
+        raise RuntimeError(f"Production runtime configuration is invalid:\n - {details}")
+
+
 def _run_startup_tasks(app: Flask) -> None:
     with app.app_context():
         if app.config.get("SAAS_MODE"):
@@ -260,6 +286,9 @@ def _build_app() -> Flask:
     app.config.from_object(Config)
 
     is_explicit_production = os.environ.get("FLASK_ENV", "").lower() == "production"
+    if is_explicit_production:
+        _validate_explicit_production_runtime(app)
+
     if not app.config.get("DEBUG"):
         if app.config.get("SECRET_KEY") == "dev-secret-key-change-in-production":
             raise RuntimeError("SECRET_KEY must be set in production")

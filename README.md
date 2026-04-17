@@ -56,7 +56,7 @@ The docs in `docs/` are SaaS-first. Legacy details remain documented only where 
 cp .env.example .env
 ```
 
-The setup wrapper creates a Python 3.11 virtualenv, installs runtime and test dependencies, and preserves an existing `.env`.
+The setup wrapper creates a Python 3.11 virtualenv, installs runtime and test dependencies, and preserves an existing `.env`. `.env.example` is a local bootstrap sample only; do not copy it directly onto a live SaaS host. Use [docs/deployment.md](docs/deployment.md) and [docs/ubuntu-vps-saas-checklist.md](docs/ubuntu-vps-saas-checklist.md) for the production env contract.
 
 ### 2. Fill the minimum SaaS settings
 
@@ -125,7 +125,12 @@ Deterministic signoff artifacts:
 
 ```bash
 ./run/public_readiness_local.sh
-./run/public_readiness_beta_snapshot.sh --org-slug public-readiness-control --label baseline
+./run/public_readiness_production_snapshot.sh --org-slug public-readiness-control --label baseline
+TWINEVIA_OWNER_USERNAME=owner@example.com \
+TWINEVIA_OWNER_PASSWORD=... \
+TWINEVIA_PLATFORM_USERNAME=platform@example.com \
+TWINEVIA_PLATFORM_PASSWORD=... \
+./run/public_readiness_live_smoke.sh
 ```
 
 Artifacts are written under `output/`.

@@ -26,13 +26,17 @@ commands=(
   "./venv/bin/python -m app.saas_db --help"
   "./run/local_saas_stack.sh --help"
   "./run/public_readiness_local.sh --help"
-  "./run/public_readiness_beta_snapshot.sh --help"
-  "./run/beta_cutover.sh --help"
+  "./run/public_readiness_production_snapshot.sh --help"
+  "./run/public_readiness_live_smoke.sh --help"
+  "./run/production_cutover.sh --help"
 )
 
 for command in "${commands[@]}"; do
   echo "==> ${command}"
   eval "${command}" >/dev/null
 done
+
+echo "==> ./run/naming_audit.sh"
+./run/naming_audit.sh >/dev/null
 
 echo "Doc smoke checks passed."

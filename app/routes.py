@@ -26,6 +26,7 @@ from flask import (
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy import DateTime, Integer, String, Text, func, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.orm import selectinload
 
 from app import csrf, db
 from app.auth import home_endpoint_for_user, require_roles
@@ -1524,29 +1525,24 @@ def _invitation_absolute_url(invitation: OrganizationInvitation | None) -> str |
 
 
 def _primary_organization_invitation(organization: Organization) -> OrganizationInvitation | None:
-    owner_invitation = (
-        OrganizationInvitation.query
-        .filter_by(organization_id=organization.id, role='owner')
-        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
-        .first()
+    invitations = list(organization.invitations or [])
+    invitations.sort(
+        key=lambda invitation: (
+            0 if invitation.role == 'owner' else 1,
+            -(invitation.id or 0),
+        )
     )
-    if owner_invitation is not None:
-        return owner_invitation
-    return (
-        OrganizationInvitation.query
-        .filter_by(organization_id=organization.id)
-        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
-        .first()
-    )
+    return invitations[0] if invitations else None
 
 
 def _organization_owner_membership(organization: Organization) -> OrganizationMembership | None:
-    return (
-        OrganizationMembership.query
-        .filter_by(organization_id=organization.id, role='owner')
-        .order_by(OrganizationMembership.id.asc())
-        .first()
-    )
+    owner_memberships = [
+        membership
+        for membership in (organization.memberships or [])
+        if membership.role == 'owner'
+    ]
+    owner_memberships.sort(key=lambda membership: membership.id or 0)
+    return owner_memberships[0] if owner_memberships else None
 
 
 def _organization_membership_for_user(
@@ -1608,7 +1604,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             badge='info',
             title='Complimentary billing',
             summary='Platform billing is covered for this workspace.',
-            next_step='No Stripe checkout is needed. Twilio billing stays on the customer-managed account.',
+            next_step='No Stripe checkout is needed. Messaging continues under the current Twilio setup.',
             can_send=True,
             is_complimentary=True,
             show_checkout=False,
@@ -1647,23 +1643,16 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
 
 
 def _organization_onboarding_view(organization: Organization) -> dict:
-    invitation = (
-        OrganizationInvitation.query
-        .filter_by(organization_id=organization.id, role='owner')
-        .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
-        .first()
-    )
+    invitation = _primary_organization_invitation(organization)
     owner_membership = _organization_owner_membership(organization)
+    memberships = list(organization.memberships or [])
+    invitations = list(organization.invitations or [])
     owner_invited = invitation is not None or owner_membership is not None
-    staff_membership_count = (
-        OrganizationMembership.query
-        .filter_by(organization_id=organization.id, role='staff')
-        .count()
-    )
-    pending_staff_invitation_count = (
-        OrganizationInvitation.query
-        .filter_by(organization_id=organization.id, role='staff', status='pending')
-        .count()
+    staff_membership_count = sum(1 for membership in memberships if membership.role == 'staff')
+    pending_staff_invitation_count = sum(
+        1
+        for pending_invitation in invitations
+        if pending_invitation.role == 'staff' and pending_invitation.status == 'pending'
     )
     subscription_view = _subscription_view(organization.subscription)
     messaging_profile = organization.messaging_profile
@@ -1817,6 +1806,13 @@ def _organization_messaging_view(organization: Organization) -> dict:
 def _platform_organization_rows() -> list[dict]:
     organizations = (
         Organization.query
+        .options(
+            selectinload(Organization.subscription),
+            selectinload(Organization.messaging_profile),
+            selectinload(Organization.a2p_onboarding),
+            selectinload(Organization.invitations),
+            selectinload(Organization.memberships).selectinload(OrganizationMembership.user),
+        )
         .order_by(Organization.created_at.desc(), Organization.id.desc())
         .all()
     )
@@ -2877,28 +2873,49 @@ def dashboard():
         labels = []
         sent_data = []
         failed_data = []
+        day_totals: dict = {}
+        range_start = None
+        range_end = None
         
         for i in range(6, -1, -1):
             day = today - timedelta(days=i)
             labels.append(day.strftime('%b %d'))
+            day_totals[day] = {'sent': 0, 'failed': 0}
             
             day_start_local = datetime.combine(day, datetime.min.time(), tzinfo=tz)
             day_end_local = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=tz)
             day_start = day_start_local.astimezone(timezone.utc).replace(tzinfo=None)
             day_end = day_end_local.astimezone(timezone.utc).replace(tzinfo=None)
-            
-            try:
-                logs = MessageLog.query.filter(
-                    MessageLog.created_at >= day_start,
-                    MessageLog.created_at < day_end
-                ).all()
-                
-                day_sent = sum(log.success_count or 0 for log in logs)
-                day_failed = sum(log.failure_count or 0 for log in logs)
-            except OperationalError:
-                day_sent = 0
-                day_failed = 0
-            
+
+            if range_start is None or day_start < range_start:
+                range_start = day_start
+            if range_end is None or day_end > range_end:
+                range_end = day_end
+
+        try:
+            logs = MessageLog.query.filter(
+                MessageLog.created_at >= range_start,
+                MessageLog.created_at < range_end,
+            ).all()
+        except OperationalError:
+            logs = []
+
+        for log in logs:
+            created_at = log.created_at
+            if created_at is None:
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            local_day = created_at.astimezone(tz).date()
+            if local_day not in day_totals:
+                continue
+            day_totals[local_day]['sent'] += log.success_count or 0
+            day_totals[local_day]['failed'] += log.failure_count or 0
+
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            day_sent = day_totals[day]['sent']
+            day_failed = day_totals[day]['failed']
             sent_data.append(day_sent)
             failed_data.append(day_failed)
         
@@ -3609,9 +3626,9 @@ def team_invite():
             flash(team_email_error, 'error')
             return redirect(url_for('main.users_list'))
 
-        existing_invite = OrganizationInvitation.query.filter_by(email=email, status='pending').first()
+        existing_invite = _organization_pending_invitation_for_email(_current_organization_id(), email)
         if existing_invite:
-            flash('A pending invitation already exists for that email.', 'warning')
+            flash('A pending invitation already exists for that email in this workspace.', 'warning')
             return redirect(url_for('main.users_list'))
 
         invitation = OrganizationInvitation(

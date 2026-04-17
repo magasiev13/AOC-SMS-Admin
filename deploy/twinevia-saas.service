@@ -6,11 +6,13 @@ After=network.target
 User=__APP_USER__
 Group=__APP_GROUP__
 WorkingDirectory=__APP_ROOT__
-Environment="PATH=__APP_ROOT__/venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="SCHEDULER_ENABLED=0"
-Environment="SAAS_MODE=1"
-Environment="APP_ROOT=__APP_ROOT__"
 EnvironmentFile=__APP_ROOT__/.env
+Environment="PATH=__APP_ROOT__/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="APP_ROOT=__APP_ROOT__"
+Environment="SAAS_MODE=1"
+Environment="SCHEDULER_ENABLED=0"
+Environment="FLASK_ENV=production"
+Environment="FLASK_DEBUG=0"
 ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
 ExecStart=__APP_ROOT__/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8100 --access-logfile /var/log/twinevia-saas/access.log --error-logfile /var/log/twinevia-saas/error.log wsgi:app

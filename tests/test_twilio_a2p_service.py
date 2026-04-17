@@ -23,7 +23,7 @@ class TestTwilioA2PService(unittest.TestCase):
                 "STRIPE_SECRET_KEY": "sk_test_123",
                 "STRIPE_WEBHOOK_SECRET": "whsec_test_123",
                 "STRIPE_PRICE_ID": "price_test_123",
-                "SAAS_BASE_URL": "https://beta.example.com",
+                "SAAS_BASE_URL": "https://app.example.com",
                 "TWILIO_CREDENTIAL_ENCRYPTION_KEY": "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
                 "TWILIO_ACCOUNT_SID": "ACmaster123",
                 "TWILIO_AUTH_TOKEN": "master-token",
@@ -449,10 +449,10 @@ class TestTwilioA2PService(unittest.TestCase):
             actor_user_id=20,
         )
 
-        self.assertEqual(onboarding.website_url, "https://beta.example.com/compliance/acme/sms/opt-in")
-        self.assertEqual(onboarding.privacy_policy_url, "https://beta.example.com/compliance/acme/sms/privacy")
-        self.assertEqual(onboarding.terms_and_conditions_url, "https://beta.example.com/compliance/acme/sms/terms")
-        self.assertEqual(onboarding.cta_proof_url, "https://beta.example.com/compliance/acme/sms/opt-in")
+        self.assertEqual(onboarding.website_url, "https://app.example.com/compliance/acme/sms/opt-in")
+        self.assertEqual(onboarding.privacy_policy_url, "https://app.example.com/compliance/acme/sms/privacy")
+        self.assertEqual(onboarding.terms_and_conditions_url, "https://app.example.com/compliance/acme/sms/terms")
+        self.assertEqual(onboarding.cta_proof_url, "https://app.example.com/compliance/acme/sms/opt-in")
         self.assertEqual(onboarding.submission_source_mode, "hosted_fallback")
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 20)
 
@@ -498,7 +498,7 @@ class TestTwilioA2PService(unittest.TestCase):
         )
 
         self.assertEqual(onboarding.submission_source_mode, "hosted_fallback")
-        self.assertEqual(onboarding.website_url, "https://beta.example.com/compliance/acme/sms/opt-in")
+        self.assertEqual(onboarding.website_url, "https://app.example.com/compliance/acme/sms/opt-in")
         queue.enqueue.assert_called_once_with("app.tasks.process_a2p_onboarding_job", self.organization.id, 22)
 
     @patch("app.services.twilio_a2p_service.get_queue")
@@ -684,8 +684,8 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
-        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
-        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.privacy_policy_url = "https://app.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://app.example.com/compliance/acme/sms/terms"
         onboarding.raw_submission_json = '{"has_embedded_links": true, "has_embedded_phone": false}'
         self._populate_onboarding_profile(onboarding)
 
@@ -737,8 +737,8 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
-        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
-        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.privacy_policy_url = "https://app.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://app.example.com/compliance/acme/sms/terms"
         onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
         self._populate_onboarding_profile(onboarding)
 
@@ -789,8 +789,8 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
-        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
-        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.privacy_policy_url = "https://app.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://app.example.com/compliance/acme/sms/terms"
         onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
         self._populate_onboarding_profile(onboarding)
 
@@ -846,8 +846,8 @@ class TestTwilioA2PService(unittest.TestCase):
         onboarding.campaign_description = "Community updates"
         onboarding.message_flow = "Users opt in."
         onboarding.message_samples_json = '["Sample 1", "Sample 2"]'
-        onboarding.privacy_policy_url = "https://beta.example.com/compliance/acme/sms/privacy"
-        onboarding.terms_and_conditions_url = "https://beta.example.com/compliance/acme/sms/terms"
+        onboarding.privacy_policy_url = "https://app.example.com/compliance/acme/sms/privacy"
+        onboarding.terms_and_conditions_url = "https://app.example.com/compliance/acme/sms/terms"
         onboarding.raw_submission_json = '{"has_embedded_links": false, "has_embedded_phone": false}'
         self._populate_onboarding_profile(onboarding)
 

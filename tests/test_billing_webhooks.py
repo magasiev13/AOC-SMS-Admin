@@ -64,7 +64,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
-            SAAS_BASE_URL="https://beta.example.com",
+            SAAS_BASE_URL="https://app.example.com",
         )
         self._ctx = self.app.app_context()
         self._ctx.push()
@@ -436,7 +436,7 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_SECRET_KEY="",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
-            SAAS_BASE_URL="https://beta.example.com",
+            SAAS_BASE_URL="https://app.example.com",
             TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
         )
 
@@ -452,7 +452,7 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
-            SAAS_BASE_URL="https://beta.example.com",
+            SAAS_BASE_URL="https://app.example.com",
             TWILIO_CREDENTIAL_ENCRYPTION_KEY="",
         )
 

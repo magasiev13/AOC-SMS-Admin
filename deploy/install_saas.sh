@@ -83,6 +83,25 @@ render_template() {
   rm -f "${tmp_file}"
 }
 
+install_repo_file() {
+  local src="$1"
+  local dest="$2"
+  local mode="$3"
+  local src_real=""
+  local dest_real=""
+
+  if command -v realpath >/dev/null 2>&1; then
+    src_real="$(realpath "${src}" 2>/dev/null || true)"
+    dest_real="$(realpath "${dest}" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "${src_real}" && -n "${dest_real}" && "${src_real}" == "${dest_real}" ]]; then
+    return
+  fi
+
+  sudo install -m "${mode}" "${src}" "${dest}"
+}
+
 resolve_health_host() {
   local trusted_hosts
   local first_host
@@ -200,6 +219,16 @@ current_env_value() {
   sudo grep -E "^${key}=" "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true
 }
 
+first_csv_value() {
+  local raw="$1"
+  printf '%s\n' "${raw}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}'
+}
+
+trusted_hosts_are_localhost_only() {
+  local trusted_hosts="$1"
+  [[ "${trusted_hosts}" =~ ^(127\.0\.0\.1|localhost)(,(127\.0\.0\.1|localhost))*$ ]]
+}
+
 upsert_env_key() {
   local key="$1"
   local value="$2"
@@ -227,13 +256,95 @@ upsert_env_key() {
   echo "✓ Set ${key}"
 }
 
+validate_saas_runtime_env() {
+  local flask_env
+  local flask_debug
+  local database_url
+  local trusted_hosts
+  local trust_proxy
+  local session_cookie_secure
+  local remember_cookie_secure
+  local session_cookie_samesite
+  local errors=()
+
+  flask_env="$(current_env_value "FLASK_ENV")"
+  flask_debug="$(current_env_value "FLASK_DEBUG")"
+  database_url="$(current_env_value "DATABASE_URL")"
+  trusted_hosts="$(current_env_value "TRUSTED_HOSTS")"
+  trust_proxy="$(current_env_value "TRUST_PROXY")"
+  session_cookie_secure="$(current_env_value "SESSION_COOKIE_SECURE")"
+  remember_cookie_secure="$(current_env_value "REMEMBER_COOKIE_SECURE")"
+  session_cookie_samesite="$(current_env_value "SESSION_COOKIE_SAMESITE")"
+
+  if [[ "${flask_env}" != "production" ]]; then
+    errors+=("FLASK_ENV must be set to production for live SaaS deploys.")
+  fi
+  if [[ -n "${flask_debug}" && "${flask_debug}" != "0" ]]; then
+    errors+=("FLASK_DEBUG must be unset or 0 for live SaaS deploys.")
+  fi
+  if [[ "${database_url}" != postgresql* ]]; then
+    errors+=("DATABASE_URL must use PostgreSQL for live SaaS deploys.")
+  fi
+  if [[ -z "${trusted_hosts}" ]]; then
+    errors+=("TRUSTED_HOSTS must list the real public hostnames for this deployment.")
+  elif trusted_hosts_are_localhost_only "${trusted_hosts}"; then
+    echo "[warn] TRUSTED_HOSTS is localhost-only ('${trusted_hosts}')." >&2
+    echo "       Public Host headers will be rejected with 400 even if the local health check passes." >&2
+    errors+=("TRUSTED_HOSTS must not be localhost-only for live SaaS deploys.")
+  fi
+  if [[ "${trust_proxy}" != "1" ]]; then
+    errors+=("TRUST_PROXY must be 1 when SaaS is served behind the public reverse proxy.")
+  fi
+  if [[ "${session_cookie_secure}" != "1" ]]; then
+    errors+=("SESSION_COOKIE_SECURE must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${remember_cookie_secure}" != "1" ]]; then
+    errors+=("REMEMBER_COOKIE_SECURE must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${session_cookie_samesite}" != "Lax" && "${session_cookie_samesite}" != "Strict" ]]; then
+    errors+=("SESSION_COOKIE_SAMESITE must be Lax or Strict for live SaaS deploys.")
+  fi
+
+  for flag_name in STRIPE_FAKE_CHECKOUT_ENABLED TWILIO_BROWSER_FAKE_SENDS TWILIO_A2P_FAKE_QUEUE; do
+    if [[ "$(current_env_value "${flag_name}")" != "0" ]]; then
+      errors+=("${flag_name} must be 0 for live SaaS deploys.")
+    fi
+  done
+
+  if [[ ${#errors[@]} -gt 0 ]]; then
+    printf 'ERROR: SaaS runtime configuration is unsafe for live deploys:\n' >&2
+    printf ' - %s\n' "${errors[@]}" >&2
+    exit 1
+  fi
+}
+
+dump_service_diagnostics() {
+  echo "==> Diagnostics: twinevia-saas service status"
+  sudo systemctl status twinevia-saas --no-pager || true
+  echo "==> Diagnostics: twinevia-saas-worker service status"
+  sudo systemctl status twinevia-saas-worker --no-pager || true
+  echo "==> Diagnostics: recent twinevia-saas journal logs"
+  sudo journalctl -u twinevia-saas -n 200 --no-pager || true
+  echo "==> Diagnostics: recent twinevia-saas-worker journal logs"
+  sudo journalctl -u twinevia-saas-worker -n 120 --no-pager || true
+}
+
+ensure_env_key "FLASK_ENV" "production"
+ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"
 upsert_env_key "SCHEDULER_ENABLED" "0"
 upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"
-upsert_env_key "REDIS_URL" "redis://localhost:6379/0"
-upsert_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
-upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
-upsert_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
+ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
+ensure_env_key "TRUST_PROXY" "1"
+ensure_env_key "SESSION_COOKIE_SECURE" "1"
+ensure_env_key "REMEMBER_COOKIE_SECURE" "1"
+ensure_env_key "SESSION_COOKIE_SAMESITE" "Lax"
+ensure_env_key "STRIPE_FAKE_CHECKOUT_ENABLED" "0"
+ensure_env_key "TWILIO_BROWSER_FAKE_SENDS" "0"
+ensure_env_key "TWILIO_A2P_FAKE_QUEUE" "0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
+ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
 
 required_keys=(
   DATABASE_URL
@@ -278,11 +389,23 @@ if [[ "${a2p_enabled}" == "1" ]]; then
   fi
 fi
 
+validate_saas_runtime_env
+
 echo "==> Installing Python dependencies"
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 
 echo "==> Applying SaaS schema"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --doctor"
+
+echo "==> Validating SaaS app configuration startup path"
+if ! sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${VENV_BIN}/python\" - <<'PY'
+from app import create_app
+create_app(run_startup_tasks=False, start_scheduler=False)
+print('SaaS app config validation ok')
+PY"; then
+  echo "ERROR: SaaS app startup validation failed before services were enabled." >&2
+  exit 1
+fi
 
 sudo mkdir -p "${LOG_DIR}"
 sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
@@ -298,12 +421,12 @@ render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.servic
 render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.timer" /etc/systemd/system/twinevia-saas-platform-restart-queue.timer 0644
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.service" /etc/systemd/system/twinevia-saas-a2p-reconcile.service 0644
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.timer" /etc/systemd/system/twinevia-saas-a2p-reconcile.timer 0644
-sudo install -m 0755 "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh"
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh"
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh"
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh"
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${APP_ROOT}/deploy/run_platform_restart_queue_once.sh"
-sudo install -m 0755 "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh"
+install_repo_file "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${APP_ROOT}/deploy/run_platform_restart_queue_once.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh" 0755
 
 sudo systemctl daemon-reload
 retire_legacy_saas_runtime
@@ -317,9 +440,20 @@ fi
 
 echo "==> Verifying SaaS health"
 HEALTH_HOST="$(resolve_health_host)"
-if ! curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
-  echo "WARNING: SaaS health check failed on http://127.0.0.1:8100/health (Host=${HEALTH_HOST})" >&2
-  echo "Check: journalctl -u twinevia-saas -n 100 --no-pager" >&2
+health_ok=0
+for attempt in $(seq 1 20); do
+  if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
+    health_ok=1
+    break
+  fi
+  echo "Health check attempt ${attempt}/20 failed for host ${HEALTH_HOST}; retrying..."
+  sleep 2
+done
+
+if [[ "${health_ok}" -ne 1 ]]; then
+  echo "ERROR: SaaS health check failed after install (Host=${HEALTH_HOST})." >&2
+  dump_service_diagnostics
+  exit 1
 fi
 
 echo "SaaS install completed."

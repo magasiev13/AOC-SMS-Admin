@@ -24,6 +24,17 @@ class TestConfigSecurityHardening(unittest.TestCase):
         importlib.reload(app.config)
         return app.config
 
+    def _configure_minimal_saas_production_env(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["SAAS_MODE"] = "1"
+        os.environ["TRUSTED_HOSTS"] = "app.example.com"
+        os.environ["SAAS_BASE_URL"] = "https://app.example.com"
+        os.environ["STRIPE_SECRET_KEY"] = "sk_test_123"
+        os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test_123"
+        os.environ["STRIPE_PRICE_ID"] = "price_test_123"
+        os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
+
     def test_recommended_hardening_defaults(self) -> None:
         config_module = self._reload_config_module()
         Config = config_module.Config
@@ -78,6 +89,49 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         self.assertIn("TRUSTED_HOSTS must include your production hostnames", str(ctx.exception))
 
+    def test_explicit_production_rejects_debug_flag(self) -> None:
+        self._configure_minimal_saas_production_env()
+        os.environ["FLASK_DEBUG"] = "1"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        with self.assertRaises(RuntimeError) as ctx:
+            create_app(run_startup_tasks=False, start_scheduler=False)
+
+        self.assertIn("FLASK_DEBUG must be unset or 0", str(ctx.exception))
+
+    def test_explicit_production_rejects_sqlite_for_saas(self) -> None:
+        self._configure_minimal_saas_production_env()
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        with self.assertRaises(RuntimeError) as ctx:
+            create_app(run_startup_tasks=False, start_scheduler=False)
+
+        self.assertIn("Production SaaS requires PostgreSQL DATABASE_URL", str(ctx.exception))
+
+    def test_explicit_production_rejects_fake_provider_flags(self) -> None:
+        self._configure_minimal_saas_production_env()
+        os.environ["DATABASE_URL"] = "postgresql+psycopg://user:pass@127.0.0.1:5432/twinevia"
+        os.environ["STRIPE_FAKE_CHECKOUT_ENABLED"] = "1"
+        os.environ["TWILIO_BROWSER_FAKE_SENDS"] = "1"
+        os.environ["TWILIO_A2P_FAKE_QUEUE"] = "1"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        with self.assertRaises(RuntimeError) as ctx:
+            create_app(run_startup_tasks=False, start_scheduler=False)
+
+        self.assertIn("STRIPE_FAKE_CHECKOUT_ENABLED must be disabled", str(ctx.exception))
+        self.assertIn("TWILIO_BROWSER_FAKE_SENDS must be disabled", str(ctx.exception))
+        self.assertIn("TWILIO_A2P_FAKE_QUEUE must be disabled", str(ctx.exception))
+
     def test_security_variables_have_non_technical_comments(self) -> None:
         config_path = os.path.join(os.path.dirname(__file__), "..", "app", "config.py")
         with open(config_path, "r", encoding="utf-8") as config_file:
@@ -127,11 +181,13 @@ class TestConfigSecurityHardening(unittest.TestCase):
         trusted_response = client.get("/", headers={"Host": "sms.example.org"})
         self.assertNotEqual(trusted_response.status_code, 400)
 
-    def test_env_example_defaults_to_development(self) -> None:
+    def test_env_example_is_marked_as_local_bootstrap_only(self) -> None:
         env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")
         with open(env_example_path, "r", encoding="utf-8") as env_file:
             content = env_file.read()
 
+        self.assertIn("# Twinevia local SaaS bootstrap defaults", content)
+        self.assertIn("Do not copy it directly to a", content)
         self.assertIn("FLASK_ENV=development", content)
 
     def test_saas_mode_defaults_to_twinevia_local_db_and_queue(self) -> None:
@@ -159,7 +215,7 @@ class TestConfigSecurityHardening(unittest.TestCase):
         with open(env_example_path, "r", encoding="utf-8") as env_file:
             content = env_file.read()
 
-        self.assertIn("# Twinevia SaaS: primary production runtime", content)
+        self.assertIn("# Twinevia local SaaS bootstrap defaults", content)
         self.assertIn("DATABASE_URL=sqlite:///instance/twinevia.db", content)
         self.assertIn("RQ_QUEUE_NAME=twinevia-saas", content)
         self.assertIn("# TWILIO_PLATFORM_FRIENDLY_NAME=Twinevia", content)

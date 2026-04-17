@@ -28,7 +28,7 @@ The `Twinevia Legacy` single-tenant SQLite runtime remains documented only where
 
 ## Release And Rollout
 
-- [Public Readiness Signoff](public-readiness-signoff.md): local and beta evidence gate
+- [Public Readiness Signoff](public-readiness-signoff.md): local and production evidence gate
 - [SaaS Pilot Rollout](saas-pilot-rollout.md): local acceptance and rollout expectations
 - [Ubuntu VPS SaaS Checklist](ubuntu-vps-saas-checklist.md): step-by-step VPS bring-up
 - [SaaS Demo Data](saas-demo-data.md): seeded tenants, accounts, and manual walkthrough

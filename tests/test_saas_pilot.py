@@ -80,7 +80,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
-            SAAS_BASE_URL="https://beta.example.com",
+            SAAS_BASE_URL="https://app.example.com",
         )
         self._ctx = self.app.app_context()
         self._ctx.push()
@@ -437,7 +437,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             business_registration_identifier="EIN",
             business_registration_number_encrypted="encrypted-ein",
             business_regions_json='["USA_AND_CANADA"]',
-            website_url="https://beta.example.com/acme",
+            website_url="https://app.example.com/acme",
             email="owner@acme.test",
             notification_email="owner@acme.test",
             first_name="Owner",
@@ -452,9 +452,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_description="Transactional reminders and support updates.",
             message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
             message_samples_json='["Acme: Your reminder is ready. Reply STOP to opt out."]',
-            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
-            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
-            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+            privacy_policy_url="https://app.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://app.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://app.example.com/compliance/acme/sms/opt-in",
             failure_code="30909",
             last_error="CTA could not be verified.",
         )
@@ -503,9 +503,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_description="Transactional reminders and support updates.",
             message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
             message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
-            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
-            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
-            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+            privacy_policy_url="https://app.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://app.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://app.example.com/compliance/acme/sms/opt-in",
         )
         self.db.session.add(onboarding)
         self.db.session.add(
@@ -556,9 +556,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_description="Transactional reminders and support updates.",
             message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
             message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
-            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
-            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
-            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+            privacy_policy_url="https://app.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://app.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://app.example.com/compliance/acme/sms/opt-in",
         )
         self.db.session.add(onboarding)
         self.db.session.add(
@@ -599,7 +599,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             business_type="Limited Liability Corporation",
             business_industry="Technology",
             business_registration_identifier="EIN",
-            website_url="https://beta.example.com/acme",
+            website_url="https://app.example.com/acme",
             email="owner@acme.test",
             notification_email="owner@acme.test",
             first_name="Owner",
@@ -628,9 +628,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Twilio code:", response.data)
         self.assertIn(b"30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
-        self.assertIn(b"https://beta.example.com/compliance/acme/sms/privacy", response.data)
-        self.assertIn(b"https://beta.example.com/compliance/acme/sms/terms", response.data)
-        self.assertIn(b"https://beta.example.com/compliance/acme/sms/opt-in", response.data)
+        self.assertIn(b"https://app.example.com/compliance/acme/sms/privacy", response.data)
+        self.assertIn(b"https://app.example.com/compliance/acme/sms/terms", response.data)
+        self.assertIn(b"https://app.example.com/compliance/acme/sms/opt-in", response.data)
 
     def test_customer_managed_setup_rejects_platform_managed_a2p_submission_actions(self) -> None:
         organization, _, _, user = self._create_customer_managed_workspace(
@@ -1409,7 +1409,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Open invite", response.data)
-        self.assertIn(f"https://beta.example.com/invites/{invitation.token}".encode(), response.data)
+        self.assertIn(f"https://app.example.com/invites/{invitation.token}".encode(), response.data)
 
     def test_platform_organizations_list_shows_owner_invite_link_and_progress(self) -> None:
         invitation = self.OrganizationInvitation(
@@ -1428,7 +1428,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"core steps complete", response.data)
         self.assertIn(b"Open invite", response.data)
         self.assertIn(b"Manage Access", response.data)
-        self.assertIn(f"https://beta.example.com/invites/{invitation.token}".encode(), response.data)
+        self.assertIn(f"https://app.example.com/invites/{invitation.token}".encode(), response.data)
 
     def test_platform_organization_access_page_can_create_staff_invite(self) -> None:
         self._login_platform_admin()
@@ -1461,7 +1461,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
         self.assertIsNotNone(invitation)
         self.assertIn(
-            f"https://beta.example.com/invites/{invitation.token}".encode(),
+            f"https://app.example.com/invites/{invitation.token}".encode(),
             response.data,
         )
         event = (
@@ -1575,7 +1575,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(new_invitation)
         self.assertNotEqual(new_invitation.token, original_token)
         self.assertIn(
-            f"https://beta.example.com/invites/{new_invitation.token}".encode(),
+            f"https://app.example.com/invites/{new_invitation.token}".encode(),
             response.data,
         )
         event = (
@@ -2120,7 +2120,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertRegex(response.data, rb'<option value="ACCOUNT_NOTIFICATION" selected>')
         self.assertIn(b"external_privacy_policy_url", response.data)
         self.assertIn(b"has_public_website", response.data)
-        self.assertIn(b"https://beta.example.com/compliance/acme/sms/privacy", response.data)
+        self.assertIn(b"https://app.example.com/compliance/acme/sms/privacy", response.data)
         self.assertNotIn(b'value="None"', response.data)
 
     def test_platform_admin_messaging_page_shows_a2p_failure_detail(self) -> None:
@@ -2184,9 +2184,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_description="Transactional reminders and support updates.",
             message_flow="Customers opt in on the Acme website before receiving reminders and support updates. Reply STOP to opt out and HELP for help.",
             message_samples_json='["Acme: Your reminder is ready.", "Acme: Your appointment is confirmed."]',
-            privacy_policy_url="https://beta.example.com/compliance/acme/sms/privacy",
-            terms_and_conditions_url="https://beta.example.com/compliance/acme/sms/terms",
-            cta_proof_url="https://beta.example.com/compliance/acme/sms/opt-in",
+            privacy_policy_url="https://app.example.com/compliance/acme/sms/privacy",
+            terms_and_conditions_url="https://app.example.com/compliance/acme/sms/terms",
+            cta_proof_url="https://app.example.com/compliance/acme/sms/opt-in",
         )
         self.db.session.add(onboarding)
         self.db.session.add(
@@ -2445,7 +2445,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(terms_response.status_code, 200)
         self.assertEqual(opt_in_response.status_code, 200)
         self.assertIn(b"Acme Realty", privacy_response.data)
+        self.assertIn(b"uses SMS for this program:", privacy_response.data)
         self.assertIn(b"SMS Terms and Conditions", terms_response.data)
+        self.assertIn(b"related to this program:", terms_response.data)
         self.assertIn(b"STOP", opt_in_response.data)
 
     @patch("app.routes.submit_a2p_onboarding")
@@ -2948,6 +2950,49 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNone(
             self.OrganizationInvitation.query.filter_by(email="platform@acme.test", status="pending").first()
         )
+
+    def test_team_invite_allows_same_email_when_pending_invite_is_in_another_organization(self) -> None:
+        self.subscription.status = "trialing"
+        self.db.session.commit()
+        other_organization, _other_owner_invite = self._create_support_organization(
+            name="Other Co",
+            slug="other-co",
+            owner_email="other-owner@acme.test",
+        )
+        self.db.session.add(
+            self.OrganizationInvitation(
+                organization_id=other_organization.id,
+                email="shared-staff@acme.test",
+                role="staff",
+                status="pending",
+                invited_by_user_id=self.platform_admin.id,
+            )
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            "/team/invite",
+            data={
+                "email": "shared-staff@acme.test",
+                "role": "staff",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        current_workspace_invite = self.OrganizationInvitation.query.filter_by(
+            organization_id=self.organization.id,
+            email="shared-staff@acme.test",
+            status="pending",
+        ).first()
+        other_workspace_invite = self.OrganizationInvitation.query.filter_by(
+            organization_id=other_organization.id,
+            email="shared-staff@acme.test",
+            status="pending",
+        ).first()
+        self.assertIsNotNone(current_workspace_invite)
+        self.assertIsNotNone(other_workspace_invite)
 
     def test_owner_cannot_post_platform_restart_services(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True

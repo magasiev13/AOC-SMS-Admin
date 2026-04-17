@@ -184,12 +184,12 @@ Runs the deterministic local readiness gate and writes artifacts under:
 output/signoff/<run-id>/local/
 ```
 
-### `./run/public_readiness_beta_snapshot.sh`
+### `./run/public_readiness_production_snapshot.sh`
 
-Collects read-only beta evidence for one organization slug and label:
+Collects read-only production evidence for one organization slug and label:
 
 ```bash
-./run/public_readiness_beta_snapshot.sh \
+./run/public_readiness_production_snapshot.sh \
   --org-slug it-wingman-llc \
   --label baseline
 ```
@@ -197,16 +197,35 @@ Collects read-only beta evidence for one organization slug and label:
 Artifacts land under:
 
 ```text
-output/signoff/<run-id>/beta/<label>/
+output/signoff/<run-id>/production/<label>/
 ```
 
-### `./run/beta_cutover.sh`
+### `./run/public_readiness_live_smoke.sh`
 
-Orchestrates the safe beta cutover flow for the existing Twinevia SaaS host:
+Runs authenticated read-only browser smoke against the public Twinevia host:
 
 ```bash
-./run/beta_cutover.sh \
+TWINEVIA_OWNER_USERNAME=owner@example.com \
+TWINEVIA_OWNER_PASSWORD=... \
+TWINEVIA_PLATFORM_USERNAME=platform@example.com \
+TWINEVIA_PLATFORM_PASSWORD=... \
+./run/public_readiness_live_smoke.sh
+```
+
+Artifacts land under:
+
+```text
+output/signoff/<run-id>/live-smoke/
+```
+
+### `./run/production_cutover.sh`
+
+Orchestrates the safe production cutover flow for the live Twinevia SaaS host:
+
+```bash
+./run/production_cutover.sh \
   --org-slug it-wingman-llc \
+  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
@@ -214,16 +233,18 @@ Orchestrates the safe beta cutover flow for the existing Twinevia SaaS host:
 What it does:
 
 - optional local signoff via `./run/public_readiness_local.sh`
-- pre-deploy beta snapshot
+- pre-deploy production snapshot
 - remote PostgreSQL/Redis/config backup bundle
+- optional one-time canonical migration from `/opt/sms-saas` to `/opt/twinevia-saas`
 - branch/tracking guard against deploying the wrong checkout
 - optional in-place `deploy/deploy_twinevia_saas.sh`
-- post-deploy beta snapshot
+- pre/post runtime root and user evidence
+- post-deploy production snapshot
 
 Artifacts land under:
 
 ```text
-output/signoff/<run-id>/beta-cutover/
+output/signoff/<run-id>/production-cutover/
 ```
 
 ## Direct Runtime Commands

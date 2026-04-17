@@ -229,7 +229,7 @@ class TestA2PTaskJobs(unittest.TestCase):
                 "STRIPE_SECRET_KEY": "sk_test_123",
                 "STRIPE_WEBHOOK_SECRET": "whsec_test_123",
                 "STRIPE_PRICE_ID": "price_test_123",
-                "SAAS_BASE_URL": "https://beta.example.com",
+                "SAAS_BASE_URL": "https://app.example.com",
                 "TWILIO_CREDENTIAL_ENCRYPTION_KEY": "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
                 "TWILIO_A2P_ONBOARDING_ENABLED": "1",
                 "TWILIO_PRIMARY_CUSTOMER_PROFILE_SID": "BUprimary123",

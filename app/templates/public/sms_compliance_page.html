@@ -37,12 +37,13 @@
                 <div class="card shadow-sm border-0">
                     <div class="card-body p-4 p-lg-5">
                         {% if page_kind == 'privacy' %}
-                        <p><strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %} uses SMS to deliver {{ campaign_description|lower }} We collect the mobile number and consent details needed to send these messages, respond to support requests, and maintain delivery, opt-out, and compliance records.</p>
+                        <p><strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %} uses SMS for this program: {{ campaign_description }}</p>
+                        <p>We collect the mobile number and consent details needed to send these messages, respond to support requests, and maintain delivery, opt-out, and compliance records.</p>
                         <p>Mobile opt-in data and consent records are used only for this sender's messaging program. They are not sold or shared with third parties for unrelated marketing.</p>
                         <p>When this program is operated through {{ product_name }}, the platform acts only as the messaging service operator on behalf of {{ sender_name }}.</p>
                         <p>You can stop SMS at any time by replying <strong>STOP</strong>. For help, reply <strong>HELP</strong>.</p>
                         {% elif page_kind == 'terms' %}
-                        <p>By opting in to SMS from <strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %}, you agree to receive recurring text messages related to {{ campaign_description|lower }}</p>
+                        <p>By opting in to SMS from <strong>{{ sender_name }}</strong>{% if legal_business_name and legal_business_name != sender_name %} ({{ legal_business_name }}){% endif %}, you agree to receive recurring text messages related to this program: {{ campaign_description }}</p>
                         <p>Message frequency varies based on your activity and requests. Message and data rates may apply. Consent is not a condition of purchase.</p>
                         <p>Reply <strong>STOP</strong> to opt out. Reply <strong>HELP</strong> for help. Supported opt-in flow: {{ message_flow }}</p>
                         {% if sender_email or sender_phone %}

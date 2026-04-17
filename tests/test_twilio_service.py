@@ -155,7 +155,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
             TESTING=True,
-            SAAS_BASE_URL="https://beta.example.com",
+            SAAS_BASE_URL="https://app.example.com",
             BILLING_INCLUDED_OUTBOUND_SEGMENTS=1,
             BILLING_OUTBOUND_SEGMENT_RATE_USD="0.0300",
         )
@@ -440,7 +440,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             use_inbound_webhook_on_number=True
         )
         customer_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
-            sms_url="https://beta.example.com/webhooks/twilio/inbound",
+            sms_url="https://app.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
 
@@ -678,11 +678,11 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         service_context.phone_numbers.create.assert_called_once_with(phone_number_sid="PN0001")
         subaccount_client.incoming_phone_numbers.assert_called_once_with("PN0001")
         subaccount_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
-            sms_url="https://beta.example.com/webhooks/twilio/inbound",
+            sms_url="https://app.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
         service_context.update.assert_called_once_with(
-            inbound_request_url="https://beta.example.com/webhooks/twilio/inbound",
+            inbound_request_url="https://app.example.com/webhooks/twilio/inbound",
             inbound_method="POST",
             use_inbound_webhook_on_number=False,
         )
@@ -790,7 +790,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(phone_context.update.call_count, 2)
         self.assertIn(
             {
-                "sms_url": "https://beta.example.com/webhooks/twilio/inbound",
+                "sms_url": "https://app.example.com/webhooks/twilio/inbound",
                 "sms_method": "POST",
             },
             [call.kwargs for call in phone_context.update.call_args_list],
@@ -991,7 +991,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         profile = release_sender(organization.id, actor_user_id=50)
 
         service_context.update.assert_called_once_with(
-            inbound_request_url="https://beta.example.com/webhooks/twilio/inbound",
+            inbound_request_url="https://app.example.com/webhooks/twilio/inbound",
             inbound_method="POST",
             use_inbound_webhook_on_number=False,
         )

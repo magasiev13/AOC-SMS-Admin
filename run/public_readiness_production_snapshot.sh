@@ -2,13 +2,33 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HOST="${BETA_SIGNOFF_HOST:-beta.theitwingman.com}"
-SSH_TARGET="${BETA_SIGNOFF_SSH_TARGET:-ubuntu@beta.theitwingman.com}"
-SSH_KEY="${BETA_SIGNOFF_SSH_KEY:-$HOME/.ssh/itlab.key}"
-SSH_PORT="${BETA_SIGNOFF_SSH_PORT:-22}"
-APP_ROOT="${BETA_SIGNOFF_APP_ROOT:-}"
-APP_USER="${BETA_SIGNOFF_APP_USER:-}"
-UNIT_PREFIX="${BETA_SIGNOFF_UNIT_PREFIX:-}"
+
+resolve_compat_env() {
+  local primary_key="$1"
+  local legacy_key="$2"
+  local default_value="${3:-}"
+  local primary_value="${!primary_key:-}"
+  local legacy_value="${!legacy_key:-}"
+
+  if [[ -n "${primary_value}" ]]; then
+    printf '%s\n' "${primary_value}"
+    return
+  fi
+  if [[ -n "${legacy_value}" ]]; then
+    echo "[warn] ${legacy_key} is deprecated; use ${primary_key} instead." >&2
+    printf '%s\n' "${legacy_value}"
+    return
+  fi
+  printf '%s\n' "${default_value}"
+}
+
+HOST="$(resolve_compat_env "TWINEVIA_PUBLIC_HOST" "BETA_SIGNOFF_HOST" "twinevia.com")"
+SSH_TARGET="$(resolve_compat_env "TWINEVIA_SSH_TARGET" "BETA_SIGNOFF_SSH_TARGET" "")"
+SSH_KEY="$(resolve_compat_env "TWINEVIA_SSH_KEY" "BETA_SIGNOFF_SSH_KEY" "$HOME/.ssh/itlab.key")"
+SSH_PORT="$(resolve_compat_env "TWINEVIA_SSH_PORT" "BETA_SIGNOFF_SSH_PORT" "22")"
+APP_ROOT="$(resolve_compat_env "TWINEVIA_APP_ROOT" "BETA_SIGNOFF_APP_ROOT" "")"
+APP_USER="$(resolve_compat_env "TWINEVIA_APP_USER" "BETA_SIGNOFF_APP_USER" "")"
+UNIT_PREFIX="$(resolve_compat_env "TWINEVIA_UNIT_PREFIX" "BETA_SIGNOFF_UNIT_PREFIX" "")"
 
 RUN_ID=""
 ORG_SLUG=""
@@ -16,10 +36,10 @@ LABEL=""
 
 usage() {
   cat <<'EOF'
-Usage: ./run/public_readiness_beta_snapshot.sh --org-slug ORG_SLUG --label LABEL [--run-id RUN_ID]
+Usage: ./run/public_readiness_production_snapshot.sh --org-slug ORG_SLUG --label LABEL [--run-id RUN_ID]
 
-Collects read-only beta signoff evidence under:
-  output/signoff/<run-id>/beta/<label>/
+Collects read-only production signoff evidence under:
+  output/signoff/<run-id>/production/<label>/
 EOF
 }
 
@@ -61,6 +81,11 @@ if [[ -z "${ORG_SLUG}" || -z "${LABEL}" ]]; then
   exit 1
 fi
 
+if [[ -z "${SSH_TARGET}" ]]; then
+  echo "ERROR: TWINEVIA_SSH_TARGET must be set for remote production snapshots." >&2
+  exit 1
+fi
+
 if [[ -z "${RUN_ID}" ]]; then
   RUN_ID="$(date +%Y%m%d-%H%M%S)"
 fi
@@ -70,7 +95,7 @@ if [[ -z "${SAFE_LABEL}" ]]; then
   SAFE_LABEL="snapshot"
 fi
 
-OUT_DIR="${REPO_ROOT}/output/signoff/${RUN_ID}/beta/${SAFE_LABEL}"
+OUT_DIR="${REPO_ROOT}/output/signoff/${RUN_ID}/production/${SAFE_LABEL}"
 mkdir -p "${OUT_DIR}"
 
 SSH_OPTS=(
@@ -91,6 +116,14 @@ resolve_remote_app_user() {
     printf '%s\n' "${APP_USER}"
     return
   fi
+  if [[ -n "${APP_ROOT}" ]]; then
+    local owner
+    owner="$(ssh_run "if [ -d \"${APP_ROOT}\" ]; then stat -c '%U' \"${APP_ROOT}\" 2>/dev/null; fi" || true)"
+    if [[ -n "${owner}" && "${owner}" != "root" ]]; then
+      printf '%s\n' "${owner}"
+      return
+    fi
+  fi
   ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; elif id -u smsadmin >/dev/null 2>&1; then printf smsadmin; else printf twinevia; fi"
 }
 
@@ -99,7 +132,18 @@ resolve_remote_app_root() {
     printf '%s\n' "${APP_ROOT}"
     return
   fi
-  ssh_run "if [ -d /opt/twinevia-saas/.git ]; then printf /opt/twinevia-saas; elif [ -d /opt/sms-saas/.git ]; then printf /opt/sms-saas; else printf /opt/twinevia-saas; fi"
+  ssh_run "
+    active_root=\"\$(systemctl show twinevia-saas.service -p WorkingDirectory --value 2>/dev/null || true)\"
+    if [ -n \"\${active_root}\" ] && [ -d \"\${active_root}/.git\" ]; then
+      printf '%s' \"\${active_root}\"
+    elif [ -d /opt/twinevia-saas/.git ]; then
+      printf /opt/twinevia-saas
+    elif [ -d /opt/sms-saas/.git ]; then
+      printf /opt/sms-saas
+    else
+      printf /opt/twinevia-saas
+    fi
+  "
 }
 
 resolve_remote_unit_prefix() {
@@ -117,8 +161,8 @@ capture_remote_file() {
 }
 
 command_failures=0
-APP_USER="$(resolve_remote_app_user)"
 APP_ROOT="$(resolve_remote_app_root)"
+APP_USER="$(resolve_remote_app_user)"
 UNIT_PREFIX="$(resolve_remote_unit_prefix)"
 REQUIRED_UNITS=(
   "${UNIT_PREFIX}"
@@ -128,6 +172,10 @@ REQUIRED_UNITS=(
   "${UNIT_PREFIX}-platform-restart-queue.timer"
   "${UNIT_PREFIX}-a2p-reconcile.timer"
 )
+
+printf '%s\n' "${APP_ROOT}" > "${OUT_DIR}/app_root.txt"
+printf '%s\n' "${APP_USER}" > "${OUT_DIR}/app_user.txt"
+printf '%s\n' "${UNIT_PREFIX}" > "${OUT_DIR}/unit_prefix.txt"
 
 commit_sha="unavailable"
 if commit_sha="$(ssh_run "sudo -u ${APP_USER} git -C ${APP_ROOT} rev-parse HEAD")"; then
@@ -379,11 +427,14 @@ PY
 fi
 
 cat > "${OUT_DIR}/summary.md" <<EOF
-# Beta Snapshot
+# Production Snapshot
 
 - Host: ${HOST}
 - Label: ${LABEL}
 - Org slug: ${ORG_SLUG}
+- App root: ${APP_ROOT}
+- App user: ${APP_USER}
+- Unit prefix: ${UNIT_PREFIX}
 - Live commit: ${commit_sha}
 - Health HTTP status: ${health_code}
 - Required unit activity: see \`services.activity.txt\`
@@ -394,8 +445,8 @@ cat > "${OUT_DIR}/summary.md" <<EOF
 EOF
 
 if [[ "${command_failures}" -ne 0 || "${health_failed}" -ne 0 || "${services_failed}" -ne 0 || "${org_state_failed}" -ne 0 || "${ownership_failed}" -ne 0 ]]; then
-  echo "Beta snapshot captured, but one or more release checks failed. See ${OUT_DIR}" >&2
+  echo "Production snapshot captured, but one or more release checks failed. See ${OUT_DIR}" >&2
   exit 1
 fi
 
-echo "Beta snapshot written to ${OUT_DIR}"
+echo "Production snapshot written to ${OUT_DIR}"

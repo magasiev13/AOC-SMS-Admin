@@ -6,11 +6,13 @@ After=network.target redis.service
 User=__APP_USER__
 Group=__APP_GROUP__
 WorkingDirectory=__APP_ROOT__
+EnvironmentFile=__APP_ROOT__/.env
 Environment="APP_ROOT=__APP_ROOT__"
 Environment="SAAS_MODE=1"
 Environment="SCHEDULER_ENABLED=0"
+Environment="FLASK_ENV=production"
+Environment="FLASK_DEBUG=0"
 Environment="RQ_QUEUE_NAME=twinevia-saas"
-EnvironmentFile=__APP_ROOT__/.env
 ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
 ExecStart=/bin/bash __APP_ROOT__/deploy/run_worker.sh

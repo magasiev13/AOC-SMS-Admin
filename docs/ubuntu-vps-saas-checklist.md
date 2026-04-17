@@ -73,6 +73,7 @@ PGPASSWORD='REPLACE_WITH_STRONG_DB_PASSWORD' psql \
 ```bash
 sudo tee /opt/twinevia-saas/.env >/dev/null <<'EOF'
 FLASK_ENV=production
+FLASK_DEBUG=0
 TRUST_PROXY=1
 TRUSTED_HOSTS=app.example.com
 SAAS_MODE=1
@@ -107,6 +108,9 @@ REMEMBER_COOKIE_DURATION_DAYS=7
 SESSION_COOKIE_SAMESITE=Lax
 SESSION_COOKIE_SECURE=1
 REMEMBER_COOKIE_SECURE=1
+STRIPE_FAKE_CHECKOUT_ENABLED=0
+TWILIO_BROWSER_FAKE_SENDS=0
+TWILIO_A2P_FAKE_QUEUE=0
 EOF
 sudo chown root:twinevia /opt/twinevia-saas/.env
 sudo chmod 660 /opt/twinevia-saas/.env
@@ -121,6 +125,11 @@ Replace at least:
 - Stripe values
 - Twilio values
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
+
+The SaaS installer and deployer now hard-fail if this file still looks like a
+local/dev setup. Keep PostgreSQL, production mode, real hostnames, secure
+cookies, and the fake Stripe/Twilio flags exactly as shown above unless you have
+an intentional equivalent.
 
 ## 6. Install Python Dependencies
 

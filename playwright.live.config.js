@@ -1,13 +1,12 @@
 const { defineConfig } = require('@playwright/test');
 
-const port = process.env.PLAYWRIGHT_PORT || '5010';
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || `http://127.0.0.1:${port}`;
-const artifactRoot = process.env.PLAYWRIGHT_ARTIFACT_DIR || 'output/playwright';
+const baseURL = process.env.TWINEVIA_LIVE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'https://twinevia.com';
+const artifactRoot = process.env.PLAYWRIGHT_ARTIFACT_DIR || 'output/playwright-live';
 
 module.exports = defineConfig({
   testDir: './tests/browser',
-  testIgnore: ['**/live-production-smoke.spec.js'],
-  timeout: 30_000,
+  testMatch: ['**/live-production-smoke.spec.js'],
+  timeout: 45_000,
   expect: {
     timeout: 5_000,
   },
@@ -24,11 +23,5 @@ module.exports = defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     headless: true,
-  },
-  webServer: {
-    command: `PLAYWRIGHT_PORT=${port} PLAYWRIGHT_BASE_URL=${baseURL} ./run/playwright_web.sh`,
-    url: `${baseURL}/login`,
-    timeout: 120_000,
-    reuseExistingServer: false,
   },
 });

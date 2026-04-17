@@ -412,10 +412,12 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("run_platform_restart_queue_once.sh", install_script)
         self.assertIn("resolve_app_user", install_script)
         self.assertIn("resolve_app_group", install_script)
+        self.assertIn("install_repo_file", install_script)
+        self.assertIn("realpath", install_script)
         self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", install_script)
         self.assertIn("/usr/local/bin/saas-dbdoctor", install_script)
         self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', install_script)
-        self.assertIn('upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', install_script)
+        self.assertIn('ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', install_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
 
     def test_deploy_script_syncs_restart_helper_and_restart_queue_timer(self) -> None:
@@ -437,7 +439,7 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("retire_legacy_saas_runtime", deploy_script)
         self.assertIn("LOG_DIR", deploy_script)
         self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', deploy_script)
-        self.assertIn('upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', deploy_script)
+        self.assertIn('ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.service", deploy_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)
@@ -447,33 +449,163 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn('"twinevia-saas-platform-restart-queue.timer"', runtime_units)
 
     def test_deploy_workflow_asserts_restart_queue_timer_and_helper(self) -> None:
-        workflow = self._read_repo_file(".github", "workflows", "deploy-saas-pilot.yml")
+        workflow = self._read_repo_file(".github", "workflows", "deploy-twinevia-production.yml")
 
+        self.assertIn('branches: ["main"]', workflow)
+        self.assertIn("default: main", workflow)
+        self.assertIn("default: origin/main", workflow)
+        self.assertNotIn("codex/saas-pilot-v2", workflow)
         self.assertIn("sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer", workflow)
         self.assertIn("restart-twinevia-saas-services --check", workflow)
         self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", workflow)
         self.assertIn("deploy_branch:", workflow)
         self.assertIn("deploy_tracking:", workflow)
+        self.assertIn("TWINEVIA_DEPLOY_BRANCH", workflow)
+        self.assertIn("TWINEVIA_DEPLOY_TRACKING", workflow)
+        self.assertIn("TWINEVIA_SSH_TARGET", workflow)
+        self.assertIn("TWINEVIA_SSH_KNOWN_HOSTS", workflow)
+        self.assertIn("BETA_DEPLOY_BRANCH is deprecated", workflow)
+        self.assertIn("BETA_DEPLOY_TRACKING is deprecated", workflow)
         self.assertIn("EXPECTED_GIT_BRANCH", workflow)
         self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", workflow)
         self.assertIn("resolve_app_root", workflow)
+        self.assertIn("systemctl show twinevia-saas.service -p WorkingDirectory --value", workflow)
         self.assertIn("/opt/sms-saas", workflow)
         self.assertIn("CURRENT_UNIT_PREFIX", workflow)
         self.assertIn('APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}"', workflow)
+        self.assertNotIn("beta.theitwingman.com", workflow)
+        self.assertIn("LEGACY_BETA_DEPLOY_BRANCH", workflow)
 
-    def test_beta_cutover_script_collects_backups_and_snapshots(self) -> None:
-        cutover_script = self._read_repo_file("run", "beta_cutover.sh")
+    def test_legacy_deploy_workflow_is_manual_only(self) -> None:
+        workflow = self._read_repo_file(".github", "workflows", "deploy.yml")
+
+        self.assertIn("Deploy Legacy SMS Admin (manual)", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn('branches: [ "main" ]', workflow)
+
+    def test_production_cutover_script_collects_backups_and_snapshots(self) -> None:
+        cutover_script = self._read_repo_file("run", "production_cutover.sh")
 
         self.assertIn("public_readiness_local.sh", cutover_script)
-        self.assertIn("public_readiness_beta_snapshot.sh", cutover_script)
+        self.assertIn("public_readiness_production_snapshot.sh", cutover_script)
         self.assertIn("pg_dump", cutover_script)
         self.assertIn("redis-cli", cutover_script)
         self.assertIn("deploy_twinevia_saas.sh", cutover_script)
         self.assertIn("live_tracking_branch.txt", cutover_script)
         self.assertIn("resolve_remote_app_root", cutover_script)
+        self.assertIn("resolve_remote_app_user", cutover_script)
         self.assertIn("resolve_remote_unit_prefix", cutover_script)
         self.assertIn("TWINEVIA_SAAS_APP_ROOT", cutover_script)
         self.assertIn("TWINEVIA_SAAS_PYTHON", cutover_script)
+        self.assertIn("TWINEVIA_PUBLIC_HOST", cutover_script)
+        self.assertIn("TWINEVIA_SSH_TARGET", cutover_script)
+        self.assertIn("twinevia.com", cutover_script)
+        self.assertIn("systemctl show twinevia-saas.service -p WorkingDirectory --value", cutover_script)
+
+    def test_production_cutover_script_supports_canonical_host_migration_and_records_layout(self) -> None:
+        cutover_script = self._read_repo_file("run", "production_cutover.sh")
+
+        self.assertIn("--canonicalize-host", cutover_script)
+        self.assertIn("/opt/twinevia-saas", cutover_script)
+        self.assertIn("/opt/sms-saas", cutover_script)
+        self.assertIn("canonicalized.txt", cutover_script)
+        self.assertIn("pre_app_root.txt", cutover_script)
+        self.assertIn("post_app_root.txt", cutover_script)
+        self.assertIn("pre_app_user.txt", cutover_script)
+        self.assertIn("post_app_user.txt", cutover_script)
+        self.assertIn("runtime_layout.pre.txt", cutover_script)
+        self.assertIn("runtime_layout.post.txt", cutover_script)
+        self.assertIn("assert_runtime_layout", cutover_script)
+        self.assertIn('assert_runtime_layout "${RUN_DIR}/runtime_layout.post.txt" "twinevia" "/opt/twinevia-saas"', cutover_script)
+        self.assertIn("install_saas.sh", cutover_script)
+
+    def test_live_smoke_wrapper_requires_existing_credentials(self) -> None:
+        live_smoke_path = self.repo_root / "run" / "public_readiness_live_smoke.sh"
+        completed = subprocess.run(
+            ["bash", str(live_smoke_path), "--run-id", "live-smoke-missing-creds"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "HOME": os.environ.get("HOME", ""),
+                "PATH": os.environ.get("PATH", ""),
+            },
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("TWINEVIA_OWNER_USERNAME", completed.stderr)
+        self.assertIn("TWINEVIA_PLATFORM_PASSWORD", completed.stderr)
+
+    def test_live_playwright_config_skips_local_web_server_boot(self) -> None:
+        live_config = self._read_repo_file("playwright.live.config.js")
+
+        self.assertIn("https://twinevia.com", live_config)
+        self.assertIn("TWINEVIA_LIVE_BASE_URL", live_config)
+        self.assertIn("live-production-smoke.spec.js", live_config)
+        self.assertNotIn("webServer", live_config)
+
+    def test_production_snapshot_script_requires_explicit_ssh_target(self) -> None:
+        snapshot_path = self.repo_root / "run" / "public_readiness_production_snapshot.sh"
+        snapshot_script = self._read_repo_file("run", "public_readiness_production_snapshot.sh")
+        self.assertIn("systemctl show twinevia-saas.service -p WorkingDirectory --value", snapshot_script)
+        completed = subprocess.run(
+            ["bash", str(snapshot_path), "--org-slug", "control", "--label", "baseline"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "HOME": os.environ.get("HOME", ""),
+                "PATH": os.environ.get("PATH", ""),
+            },
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("TWINEVIA_SSH_TARGET", completed.stderr)
+
+    def test_production_cutover_script_requires_explicit_ssh_target(self) -> None:
+        cutover_path = self.repo_root / "run" / "production_cutover.sh"
+        completed = subprocess.run(
+            ["bash", str(cutover_path), "--org-slug", "control"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "HOME": os.environ.get("HOME", ""),
+                "PATH": os.environ.get("PATH", ""),
+            },
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("TWINEVIA_SSH_TARGET", completed.stderr)
+
+    def test_production_snapshot_script_warns_when_beta_env_aliases_are_used(self) -> None:
+        snapshot_path = self.repo_root / "run" / "public_readiness_production_snapshot.sh"
+        completed = subprocess.run(
+            ["bash", str(snapshot_path), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                "HOME": os.environ.get("HOME", ""),
+                "PATH": os.environ.get("PATH", ""),
+                "BETA_SIGNOFF_HOST": "legacy.example.com",
+                "BETA_SIGNOFF_SSH_TARGET": "ubuntu@legacy.example.com",
+            },
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("BETA_SIGNOFF_HOST is deprecated", completed.stderr)
+        self.assertIn("BETA_SIGNOFF_SSH_TARGET is deprecated", completed.stderr)
+
+    def test_doc_smoke_runs_naming_audit_for_retired_beta_refs(self) -> None:
+        doc_smoke_script = self._read_repo_file("run", "doc_smoke.sh")
+        naming_audit_script = self._read_repo_file("run", "naming_audit.sh")
+
+        self.assertIn("./run/naming_audit.sh", doc_smoke_script)
+        self.assertIn("./run/public_readiness_live_smoke.sh --help", doc_smoke_script)
+        self.assertIn("beta\\\\.theitwingman\\\\.com", naming_audit_script)
+        self.assertIn("public_readiness_beta_snapshot\\\\.sh|beta_cutover\\\\.sh|beta-cutover", naming_audit_script)
+        self.assertIn("\\\\bbeta (snapshot|cutover|host|deploy|signoff)\\\\b", naming_audit_script)
 
     def test_saas_unit_templates_use_rendered_user_group_and_canonical_dbdoctor(self) -> None:
         service_unit = self._read_repo_file("deploy", "twinevia-saas.service")

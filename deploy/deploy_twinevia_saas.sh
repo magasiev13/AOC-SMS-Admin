@@ -138,6 +138,104 @@ resolve_health_host() {
   printf '127.0.0.1\n'
 }
 
+trusted_hosts_are_localhost_only() {
+  local trusted_hosts="$1"
+  [[ "${trusted_hosts}" =~ ^(127\.0\.0\.1|localhost)(,(127\.0\.0\.1|localhost))*$ ]]
+}
+
+ensure_env_key() {
+  local key="$1"
+  local value="$2"
+  if ! sudo grep -qE "^${key}=" "${ENV_FILE}"; then
+    echo "${key}=${value}" | sudo tee -a "${ENV_FILE}" >/dev/null
+    echo "==> Appended missing key ${key}"
+  fi
+}
+
+current_env_value() {
+  local key="$1"
+  local line
+  line="$(sudo grep -E "^${key}=" "${ENV_FILE}" | tail -n1 || true)"
+  if [[ -z "${line}" ]]; then
+    echo ""
+    return
+  fi
+  echo "${line#*=}"
+}
+
+validate_saas_runtime_env() {
+  local flask_env
+  local flask_debug
+  local database_url
+  local trusted_hosts
+  local trust_proxy
+  local session_cookie_secure
+  local remember_cookie_secure
+  local session_cookie_samesite
+  local errors=()
+
+  flask_env="$(current_env_value "FLASK_ENV")"
+  flask_debug="$(current_env_value "FLASK_DEBUG")"
+  database_url="$(current_env_value "DATABASE_URL")"
+  trusted_hosts="$(current_env_value "TRUSTED_HOSTS")"
+  trust_proxy="$(current_env_value "TRUST_PROXY")"
+  session_cookie_secure="$(current_env_value "SESSION_COOKIE_SECURE")"
+  remember_cookie_secure="$(current_env_value "REMEMBER_COOKIE_SECURE")"
+  session_cookie_samesite="$(current_env_value "SESSION_COOKIE_SAMESITE")"
+
+  if [[ "${flask_env}" != "production" ]]; then
+    errors+=("FLASK_ENV must be set to production for live SaaS deploys.")
+  fi
+  if [[ -n "${flask_debug}" && "${flask_debug}" != "0" ]]; then
+    errors+=("FLASK_DEBUG must be unset or 0 for live SaaS deploys.")
+  fi
+  if [[ "${database_url}" != postgresql* ]]; then
+    errors+=("DATABASE_URL must use PostgreSQL for live SaaS deploys.")
+  fi
+  if [[ -z "${trusted_hosts}" ]]; then
+    errors+=("TRUSTED_HOSTS must list the real public hostnames for this deployment.")
+  elif trusted_hosts_are_localhost_only "${trusted_hosts}"; then
+    echo "[warn] TRUSTED_HOSTS is localhost-only ('${trusted_hosts}')." >&2
+    echo "       Public Host headers will be rejected with 400 even if the local health check passes." >&2
+    errors+=("TRUSTED_HOSTS must not be localhost-only for live SaaS deploys.")
+  fi
+  if [[ "${trust_proxy}" != "1" ]]; then
+    errors+=("TRUST_PROXY must be 1 when SaaS is served behind the public reverse proxy.")
+  fi
+  if [[ "${session_cookie_secure}" != "1" ]]; then
+    errors+=("SESSION_COOKIE_SECURE must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${remember_cookie_secure}" != "1" ]]; then
+    errors+=("REMEMBER_COOKIE_SECURE must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${session_cookie_samesite}" != "Lax" && "${session_cookie_samesite}" != "Strict" ]]; then
+    errors+=("SESSION_COOKIE_SAMESITE must be Lax or Strict for live SaaS deploys.")
+  fi
+
+  for flag_name in STRIPE_FAKE_CHECKOUT_ENABLED TWILIO_BROWSER_FAKE_SENDS TWILIO_A2P_FAKE_QUEUE; do
+    if [[ "$(current_env_value "${flag_name}")" != "0" ]]; then
+      errors+=("${flag_name} must be 0 for live SaaS deploys.")
+    fi
+  done
+
+  if [[ ${#errors[@]} -gt 0 ]]; then
+    printf '==> Refusing deploy due to unsafe SaaS runtime configuration:\n' >&2
+    printf ' - %s\n' "${errors[@]}" >&2
+    exit 1
+  fi
+}
+
+dump_service_diagnostics() {
+  echo "==> Diagnostics: twinevia-saas service status"
+  sudo systemctl status twinevia-saas --no-pager || true
+  echo "==> Diagnostics: twinevia-saas-worker service status"
+  sudo systemctl status twinevia-saas-worker --no-pager || true
+  echo "==> Diagnostics: recent twinevia-saas journal logs"
+  sudo journalctl -u twinevia-saas -n 200 --no-pager || true
+  echo "==> Diagnostics: recent twinevia-saas-worker journal logs"
+  sudo journalctl -u twinevia-saas-worker -n 120 --no-pager || true
+}
+
 upsert_env_key() {
   local key="$1"
   local value="$2"
@@ -223,12 +321,22 @@ fi
 assert_git_source
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
 assert_git_source
+ensure_env_key "FLASK_ENV" "production"
+ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"
 upsert_env_key "SCHEDULER_ENABLED" "0"
 upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"
-upsert_env_key "REDIS_URL" "redis://localhost:6379/0"
-upsert_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
-upsert_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
+ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
+ensure_env_key "TRUST_PROXY" "1"
+ensure_env_key "SESSION_COOKIE_SECURE" "1"
+ensure_env_key "REMEMBER_COOKIE_SECURE" "1"
+ensure_env_key "SESSION_COOKIE_SAMESITE" "Lax"
+ensure_env_key "STRIPE_FAKE_CHECKOUT_ENABLED" "0"
+ensure_env_key "TWILIO_BROWSER_FAKE_SENDS" "0"
+ensure_env_key "TWILIO_A2P_FAKE_QUEUE" "0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
+ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
+validate_saas_runtime_env
 sync_deploy_artifacts
 sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --doctor"
@@ -277,8 +385,7 @@ done
 
 if [[ "${HEALTH_OK}" -ne 1 ]]; then
   echo "==> SaaS health check failed after deploy (Host=${HEALTH_HOST})." >&2
-  sudo systemctl status twinevia-saas --no-pager || true
-  sudo journalctl -u twinevia-saas -n 120 --no-pager || true
+  dump_service_diagnostics
   exit 1
 fi
 

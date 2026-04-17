@@ -5,7 +5,7 @@ Canonical release gate for SaaS customer readiness.
 The release is ready only when all of the following are true:
 
 - the deterministic local gate passes
-- the beta snapshot and walkthrough pass
+- the production snapshot and read-only live smoke pass
 - `/health` returns HTTP 200
 - the sourced `twinevia-saas-dbdoctor --doctor` check exits `0`
 - required `twinevia-saas*` services and timers are active
@@ -54,7 +54,7 @@ The local acceptance signal must still cover these product outcomes:
 - blocked states for incomplete billing, incomplete messaging, and suspended orgs
 - tenant isolation across multiple seeded organizations
 
-## Beta Snapshot Gate
+## Production Snapshot Gate
 
 Use `IT Wingman LLC` as the reusable greenlight tenant:
 
@@ -71,7 +71,7 @@ Collect snapshots at meaningful milestones:
 Run:
 
 ```bash
-./run/public_readiness_beta_snapshot.sh \
+./run/public_readiness_production_snapshot.sh \
   --org-slug it-wingman-llc \
   --label baseline
 ```
@@ -79,7 +79,7 @@ Run:
 Artifacts land in:
 
 ```text
-output/signoff/<run-id>/beta/<label>/
+output/signoff/<run-id>/production/<label>/
 ```
 
 Each snapshot should include:
@@ -93,31 +93,32 @@ Each snapshot should include:
 - organization subscription, invite, membership, messaging, and A2P state
 - Twilio ownership details when a sender already exists
 
-## Safe Beta Cutover
+## Safe Production Cutover
 
-Beta is already the Twinevia SaaS runtime. Treat the beta update as an in-place deploy against the existing PostgreSQL database, Redis instance, and `/opt/twinevia-saas/.env`.
+Canonical production is the Twinevia SaaS runtime rooted at `/opt/twinevia-saas`. Treat the live update as an in-place deploy against the existing PostgreSQL database, Redis instance, and the current production `.env`. If an upgraded host still runs from `/opt/sms-saas`, canonicalize it once during cutover with `--canonicalize-host`.
 
 Do not:
 
-- point beta at a new database
+- point production at a new database
 - run a legacy import
 - treat the cutover like a fresh-host install
 - rename the live PostgreSQL database or Redis instance for branding
 
 Preferred operator flow:
 
-1. pick the exact branch beta should follow
+1. pick the exact branch production should follow
 2. require the local gate to pass on that branch
 3. announce a short freeze window for org edits, invites, billing mutations, sender provisioning, and outbound sends
-4. capture a pre-deploy beta snapshot and backup bundle
+4. capture a pre-deploy production snapshot and backup bundle
 5. run the in-place deploy
-6. capture a post-deploy beta snapshot and compare parity
+6. capture a post-deploy production snapshot and compare parity
 
 Use:
 
 ```bash
-./run/beta_cutover.sh \
+./run/production_cutover.sh \
   --org-slug it-wingman-llc \
+  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
@@ -125,52 +126,64 @@ Use:
 What the cutover script does:
 
 - runs `./run/public_readiness_local.sh` unless `--skip-local-gate` is set
-- captures the pre-deploy beta snapshot
-- auto-detects the current beta app root and unit family so upgrades can start from either `/opt/twinevia-saas` or the older `/opt/sms-saas` host layout
+- captures the pre-deploy production snapshot
+- auto-detects the current live app root and unit family
+- migrates `/opt/sms-saas` to `/opt/twinevia-saas` when `--canonicalize-host` is supplied
 - locks the remote checkout to the expected branch and tracking ref
 - backs up PostgreSQL with `pg_dump`
 - captures a Redis backup bundle
-- copies `/opt/twinevia-saas/.env` and reverse-proxy evidence off-host into local artifacts
+- copies the current live `.env` and reverse-proxy evidence off-host into local artifacts
 - performs `deploy/deploy_twinevia_saas.sh` only when `--deploy` is supplied
-- captures a post-deploy beta snapshot when a deploy actually runs
+- records pre/post runtime root and user in the cutover artifacts
+- captures a post-deploy production snapshot when deploy or canonicalization actually runs
 
 Artifacts land in:
 
 ```text
-output/signoff/<run-id>/beta-cutover/
+output/signoff/<run-id>/production-cutover/
 ```
 
-Keep the pre-deploy backups until beta signoff is complete.
+Keep the pre-deploy backups until production signoff is complete.
 
-## Live Walkthrough
+## Authenticated Live Smoke
 
-Validate these routes on beta:
+Run:
+
+```bash
+TWINEVIA_OWNER_USERNAME=owner@example.com \
+TWINEVIA_OWNER_PASSWORD=... \
+TWINEVIA_PLATFORM_USERNAME=platform@example.com \
+TWINEVIA_PLATFORM_PASSWORD=... \
+./run/public_readiness_live_smoke.sh
+```
+
+Validate these routes on production:
 
 - `/login`
 - `/signup`
-- `/setup`
-- `/billing`
-- `/dashboard`
-- `/users`
 - `/platform`
 - `/platform/organizations`
 - `/platform/organizations/<id>/messaging`
 - `/platform/organizations/<id>/messaging/onboarding`
+- owner `/setup` or `/dashboard`
+- owner `/billing`
 
-The walkthrough should include:
+The live smoke should include:
 
-- one real Stripe test checkout on the control tenant
-- correct return to setup or billing state
-- owner dashboard blocked-send messaging until the workspace is truly ready
-- one staff invite acceptance
+- public auth surfaces and `/health`
+- owner login to the current readiness surface without mutating billing or onboarding
+- owner billing and dashboard gating copy
+- platform login plus read-only inspection of org directory, messaging, and onboarding pages
 - visible UI state matching DB and worker/log state
+- no clicks that create invites, start checkout, submit A2P, or mutate provider state
 
 ## Twilio Safety Rules
 
-- keep beta Twilio checks read-only during signoff when possible
+- keep production Twilio checks read-only during signoff when possible
 - do not submit new A2P packets solely for signoff
 - do not buy numbers solely for signoff
 - do not attach parent-account numbers solely for signoff
+- do not start a live Stripe checkout solely for signoff
 - if a sender already exists, verify ownership and assignment instead of re-provisioning it
 - if Twilio reports a structural blocker, stop and mark the launch blocked instead of retrying around it
 

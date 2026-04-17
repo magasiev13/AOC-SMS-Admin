@@ -60,6 +60,7 @@ Minimum production shape:
 
 ```env
 FLASK_ENV=production
+FLASK_DEBUG=0
 TRUST_PROXY=1
 TRUSTED_HOSTS=app.example.com
 SAAS_MODE=1
@@ -77,6 +78,9 @@ STRIPE_PRICE_ID=price_replace_me
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=replace_me
+STRIPE_FAKE_CHECKOUT_ENABLED=0
+TWILIO_BROWSER_FAKE_SENDS=0
+TWILIO_A2P_FAKE_QUEUE=0
 ```
 
 Add these when applicable:
@@ -85,6 +89,19 @@ Add these when applicable:
 - `TWILIO_A2P_ONBOARDING_ENABLED=1`
 - `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
 - `PLATFORM_SERVICE_RESTART_ENABLED=1`
+
+The SaaS install/deploy scripts now refuse to continue when the runtime still
+looks like local development. In practice that means:
+
+- `FLASK_ENV` must be `production`
+- `FLASK_DEBUG` must be unset or `0`
+- `DATABASE_URL` must use PostgreSQL, not SQLite
+- `TRUSTED_HOSTS` must contain real public hostnames, not only `localhost`
+- `TRUST_PROXY=1`
+- `SESSION_COOKIE_SECURE=1`
+- `REMEMBER_COOKIE_SECURE=1`
+- `SESSION_COOKIE_SAMESITE` must be `Lax` or `Strict`
+- fake/test flags must stay off: `STRIPE_FAKE_CHECKOUT_ENABLED=0`, `TWILIO_BROWSER_FAKE_SENDS=0`, `TWILIO_A2P_FAKE_QUEUE=0`
 
 File permissions should be:
 

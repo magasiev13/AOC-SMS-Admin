@@ -218,7 +218,7 @@ Startup additionally requires:
 ```env
 FLASK_ENV=production
 TRUST_PROXY=1
-TRUSTED_HOSTS=app.example.com,beta.example.com
+TRUSTED_HOSTS=app.example.com,www.example.com
 SESSION_COOKIE_SECURE=1
 REMEMBER_COOKIE_SECURE=1
 SESSION_COOKIE_SAMESITE=Lax

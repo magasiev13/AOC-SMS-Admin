@@ -1,12 +1,10 @@
-name: Deploy (main -> VPS)
+name: Deploy Legacy SMS Admin (manual)
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 concurrency:
-  group: deploy-main
+  group: deploy-legacy-manual
   cancel-in-progress: true
 
 jobs:

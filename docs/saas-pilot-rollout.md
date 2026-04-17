@@ -170,4 +170,4 @@ For seeded users and tenants, see [saas-demo-data.md](saas-demo-data.md).
 - do not reuse queue `sms` for SaaS
 - do not point SaaS health checks at the legacy gunicorn port
 - do not treat Twilio ownership conflicts as a retryable “just try again” problem
-- for beta deploys, keep the existing PostgreSQL and Redis data plane and use `./run/beta_cutover.sh` so snapshots, backups, branch guards, and post-deploy parity checks happen in one sequence
+- for production deploys, keep the existing PostgreSQL and Redis data plane and use `./run/production_cutover.sh` so snapshots, backups, branch guards, and post-deploy parity checks happen in one sequence

@@ -7,10 +7,12 @@ Type=oneshot
 User=__APP_USER__
 Group=__APP_GROUP__
 WorkingDirectory=__APP_ROOT__
+EnvironmentFile=-__APP_ROOT__/.env
 Environment="PATH=__APP_ROOT__/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="APP_ROOT=__APP_ROOT__"
 Environment="SAAS_MODE=1"
-EnvironmentFile=-__APP_ROOT__/.env
+Environment="FLASK_ENV=production"
+Environment="FLASK_DEBUG=0"
 ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
 ExecStart=/bin/bash __APP_ROOT__/deploy/run_platform_restart_queue_once.sh

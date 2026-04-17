@@ -13,7 +13,7 @@ Canonical SaaS deployment:
 - queue name: `twinevia-saas`
 - service family: `twinevia-saas*`
 
-Upgraded hosts may still use `smsadmin`; the SaaS install/deploy scripts support that when `APP_USER` and `APP_GROUP` are set explicitly.
+If an older host still runs `/opt/sms-saas` as `smsadmin`, treat that as a transitional layout. Canonicalize it once with `./run/production_cutover.sh --canonicalize-host`; do not keep documenting it as the default production shape.
 
 Keep this deployment isolated from the legacy line:
 
@@ -133,14 +133,14 @@ Identifier notes:
 - `QE...` is the Messaging Service campaign association SID stored by the app
 - `CM...` is the console campaign ID Twilio may expose separately
 
-### Beta repair for `it-wingman-llc`
+### Production repair for `it-wingman-llc`
 
-The current beta incident should follow that same flow:
+The current production incident should follow that same flow:
 
 1. Reconcile org `it-wingman-llc` to the live approved Twilio resources that already exist in its current subaccount.
 2. Do not rebuild the approved profile, trust product, or brand.
 3. Leave campaign creation as a separate explicit operator step after the rebind.
-4. Keep the pre-repair beta snapshot until post-repair verification confirms the org state is stable.
+4. Keep the pre-repair production snapshot until post-repair verification confirms the org state is stable.
 
 ### First Controlled Send
 
@@ -175,18 +175,33 @@ What it refreshes:
 - systemd unit files
 - active SaaS services and timers
 
-### Beta cutover wrapper
+### Production cutover wrapper
 
-For the production-like beta host, use the repo wrapper from your operator machine instead of improvising the sequence by hand:
+For the live public host, use the repo wrapper from your operator machine instead of improvising the sequence by hand:
 
 ```bash
-./run/beta_cutover.sh \
+./run/production_cutover.sh \
   --org-slug it-wingman-llc \
+  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
 
-This wrapper preserves the current beta `DATABASE_URL`, `REDIS_URL`, and `/opt/twinevia-saas/.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy.
+This wrapper preserves the current production `DATABASE_URL`, `REDIS_URL`, and live `.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy. When `--canonicalize-host` is supplied on a legacy `/opt/sms-saas` host, it first migrates the runtime to `/opt/twinevia-saas` and `twinevia`.
+
+### Live smoke wrapper
+
+Use the authenticated live smoke wrapper from your operator machine before and after the cutover:
+
+```bash
+TWINEVIA_OWNER_USERNAME=owner@example.com \
+TWINEVIA_OWNER_PASSWORD=... \
+TWINEVIA_PLATFORM_USERNAME=platform@example.com \
+TWINEVIA_PLATFORM_PASSWORD=... \
+./run/public_readiness_live_smoke.sh
+```
+
+The live smoke is intentionally read-only. It covers public auth surfaces, owner readiness/billing views, and platform inspection pages without starting checkout, sending invites, or mutating A2P/provider state.
 
 For new organizations, the app-saved sender service address is the source of truth. Imported Twilio address state may be observed for diagnostics, but it must not silently override app-entered service-address fields.
 
@@ -273,7 +288,7 @@ Also retain:
 - reverse-proxy config
 - any deploy-specific secrets or CI metadata outside the repo
 
-For beta cutovers, the automation stores off-host copies of the env snapshot and reverse-proxy evidence under `output/signoff/<run-id>/beta-cutover/` while leaving the full PostgreSQL and Redis backups on the beta host until signoff completes.
+For production cutovers, the automation stores off-host copies of the env snapshot and reverse-proxy evidence under `output/signoff/<run-id>/production-cutover/` while leaving the full PostgreSQL and Redis backups on the live host until signoff completes.
 
 ## Cutover From Legacy
 
