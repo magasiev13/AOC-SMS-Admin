@@ -34,8 +34,8 @@
             {% if platform_user %}
             <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform Control</div>
             {% endif %}
+            {% if not platform_user %}
             <div class="app-sidebar-search">
-                {% if not platform_user %}
                 {% block app_search %}
                 <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                     <i class="bi bi-search"></i>
@@ -44,12 +44,8 @@
                            value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                 </form>
                 {% endblock %}
-                {% else %}
-                <div class="small text-white-50 px-2">
-                    Manage organizations, onboarding, and platform access from a dedicated control plane.
-                </div>
-                {% endif %}
             </div>
+            {% endif %}
             <nav class="nav flex-column app-nav">
                 {% if platform_user %}
                 <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
@@ -142,10 +138,8 @@
                                    value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                         </form>
                         {% endblock %}
-                        {% else %}
-                        <div class="small text-muted">Platform control plane</div>
                         {% endif %}
-                        <div class="nav flex-column mt-3">
+                        <div class="nav flex-column {% if not platform_user %}mt-3{% endif %}">
                             {% if platform_user %}
                             <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
                                 <i class="bi bi-grid-1x2 me-2"></i>Platform

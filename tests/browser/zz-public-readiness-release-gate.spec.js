@@ -100,7 +100,7 @@ test('golden owner journey covers signup billing onboarding staff invite and pla
     billingTitle: 'Trial active',
     messagingTitle: 'Pending',
   });
-  await expect(goldenRow.getByRole('link', { name: 'Manage provider' })).toBeVisible();
+  await expect(goldenRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
 });
 
 test('platform owner invite journey lands invited owners on setup', async ({ page }) => {

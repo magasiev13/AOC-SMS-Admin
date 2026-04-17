@@ -18,16 +18,32 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   await page.goto('/platform/organizations');
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.locator('.platform-directory__row').first()).toBeVisible();
-  await expect(page.locator('.platform-directory__row').first().locator('.platform-readiness-item')).toHaveCount(3);
+  await expect(page.getByText('Manage organizations, onboarding, and platform access from a dedicated control plane.')).toHaveCount(0);
+  await expect(page.getByText('Use this directory to spot organizations that still need billing, onboarding, or messaging work.')).toHaveCount(0);
 
   const pageActionHeight = await elementHeight(page.getByRole('link', { name: 'Add Organization' }));
   expect(pageActionHeight).toBeGreaterThanOrEqual(44);
 
   const firstRow = page.locator('.platform-directory__row').first();
+  await expect(firstRow.getByText('Primary contact:')).toHaveCount(0);
+  await expect(firstRow.getByText('Owner status')).toHaveCount(0);
+
   const accessHref = await firstRow.locator('a[href*="/access"]').first().getAttribute('href');
   const messagingHref = await firstRow.locator('a[href*="/messaging"]').first().getAttribute('href');
   expect(accessHref).toBeTruthy();
   expect(messagingHref).toBeTruthy();
+
+  await expect(firstRow.getByRole('link', { name: 'Access' })).toBeVisible();
+  await expect(firstRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
+  await expect(firstRow.getByRole('button', { name: 'More actions' })).toBeVisible();
+  await expect(firstRow.getByText('Manage Access')).toHaveCount(0);
+  await expect(firstRow.getByText('Manage provider')).toHaveCount(0);
+  await expect(firstRow.getByText('View checklist')).toHaveCount(0);
+
+  const checklistSummaries = page.locator('.platform-inline-details summary');
+  if (await checklistSummaries.count()) {
+    await expect(checklistSummaries.first()).toHaveText('Checklist');
+  }
 
   const primaryActionHeight = await elementHeight(firstRow.locator('.row-actions__primary .btn').first());
   const overflowToggleHeight = await elementHeight(firstRow.locator('.row-actions__overflow-toggle').first());
@@ -67,8 +83,13 @@ test('platform admin mobile surfaces keep 44px action targets', async ({ page })
 
   await page.goto('/platform/organizations');
   await expect(page.locator('.card-list-item.platform-org-card').first()).toBeVisible();
+  await expect(page.getByText('Use this directory to spot organizations that still need billing, onboarding, or messaging work.')).toHaveCount(0);
 
-  const firstMobileButton = page.locator('.card-list-item.platform-org-card .btn').first();
+  const firstCard = page.locator('.card-list-item.platform-org-card').first();
+  await expect(firstCard.getByRole('link', { name: 'Access' })).toBeVisible();
+  await expect(firstCard.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
+
+  const firstMobileButton = firstCard.locator('.btn').first();
   expect(await elementHeight(firstMobileButton)).toBeGreaterThanOrEqual(44);
 
   await page.getByRole('link', { name: 'Add Organization' }).click();

@@ -1427,7 +1427,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"core steps complete", response.data)
         self.assertIn(b"Open invite", response.data)
-        self.assertIn(b"Manage Access", response.data)
+        self.assertIn(b"Access", response.data)
         self.assertIn(f"https://app.example.com/invites/{invitation.token}".encode(), response.data)
 
     def test_platform_organization_access_page_can_create_staff_invite(self) -> None:

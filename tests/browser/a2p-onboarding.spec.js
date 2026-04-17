@@ -11,13 +11,13 @@ async function openMessagingForOrg(page, orgName) {
   await page.goto('/platform/organizations');
   const orgCard = page.locator('article').filter({ hasText: orgName }).first();
   await expect(orgCard).toBeVisible();
-  const providerLink = orgCard.getByRole('link', { name: /Manage provider|Set up provider/ });
+  const providerLink = orgCard.getByRole('link', { name: /Messaging|Set up provider/ });
   if (await providerLink.count()) {
     await providerLink.click();
     return;
   }
 
-  const accessHref = await orgCard.getByRole('link', { name: 'Manage Access' }).getAttribute('href');
+  const accessHref = await orgCard.getByRole('link', { name: 'Access' }).getAttribute('href');
   expect(accessHref).not.toBeNull();
   const match = accessHref.match(/\/platform\/organizations\/(\d+)\/access$/);
   expect(match).not.toBeNull();

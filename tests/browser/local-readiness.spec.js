@@ -42,7 +42,7 @@ test('platform admin can review onboarding progress and owner invite access', as
     ownerInviteVisible: true,
     ownerInviteToken: /browser-owner-invite-token/,
   });
-  await expect(onboardingRow.getByRole('link', { name: 'Manage provider' })).toBeVisible();
+  await expect(onboardingRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
 
   await page.getByRole('link', { name: 'Add Organization' }).click();
   await expect(page.getByRole('heading', { name: 'Create Business Account' })).toBeVisible();
