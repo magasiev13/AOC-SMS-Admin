@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Keyword Automations - {{ product_name }}{% endblock %}
 
@@ -20,109 +21,121 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form method="GET" class="filter-bar">
-            <div class="input-group">
-                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Search keyword rules">
-            </div>
-        </form>
-    </div>
-</div>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="collection-shell">
+        {{ ui.collection_search_panel(
+            url_for('main.keyword_rules_list'),
+            'Search keyword rules',
+            value=search,
+            aria_label='Search keyword rules',
+            title='Search',
+            meta='Filter by keyword or reply copy.'
+        ) }}
 
-<div class="card app-card">
-    <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Keyword</th>
-                    <th>Response</th>
-                    <th>Status</th>
-                    <th>Matches</th>
-                    <th>Last Match</th>
-                    <th width="220">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
+        <section class="collection-panel collection-panel--results">
+            <div class="table-responsive d-none d-lg-block">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Keyword</th>
+                            <th>Response</th>
+                            <th>Status</th>
+                            <th>Matches</th>
+                            <th>Last Match</th>
+                            <th width="220">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if rules %}
+                            {% for rule in rules %}
+                            <tr>
+                                <td><code>{{ rule.keyword }}</code></td>
+                                <td>{{ rule.response_body|truncate(120) }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
+                                        {{ 'Active' if rule.is_active else 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td>{{ rule.match_count or 0 }}</td>
+                                <td>{{ rule.last_matched_at|localtime if rule.last_matched_at else '-' }}</td>
+                                <td>
+                                    <div class="automation-actions row-actions" data-row-actions>
+                                        <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-pencil me-1"></i>Edit
+                                        </a>
+                                        <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="btn btn-sm btn-soft-danger" type="submit"
+                                                    data-confirm="Delete this keyword rule?">
+                                                <i class="bi bi-trash me-1"></i>Delete
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="py-5">
+                                {{ ui.empty_state(
+                                    'bi-magic',
+                                    'No keyword rules found',
+                                    'Add your first rule to automate replies.',
+                                    primary_href=url_for('main.keyword_rule_add'),
+                                    primary_label='Add keyword rule'
+                                ) }}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-list d-lg-none">
                 {% if rules %}
                     {% for rule in rules %}
-                    <tr>
-                        <td><code>{{ rule.keyword }}</code></td>
-                        <td>{{ rule.response_body|truncate(120) }}</td>
-                        <td>
-                            <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
-                                {{ 'Active' if rule.is_active else 'Inactive' }}
-                            </span>
-                        </td>
-                        <td>{{ rule.match_count or 0 }}</td>
-                        <td>{{ rule.last_matched_at|localtime if rule.last_matched_at else '-' }}</td>
-                        <td>
-                            <div class="automation-actions row-actions" data-row-actions>
-                                <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
-                                    <i class="bi bi-pencil me-1"></i>Edit
-                                </a>
-                                <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-sm btn-soft-danger" type="submit"
-                                            data-confirm="Delete this keyword rule?">
-                                        <i class="bi bi-trash me-1"></i>Delete
-                                    </button>
-                                </form>
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1"><code>{{ rule.keyword }}</code></h6>
+                                <div class="text-muted small">{{ rule.response_body|truncate(120) }}</div>
+                                <div class="d-flex flex-wrap gap-2 mt-2">
+                                    <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
+                                        {{ 'Active' if rule.is_active else 'Inactive' }}
+                                    </span>
+                                    <span class="badge bg-light text-dark">{{ rule.match_count or 0 }} matches</span>
+                                </div>
+                                <div class="text-muted small mt-2">
+                                    Last match: {{ rule.last_matched_at|localtime if rule.last_matched_at else '-' }}
+                                </div>
                             </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                {% else %}
-                <tr>
-                    <td colspan="6" class="text-center text-muted py-4">
-                        No keyword rules found. <a href="{{ url_for('main.keyword_rule_add') }}">Add your first rule</a>.
-                    </td>
-                </tr>
-                {% endif %}
-            </tbody>
-        </table>
-    </div>
-    <div class="card-list d-lg-none">
-        {% if rules %}
-            {% for rule in rules %}
-            <div class="card-list-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div>
-                        <h6 class="mb-1"><code>{{ rule.keyword }}</code></h6>
-                        <div class="text-muted small">{{ rule.response_body|truncate(120) }}</div>
-                        <div class="d-flex flex-wrap gap-2 mt-2">
-                            <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
-                                {{ 'Active' if rule.is_active else 'Inactive' }}
-                            </span>
-                            <span class="badge bg-light text-dark">{{ rule.match_count or 0 }} matches</span>
                         </div>
-                        <div class="text-muted small mt-2">
-                            Last match: {{ rule.last_matched_at|localtime if rule.last_matched_at else '-' }}
+                        <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions>
+                            <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-pencil me-1"></i>Edit
+                            </a>
+                            <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-soft-danger" type="submit"
+                                        data-confirm="Delete this keyword rule?">
+                                    <i class="bi bi-trash me-1"></i>Delete
+                                </button>
+                            </form>
                         </div>
                     </div>
-                </div>
-                <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions>
-                    <a href="{{ url_for('main.keyword_rule_edit', rule_id=rule.id) }}" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-pencil me-1"></i>Edit
-                    </a>
-                    <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-soft-danger" type="submit"
-                                data-confirm="Delete this keyword rule?">
-                            <i class="bi bi-trash me-1"></i>Delete
-                        </button>
-                    </form>
-                </div>
+                    {% endfor %}
+                {% else %}
+                {{ ui.empty_state(
+                    'bi-magic',
+                    'No keyword rules found',
+                    'Add your first rule to automate replies.',
+                    primary_href=url_for('main.keyword_rule_add'),
+                    primary_label='Add keyword rule'
+                ) }}
+                {% endif %}
             </div>
-            {% endfor %}
-        {% else %}
-        <div class="empty-state py-4">
-            <i class="bi bi-magic empty-state__icon"></i>
-            <div class="empty-state__title">No keyword rules found</div>
-            <div class="empty-state__text">Add your first rule to automate replies.</div>
-        </div>
-        {% endif %}
+            {{ ui.collection_footer(rules|length, 'rule') }}
+        </section>
     </div>
 </div>
 {% endblock %}

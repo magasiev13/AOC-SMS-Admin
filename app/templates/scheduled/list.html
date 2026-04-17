@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Scheduled Messages - {{ product_name }}{% endblock %}
 
@@ -16,22 +17,19 @@
 
 {% block content %}
 <div id="pendingIdsContainer" data-pending-ids='{{ pending_ids|tojson }}'></div>
-
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form class="filter-bar" method="GET" data-table-loading-target="scheduledTables,scheduledPastTable">
-            <div class="flex-grow-1">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search scheduled messages" aria-label="Search scheduled messages" value="{{ search }}">
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
+<div class="collection-shell">
+    {{ ui.collection_search_panel(
+        url_for('main.scheduled_list'),
+        'Search scheduled messages',
+        search,
+        'Search scheduled messages',
+        'Search scheduled messages',
+        'Review queued and completed sends in one place.',
+        'scheduledTables,scheduledPastTable'
+    ) }}
 
 {% if pending %}
-<div class="card app-card mb-4">
+<div class="card app-card collection-panel collection-panel--results">
     <div class="card-header bg-warning-subtle d-flex flex-wrap justify-content-between align-items-center gap-2">
         <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
         <div class="d-flex align-items-center gap-3">
@@ -164,28 +162,15 @@
     </div>
 </div>
 {% else %}
-<div class="card app-card mb-4">
+<div class="card app-card collection-panel">
     <div class="card-body py-5">
-        <div class="empty-state">
-            <i class="bi bi-clock empty-state__icon"></i>
-            <div class="empty-state__title">
-                {% if past %}
-                No upcoming scheduled messages
-                {% else %}
-                No scheduled messages
-                {% endif %}
-            </div>
-            <div class="empty-state__text">
-                {% if past %}
-                Schedule a message to send at a specific time. Past scheduled messages are listed below.
-                {% else %}
-                Schedule a message to send at a specific time.
-                {% endif %}
-            </div>
-            <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-sm">
-                <i class="bi bi-plus-lg me-1"></i>Schedule from Dashboard
-            </a>
-        </div>
+        {{ ui.empty_state(
+            'bi-clock',
+            'No upcoming scheduled messages' if past else 'No scheduled messages',
+            'Schedule a message to send at a specific time. Past scheduled messages are listed below.' if past else 'Schedule a message to send at a specific time.',
+            url_for('main.dashboard'),
+            'Schedule from Dashboard'
+        ) }}
     </div>
 </div>
 {% endif %}
@@ -193,7 +178,7 @@
 
 
 {% if past %}
-<div class="card app-card">
+<div class="card app-card collection-panel collection-panel--results">
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Past Scheduled Messages</h6>
         <div class="d-flex align-items-center gap-3">
@@ -436,6 +421,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="scheduled_ids" id="pastBulkDeleteIds" value="">
 </form>
+ </div>
 {% endblock %}
 
 {% block scripts %}

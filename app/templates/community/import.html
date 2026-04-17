@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Import Community Members - {{ product_name }}{% endblock %}
 
@@ -11,43 +12,54 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="bi bi-upload me-2"></i>Import Community Members from CSV
-                </h5>
-            </div>
-            <div class="card-body">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-form-layout workspace-form-layout--with-side">
+        <div class="workspace-form-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Upload CSV</h2>
+                        <p class="workspace-panel__meta">Import community members from a file and skip manual entry.</p>
+                    </div>
+                </div>
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-4">
-                        <label for="file" class="form-label">CSV File <span class="text-danger">*</span></label>
-                        <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    <div class="workspace-panel__body">
+                        <div class="mb-0">
+                            <label for="file" class="form-label">CSV file <span class="text-danger">*</span></label>
+                            <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                        </div>
                     </div>
-
-                    <div class="alert alert-info">
-                        <h6 class="alert-heading"><i class="bi bi-info-circle me-1"></i>Supported CSV Formats</h6>
-                        <p class="mb-2"><strong>Three columns (first, last, phone):</strong></p>
-                        <pre class="mb-2 bg-light p-2 rounded">Vardan,Hovsepyan,(323) 630-0201
-Jane,Smith,720-383-2388</pre>
-                        <p class="mb-2"><strong>Two columns (name, phone):</strong></p>
-                        <pre class="mb-2 bg-light p-2 rounded">John Doe,+1234567890</pre>
-                        <p class="mb-2"><strong>Phone only:</strong></p>
-                        <pre class="mb-0 bg-light p-2 rounded">720-383-2388
-303-918-8410</pre>
-                    </div>
-
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-upload me-1"></i>Import
-                        </button>
-                        <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Duplicate phone numbers are skipped during import.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-upload me-1"></i>Import
+                            </button>
+                            <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
                     </div>
                 </form>
-            </div>
+            </section>
         </div>
+        <aside class="workspace-form-side">
+            <div class="workspace-callout-stack">
+                <section class="workspace-callout">
+                    <h3 class="workspace-callout__title">Supported CSV formats</h3>
+                    <div class="workspace-callout__copy">
+                        <strong>Three columns:</strong>
+                        <pre class="mb-2 mt-2 bg-light p-2 rounded">Vardan,Hovsepyan,(323) 630-0201
+Jane,Smith,720-383-2388</pre>
+                        <strong>Two columns:</strong>
+                        <pre class="mb-2 mt-2 bg-light p-2 rounded">John Doe,+1234567890</pre>
+                        <strong>Phone only:</strong>
+                        <pre class="mb-0 mt-2 bg-light p-2 rounded">720-383-2388
+303-918-8410</pre>
+                    </div>
+                </section>
+            </div>
+        </aside>
     </div>
 </div>
 {% endblock %}

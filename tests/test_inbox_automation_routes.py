@@ -221,6 +221,8 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
+        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b"workspace-form-layout", response.data)
         self.assertIsNone(self.SurveyFlow.query.filter_by(trigger_keyword="HELP").first())
 
     def test_survey_edit_rejects_existing_keyword_rule(self) -> None:
@@ -243,6 +245,8 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
+        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b"workspace-form-layout", response.data)
 
         refreshed = self.db.session.get(self.SurveyFlow, survey.id)
         self.assertEqual(refreshed.trigger_keyword, "RSVP")

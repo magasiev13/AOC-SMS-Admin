@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Events - {{ product_name }}{% endblock %}
 
@@ -17,20 +18,18 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form class="filter-bar" method="GET" data-table-loading-target="eventsTable">
-            <div class="flex-grow-1">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search events" aria-label="Search events" value="{{ search }}">
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
+<div class="collection-shell">
+    {{ ui.collection_search_panel(
+        url_for('main.events_list'),
+        'Search events',
+        search,
+        'Search events',
+        'Search events',
+        'Review registrations and act from one event list.',
+        'eventsTable'
+    ) }}
 
-<div class="card app-card">
+<div class="card app-card collection-panel collection-panel--results">
     {% if events and can_manage_events %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
@@ -149,14 +148,13 @@
                 {% else %}
                     <tr>
                         <td colspan="{{ 6 if can_manage_events else 5 }}" class="py-5">
-                            <div class="empty-state">
-                                <i class="bi bi-calendar-x empty-state__icon"></i>
-                                <div class="empty-state__title">No events found</div>
-                                <div class="empty-state__text">Create your first event to start collecting registrations.</div>
-                                <a href="{{ url_for('main.event_add') }}" class="btn btn-primary btn-sm">
-                                    <i class="bi bi-plus-lg me-1"></i>Create Event
-                                </a>
-                            </div>
+                            {{ ui.empty_state(
+                                'bi-calendar-x',
+                                'No events found',
+                                'Create your first event to start collecting registrations.',
+                                url_for('main.event_add'),
+                                'Create Event'
+                            ) }}
                         </td>
                     </tr>
                 {% endif %}
@@ -224,21 +222,21 @@
             </div>
             {% endfor %}
         {% else %}
-            <div class="empty-state py-5">
-                <i class="bi bi-calendar-x empty-state__icon"></i>
-                <div class="empty-state__title">No events found</div>
-                <div class="empty-state__text">Create your first event to start collecting registrations.</div>
-                <a href="{{ url_for('main.event_add') }}" class="btn btn-primary btn-sm">
-                    <i class="bi bi-plus-lg me-1"></i>Create Event
-                </a>
+            <div class="py-5">
+                {{ ui.empty_state(
+                    'bi-calendar-x',
+                    'No events found',
+                    'Create your first event to start collecting registrations.',
+                    url_for('main.event_add'),
+                    'Create Event'
+                ) }}
             </div>
         {% endif %}
     </div>
     {% if events %}
-    <div class="card-footer text-muted">
-        Showing {{ events|length }} event(s)
-    </div>
+    {{ ui.collection_footer(events|length, 'event') }}
     {% endif %}
+</div>
 </div>
 
 {% if events %}

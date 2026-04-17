@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% set platform_account_form = config.SAAS_MODE and current_user.is_platform_admin and (not user or user.is_platform_admin) %}
 {% set platform_access_toggle_visible = config.SAAS_MODE and current_user.is_platform_admin %}
@@ -30,110 +31,128 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="bi bi-person-gear me-2"></i>{{ 'Edit' if user else 'Create' }} {{ entity_label }}
-                </h5>
-            </div>
-            <div class="card-body">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-form-layout workspace-form-layout--with-side">
+        <div class="workspace-form-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if user else 'Create' }} {{ entity_label|lower }}</h2>
+                        <p class="workspace-panel__meta">Set sign-in details, workspace role, and password behavior for this account.</p>
+                    </div>
+                </div>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label for="full_name" class="form-label">Full Name</label>
-                        <input type="text" class="form-control" id="full_name" name="full_name"
-                               value="{{ user.full_name if user else '' }}"
-                               placeholder="Jane Doe">
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="username" name="username" required autocomplete="username"
-                               value="{{ user.username if user else '' }}"
-                               placeholder="username">
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email{% if config.SAAS_MODE %} <span class="text-danger">*</span>{% endif %}</label>
-                        <input type="email" class="form-control" id="email" name="email" {% if config.SAAS_MODE %}required{% endif %}
-                               value="{{ user.email if user else '' }}"
-                               placeholder="owner@example.com">
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="phone" class="form-label">Phone <span class="text-danger">*</span></label>
-                        <input type="tel" class="form-control" id="phone" name="phone" required autocomplete="tel"
-                               value="{{ user.phone if user else '' }}"
-                               placeholder="+15551234567">
-                        <div class="form-text">Used for security alerts (password reset, lockout, password change).</div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
-                        <select class="form-select" id="role" name="role" required>
-                            <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
-                            <option value="admin" {% if selected_role == 'admin' %}selected{% endif %}>
-                                {% if config.SAAS_MODE and not current_user.is_platform_admin %}Owner{% else %}Admin{% endif %}
-                            </option>
-                            <option value="social_manager" {% if selected_role == 'social_manager' %}selected{% endif %}>
-                                {% if config.SAAS_MODE and not current_user.is_platform_admin %}Staff{% else %}Social Media Manager{% endif %}
-                            </option>
-                        </select>
-                    </div>
-
-                    {% if platform_access_toggle_visible %}
-                    <div class="form-check mb-4">
-                        <input
-                            class="form-check-input"
-                            type="checkbox"
-                            id="is_platform_admin"
-                            name="is_platform_admin"
-                            {% if (user and user.is_platform_admin) or (not user) %}checked{% endif %}
-                            {% if platform_access_toggle_disabled %}disabled{% endif %}
-                        >
-                        <label class="form-check-label" for="is_platform_admin">
-                            Grant platform admin access
-                        </label>
-                        <div class="form-text">
-                            Platform admins land on Platform Control and can manage organizations, billing, provider operations, and restart access.
+                    <div class="workspace-panel__body">
+                        <div class="mb-3">
+                            <label for="full_name" class="form-label">Full name</label>
+                            <input type="text" class="form-control" id="full_name" name="full_name"
+                                   value="{{ user.full_name if user else '' }}"
+                                   placeholder="Jane Doe">
                         </div>
-                        {% if platform_access_toggle_disabled %}
-                        <div class="form-text text-muted">
-                            This account already belongs to an organization and cannot also be used as a platform admin.
+
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Username <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="username" name="username" required autocomplete="username"
+                                   value="{{ user.username if user else '' }}"
+                                   placeholder="username">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="email" class="form-label">Email{% if config.SAAS_MODE %} <span class="text-danger">*</span>{% endif %}</label>
+                            <input type="email" class="form-control" id="email" name="email" {% if config.SAAS_MODE %}required{% endif %}
+                                   value="{{ user.email if user else '' }}"
+                                   placeholder="owner@example.com">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="phone" class="form-label">Phone <span class="text-danger">*</span></label>
+                            <input type="tel" class="form-control" id="phone" name="phone" required autocomplete="tel"
+                                   value="{{ user.phone if user else '' }}"
+                                   placeholder="+15551234567">
+                            <div class="form-text">Used for password resets, lockouts, and password change alerts.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="role" class="form-label">Role <span class="text-danger">*</span></label>
+                            <select class="form-select" id="role" name="role" required>
+                                <option value="" disabled {% if not user %}selected{% endif %}>Select role</option>
+                                <option value="admin" {% if selected_role == 'admin' %}selected{% endif %}>
+                                    {% if config.SAAS_MODE and not current_user.is_platform_admin %}Owner{% else %}Admin{% endif %}
+                                </option>
+                                <option value="social_manager" {% if selected_role == 'social_manager' %}selected{% endif %}>
+                                    {% if config.SAAS_MODE and not current_user.is_platform_admin %}Staff{% else %}Social Media Manager{% endif %}
+                                </option>
+                            </select>
+                        </div>
+
+                        {% if platform_access_toggle_visible %}
+                        <div class="form-check mb-4">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="is_platform_admin"
+                                name="is_platform_admin"
+                                {% if (user and user.is_platform_admin) or (not user) %}checked{% endif %}
+                                {% if platform_access_toggle_disabled %}disabled{% endif %}
+                            >
+                            <label class="form-check-label" for="is_platform_admin">
+                                Grant platform admin access
+                            </label>
+                            <div class="form-text">
+                                Platform admins land on Platform and can manage organizations, billing, provider operations, and service restarts.
+                            </div>
+                            {% if platform_access_toggle_disabled %}
+                            <div class="form-text text-muted">
+                                This account already belongs to an organization and cannot also be used as a platform admin.
+                            </div>
+                            {% endif %}
                         </div>
                         {% endif %}
-                    </div>
-                    {% endif %}
 
-                    <div class="mb-4">
-                        <label for="password" class="form-label">
-                            {{ 'New Password' if user else 'Password' }}{% if not user %} <span class="text-danger">*</span>{% endif %}
-                        </label>
-                        <input type="password" class="form-control" id="password" name="password" autocomplete="new-password" {% if not user %}required{% endif %}>
-                        {% if user %}
-                        <div class="form-text">Leave blank to keep the existing password.</div>
-                        {% endif %}
-                    </div>
+                        <div class="mb-4">
+                            <label for="password" class="form-label">
+                                {{ 'New password' if user else 'Password' }}{% if not user %} <span class="text-danger">*</span>{% endif %}
+                            </label>
+                            <input type="password" class="form-control" id="password" name="password" autocomplete="new-password" {% if not user %}required{% endif %}>
+                            {% if user %}
+                            <div class="form-text">Leave blank to keep the existing password.</div>
+                            {% endif %}
+                        </div>
 
-                    <div class="form-check mb-4">
-                        <input class="form-check-input" type="checkbox" id="must_change_password" name="must_change_password"
-                               {% if (user and user.must_change_password) or (not user) %}checked{% endif %}>
-                        <label class="form-check-label" for="must_change_password">
-                            Require password change on first login
-                        </label>
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="must_change_password" name="must_change_password"
+                                   {% if (user and user.must_change_password) or (not user) %}checked{% endif %}>
+                            <label class="form-check-label" for="must_change_password">
+                                Require password change on first login
+                            </label>
+                        </div>
                     </div>
-
-                    <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-check-lg me-1"></i>{{ 'Update' if user else 'Create' }} {{ entity_label }}
-                        </button>
-                        <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Phone, username, and role changes apply the next time this account signs in.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-check-lg me-1"></i>{{ 'Update' if user else 'Create' }} {{ entity_label }}
+                            </button>
+                            <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
                     </div>
                 </form>
-            </div>
+            </section>
         </div>
+        <aside class="workspace-form-side">
+            <div class="workspace-callout-stack">
+                <section class="workspace-callout">
+                    <h3 class="workspace-callout__title">Password handling</h3>
+                    <p class="workspace-callout__copy">Admin-set passwords can force a reset on next login, and account alerts use the saved phone number.</p>
+                </section>
+                <section class="workspace-callout">
+                    <h3 class="workspace-callout__title">Role access</h3>
+                    <p class="workspace-callout__copy">Owners handle billing and account setup. Staff accounts handle day-to-day messaging only.</p>
+                </section>
+            </div>
+        </aside>
     </div>
 </div>
 {% endblock %}

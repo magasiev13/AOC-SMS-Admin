@@ -32,7 +32,7 @@ test('workspace and platform login surfaces are clearly separated', async ({ pag
   await page.setViewportSize({ width: 1440, height: 1100 });
   await page.goto('/login');
   await expect(page.getByText('Workspace access')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Run messaging from one calm workspace.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Send messages and review replies in one workspace.' })).toBeVisible();
   await expect(page.getByLabel('Email or username')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Create a workspace' })).toBeVisible();
   await expect(page.locator('body')).not.toContainText(/SMS Admin|Twinevia Legacy/);

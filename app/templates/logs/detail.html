@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Log Details - {{ product_name }}{% endblock %}
 
@@ -17,186 +18,209 @@
 {% endblock %}
 
 {% block content %}
-<div id="logStatusMeta" class="d-none"
-     data-log-id="{{ log.id }}"
-     data-status="{{ log.status }}"
-     data-success-count="{{ log.success_count or 0 }}"
-     data-failure-count="{{ log.failure_count or 0 }}"></div>
-<div class="row">
-    <div class="col-lg-4 mb-4">
-        <div class="card app-card">
-            <div class="card-header">
-                <h6 class="mb-0">Summary</h6>
-            </div>
-            <div class="card-body">
-                <dl class="mb-0">
-                    <dt>Sent At</dt>
-                    <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
-                    
-                    <dt>Target</dt>
-                    <dd>
-                        {% if log.test_mode %}
-                        <span class="badge bg-warning text-dark mb-1">Test</span>
-                        <br>
-                        {% endif %}
-                        <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">
-                            {{ log.target }}
-                        </span>
-                        {% if log.event %}
-                        <br>{{ log.event.title }}
-                        {% endif %}
-                    </dd>
-                    
-                    <dt>Total Recipients</dt>
-                    <dd>{{ log.total_recipients }}</dd>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div id="logStatusMeta" class="d-none"
+         data-log-id="{{ log.id }}"
+         data-status="{{ log.status }}"
+         data-success-count="{{ log.success_count or 0 }}"
+         data-failure-count="{{ log.failure_count or 0 }}"></div>
+    <div class="workspace-detail-layout">
+        <div class="workspace-detail-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Message body</h2>
+                        <p class="workspace-panel__meta">The exact content that was sent to the selected audience.</p>
+                    </div>
+                </div>
+                <div class="workspace-panel__body">
+                    <pre class="mb-0 message-body-preview">{{ log.message_body }}</pre>
+                </div>
+            </section>
 
-                    <dt>Status</dt>
-                    <dd>
-                        <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
-                            {{ log.status or 'sent' }}
-                        </span>
-                    </dd>
-                    
-                    <dt>Results</dt>
-                    <dd>
-                        <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} sent</span>
-                        <br>
-                        <span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ log.failure_count }} failed</span>
-                    </dd>
-                </dl>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-lg-8 mb-4">
-        <div class="card app-card mb-4">
-            <div class="card-header">
-                <h6 class="mb-0">Message</h6>
-            </div>
-            <div class="card-body">
-                <pre class="mb-0 message-body-preview">{{ log.message_body }}</pre>
-            </div>
-        </div>
-
-        <div class="card app-card">
-            <div class="card-header">
-                <h6 class="mb-0">Recipient Details</h6>
-            </div>
-            <div class="table-responsive d-none d-lg-block">
-                <table class="table table-sm mb-0" data-sortable="client">
-                    <thead class="table-light">
-                        <tr>
-                            <th data-sort-type="string">
-                                <button type="button" class="sort-button" data-sort-key="name">
-                                    <span>Name</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="phone">
-                                <button type="button" class="sort-button" data-sort-key="phone">
-                                    <span>Phone</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="enum">
-                                <button type="button" class="sort-button" data-sort-key="status">
-                                    <span>Status</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="enum">
-                                <button type="button" class="sort-button" data-sort-key="suppression">
-                                    <span>Suppression</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="string">
-                                <button type="button" class="sort-button" data-sort-key="error">
-                                    <span>Error</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% if details %}
+            <section class="collection-panel collection-panel--results">
+                <div class="collection-panel__header">
+                    <div>
+                        <h2 class="collection-panel__title">Recipient details</h2>
+                        <p class="collection-panel__meta">Review delivery status, suppression outcomes, and carrier errors by phone.</p>
+                    </div>
+                </div>
+                <div class="table-responsive d-none d-lg-block">
+                    <table class="table table-sm mb-0" data-sortable="client">
+                        <thead class="table-light">
+                            <tr>
+                                <th data-sort-type="string">
+                                    <button type="button" class="sort-button" data-sort-key="name">
+                                        <span>Name</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                                <th data-sort-type="phone">
+                                    <button type="button" class="sort-button" data-sort-key="phone">
+                                        <span>Phone</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                                <th data-sort-type="enum">
+                                    <button type="button" class="sort-button" data-sort-key="status">
+                                        <span>Status</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                                <th data-sort-type="enum">
+                                    <button type="button" class="sort-button" data-sort-key="suppression">
+                                        <span>Suppression</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                                <th data-sort-type="string">
+                                    <button type="button" class="sort-button" data-sort-key="error">
+                                        <span>Error</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if details %}
+                            {% for d in details %}
+                            <tr class="{{ 'table-danger' if not d.success else '' }}">
+                                <td data-sort-value="{{ d.name or '' }}">{{ d.name or '-' }}</td>
+                                <td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>
+                                <td data-sort-value="{{ 'Sent' if d.success else 'Failed' }}">
+                                    {% if d.success %}
+                                    <span class="badge bg-success">Sent</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Failed</span>
+                                    {% endif %}
+                                </td>
+                                <td data-sort-value="{{ suppression_status.get(d.normalized_phone) or '' }}">
+                                    {% if not d.success and suppression_status.get(d.normalized_phone) %}
+                                    <span class="badge bg-warning text-dark text-uppercase">
+                                        {{ suppression_status.get(d.normalized_phone) }}
+                                    </span>
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                                <td data-sort-value="{{ d.error or '' }}">
+                                    {% if d.error %}
+                                    <small class="text-danger">{{ d.error }}</small>
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="py-5">
+                                    {{ ui.empty_state(
+                                        'bi-list-check',
+                                        'No details available',
+                                        'No per-recipient delivery details were recorded for this send.'
+                                    ) }}
+                                </td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-list d-lg-none">
+                    {% if details %}
                         {% for d in details %}
-                        <tr class="{{ 'table-danger' if not d.success else '' }}">
-                            <td data-sort-value="{{ d.name or '' }}">{{ d.name or '-' }}</td>
-                            <td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>
-                            <td data-sort-value="{{ 'Sent' if d.success else 'Failed' }}">
+                        <div class="card-list-item">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <h6 class="mb-1">{{ d.name or '-' }}</h6>
+                                    <div class="text-muted small"><code>{{ d.phone }}</code></div>
+                                </div>
                                 {% if d.success %}
                                 <span class="badge bg-success">Sent</span>
                                 {% else %}
                                 <span class="badge bg-danger">Failed</span>
                                 {% endif %}
-                            </td>
-                            <td data-sort-value="{{ suppression_status.get(d.normalized_phone) or '' }}">
+                            </div>
+                            <div class="mt-2 small text-muted">
+                                Suppression:
                                 {% if not d.success and suppression_status.get(d.normalized_phone) %}
-                                <span class="badge bg-warning text-dark text-uppercase">
+                                <span class="badge bg-warning text-dark text-uppercase ms-1">
                                     {{ suppression_status.get(d.normalized_phone) }}
                                 </span>
                                 {% else %}
-                                -
+                                <span class="ms-1">-</span>
                                 {% endif %}
-                            </td>
-                            <td data-sort-value="{{ d.error or '' }}">
-                                {% if d.error %}
-                                <small class="text-danger">{{ d.error }}</small>
-                                {% else %}
-                                -
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        {% else %}
-                        <tr>
-                            <td colspan="5" class="text-center text-muted py-3">No details available.</td>
-                        </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-            <div class="card-list d-lg-none">
-                {% if details %}
-                    {% for d in details %}
-                    <div class="card-list-item">
-                        <div class="d-flex justify-content-between align-items-start gap-2">
-                            <div>
-                                <h6 class="mb-1">{{ d.name or '-' }}</h6>
-                                <div class="text-muted small"><code>{{ d.phone }}</code></div>
                             </div>
-                            {% if d.success %}
-                            <span class="badge bg-success">Sent</span>
-                            {% else %}
-                            <span class="badge bg-danger">Failed</span>
+                            {% if d.error %}
+                            <div class="mt-2 small text-danger">{{ d.error }}</div>
                             {% endif %}
                         </div>
-                        <div class="mt-2 small text-muted">
-                            Suppression:
-                            {% if not d.success and suppression_status.get(d.normalized_phone) %}
-                            <span class="badge bg-warning text-dark text-uppercase ms-1">
-                                {{ suppression_status.get(d.normalized_phone) }}
-                            </span>
-                            {% else %}
-                            <span class="ms-1">-</span>
-                            {% endif %}
-                        </div>
-                        {% if d.error %}
-                        <div class="mt-2 small text-danger">{{ d.error }}</div>
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                {% else %}
-                <div class="empty-state py-4">
-                    <i class="bi bi-list-check empty-state__icon"></i>
-                    <div class="empty-state__title">No details available</div>
-                    <div class="empty-state__text">No recipient delivery details are recorded for this log entry.</div>
-                    <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Back to Logs</a>
+                        {% endfor %}
+                    {% else %}
+                    {{ ui.empty_state(
+                        'bi-list-check',
+                        'No details available',
+                        'No per-recipient delivery details were recorded for this send.',
+                        primary_href=url_for('main.logs_list'),
+                        primary_label='Back to logs',
+                        primary_class='btn btn-outline-primary btn-sm'
+                    ) }}
+                    {% endif %}
                 </div>
-                {% endif %}
-            </div>
+                {{ ui.collection_footer(details|length, 'recipient') }}
+            </section>
         </div>
+
+        <aside class="workspace-detail-side">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Send summary</h2>
+                        <p class="workspace-panel__meta">Current delivery status and audience details for this log entry.</p>
+                    </div>
+                </div>
+                <div class="workspace-panel__body">
+                    <dl class="workspace-data-list">
+                        <div>
+                            <dt>Sent at</dt>
+                            <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
+                        </div>
+                        <div>
+                            <dt>Target</dt>
+                            <dd>
+                                {% if log.test_mode %}
+                                <span class="badge bg-warning text-dark mb-1">Test</span><br>
+                                {% endif %}
+                                <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">{{ log.target }}</span>
+                                {% if log.event %}
+                                <br>{{ log.event.title }}
+                                {% endif %}
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Total recipients</dt>
+                            <dd>{{ log.total_recipients }}</dd>
+                        </div>
+                        <div>
+                            <dt>Status</dt>
+                            <dd>
+                                <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
+                                    {{ log.status or 'sent' }}
+                                </span>
+                            </dd>
+                        </div>
+                        <div>
+                            <dt>Results</dt>
+                            <dd>
+                                <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} sent</span><br>
+                                <span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ log.failure_count }} failed</span>
+                            </dd>
+                        </div>
+                    </dl>
+                </div>
+            </section>
+        </aside>
     </div>
 </div>
 {% endblock %}

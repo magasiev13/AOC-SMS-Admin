@@ -83,10 +83,11 @@ test('owner sees human-readable billing state and pending invite links', async (
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Organizations' })).toHaveCount(0);
-  await page.goto('/billing');
+  await page.getByRole('link', { name: 'Billing' }).first().click();
+  await expect(page).toHaveURL(/\/billing$/);
 
   await expect(page.locator('.badge').filter({ hasText: 'Trial active' }).first()).toBeVisible();
-  await expect(page.getByText(/Ready for owner/)).toBeVisible();
+  await expect(page.locator('.workspace-summary__stat-meta').filter({ hasText: /Ready for owner/ }).first()).toBeVisible();
   await expect(page.getByText('Sending enabled')).toBeVisible();
 
   await page.goto('/users');

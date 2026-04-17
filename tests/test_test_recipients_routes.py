@@ -152,6 +152,17 @@ class TestTestRecipientRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_owner_page_uses_shared_summary_and_detail_layout(self) -> None:
+        self._login("owner@acme.test", "Owner-pass1!")
+
+        response = self.client.get("/settings/test-recipients", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("workspace-summary", html)
+        self.assertIn("workspace-detail-layout", html)
+        self.assertNotIn("These recipients are available in dashboard test mode", html)
+
     def test_dashboard_shows_owner_manage_link_and_staff_read_only_count(self) -> None:
         self.db.session.add(
             self.OrganizationTestRecipient(

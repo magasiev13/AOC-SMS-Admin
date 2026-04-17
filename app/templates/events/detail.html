@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}{{ event.title }} - {{ product_name }}{% endblock %}
 
@@ -23,174 +24,191 @@
 {% endblock %}
 
 {% block content %}
-<p class="text-muted mb-4">
-    {% if event.date %}
-    <i class="bi bi-calendar me-1"></i>{{ event.date.strftime('%B %d, %Y') }}
-    {% else %}
-    <i class="bi bi-calendar me-1"></i>No date set
-    {% endif %}
-</p>
-
-<div class="row">
-    <div class="col-lg-5 mb-4">
-        <div class="card app-card mb-4">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-person-plus me-2"></i>Add Registration</h6>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-2">
-                        <input type="text" class="form-control" id="registration_name" name="name" placeholder="Name (optional)" aria-label="Name" autocomplete="name">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-detail-layout">
+        <div class="workspace-detail-main">
+            <section class="collection-panel collection-panel--results">
+                <div class="collection-panel__header">
+                    <div>
+                        <h2 class="collection-panel__title">Registrations</h2>
+                        <p class="collection-panel__meta">Review saved attendees and remove or suppress them when needed.</p>
                     </div>
-                    <div class="mb-2">
-                        <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="Phone number" aria-label="Phone number" autocomplete="tel" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">Add Registration</button>
-                </form>
-            </div>
-        </div>
-        
-        <div class="card app-card">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-upload me-2"></i>Import from CSV</h6>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-2">
-                        <input type="file" class="form-control" id="registrations_file" name="file" accept=".csv" aria-label="Upload CSV" required>
-                    </div>
-                    <button type="submit" class="btn btn-outline-primary w-100">Import CSV</button>
-                    <div class="form-text">Supports: phone only, name+phone, or first+last+phone</div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="col-lg-7 mb-4">
-        <div class="card app-card">
-            <div class="card-header">
-                <h6 class="mb-0"><i class="bi bi-people me-2"></i>Registrations ({{ registrations|length }})</h6>
-            </div>
-            <div class="table-responsive d-none d-lg-block">
-                <table class="table table-sm mb-0" data-sortable="client">
-                    <thead class="table-light">
-                        <tr>
-                            <th data-sort-type="string">
-                                <button type="button" class="sort-button" data-sort-key="name">
-                                    <span>Name</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="phone">
-                                <button type="button" class="sort-button" data-sort-key="phone">
-                                    <span>Phone</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th data-sort-type="enum">
-                                <button type="button" class="sort-button" data-sort-key="status">
-                                    <span>Status</span>
-                                    <span class="sort-indicator" aria-hidden="true"></span>
-                                </button>
-                            </th>
-                            <th width="60"></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% if registrations %}
-                        {% for reg in registrations %}
-                        {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
-                        <tr>
-                            <td data-sort-value="{{ reg.name or '' }}">{{ reg.name or '-' }}</td>
-                            <td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>
-                            <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else 'Active' }}">
-                                {% if is_unsubscribed %}
-                                <span class="badge bg-secondary">Unsubscribed</span>
-                                {% else %}
-                                <span class="badge bg-success">Active</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <div class="d-flex flex-wrap gap-1">
-                                    {% if not is_unsubscribed %}
-                                    <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe registration"
-                                            data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
-                                        <i class="bi bi-person-x"></i>
+                </div>
+                <div class="table-responsive d-none d-lg-block">
+                    <table class="table table-sm mb-0" data-sortable="client">
+                        <thead class="table-light">
+                            <tr>
+                                <th data-sort-type="string">
+                                    <button type="button" class="sort-button" data-sort-key="name">
+                                        <span>Name</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
-                                    {% endif %}
-                                    <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove registration" data-confirm="Remove this registration?">
-                                        <i class="bi bi-x"></i>
+                                </th>
+                                <th data-sort-type="phone">
+                                    <button type="button" class="sort-button" data-sort-key="phone">
+                                        <span>Phone</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
-                                </div>
-                                {% if not is_unsubscribed %}
-                                <form id="unsubscribe-reg-{{ reg.id }}" method="POST" 
-                                      action="{{ url_for('main.event_registration_unsubscribe', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                </form>
-                                {% endif %}
-                                <form id="remove-reg-{{ reg.id }}" method="POST" 
-                                      action="{{ url_for('main.event_unregister', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                        {% else %}
-                        <tr>
-                            <td colspan="4" class="py-5">
-                                <div class="empty-state">
-                                    <i class="bi bi-people empty-state__icon"></i>
-                                    <div class="empty-state__title">No registrations yet</div>
-                                    <div class="empty-state__text">Use the form or CSV import to add registrations.</div>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-            <div class="card-list d-lg-none">
-                {% if registrations %}
-                    {% for reg in registrations %}
-                    {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
-                    <div class="card-list-item">
-                        <div class="d-flex justify-content-between align-items-start gap-2">
-                            <div>
-                                <h6 class="mb-1">{{ reg.name or '-' }}</h6>
-                                <div class="text-muted small"><code>{{ reg.phone }}</code></div>
-                                <div class="mt-2">
+                                </th>
+                                <th data-sort-type="enum">
+                                    <button type="button" class="sort-button" data-sort-key="status">
+                                        <span>Status</span>
+                                        <span class="sort-indicator" aria-hidden="true"></span>
+                                    </button>
+                                </th>
+                                <th width="160">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if registrations %}
+                            {% for reg in registrations %}
+                            {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
+                            <tr>
+                                <td data-sort-value="{{ reg.name or '' }}">{{ reg.name or '-' }}</td>
+                                <td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>
+                                <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else 'Active' }}">
                                     {% if is_unsubscribed %}
                                     <span class="badge bg-secondary">Unsubscribed</span>
                                     {% else %}
                                     <span class="badge bg-success">Active</span>
                                     {% endif %}
+                                </td>
+                                <td>
+                                    <div class="row-actions" data-row-actions>
+                                        {% if not is_unsubscribed %}
+                                        <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe registration"
+                                                data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
+                                            <i class="bi bi-person-x me-1"></i>Unsubscribe
+                                        </button>
+                                        {% endif %}
+                                        <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove registration" data-confirm="Remove this registration?">
+                                            <i class="bi bi-x me-1"></i>Remove
+                                        </button>
+                                    </div>
+                                    {% if not is_unsubscribed %}
+                                    <form id="unsubscribe-reg-{{ reg.id }}" method="POST"
+                                          action="{{ url_for('main.event_registration_unsubscribe', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    </form>
+                                    {% endif %}
+                                    <form id="remove-reg-{{ reg.id }}" method="POST"
+                                          action="{{ url_for('main.event_unregister', event_id=event.id, registration_id=reg.id) }}" style="display:none;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="py-5">
+                                    {{ ui.empty_state(
+                                        'bi-people',
+                                        'No registrations yet',
+                                        'Add attendees manually or import a CSV to populate this event.'
+                                    ) }}
+                                </td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-list d-lg-none">
+                    {% if registrations %}
+                        {% for reg in registrations %}
+                        {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
+                        <div class="card-list-item">
+                            <div class="d-flex justify-content-between align-items-start gap-2">
+                                <div>
+                                    <h6 class="mb-1">{{ reg.name or '-' }}</h6>
+                                    <div class="text-muted small"><code>{{ reg.phone }}</code></div>
+                                    <div class="mt-2">
+                                        {% if is_unsubscribed %}
+                                        <span class="badge bg-secondary">Unsubscribed</span>
+                                        {% else %}
+                                        <span class="badge bg-success">Active</span>
+                                        {% endif %}
+                                    </div>
                                 </div>
                             </div>
+                            <div class="row-actions mt-3" data-row-actions>
+                                {% if not is_unsubscribed %}
+                                <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" aria-label="Unsubscribe registration"
+                                        data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
+                                    <i class="bi bi-person-x me-1"></i>Unsubscribe
+                                </button>
+                                {% endif %}
+                                <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" aria-label="Remove registration" data-confirm="Remove this registration?">
+                                    <i class="bi bi-x me-1"></i>Remove
+                                </button>
+                            </div>
                         </div>
-                        <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
-                            {% if not is_unsubscribed %}
-                            <button type="submit" form="unsubscribe-reg-{{ reg.id }}" class="btn btn-sm btn-outline-warning" aria-label="Unsubscribe registration"
-                                    data-confirm="Unsubscribe {{ reg.name or reg.phone }}? This will add them to the suppression list.">
-                                <i class="bi bi-person-x"></i> Unsubscribe
-                            </button>
-                            {% endif %}
-                            <button type="submit" form="remove-reg-{{ reg.id }}" class="btn btn-sm btn-outline-danger" aria-label="Remove registration" data-confirm="Remove this registration?">
-                                <i class="bi bi-x"></i> Remove
-                            </button>
+                        {% endfor %}
+                    {% else %}
+                    {{ ui.empty_state(
+                        'bi-people',
+                        'No registrations yet',
+                        'Add attendees manually or import a CSV to populate this event.'
+                    ) }}
+                    {% endif %}
+                </div>
+                {{ ui.collection_footer(registrations|length, 'registration') }}
+            </section>
+        </div>
+
+        <aside class="workspace-detail-side">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Add registration</h2>
+                        <p class="workspace-panel__meta">Save a single attendee without leaving this event.</p>
+                    </div>
+                </div>
+                <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="workspace-panel__body">
+                        <div class="mb-3">
+                            <label for="registration_name" class="form-label">Name (optional)</label>
+                            <input type="text" class="form-control" id="registration_name" name="name" placeholder="Board member or guest" autocomplete="name">
+                        </div>
+                        <div class="mb-0">
+                            <label for="registration_phone" class="form-label">Phone number</label>
+                            <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel" required>
                         </div>
                     </div>
-                    {% endfor %}
-                {% else %}
-                <div class="empty-state py-4">
-                    <i class="bi bi-people empty-state__icon"></i>
-                    <div class="empty-state__title">No registrations yet</div>
-                    <div class="empty-state__text">Use the Add Registration form above or import a CSV list.</div>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">The phone number is used for event sends and response tracking.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">Add registration</button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Import CSV</h2>
+                        <p class="workspace-panel__meta">Bulk add registrations from a saved contact export or attendee list.</p>
+                    </div>
                 </div>
-                {% endif %}
-            </div>
-        </div>
+                <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="workspace-panel__body">
+                        <div class="mb-3">
+                            <label for="registrations_file" class="form-label">CSV file</label>
+                            <input type="file" class="form-control" id="registrations_file" name="file" accept=".csv" aria-label="Upload CSV" required>
+                        </div>
+                        <div class="text-muted small">Supported columns: phone only, name + phone, or first + last + phone.</div>
+                    </div>
+                    <div class="workspace-panel__footer">
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-outline-primary">Import CSV</button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+        </aside>
     </div>
 </div>
 {% endblock %}

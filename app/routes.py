@@ -2149,6 +2149,428 @@ def _platform_home_context() -> dict:
     }
 
 
+def _badge_view(label: str, class_name: str) -> dict:
+    return {
+        'label': label,
+        'class_name': class_name,
+    }
+
+
+def _surface_stat(label: str, value: object, meta: str | None = None) -> dict:
+    return {
+        'label': label,
+        'value': value,
+        'meta': meta,
+    }
+
+
+def _surface_view(
+    *,
+    eyebrow: str,
+    title: str,
+    copy: str | None = None,
+    meta: list[str] | None = None,
+    badges: list[dict] | None = None,
+    stats: list[dict] | None = None,
+    modifier: str | None = None,
+) -> dict:
+    return {
+        'eyebrow': eyebrow,
+        'title': title,
+        'copy': copy,
+        'meta': meta or [],
+        'badges': badges or [],
+        'stats': stats or [],
+        'modifier': modifier,
+    }
+
+
+def _organization_meta_items(organization: Organization | None) -> list[str]:
+    if organization is None:
+        return []
+    return [organization.slug]
+
+
+def _community_form_surface_view(member: CommunityMember | None) -> dict:
+    return _surface_view(
+        eyebrow='Community',
+        title='Edit community member' if member is not None else 'Add community member',
+        copy='Save a contact who should be available for workspace sends.',
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _community_import_surface_view() -> dict:
+    return _surface_view(
+        eyebrow='Community',
+        title='Import community members',
+        copy='Upload a CSV of contacts and add them in one pass.',
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _event_form_surface_view(event: Event | None) -> dict:
+    organization = _current_organization()
+    return _surface_view(
+        eyebrow='Events',
+        title='Edit event' if event is not None else 'Create event',
+        copy='Save the event record used for registrations and event-based sends.',
+        meta=_organization_meta_items(organization),
+        stats=[
+            _surface_stat(
+                'Date',
+                event.date.strftime('%b %d, %Y') if event is not None and event.date else 'Not set',
+                'Event schedule',
+            )
+        ] if event is not None else [],
+    )
+
+
+def _event_detail_surface_view(
+    event: Event,
+    *,
+    registration_count: int,
+    unsubscribed_count: int,
+) -> dict:
+    return _surface_view(
+        eyebrow='Events',
+        title=event.title,
+        copy='Review registrations, add attendees, and import CSV updates from one page.',
+        meta=_organization_meta_items(_current_organization()),
+        badges=[
+            _badge_view(
+                event.date.strftime('%b %d, %Y') if event.date else 'Date not set',
+                'bg-light text-dark',
+            ),
+        ],
+        stats=[
+            _surface_stat('Registrations', registration_count, 'Saved attendees'),
+            _surface_stat('Suppressed', unsubscribed_count, 'Registrants blocked from sends'),
+        ],
+    )
+
+
+def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
+    target_label = 'Community' if log.target == 'community' else 'Event'
+    if log.event is not None:
+        target_label = f'{target_label}: {log.event.title}'
+    return _surface_view(
+        eyebrow='Logs',
+        title='Message log details',
+        copy='Review delivery outcomes and per-recipient results for this send.',
+        meta=_organization_meta_items(_current_organization()),
+        badges=[
+            _badge_view(target_label, 'bg-light text-dark'),
+            _badge_view(
+                'Test send' if log.test_mode else 'Live send',
+                'bg-light text-dark',
+            ),
+        ],
+        stats=[
+            _surface_stat(
+                'Sent at',
+                log.created_at.strftime('%b %d, %Y %H:%M') if log.created_at else '-',
+                'UTC timestamp',
+            ),
+            _surface_stat('Recipients', log.total_recipients or 0, 'Attempted sends'),
+            _surface_stat('Delivered', log.success_count or 0, 'Successful sends'),
+            _surface_stat('Failed', log.failure_count or 0, 'Delivery failures'),
+        ],
+    )
+
+
+def _keyword_rules_surface_view(rules: list[KeywordAutomationRule], *, search: str) -> dict:
+    return _surface_view(
+        eyebrow='Automations',
+        title='Keyword rules',
+        copy='Manage inbound auto-replies and keep trigger coverage easy to scan.',
+        meta=_organization_meta_items(_current_organization()),
+        stats=[
+            _surface_stat('Rules', len(rules), 'Saved keyword triggers'),
+            _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
+        ],
+    )
+
+
+def _keyword_rule_form_surface_view(rule: KeywordAutomationRule | None) -> dict:
+    return _surface_view(
+        eyebrow='Automations',
+        title='Edit keyword rule' if rule is not None else 'Add keyword rule',
+        copy='Set the trigger phrase and the SMS reply sent back automatically.',
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _survey_flows_surface_view(surveys: list[SurveyFlow], *, search: str) -> dict:
+    active_count = sum(1 for survey in surveys if survey.is_active)
+    return _surface_view(
+        eyebrow='Automations',
+        title='Survey flows',
+        copy='Review survey triggers, question counts, and submission paths from one list.',
+        meta=_organization_meta_items(_current_organization()),
+        stats=[
+            _surface_stat('Flows', len(surveys), 'Saved surveys'),
+            _surface_stat('Active', active_count, 'Ready to collect replies'),
+            _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
+        ],
+    )
+
+
+def _survey_form_surface_view(survey: SurveyFlow | None) -> dict:
+    stats: list[dict] = []
+    if survey is not None:
+        stats.extend([
+            _surface_stat('Questions', len(survey.questions), 'Current prompts'),
+            _surface_stat('Status', 'Active' if survey.is_active else 'Inactive', 'Trigger state'),
+        ])
+    return _surface_view(
+        eyebrow='Automations',
+        title='Edit survey flow' if survey is not None else 'Add survey flow',
+        copy='Define the trigger keyword, prompts, and optional event sync for this workflow.',
+        meta=_organization_meta_items(_current_organization()),
+        stats=stats,
+    )
+
+
+def _survey_submissions_surface_view(
+    survey: SurveyFlow,
+    *,
+    unique_attendees: int,
+    total_completed: int,
+    repeat_submitters: int,
+) -> dict:
+    return _surface_view(
+        eyebrow='Automations',
+        title=f'{survey.name} submissions',
+        copy='Review completed survey responses, search attendee history, and export the latest results.',
+        meta=_organization_meta_items(_current_organization()),
+        badges=[_badge_view(survey.trigger_keyword, 'bg-light text-dark')],
+        stats=[
+            _surface_stat('Attendees', unique_attendees, 'Unique phones'),
+            _surface_stat('Completed', total_completed, 'Submission count'),
+            _surface_stat('Repeat', repeat_submitters, 'Attendees with multiple submissions'),
+        ],
+    )
+
+
+def _suppression_list_surface_view(*, total_count: int, search: str) -> dict:
+    return _surface_view(
+        eyebrow='Suppression',
+        title='Suppression list',
+        copy='Review blocked contacts, manual suppressions, and backfill results before the next send.',
+        meta=_organization_meta_items(_current_organization()),
+        stats=[
+            _surface_stat('Entries', total_count, 'Combined unsubscribed and suppressed'),
+            _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
+        ],
+    )
+
+
+def _suppression_form_surface_view(*, mode: str) -> dict:
+    copy = (
+        'Upload a CSV of contacts that should stay off send lists.'
+        if mode == 'import'
+        else 'Add a contact to keep future sends from reaching that number.'
+    )
+    return _surface_view(
+        eyebrow='Suppression',
+        title='Import suppression contacts' if mode == 'import' else 'Add to suppression',
+        copy=copy,
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _security_events_surface_view(*, event_count: int, filters: dict[str, str]) -> dict:
+    scope_label = 'Platform' if current_user.is_platform_admin else 'Workspace'
+    active_filter_count = sum(1 for value in filters.values() if value)
+    return _surface_view(
+        eyebrow='Security',
+        title='Security events',
+        copy='Filter recent sign-in, password, and lockout activity from the current scope.',
+        meta=[scope_label, *_organization_meta_items(_current_organization())],
+        stats=[
+            _surface_stat('Rows', event_count, 'Latest matching events'),
+            _surface_stat('Filters', active_filter_count, 'Active filters'),
+        ],
+    )
+
+
+def _test_recipients_surface_view(
+    organization: Organization,
+    *,
+    saved_recipient_count: int,
+    max_test_recipients: int,
+    recent_change_count: int,
+) -> dict:
+    return _surface_view(
+        eyebrow='Workspace testing',
+        title='Internal test recipients',
+        copy='Save the numbers owners use for dashboard test sends and keep the list current.',
+        meta=[organization.slug],
+        stats=[
+            _surface_stat('Saved', saved_recipient_count, f'Up to {max_test_recipients} recipients'),
+            _surface_stat('Recent changes', recent_change_count, 'Latest audit entries shown'),
+        ],
+    )
+
+
+def _user_form_surface_view(user: AppUser | None) -> dict:
+    platform_account_form = saas_mode_enabled() and current_user.is_platform_admin and (user is None or user.is_platform_admin)
+    entity_label = 'Platform admin' if platform_account_form else 'User'
+    scope_label = 'Platform' if current_user.is_platform_admin else 'Workspace'
+    copy = (
+        'Manage sign-in, access scope, and account security for this admin account.'
+        if platform_account_form
+        else 'Manage sign-in, workspace role, and security details for this account.'
+    )
+    return _surface_view(
+        eyebrow=f'{scope_label} users',
+        title=f'Edit {entity_label}' if user is not None else f'Create {entity_label}',
+        copy=copy,
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _team_invite_surface_view() -> dict:
+    return _surface_view(
+        eyebrow='Workspace users',
+        title='Invite team member',
+        copy='Send access to an owner or staff account and keep billing access limited to owners.',
+        meta=_organization_meta_items(_current_organization()),
+    )
+
+
+def _workspace_summary_view(
+    *,
+    organization: Organization | None,
+    subscription_view: dict,
+    a2p_status_view: dict | None = None,
+    can_send_messages: bool = False,
+    send_disabled_reason: str | None = None,
+    total_recipients: int | None = None,
+    community_count: int | None = None,
+    event_registration_count: int | None = None,
+    pending_scheduled_count: int | None = None,
+    unread_threads_count: int | None = None,
+    active_survey_sessions: int | None = None,
+    keyword_rule_count: int | None = None,
+    survey_flow_count: int | None = None,
+) -> dict:
+    organization_name = organization.name if organization is not None else 'Workspace'
+    readiness_summary = (
+        send_disabled_reason
+        if send_disabled_reason
+        else 'Send updates, review replies, and handle setup from the same workspace.'
+    )
+    badges = [
+        _badge_view(subscription_view['title'], f"bg-{subscription_view['badge']}"),
+        _badge_view(
+            'Sending enabled' if can_send_messages else 'Sending paused',
+            'bg-light text-dark',
+        ),
+    ]
+    if a2p_status_view and a2p_status_view.get('show_wait_state'):
+        badges.append(
+            _badge_view(
+                f"A2P {a2p_status_view['stage'].replace('_', ' ')}",
+                'bg-light text-dark',
+            )
+        )
+
+    summary = {
+        'eyebrow': 'Workspace',
+        'title': organization_name,
+        'copy': readiness_summary,
+        'meta': [organization.slug] if organization is not None else [],
+        'badges': badges,
+        'stats': [],
+    }
+    if total_recipients is not None:
+        summary['stats'].append(
+            {
+                'label': 'Recipients',
+                'value': total_recipients,
+                'meta': f"{community_count or 0} community · {event_registration_count or 0} RSVPs",
+            }
+        )
+    if pending_scheduled_count is not None:
+        summary['stats'].append(
+            {
+                'label': 'Scheduled',
+                'value': pending_scheduled_count,
+                'meta': 'Pending queue',
+            }
+        )
+    if unread_threads_count is not None:
+        summary['stats'].append(
+            {
+                'label': 'Unread',
+                'value': unread_threads_count,
+                'meta': 'Open inbox threads',
+            }
+        )
+    if active_survey_sessions is not None:
+        summary['stats'].append(
+            {
+                'label': 'Automations',
+                'value': active_survey_sessions,
+                'meta': f"{keyword_rule_count or 0} keyword rules · {survey_flow_count or 0} surveys",
+            }
+        )
+    return summary
+
+
+def _billing_surface_view(
+    *,
+    organization: Organization | None,
+    subscription_view: dict,
+    onboarding_view: dict | None,
+) -> dict:
+    organization_name = organization.name if organization is not None else 'Workspace'
+    summary_copy = subscription_view['next_step'] if not subscription_view['can_send'] else subscription_view['summary']
+    badges = [
+        _badge_view(subscription_view['title'], f"bg-{subscription_view['badge']}"),
+        _badge_view(
+            'Sending enabled' if subscription_view['can_send'] else 'Sending paused',
+            'bg-light text-dark',
+        ),
+    ]
+    if onboarding_view and onboarding_view.get('a2p_status'):
+        badges.append(
+            _badge_view(
+                onboarding_view['a2p_status']['title'],
+                'bg-light text-dark',
+            )
+        )
+
+    stats = []
+    period_label = subscription_view.get('period_label') or 'Plan'
+    period_value = subscription_view.get('period_value') or subscription_view['title']
+    stats.append(
+        {
+            'label': period_label,
+            'value': period_value,
+            'meta': 'Subscription state',
+        }
+    )
+    if onboarding_view:
+        stats.append(
+            {
+                'label': 'Onboarding',
+                'value': f"{onboarding_view['completed_required']}/{onboarding_view['required_total']}",
+                'meta': onboarding_view['headline'],
+            }
+        )
+    return {
+        'eyebrow': 'Workspace billing',
+        'title': organization_name,
+        'copy': summary_copy,
+        'meta': [organization.slug] if organization is not None else [],
+        'badges': badges,
+        'stats': stats,
+    }
+
+
 def _billing_context(organization: Organization | None) -> dict:
     subscription = organization.subscription if organization is not None else None
     onboarding = _organization_onboarding_view(organization) if organization is not None else None
@@ -2156,6 +2578,11 @@ def _billing_context(organization: Organization | None) -> dict:
         'subscription_view': _subscription_view(subscription),
         'onboarding_view': onboarding,
         'a2p_status_view': onboarding['a2p_status'] if onboarding is not None else None,
+        'surface_view': _billing_surface_view(
+            organization=organization,
+            subscription_view=_subscription_view(subscription),
+            onboarding_view=onboarding,
+        ),
     }
 
 
@@ -2743,11 +3170,12 @@ def _stream_csv_rows(rows: object) -> object:
 def _csv_import_error_response(
     *,
     template_name: str | None = None,
+    template_context: dict | None = None,
     redirect_endpoint: str | None = None,
     redirect_values: dict | None = None,
 ):
     if template_name is not None:
-        return render_template(template_name)
+        return render_template(template_name, **(template_context or {}))
     if redirect_endpoint is not None:
         return redirect(url_for(redirect_endpoint, **(redirect_values or {})))
     raise ValueError("CSV import error response requires a template or redirect endpoint.")
@@ -2756,6 +3184,7 @@ def _csv_import_error_response(
 def _read_uploaded_csv_text(
     *,
     template_name: str | None = None,
+    template_context: dict | None = None,
     redirect_endpoint: str | None = None,
     redirect_values: dict | None = None,
 ):
@@ -2763,6 +3192,7 @@ def _read_uploaded_csv_text(
         flash('No file uploaded.', 'error')
         return None, None, _csv_import_error_response(
             template_name=template_name,
+            template_context=template_context,
             redirect_endpoint=redirect_endpoint,
             redirect_values=redirect_values,
         )
@@ -2772,6 +3202,7 @@ def _read_uploaded_csv_text(
         flash('No file selected.', 'error')
         return uploaded_file, None, _csv_import_error_response(
             template_name=template_name,
+            template_context=template_context,
             redirect_endpoint=redirect_endpoint,
             redirect_values=redirect_values,
         )
@@ -2845,12 +3276,74 @@ def _survey_form_events() -> list[Event]:
     return Event.query.order_by(Event.date.desc(), Event.title.asc()).all()
 
 
+def _render_community_form(*, member: CommunityMember | None):
+    return render_template(
+        'community/form.html',
+        member=member,
+        surface_view=_community_form_surface_view(member),
+    )
+
+
+def _render_community_import():
+    return render_template(
+        'community/import.html',
+        surface_view=_community_import_surface_view(),
+    )
+
+
+def _render_event_form(*, event: Event | None):
+    return render_template(
+        'events/form.html',
+        event=event,
+        surface_view=_event_form_surface_view(event),
+    )
+
+
+def _render_user_form(*, user: AppUser | None):
+    return render_template(
+        'users/form.html',
+        user=user,
+        surface_view=_user_form_surface_view(user),
+    )
+
+
+def _render_team_invite_form():
+    return render_template(
+        'users/invite_form.html',
+        surface_view=_team_invite_surface_view(),
+    )
+
+
+def _render_keyword_form(*, rule: KeywordAutomationRule | None, form_data: dict | None):
+    return render_template(
+        'inbox/keyword_form.html',
+        rule=rule,
+        form_data=form_data,
+        surface_view=_keyword_rule_form_surface_view(rule),
+    )
+
+
 def _render_survey_form(*, survey: SurveyFlow | None, form_data: dict | None):
     return render_template(
         'inbox/survey_form.html',
         survey=survey,
         form_data=form_data,
         events=_survey_form_events(),
+        surface_view=_survey_form_surface_view(survey),
+    )
+
+
+def _render_unsubscribed_form():
+    return render_template(
+        'unsubscribed/form.html',
+        surface_view=_suppression_form_surface_view(mode='add'),
+    )
+
+
+def _render_unsubscribed_import():
+    return render_template(
+        'unsubscribed/import.html',
+        surface_view=_suppression_form_surface_view(mode='import'),
     )
 
 
@@ -3142,6 +3635,21 @@ def dashboard():
             'workspace_activation_tasks': workspace_activation_tasks,
             'can_send_messages': can_send_messages,
             'send_disabled_reason': send_disabled_reason,
+            'workspace_summary': _workspace_summary_view(
+                organization=organization,
+                subscription_view=subscription_view,
+                a2p_status_view=a2p_status_view,
+                can_send_messages=can_send_messages,
+                send_disabled_reason=send_disabled_reason,
+                total_recipients=total_recipients,
+                community_count=community_count,
+                event_registration_count=event_registration_count,
+                pending_scheduled_count=pending_scheduled_count,
+                unread_threads_count=unread_threads_count,
+                active_survey_sessions=active_survey_sessions,
+                keyword_rule_count=keyword_rule_count,
+                survey_flow_count=survey_flow_count,
+            ),
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
@@ -3426,47 +3934,47 @@ def users_add():
 
         if not username:
             flash('Username is required.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
         if saas_mode_enabled() and not email:
             flash('Email is required in SaaS mode.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         if role not in {'admin', 'social_manager'}:
             flash('Role selection is required.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
         platform_admin_error = _platform_admin_access_error(
             requested_platform_admin=requested_platform_admin,
         )
         if platform_admin_error:
             flash(platform_admin_error, 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         if not password:
             flash('Password is required.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         if not phone_input:
             flash('Phone number is required.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         normalized_phone = normalize_phone(phone_input)
         if not validate_phone(normalized_phone):
             flash('Phone number must be a valid E.164 number.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         policy_errors = password_policy_errors(password, username=username)
         if policy_errors:
             for error in policy_errors:
                 flash(error, 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         existing = _find_username_conflict(username)
         if existing:
             flash('A user with this username already exists.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
         if email and AppUser.query.filter(func.lower(AppUser.email) == email).first():
             flash('A user with this email already exists.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         existing_phone = _find_phone_conflict(
             normalized_phone,
@@ -3477,7 +3985,7 @@ def users_add():
                 flash('A user with this phone number already exists in this organization.', 'error')
             else:
                 flash('A user with this phone number already exists.', 'error')
-            return render_template('users/form.html', user=None)
+            return _render_user_form(user=None)
 
         user = AppUser(
             username=username,
@@ -3495,7 +4003,7 @@ def users_add():
         flash('User created successfully.', 'success')
         return redirect(url_for('main.users_list'))
 
-    return render_template('users/form.html', user=None)
+    return _render_user_form(user=None)
 
 
 @bp.route('/users/<int:user_id>/edit', methods=['GET', 'POST'])
@@ -3516,36 +4024,36 @@ def users_edit(user_id):
 
         if not username:
             flash('Username is required.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
         email_required = saas_mode_enabled() and (bool(user.email) or user.is_platform_admin)
         if email_required and not email:
             flash('Email is required in SaaS mode.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         if role not in {'admin', 'social_manager'}:
             flash('Role selection is required.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
         platform_admin_error = _platform_admin_access_error(
             requested_platform_admin=requested_platform_admin,
             user=user,
         )
         if platform_admin_error:
             flash(platform_admin_error, 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         if not phone_input:
             flash('Phone number is required.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         normalized_phone = normalize_phone(phone_input)
         if not validate_phone(normalized_phone):
             flash('Phone number must be a valid E.164 number.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         existing = _find_username_conflict(username, exclude_user_id=user_id)
         if existing:
             flash('A user with this username already exists.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
         if email:
             email_conflict = AppUser.query.filter(
                 func.lower(AppUser.email) == email,
@@ -3553,7 +4061,7 @@ def users_edit(user_id):
             ).first()
             if email_conflict:
                 flash('A user with this email already exists.', 'error')
-                return render_template('users/form.html', user=user)
+                return _render_user_form(user=user)
 
         existing_phone = _find_phone_conflict(
             normalized_phone,
@@ -3565,7 +4073,7 @@ def users_edit(user_id):
                 flash('A user with this phone number already exists in this organization.', 'error')
             else:
                 flash('A user with this phone number already exists.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         membership = None
         membership_role = None
@@ -3577,17 +4085,17 @@ def users_edit(user_id):
                     owner_count = _organization_owner_count(membership.organization_id)
                     if owner_count <= 1:
                         flash('At least one owner is required.', 'error')
-                        return render_template('users/form.html', user=user)
+                        return _render_user_form(user=user)
 
         if membership is None and not user.is_platform_admin and user.role == 'admin' and role != 'admin':
             admin_count = _organization_scoped_user_query().filter_by(role='admin').count()
             if admin_count <= 1:
                 flash('At least one admin user is required.', 'error')
-                return render_template('users/form.html', user=user)
+                return _render_user_form(user=user)
 
         if password and user.id == current_user.id:
             flash('Use Account > Change Password to update your own password.', 'error')
-            return render_template('users/form.html', user=user)
+            return _render_user_form(user=user)
 
         user.username = username
         user.email = email or None
@@ -3607,7 +4115,7 @@ def users_edit(user_id):
             if policy_errors:
                 for error in policy_errors:
                     flash(error, 'error')
-                return render_template('users/form.html', user=user)
+                return _render_user_form(user=user)
             old_password_hash = user.password_hash
             user.set_password(password)
             user.must_change_password = True
@@ -3648,7 +4156,7 @@ def users_edit(user_id):
         flash('User updated successfully.', 'success')
         return redirect(url_for('main.users_list'))
 
-    return render_template('users/form.html', user=user)
+    return _render_user_form(user=user)
 
 
 @bp.route('/users/<int:user_id>/delete', methods=['POST'])
@@ -3694,10 +4202,10 @@ def team_invite():
         role = request.form.get('role', '').strip().lower()
         if not email:
             flash('Email is required.', 'error')
-            return render_template('users/invite_form.html')
+            return _render_team_invite_form()
         if role not in {'admin', 'social_manager', 'owner', 'staff'}:
             flash('Role is required.', 'error')
-            return render_template('users/invite_form.html')
+            return _render_team_invite_form()
 
         existing_membership = (
             OrganizationMembership.query
@@ -3731,7 +4239,7 @@ def team_invite():
         flash('Team invitation created.', 'success')
         return redirect(url_for('main.users_list'))
 
-    return render_template('users/invite_form.html')
+    return _render_team_invite_form()
 
 
 @bp.route('/team/invitations/<int:invitation_id>/revoke', methods=['POST'])
@@ -3903,6 +4411,8 @@ def test_recipients_settings():
         return rows
 
     def render_page(*, form_rows: list[dict[str, str]] | None = None):
+        saved_count = count_test_recipients(organization.id)
+        audit_entries = recent_test_recipient_audit_entries(organization.id)
         current_rows = form_rows if form_rows is not None else [
             {
                 'label': row['label'],
@@ -3916,9 +4426,15 @@ def test_recipients_settings():
             'settings/test_recipients.html',
             organization=organization,
             recipient_rows=current_rows,
-            saved_recipient_count=count_test_recipients(organization.id),
+            saved_recipient_count=saved_count,
             max_test_recipients=TEST_RECIPIENT_MAX_COUNT,
-            recent_test_recipient_audit_entries=recent_test_recipient_audit_entries(organization.id),
+            recent_test_recipient_audit_entries=audit_entries,
+            surface_view=_test_recipients_surface_view(
+                organization,
+                saved_recipient_count=saved_count,
+                max_test_recipients=TEST_RECIPIENT_MAX_COUNT,
+                recent_change_count=len(audit_entries),
+            ),
         )
 
     if request.method == 'POST':
@@ -5086,6 +5602,7 @@ def billing_overview():
         subscription=_current_subscription(),
         subscription_view=billing_context['subscription_view'],
         onboarding_view=billing_context['onboarding_view'],
+        surface_view=billing_context['surface_view'],
     )
 
 
@@ -5288,12 +5805,12 @@ def community_add():
         
         if not phone:
             flash('Phone number is required.', 'error')
-            return render_template('community/form.html', member=None)
+            return _render_community_form(member=None)
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
-            return render_template('community/form.html', member=None)
+            return _render_community_form(member=None)
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
             flash('This number is currently unsubscribed and will not receive messages.', 'warning')
@@ -5302,7 +5819,7 @@ def community_add():
         existing = CommunityMember.query.filter_by(phone=phone).first()
         if existing:
             flash('A member with this phone number already exists.', 'error')
-            return render_template('community/form.html', member=None)
+            return _render_community_form(member=None)
         
         member = CommunityMember(name=name, phone=phone)
         db.session.add(member)
@@ -5311,7 +5828,7 @@ def community_add():
         flash('Community member added successfully.', 'success')
         return redirect(url_for('main.community_list'))
     
-    return render_template('community/form.html', member=None)
+    return _render_community_form(member=None)
 
 
 @bp.route('/community/<int:member_id>/edit', methods=['GET', 'POST'])
@@ -5326,12 +5843,12 @@ def community_edit(member_id):
         
         if not phone:
             flash('Phone number is required.', 'error')
-            return render_template('community/form.html', member=member)
+            return _render_community_form(member=member)
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
-            return render_template('community/form.html', member=member)
+            return _render_community_form(member=member)
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
             flash('This number is currently unsubscribed and will not receive messages.', 'warning')
@@ -5343,7 +5860,7 @@ def community_edit(member_id):
         ).first()
         if existing:
             flash('A member with this phone number already exists.', 'error')
-            return render_template('community/form.html', member=member)
+            return _render_community_form(member=member)
         
         member.name = name
         member.phone = phone
@@ -5352,7 +5869,7 @@ def community_edit(member_id):
         flash('Community member updated successfully.', 'success')
         return redirect(url_for('main.community_list'))
     
-    return render_template('community/form.html', member=member)
+    return _render_community_form(member=member)
 
 
 @bp.route('/community/<int:member_id>/delete', methods=['POST'])
@@ -5417,14 +5934,17 @@ def community_import():
     if request.method == 'POST':
         file = None
         try:
-            file, content, error_response = _read_uploaded_csv_text(template_name='community/import.html')
+            file, content, error_response = _read_uploaded_csv_text(
+                template_name='community/import.html',
+                template_context={'surface_view': _community_import_surface_view()},
+            )
             if error_response is not None:
                 return error_response
             parsed = parse_recipients_csv(content)
 
             if not parsed:
                 flash('No valid members found in CSV.', 'error')
-                return render_template('community/import.html')
+                return _render_community_import()
 
             parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
@@ -5457,7 +5977,7 @@ def community_import():
             db.session.rollback()
             flash(CSV_IMPORT_ERROR_FLASH, 'error')
     
-    return render_template('community/import.html')
+    return _render_community_import()
 
 
 @bp.route('/community/<int:member_id>/unsubscribe', methods=['POST'])
@@ -5511,7 +6031,7 @@ def event_add():
         
         if not title:
             flash('Event title is required.', 'error')
-            return render_template('events/form.html', event=None)
+            return _render_event_form(event=None)
         
         from datetime import datetime
         event_date = None
@@ -5520,7 +6040,7 @@ def event_add():
                 event_date = datetime.strptime(date_str, '%Y-%m-%d').date()
             except ValueError:
                 flash('Invalid date format.', 'error')
-                return render_template('events/form.html', event=None)
+                return _render_event_form(event=None)
         
         event = Event(title=title, date=event_date)
         db.session.add(event)
@@ -5529,7 +6049,7 @@ def event_add():
         flash('Event created successfully.', 'success')
         return redirect(url_for('main.event_detail', event_id=event.id))
     
-    return render_template('events/form.html', event=None)
+    return _render_event_form(event=None)
 
 
 @bp.route('/events/<int:event_id>')
@@ -5538,7 +6058,17 @@ def event_detail(event_id):
     event = _tenant_get_or_404(Event, event_id)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
     unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
-    return render_template('events/detail.html', event=event, registrations=registrations, unsubscribed_phones=unsubscribed_phones)
+    return render_template(
+        'events/detail.html',
+        event=event,
+        registrations=registrations,
+        unsubscribed_phones=unsubscribed_phones,
+        surface_view=_event_detail_surface_view(
+            event,
+            registration_count=len(registrations),
+            unsubscribed_count=len(unsubscribed_phones),
+        ),
+    )
 
 
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
@@ -5552,7 +6082,7 @@ def event_edit(event_id):
         
         if not title:
             flash('Event title is required.', 'error')
-            return render_template('events/form.html', event=event)
+            return _render_event_form(event=event)
         
         from datetime import datetime
         event_date = None
@@ -5561,7 +6091,7 @@ def event_edit(event_id):
                 event_date = datetime.strptime(date_str, '%Y-%m-%d').date()
             except ValueError:
                 flash('Invalid date format.', 'error')
-                return render_template('events/form.html', event=event)
+                return _render_event_form(event=event)
         
         event.title = title
         event.date = event_date
@@ -5570,7 +6100,7 @@ def event_edit(event_id):
         flash('Event updated successfully.', 'success')
         return redirect(url_for('main.event_detail', event_id=event.id))
     
-    return render_template('events/form.html', event=event)
+    return _render_event_form(event=event)
 
 
 @bp.route('/events/<int:event_id>/delete', methods=['POST'])
@@ -5851,6 +6381,7 @@ def log_detail(log_id):
         log=log,
         details=details,
         suppression_status=suppression_status,
+        surface_view=_log_detail_surface_view(log, details),
     )
 
 
@@ -5949,6 +6480,16 @@ def security_events():
         },
         event_type_options=event_type_options,
         outcome_options=outcome_options,
+        surface_view=_security_events_surface_view(
+            event_count=len(events),
+            filters={
+                'username': username,
+                'event_type': event_type,
+                'outcome': outcome,
+                'date_from': date_from,
+                'date_to': date_to,
+            },
+        ),
     )
 
 
@@ -6318,6 +6859,7 @@ def unsubscribed_list():
         total_count=total_count,
         sort_key=sort_key,
         sort_dir=sort_dir,
+        surface_view=_suppression_list_surface_view(total_count=total_count, search=search),
     )
 
 
@@ -6353,12 +6895,12 @@ def unsubscribed_add():
 
         if not phone:
             flash('Phone number is required.', 'error')
-            return render_template('unsubscribed/form.html', entry=None)
+            return _render_unsubscribed_form()
 
         phone = normalize_phone(phone)
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
-            return render_template('unsubscribed/form.html', entry=None)
+            return _render_unsubscribed_form()
 
         existing = UnsubscribedContact.query.filter_by(phone=phone).first()
         if existing:
@@ -6376,7 +6918,7 @@ def unsubscribed_add():
             return redirect(next_url)
         return redirect(url_for('main.unsubscribed_list'))
 
-    return render_template('unsubscribed/form.html', entry=None)
+    return _render_unsubscribed_form()
 
 
 @bp.route('/unsubscribed/import', methods=['GET', 'POST'])
@@ -6386,14 +6928,17 @@ def unsubscribed_import():
     if request.method == 'POST':
         file = None
         try:
-            file, content, error_response = _read_uploaded_csv_text(template_name='unsubscribed/import.html')
+            file, content, error_response = _read_uploaded_csv_text(
+                template_name='unsubscribed/import.html',
+                template_context={'surface_view': _suppression_form_surface_view(mode='import')},
+            )
             if error_response is not None:
                 return error_response
             parsed = parse_recipients_csv(content)
 
             if not parsed:
                 flash('No valid entries found in CSV.', 'error')
-                return render_template('unsubscribed/import.html')
+                return _render_unsubscribed_import()
 
             parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
@@ -6427,7 +6972,7 @@ def unsubscribed_import():
             db.session.rollback()
             flash(CSV_IMPORT_ERROR_FLASH, 'error')
 
-    return render_template('unsubscribed/import.html')
+    return _render_unsubscribed_import()
 
 
 @bp.route('/unsubscribed/export')
@@ -6797,7 +7342,12 @@ def keyword_rules_list():
         )
 
     rules = query.order_by(KeywordAutomationRule.keyword.asc()).all()
-    return render_template('inbox/keywords_list.html', rules=rules, search=search)
+    return render_template(
+        'inbox/keywords_list.html',
+        rules=rules,
+        search=search,
+        surface_view=_keyword_rules_surface_view(rules, search=search),
+    )
 
 
 @bp.route('/inbox/keywords/add', methods=['GET', 'POST'])
@@ -6818,16 +7368,16 @@ def keyword_rule_add():
 
         if not normalized_keyword:
             flash('Keyword is required.', 'error')
-            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+            return _render_keyword_form(rule=None, form_data=form_data)
         if not response_body:
             flash('Auto-reply message is required.', 'error')
-            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+            return _render_keyword_form(rule=None, form_data=form_data)
         if _keyword_conflicts_with_rule(normalized_keyword):
             flash('That keyword already exists.', 'error')
-            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+            return _render_keyword_form(rule=None, form_data=form_data)
         if _keyword_conflicts_with_survey(normalized_keyword):
             flash('That keyword is already used as a survey trigger.', 'error')
-            return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+            return _render_keyword_form(rule=None, form_data=form_data)
 
         rule = KeywordAutomationRule(
             keyword=normalized_keyword,
@@ -6839,7 +7389,7 @@ def keyword_rule_add():
         flash('Keyword automation created.', 'success')
         return redirect(url_for('main.keyword_rules_list'))
 
-    return render_template('inbox/keyword_form.html', rule=None, form_data=form_data)
+    return _render_keyword_form(rule=None, form_data=form_data)
 
 
 @bp.route('/inbox/keywords/<int:rule_id>/edit', methods=['GET', 'POST'])
@@ -6856,17 +7406,17 @@ def keyword_rule_edit(rule_id):
 
         if not normalized_keyword:
             flash('Keyword is required.', 'error')
-            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+            return _render_keyword_form(rule=rule, form_data=None)
         if not response_body:
             flash('Auto-reply message is required.', 'error')
-            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+            return _render_keyword_form(rule=rule, form_data=None)
 
         if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
             flash('That keyword already exists.', 'error')
-            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+            return _render_keyword_form(rule=rule, form_data=None)
         if _keyword_conflicts_with_survey(normalized_keyword):
             flash('That keyword is already used as a survey trigger.', 'error')
-            return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+            return _render_keyword_form(rule=rule, form_data=None)
 
         rule.keyword = normalized_keyword
         rule.response_body = response_body
@@ -6875,7 +7425,7 @@ def keyword_rule_edit(rule_id):
         flash('Keyword automation updated.', 'success')
         return redirect(url_for('main.keyword_rules_list'))
 
-    return render_template('inbox/keyword_form.html', rule=rule, form_data=None)
+    return _render_keyword_form(rule=rule, form_data=None)
 
 
 @bp.route('/inbox/keywords/<int:rule_id>/delete', methods=['POST'])
@@ -6909,7 +7459,12 @@ def survey_flows_list():
         )
 
     surveys = query.order_by(SurveyFlow.created_at.desc()).all()
-    return render_template('inbox/surveys_list.html', surveys=surveys, search=search)
+    return render_template(
+        'inbox/surveys_list.html',
+        surveys=surveys,
+        search=search,
+        surface_view=_survey_flows_surface_view(surveys, search=search),
+    )
 
 
 @bp.route('/inbox/surveys/<int:survey_id>/submissions')
@@ -6943,6 +7498,12 @@ def survey_flow_submissions(survey_id):
         page=payload['page'],
         total_pages=payload['total_pages'],
         per_page=payload['per_page'],
+        surface_view=_survey_submissions_surface_view(
+            survey,
+            unique_attendees=payload['unique_attendees'],
+            total_completed=payload['total_completed'],
+            repeat_submitters=payload['repeat_submitters'],
+        ),
     )
 
 

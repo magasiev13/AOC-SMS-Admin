@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Suppression - {{ product_name }}{% endblock %}
 
@@ -32,231 +33,253 @@
 
 {% block content %}
 <div class="alert alert-success d-none" role="status" aria-live="polite" id="backfillAlert"></div>
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form method="GET" class="filter-bar" data-table-loading-target="unsubscribedTable">
-            <div class="flex-grow-1">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search by name, phone, reason, category, or source..." aria-label="Search suppression list"
-                           value="{{ search }}">
-                </div>
-            </div>
-            <input type="hidden" name="sort" value="{{ sort_key }}">
-            <input type="hidden" name="dir" value="{{ sort_dir }}">
-        </form>
-    </div>
-</div>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
 
-<div class="card app-card">
-    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
-            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
-        </div>
-        <div class="bulk-selection-actions" id="bulkSelectionActions">
-            <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
-                <span id="selectedCount">0</span> selected
-            </span>
-            <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
-                    data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
-                <i class="bi bi-trash me-1"></i>Delete selected
-            </button>
-        </div>
-        <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.unsubscribed_bulk_delete') }}" style="display:none;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        </form>
-    </div>
-    <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable" data-sortable="server" data-sort-default="created_at" data-sort-default-dir="desc">
-            <thead class="table-light">
-                <tr>
-                    <th width="40">
-                        {% if entries %}
-                        <input class="form-check-input" type="checkbox" id="selectAllEntries" aria-label="Select all entries">
-                        {% endif %}
-                    </th>
-                    <th data-sort-type="string">
-                        <button type="button" class="sort-button" data-sort-key="name">
-                            <span>Name</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    <th data-sort-type="phone">
-                        <button type="button" class="sort-button" data-sort-key="phone">
-                            <span>Phone</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    <th data-sort-type="string">
-                        <button type="button" class="sort-button" data-sort-key="reason">
-                            <span>Reason</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    <th data-sort-type="enum">
-                        <button type="button" class="sort-button" data-sort-key="category">
-                            <span>Category</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    <th data-sort-type="enum">
-                        <button type="button" class="sort-button" data-sort-key="source">
-                            <span>Source</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    <th data-sort-type="date">
-                        <button type="button" class="sort-button" data-sort-key="created_at">
-                            <span>Added</span>
-                            <span class="sort-indicator" aria-hidden="true"></span>
-                        </button>
-                    </th>
-                    {% if can_manage_unsubscribed %}
-                    <th width="80">Actions</th>
-                    {% endif %}
-                </tr>
-            </thead>
-            <tbody class="table-data">
-                {% if entries %}
-                    {% for entry in entries %}
-                    <tr>
-                        <td>
-                            {% if entry.entry_type == 'unsubscribed' %}
-                            <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
-                            {% else %}
-                            <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
-                            {% endif %}
-                        </td>
-                        <td data-sort-value="{{ entry.name or '' }}">{{ entry.name or '-' }}</td>
-                        <td data-sort-value="{{ entry.phone }}"><code>{{ entry.phone }}</code></td>
-                        <td data-sort-value="{{ entry.reason or '' }}">{{ entry.reason or '-' }}</td>
-                        <td data-sort-value="{{ entry.category }}">
-                            <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
-                        </td>
-                        <td data-sort-value="{{ entry.source or '' }}"><span class="badge bg-light text-dark">{{ entry.source or '-' }}</span></td>
-                        <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
-                        {% if can_manage_unsubscribed %}
-                        <td>
-                            {% if entry.entry_type == 'unsubscribed' %}
-                            <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove entry">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                            </form>
-                            {% else %}
-                            <span class="text-muted small">Managed via suppression</span>
-                            {% endif %}
-                        </td>
-                        {% endif %}
-                    </tr>
-                    {% endfor %}
-                {% else %}
-                    <tr>
-                        <td colspan="{{ 8 if can_manage_unsubscribed else 7 }}" class="text-center text-muted py-4">
-                            No suppression entries found.
-                            {% if can_manage_unsubscribed %}
-                            <a href="{{ url_for('main.unsubscribed_add') }}">Add one</a> or
-                            <a href="{{ url_for('main.unsubscribed_import') }}">import from CSV</a>.
-                            {% endif %}
-                        </td>
-                    </tr>
-                {% endif %}
-            </tbody>
-            <tbody class="table-skeleton-body" aria-hidden="true">
-                {% for _ in range(5) %}
-                <tr>
-                    <td><span class="skeleton-block w-25"></span></td>
-                    <td><span class="skeleton-block w-75"></span></td>
-                    <td><span class="skeleton-block w-50"></span></td>
-                    <td><span class="skeleton-block w-75"></span></td>
-                    <td><span class="skeleton-block w-50"></span></td>
-                    <td><span class="skeleton-block w-50"></span></td>
-                    <td><span class="skeleton-block w-50"></span></td>
-                    {% if can_manage_unsubscribed %}
-                    <td><span class="skeleton-block w-25"></span></td>
-                    {% endif %}
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    <div class="card-list d-lg-none">
-        {% if entries %}
-            {% for entry in entries %}
-            <div class="card-list-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div>
-                        <h6 class="mb-1">{{ entry.name or '-' }}</h6>
-                        <div class="text-muted small"><code>{{ entry.phone }}</code></div>
-                        <div class="text-muted small mt-1">{{ entry.reason or '-' }}</div>
-                        <div class="d-flex flex-wrap gap-2 mt-2">
-                            <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
-                            <span class="badge bg-light text-dark">{{ entry.source or '-' }}</span>
-                        </div>
-                        <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
-                    </div>
-                    <div class="d-flex flex-column align-items-end gap-2">
-                        {% if entry.entry_type == 'unsubscribed' %}
-                        <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
-                        {% else %}
-                        <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
-                        {% endif %}
-                    </div>
+    <div class="collection-shell">
+        {% call ui.collection_search_panel(
+            url_for('main.unsubscribed_list'),
+            'Search by name, phone, reason, category, or source',
+            value=search,
+            aria_label='Search suppression list',
+            title='Search',
+            meta='Search combined unsubscribed and suppressed contacts.',
+            target_ids='unsubscribedTable'
+        ) %}
+        <input type="hidden" name="sort" value="{{ sort_key }}">
+        <input type="hidden" name="dir" value="{{ sort_dir }}">
+        {% endcall %}
+
+        <section class="collection-panel collection-panel--results">
+            <div class="collection-panel__header">
+                <div>
+                    <h2 class="collection-panel__title">Suppression entries</h2>
+                    <p class="collection-panel__meta">Review unsubscribed contacts, manual suppressions, and backfill results before the next send.</p>
                 </div>
-                {% if can_manage_unsubscribed and entry.entry_type == 'unsubscribed' %}
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
-                    <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove entry">
-                            <i class="bi bi-trash"></i> Remove
+                <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
+                        <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
+                        <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+                    </div>
+                    <div class="bulk-selection-actions" id="bulkSelectionActions">
+                        <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
+                            <span id="selectedCount">0</span> selected
+                        </span>
+                        <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
+                                data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
+                            <i class="bi bi-trash me-1"></i>Delete selected
                         </button>
+                    </div>
+                    <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.unsubscribed_bulk_delete') }}" style="display:none;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     </form>
                 </div>
+            </div>
+
+            <div class="table-responsive d-none d-lg-block">
+                <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable" data-sortable="server" data-sort-default="created_at" data-sort-default-dir="desc">
+                    <thead class="table-light">
+                        <tr>
+                            <th width="40">
+                                {% if entries %}
+                                <input class="form-check-input" type="checkbox" id="selectAllEntries" aria-label="Select all entries">
+                                {% endif %}
+                            </th>
+                            <th data-sort-type="string">
+                                <button type="button" class="sort-button" data-sort-key="name">
+                                    <span>Name</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="phone">
+                                <button type="button" class="sort-button" data-sort-key="phone">
+                                    <span>Phone</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="string">
+                                <button type="button" class="sort-button" data-sort-key="reason">
+                                    <span>Reason</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="enum">
+                                <button type="button" class="sort-button" data-sort-key="category">
+                                    <span>Category</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="enum">
+                                <button type="button" class="sort-button" data-sort-key="source">
+                                    <span>Source</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            <th data-sort-type="date">
+                                <button type="button" class="sort-button" data-sort-key="created_at">
+                                    <span>Added</span>
+                                    <span class="sort-indicator" aria-hidden="true"></span>
+                                </button>
+                            </th>
+                            {% if can_manage_unsubscribed %}
+                            <th width="120">Actions</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody class="table-data">
+                        {% if entries %}
+                            {% for entry in entries %}
+                            <tr>
+                                <td>
+                                    {% if entry.entry_type == 'unsubscribed' %}
+                                    <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                    {% else %}
+                                    <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                    {% endif %}
+                                </td>
+                                <td data-sort-value="{{ entry.name or '' }}">{{ entry.name or '-' }}</td>
+                                <td data-sort-value="{{ entry.phone }}"><code>{{ entry.phone }}</code></td>
+                                <td data-sort-value="{{ entry.reason or '' }}">{{ entry.reason or '-' }}</td>
+                                <td data-sort-value="{{ entry.category }}">
+                                    <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
+                                </td>
+                                <td data-sort-value="{{ entry.source or '' }}"><span class="badge bg-light text-dark">{{ entry.source or '-' }}</span></td>
+                                <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
+                                {% if can_manage_unsubscribed %}
+                                <td>
+                                    {% if entry.entry_type == 'unsubscribed' %}
+                                    <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove entry">
+                                            <i class="bi bi-trash me-1"></i>Remove
+                                        </button>
+                                    </form>
+                                    {% else %}
+                                    <span class="text-muted small">Managed via suppression</span>
+                                    {% endif %}
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="{{ 8 if can_manage_unsubscribed else 7 }}" class="py-5">
+                                {{ ui.empty_state(
+                                    'bi-person-x',
+                                    'No suppression entries found',
+                                    'Add a contact or import a CSV list to start blocking sends to these numbers.',
+                                    primary_href=url_for('main.unsubscribed_add') if can_manage_unsubscribed else None,
+                                    primary_label='Add to suppression' if can_manage_unsubscribed else None,
+                                    secondary_href=url_for('main.unsubscribed_import') if can_manage_unsubscribed else None,
+                                    secondary_label='Import CSV' if can_manage_unsubscribed else None,
+                                    primary_class='btn btn-primary btn-sm',
+                                    secondary_class='btn btn-outline-secondary btn-sm'
+                                ) }}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                    <tbody class="table-skeleton-body" aria-hidden="true">
+                        {% for _ in range(5) %}
+                        <tr>
+                            <td><span class="skeleton-block w-25"></span></td>
+                            <td><span class="skeleton-block w-75"></span></td>
+                            <td><span class="skeleton-block w-50"></span></td>
+                            <td><span class="skeleton-block w-75"></span></td>
+                            <td><span class="skeleton-block w-50"></span></td>
+                            <td><span class="skeleton-block w-50"></span></td>
+                            <td><span class="skeleton-block w-50"></span></td>
+                            {% if can_manage_unsubscribed %}
+                            <td><span class="skeleton-block w-25"></span></td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="card-list d-lg-none">
+                {% if entries %}
+                    {% for entry in entries %}
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1">{{ entry.name or '-' }}</h6>
+                                <div class="text-muted small"><code>{{ entry.phone }}</code></div>
+                                <div class="text-muted small mt-1">{{ entry.reason or '-' }}</div>
+                                <div class="d-flex flex-wrap gap-2 mt-2">
+                                    <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
+                                    <span class="badge bg-light text-dark">{{ entry.source or '-' }}</span>
+                                </div>
+                                <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
+                            </div>
+                            <div class="d-flex flex-column align-items-end gap-2">
+                                {% if entry.entry_type == 'unsubscribed' %}
+                                <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                {% else %}
+                                <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% if can_manage_unsubscribed and entry.entry_type == 'unsubscribed' %}
+                        <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
+                            <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove entry">
+                                    <i class="bi bi-trash me-1"></i>Remove
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                {{ ui.empty_state(
+                    'bi-person-x',
+                    'No suppression entries found',
+                    'Add a contact or import a CSV list to start blocking sends to these numbers.',
+                    primary_href=url_for('main.unsubscribed_add') if can_manage_unsubscribed else None,
+                    primary_label='Add to suppression' if can_manage_unsubscribed else None,
+                    secondary_href=url_for('main.unsubscribed_import') if can_manage_unsubscribed else None,
+                    secondary_label='Import CSV' if can_manage_unsubscribed else None,
+                    primary_class='btn btn-primary btn-sm',
+                    secondary_class='btn btn-outline-secondary btn-sm'
+                ) }}
                 {% endif %}
             </div>
-            {% endfor %}
-        {% else %}
-        <div class="empty-state py-4">
-            <i class="bi bi-person-x empty-state__icon"></i>
-            <div class="empty-state__title">No suppression entries found</div>
-            {% if can_manage_unsubscribed %}
-            <div class="empty-state__text">Add a contact or import from CSV to get started.</div>
+
+            {% if entries %}
+            <div class="collection-panel__footer d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <span>Showing {{ entries|length }} of {{ total_count }} contact(s)</span>
+                {% if total_pages > 1 %}
+                <nav aria-label="Suppression list pagination">
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
+                                <span aria-hidden="true">&laquo;</span>
+                            </a>
+                        </li>
+                        {% for p in range(1, total_pages + 1) %}
+                            {% if p == page %}
+                            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                            {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                            <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
+                            {% elif p == page - 3 or p == page + 3 %}
+                            <li class="page-item disabled"><span class="page-link">...</span></li>
+                            {% endif %}
+                        {% endfor %}
+                        <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
+                                <span aria-hidden="true">&raquo;</span>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+                {% endif %}
+            </div>
             {% endif %}
-        </div>
-        {% endif %}
+        </section>
     </div>
-{% if entries %}
-    <div class="card-footer d-flex justify-content-between align-items-center text-muted">
-        <span>Showing {{ entries|length }} of {{ total_count }} contact(s)</span>
-        {% if total_pages > 1 %}
-        <nav aria-label="Suppression list pagination">
-            <ul class="pagination pagination-sm mb-0">
-                <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-                    <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
-                        <span aria-hidden="true">&laquo;</span>
-                    </a>
-                </li>
-                {% for p in range(1, total_pages + 1) %}
-                    {% if p == page %}
-                    <li class="page-item active"><span class="page-link">{{ p }}</span></li>
-                    {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                    <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
-                    {% elif p == page - 3 or p == page + 3 %}
-                    <li class="page-item disabled"><span class="page-link">...</span></li>
-                    {% endif %}
-                {% endfor %}
-                <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-                    <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
-                        <span aria-hidden="true">&raquo;</span>
-                    </a>
-                </li>
-            </ul>
-        </nav>
-        {% endif %}
-    </div>
-    {% endif %}
 </div>
 
 <div class="modal fade" id="bulkDeleteModal" tabindex="-1" aria-labelledby="bulkDeleteModalTitle">

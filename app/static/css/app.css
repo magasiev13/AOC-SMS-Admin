@@ -290,11 +290,17 @@ h6,
 }
 
 .app-topbar {
-  background-color: var(--color-surface);
+  background: rgba(246, 248, 251, 0.96);
   border-bottom: 1px solid var(--color-border);
+  backdrop-filter: blur(18px);
   padding: var(--space-3) 0;
   position: relative;
   z-index: 1020;
+}
+
+.app-mobile-nav-open .app-topbar {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: none;
 }
 
 .app-topbar .navbar-brand {
@@ -303,6 +309,12 @@ h6,
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
+}
+
+.app-topbar .brand-icon,
+.auth-brand .brand-icon {
+  background: var(--color-text);
+  border: 0;
 }
 
 .app-mobile-nav {
@@ -493,8 +505,8 @@ h6,
 .app-card {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--elevation-1);
+  border-radius: calc(var(--radius-lg) + 2px);
+  box-shadow: none;
 }
 
 .auth-login-main {
@@ -556,7 +568,7 @@ h6,
 
 .setup-shell {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .setup-hero {
@@ -839,7 +851,7 @@ h6,
 
 .platform-shell {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .platform-shell.platform-shell--compact {
@@ -917,9 +929,9 @@ h6,
 
 .platform-shell__summary-title {
   margin: 0;
-  max-width: 22ch;
+  max-width: 18ch;
   font-size: clamp(1.55rem, 2.2vw, 2.3rem);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
   line-height: 1.08;
 }
 
@@ -4318,22 +4330,6 @@ a:focus-visible,
   box-shadow: none;
 }
 
-.app-topbar {
-  background: rgba(246, 248, 251, 0.96);
-  backdrop-filter: blur(18px);
-}
-
-.app-mobile-nav-open .app-topbar {
-  background: rgba(255, 255, 255, 0.98);
-  backdrop-filter: none;
-}
-
-.app-topbar .brand-icon,
-.auth-brand .brand-icon {
-  background: var(--color-text);
-  border: 0;
-}
-
 .app-content--workspace {
   width: min(100%, 94rem);
   margin: 0 auto;
@@ -4356,25 +4352,6 @@ a:focus-visible,
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
-}
-
-.platform-home-shell,
-.platform-shell,
-.setup-shell {
-  gap: var(--space-4);
-}
-
-.platform-home-hero,
-.platform-shell__summary,
-.setup-hero {
-  gap: var(--space-3);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.platform-home-title,
-.platform-shell__summary-title {
-  max-width: 18ch;
 }
 
 .platform-attention-item,
@@ -4818,11 +4795,6 @@ a:focus-visible,
 .setup-checkbox--statement {
   border: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
-}
-
-.platform-home-title,
-.platform-shell__summary-title {
-  letter-spacing: -0.04em;
 }
 
 .platform-stat-card .card-body {

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Billing - {{ product_name }}{% endblock %}
 
@@ -9,57 +10,51 @@
 {% endblock %}
 
 {% block content %}
-<div class="row g-4 align-items-start">
-    <div class="col-lg-6">
-        <div class="card app-card billing-summary-card">
-            <div class="card-body">
-                <div class="billing-summary-card__header">
-                    <div class="text-muted small text-uppercase mb-1">Organization</div>
-                    <h4 class="mb-1">{{ organization.name if organization else 'Unknown organization' }}</h4>
-                    <div class="d-flex flex-wrap gap-2 align-items-center mt-3">
-                        <span class="badge bg-{{ subscription_view.badge }}">{{ subscription_view.title }}</span>
-                        {% if subscription_view.period_value %}
-                        <span class="billing-summary-chip">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</span>
-                        {% endif %}
-                        <span class="billing-summary-chip">Sending {{ 'enabled' if subscription_view.can_send else 'paused' }}</span>
-                    </div>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}
+    {% if subscription_view.show_portal %}
+    <form method="POST" action="{{ url_for('main.billing_portal') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-outline-secondary">Open Billing Portal</button>
+    </form>
+    {% endif %}
+    {% if subscription_view.show_checkout %}
+    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+            {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
+        </button>
+    </form>
+    {% endif %}
+    {% endcall %}
+
+    <div class="workspace-command-layout">
+        <section class="workspace-panel billing-summary-card">
+            <div class="workspace-panel__header">
+                <div>
+                    <h2 class="workspace-panel__title">Subscription</h2>
+                    <p class="workspace-panel__meta">{{ subscription_view.summary }}</p>
                 </div>
-                <div class="billing-summary-card__body">
-                    <p class="mb-2">{{ subscription_view.summary }}</p>
-                    <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
-                    {% if subscription_view.is_complimentary %}
-                    <div class="form-text mt-3">Stripe is not used for this workspace. Twilio charges stay on the customer-managed account.</div>
-                    {% endif %}
-                </div>
-                <div class="d-flex flex-wrap gap-2 mt-4">
-                    {% if subscription_view.show_portal %}
-                    <form method="POST" action="{{ url_for('main.billing_portal') }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-secondary">
-                            Open Billing Portal
-                        </button>
-                    </form>
-                    {% endif %}
-                    {% if subscription_view.show_checkout %}
-                    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-primary">
-                            {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
+            </div>
+            <div class="workspace-panel__body">
+                <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
+                {% if subscription_view.is_complimentary %}
+                <div class="form-text mt-3">Stripe is not used for this workspace. Twilio charges stay on the customer-managed account.</div>
+                {% endif %}
                 {% if subscription_view.show_portal and (not subscription or not subscription.stripe_customer_id) %}
-                <div class="form-text mt-2">The billing portal becomes available after Stripe creates the customer record.</div>
+                <div class="form-text mt-3">The billing portal becomes available after Stripe creates the customer record.</div>
                 {% endif %}
             </div>
-        </div>
-    </div>
-    <div class="col-lg-6">
-        <div class="card app-card billing-onboarding-card">
-            <div class="card-body">
-                <div class="text-muted small text-uppercase mb-1">Onboarding</div>
-                <h5 class="mb-1">{{ onboarding_view.headline if onboarding_view else 'No onboarding state yet' }}</h5>
+        </section>
+
+        <section class="workspace-panel billing-onboarding-card">
+            <div class="workspace-panel__header">
+                <div>
+                    <h2 class="workspace-panel__title">Launch checklist</h2>
+                    <p class="workspace-panel__meta">{{ onboarding_view.headline if onboarding_view else 'No onboarding state yet' }}</p>
+                </div>
+            </div>
+            <div class="workspace-panel__body">
                 {% if onboarding_view %}
                 <p class="text-muted mb-3">{{ onboarding_view.completed_required }}/{{ onboarding_view.required_total }} required setup steps are complete.</p>
                 {% if onboarding_view.a2p_status %}
@@ -104,7 +99,7 @@
                 {% endif %}
                 {% endif %}
             </div>
-        </div>
+        </section>
     </div>
 </div>
 {% endblock %}

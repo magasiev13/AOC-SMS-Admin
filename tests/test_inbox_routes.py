@@ -728,6 +728,8 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn("Cindi Berberian", html)
+        self.assertIn("workspace-summary", html)
+        self.assertIn("collection-shell", html)
 
     def test_survey_submissions_requires_login(self) -> None:
         survey = self._create_survey_flow(
@@ -824,9 +826,12 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertNotIn("Cancelled Jordan", html)
         self.assertEqual(html.count('id="surveySubmission17205550100"'), 1)
         self.assertEqual(html.count('id="surveySubmission'), 2)
-        self.assertIn("2 attendee(s)", html)
-        self.assertIn("3 completed submission(s)", html)
-        self.assertIn("1 repeat submitter(s)", html)
+        self.assertIn("Attendees", html)
+        self.assertIn("Unique phones", html)
+        self.assertIn("Completed", html)
+        self.assertIn("Repeat", html)
+        self.assertIn("collection-panel--filters", html)
+        self.assertIn("workspace-summary", html)
 
     def test_survey_submissions_display_name_fallback_order(self) -> None:
         self._login()

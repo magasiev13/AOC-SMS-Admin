@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }} - {{ product_name }}{% endblock %}
 
@@ -9,116 +10,24 @@
 {% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-xl-12 dashboard-layout">
-        {% if config.SAAS_MODE and current_organization %}
-        <section class="mb-4">
-            <div class="card app-card">
-                <div class="card-body d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-                    <div>
-                        <div class="text-muted small text-uppercase mb-1">Organization</div>
-                        <div class="h5 mb-1">{{ current_organization.name }}</div>
-                        <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
-                            <span class="badge bg-{{ current_subscription_view.badge }}">{{ current_subscription_view.title }}</span>
-                            <span class="text-muted small">Sending {{ 'enabled' if can_send_messages else 'paused' }}</span>
-                        </div>
-                    </div>
-                    <div class="d-flex gap-2">
-                        <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
-                        {% if not can_send_messages and current_subscription_view.show_checkout %}
-                        <form method="POST" action="{{ url_for('main.billing_checkout') }}">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-primary">
-                                {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
-                            </button>
-                        </form>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </section>
-        {% endif %}
+<div class="workspace-shell">
+    {% if config.SAAS_MODE and current_organization %}
+    {% call ui.workspace_summary(workspace_summary) %}
+    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
+    <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
+    {% if not can_send_messages and current_subscription_view.show_checkout %}
+    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+            {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
+        </button>
+    </form>
+    {% endif %}
+    {% endcall %}
+    {% endif %}
 
-        {% if config.SAAS_MODE and current_organization and users_missing_email and current_user.is_admin %}
-        <section class="mb-4">
-            <div class="alert alert-warning" role="alert">
-                <strong>Email cleanup needed.</strong>
-                {{ users_missing_email|length }} workspace user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
-                Password recovery and invite hygiene stay limited until you backfill those records.
-                <a href="{{ url_for('main.users_list') }}" class="alert-link">Review users</a>.
-            </div>
-        </section>
-        {% endif %}
-
-        {% if config.SAAS_MODE and current_organization and a2p_status_view and a2p_status_view.show_wait_state %}
-        <section class="mb-4">
-            <div class="card app-card">
-                <div class="card-body">
-                    <div class="d-flex flex-column flex-xl-row justify-content-between gap-3">
-                        <div>
-                            <div class="text-muted small text-uppercase mb-1">SMS approval</div>
-                            <h5 class="mb-1">{{ a2p_status_view.title }}</h5>
-                            <p class="mb-2">{{ a2p_status_view.summary }}</p>
-                            <div class="small text-muted">{{ a2p_status_view.next_step }}</div>
-                            <div class="small text-muted mt-1">
-                                ETA: {{ a2p_status_view.eta }}
-                                {% if a2p_status_view.last_checked_display %}
-                                · Last checked {{ a2p_status_view.last_checked_display }}
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="d-flex flex-wrap gap-2 align-items-start">
-                            <span class="badge bg-{{ a2p_status_view.badge }}">{{ a2p_status_view.stage.replace('_', ' ') }}</span>
-                            <span class="badge bg-light text-dark">Brand {{ a2p_status_view.brand_status }}</span>
-                            <span class="badge bg-light text-dark">Campaign {{ a2p_status_view.campaign_status }}</span>
-                        </div>
-                    </div>
-
-                    <div class="row g-3 mt-1">
-                        <div class="col-lg-7">
-                            <div class="list-group list-group-flush">
-                                {% for task in workspace_activation_tasks %}
-                                <div class="list-group-item px-0">
-                                    <div class="d-flex justify-content-between align-items-start gap-3">
-                                        <div>
-                                            <div class="fw-semibold">
-                                                {% if task.complete %}
-                                                <i class="bi bi-check-circle-fill text-success me-2"></i>
-                                                {% else %}
-                                                <i class="bi bi-circle text-muted me-2"></i>
-                                                {% endif %}
-                                                {{ task.label }}
-                                            </div>
-                                            <div class="small text-muted mt-1">{{ task.detail }}</div>
-                                        </div>
-                                    </div>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div class="col-lg-5">
-                            <div class="border rounded-3 p-3 h-100">
-                                <div class="fw-semibold mb-2">While approval is pending</div>
-                                <p class="small text-muted mb-3">
-                                    Keep moving on billing, team setup, recipients, and inbound automation. Live SMS stays paused until the sender is fully approved.
-                                </p>
-                                <div class="d-flex flex-wrap gap-2">
-                                    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-sm btn-outline-secondary">Billing</a>
-                                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary">Community</a>
-                                    <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-sm btn-outline-secondary">Keywords</a>
-                                    <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-sm btn-outline-secondary">Surveys</a>
-                                    <a href="{{ url_for('main.events_list') }}" class="btn btn-sm btn-outline-secondary">Events</a>
-                                    {% if current_user.is_admin and not current_user.is_platform_admin %}
-                                    <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-secondary">Invite Team</a>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-        {% endif %}
+    <div class="workspace-command-layout dashboard-layout">
+        <div class="workspace-command-main">
 
         <!-- Send SMS Section -->
         <section class="mb-4 dashboard-section dashboard-section-send">
@@ -315,6 +224,72 @@
                 </div>
             </div>
         </section>
+        </div>
+
+        <aside class="workspace-command-side">
+            {% if config.SAAS_MODE and current_organization and users_missing_email and current_user.is_admin %}
+            <div class="workspace-callout workspace-callout--warning" role="alert">
+                <div class="workspace-callout__title">Email cleanup needed</div>
+                <p class="workspace-callout__copy">
+                    {{ users_missing_email|length }} workspace user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
+                    Password reset and invite recovery stay limited until those records are updated.
+                </p>
+                <div class="workspace-callout__actions">
+                    <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review users</a>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if config.SAAS_MODE and current_organization and a2p_status_view and a2p_status_view.show_wait_state %}
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">SMS approval</h2>
+                        <p class="workspace-panel__meta">{{ a2p_status_view.summary }}</p>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <span class="badge bg-{{ a2p_status_view.badge }}">{{ a2p_status_view.stage.replace('_', ' ') }}</span>
+                        <span class="badge bg-light text-dark">Brand {{ a2p_status_view.brand_status }}</span>
+                        <span class="badge bg-light text-dark">Campaign {{ a2p_status_view.campaign_status }}</span>
+                    </div>
+                </div>
+                <div class="workspace-panel__body workspace-panel__body--dense">
+                    <div class="small text-muted mb-3">
+                        {{ a2p_status_view.next_step }}
+                        {% if a2p_status_view.last_checked_display %}
+                        · Last checked {{ a2p_status_view.last_checked_display }}
+                        {% endif %}
+                    </div>
+                    <div class="list-group list-group-flush mb-3">
+                        {% for task in workspace_activation_tasks %}
+                        <div class="list-group-item px-0">
+                            <div class="fw-semibold">
+                                {% if task.complete %}
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                {% else %}
+                                <i class="bi bi-circle text-muted me-2"></i>
+                                {% endif %}
+                                {{ task.label }}
+                            </div>
+                            <div class="small text-muted mt-1">{{ task.detail }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="workspace-callout__actions">
+                        <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
+                        <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-primary">Community</a>
+                        <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary">Keywords</a>
+                        <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Surveys</a>
+                        <a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">Events</a>
+                        {% if current_user.is_admin and not current_user.is_platform_admin %}
+                        <a href="{{ url_for('main.team_invite') }}" class="btn btn-outline-secondary">Invite Team</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </section>
+            {% endif %}
+        </aside>
+    </div>
 
         <!-- Stats Row -->
         <section class="mb-4 dashboard-section dashboard-section-stats">
@@ -588,7 +563,6 @@
             {% endif %}
         </section>
         {% endif %}
-    </div>
 </div>
 {% endblock %}
 
