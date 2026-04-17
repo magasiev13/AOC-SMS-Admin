@@ -23,8 +23,7 @@
         <aside class="app-sidebar d-none d-lg-flex flex-column">
             <a class="app-sidebar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                 <span class="brand-icon">
-                    <span class="brand-icon__pulse"></span>
-                    <i class="bi bi-send-fill" aria-hidden="true"></i>
+                    <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                 </span>
                 <span class="brand-lockup">
                     <span class="brand-text">{{ product_name }}</span>
@@ -115,8 +114,7 @@
                 <div class="container-fluid">
                     <a class="navbar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                         <span class="brand-icon brand-icon--sm">
-                            <span class="brand-icon__pulse"></span>
-                            <i class="bi bi-send-fill" aria-hidden="true"></i>
+                            <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                         </span>
                         <span class="brand-lockup brand-lockup--inline">
                             <span class="brand-text">{{ product_name }}</span>

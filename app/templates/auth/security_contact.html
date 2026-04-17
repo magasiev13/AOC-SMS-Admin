@@ -11,8 +11,7 @@
     <div class="auth-story auth-story--compact">
         <a class="auth-brand" href="{{ url_for('main.dashboard') }}" aria-label="{{ product_name }}">
             <span class="brand-icon">
-                <span class="brand-icon__pulse"></span>
-                <i class="bi bi-send-fill"></i>
+                <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
             </span>
             <span class="brand-lockup">
                 <span class="brand-text">{{ product_name }}</span>

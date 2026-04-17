@@ -27,6 +27,19 @@ async function backgroundColor(locator) {
   return locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 }
 
+async function centerDelta(container, child) {
+  const containerBox = await container.boundingBox();
+  const childBox = await child.boundingBox();
+  if (!containerBox || !childBox) {
+    throw new Error('Expected both brand elements to be visible before measuring alignment');
+  }
+
+  return {
+    x: Math.abs((containerBox.x + containerBox.width / 2) - (childBox.x + childBox.width / 2)),
+    y: Math.abs((containerBox.y + containerBox.height / 2) - (childBox.y + childBox.height / 2)),
+  };
+}
+
 test('platform admin desktop surfaces use the shared shell and aligned actions', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await login(page, 'platform@browser.test', 'Platform-pass1!');
@@ -115,6 +128,44 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
     await elementTop(page.getByText('Recent Twilio activity').first()),
   );
   expect(await elementHeight(page.getByRole('button', { name: 'Submit A2P Onboarding' }))).toBeGreaterThanOrEqual(44);
+});
+
+test('shared airplane mark stays centered and favicon matches the app asset', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.goto('/login');
+
+  const authBrandIcon = page.locator('.auth-brand .brand-icon').first();
+  const authBrandImage = authBrandIcon.locator('.brand-icon__image');
+  await expect(authBrandImage).toBeVisible();
+
+  const authCenter = await centerDelta(authBrandIcon, authBrandImage);
+  expect(authCenter.x).toBeLessThanOrEqual(1.0);
+  expect(authCenter.y).toBeLessThanOrEqual(1.0);
+
+  const faviconHref = await page.locator('link[rel="icon"]').first().getAttribute('href');
+  expect(faviconHref).toContain('/static/favicon.svg');
+
+  await login(page, 'platform@browser.test', 'Platform-pass1!');
+  await page.goto('/platform');
+
+  const sidebarBrandIcon = page.locator('.app-sidebar-brand .brand-icon').first();
+  const sidebarBrandImage = sidebarBrandIcon.locator('.brand-icon__image');
+  await expect(sidebarBrandImage).toBeVisible();
+
+  const sidebarCenter = await centerDelta(sidebarBrandIcon, sidebarBrandImage);
+  expect(sidebarCenter.x).toBeLessThanOrEqual(1.0);
+  expect(sidebarCenter.y).toBeLessThanOrEqual(1.0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/platform');
+
+  const topbarBrandIcon = page.locator('.app-topbar .brand-icon').first();
+  const topbarBrandImage = topbarBrandIcon.locator('.brand-icon__image');
+  await expect(topbarBrandImage).toBeVisible();
+
+  const topbarCenter = await centerDelta(topbarBrandIcon, topbarBrandImage);
+  expect(topbarCenter.x).toBeLessThanOrEqual(1.0);
+  expect(topbarCenter.y).toBeLessThanOrEqual(1.0);
 });
 
 test('platform admin mobile surfaces keep 44px action targets', async ({ page }) => {
