@@ -103,8 +103,26 @@ install_repo_file() {
 }
 
 resolve_health_host() {
+  local saas_base_url
+  local canonical_host
   local trusted_hosts
   local first_host
+
+  saas_base_url="$(current_env_value "SAAS_BASE_URL")"
+  canonical_host="$(printf '%s' "${saas_base_url}" | awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      gsub(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "", $0)
+      sub(/\/.*$/, "", $0)
+      sub(/^[^@]*@/, "", $0)
+      sub(/:.*/, "", $0)
+      print $0
+    }
+  ')"
+  if [[ -n "${canonical_host}" ]]; then
+    printf '%s\n' "${canonical_host}"
+    return
+  fi
 
   trusted_hosts="$(grep -E '^TRUSTED_HOSTS=' "${ENV_FILE}" | tail -n1 | cut -d= -f2- || true)"
   first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"

@@ -181,6 +181,39 @@ class TestConfigSecurityHardening(unittest.TestCase):
         trusted_response = client.get("/", headers={"Host": "sms.example.org"})
         self.assertNotEqual(trusted_response.status_code, 400)
 
+    def test_trusted_hosts_redirect_to_saas_base_url_host(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["TRUSTED_HOSTS"] = "twinevia.com,www.twinevia.com"
+        os.environ["SAAS_BASE_URL"] = "https://www.twinevia.com"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        app.testing = True
+        client = app.test_client()
+
+        response = client.get(
+            "/login?next=%2Fplatform",
+            headers={"Host": "twinevia.com"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 308)
+        self.assertEqual(
+            response.headers["Location"],
+            "https://www.twinevia.com/login?next=%2Fplatform",
+        )
+
+        canonical_response = client.get(
+            "/login",
+            headers={"Host": "www.twinevia.com"},
+            follow_redirects=False,
+        )
+        self.assertNotEqual(canonical_response.status_code, 308)
+
     def test_env_example_is_marked_as_local_bootstrap_only(self) -> None:
         env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")
         with open(env_example_path, "r", encoding="utf-8") as env_file:

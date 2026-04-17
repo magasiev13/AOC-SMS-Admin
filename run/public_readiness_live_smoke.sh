@@ -17,7 +17,7 @@ Required environment:
   TWINEVIA_PLATFORM_PASSWORD
 
 Optional environment:
-  TWINEVIA_LIVE_BASE_URL   Default: https://twinevia.com
+  TWINEVIA_LIVE_BASE_URL   Default: https://www.twinevia.com
 EOF
 }
 
@@ -79,7 +79,7 @@ if [[ ! -d "${HOME}/Library/Caches/ms-playwright" ]] && [[ ! -d "${HOME}/.cache/
   (cd "${REPO_ROOT}" && npx playwright install chromium)
 fi
 
-BASE_URL="${TWINEVIA_LIVE_BASE_URL:-https://twinevia.com}"
+BASE_URL="${TWINEVIA_LIVE_BASE_URL:-https://www.twinevia.com}"
 LOG_FILE="${RUN_DIR}/live-smoke.log"
 
 printf '%s\n' "${BASE_URL}" > "${RUN_DIR}/base_url.txt"

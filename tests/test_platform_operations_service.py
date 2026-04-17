@@ -499,7 +499,7 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("TWINEVIA_SAAS_PYTHON", cutover_script)
         self.assertIn("TWINEVIA_PUBLIC_HOST", cutover_script)
         self.assertIn("TWINEVIA_SSH_TARGET", cutover_script)
-        self.assertIn("twinevia.com", cutover_script)
+        self.assertIn("www.twinevia.com", cutover_script)
         self.assertIn("systemctl show twinevia-saas.service -p WorkingDirectory --value", cutover_script)
 
     def test_production_cutover_script_supports_canonical_host_migration_and_records_layout(self) -> None:
@@ -539,10 +539,19 @@ class TestRestartDeployArtifacts(unittest.TestCase):
     def test_live_playwright_config_skips_local_web_server_boot(self) -> None:
         live_config = self._read_repo_file("playwright.live.config.js")
 
-        self.assertIn("https://twinevia.com", live_config)
+        self.assertIn("https://www.twinevia.com", live_config)
         self.assertIn("TWINEVIA_LIVE_BASE_URL", live_config)
         self.assertIn("live-production-smoke.spec.js", live_config)
         self.assertNotIn("webServer", live_config)
+
+    def test_saas_deploy_scripts_prefer_saas_base_url_host_for_health_checks(self) -> None:
+        install_script = self._read_repo_file("deploy", "install_saas.sh")
+        deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
+
+        for script in (install_script, deploy_script):
+            self.assertIn('current_env_value "SAAS_BASE_URL"', script)
+            self.assertIn('canonical_host="$(printf', script)
+            self.assertIn('printf \'%s\\n\' "${canonical_host}"', script)
 
     def test_production_snapshot_script_requires_explicit_ssh_target(self) -> None:
         snapshot_path = self.repo_root / "run" / "public_readiness_production_snapshot.sh"

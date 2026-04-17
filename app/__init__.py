@@ -1,10 +1,10 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo
 
-from flask import Flask, abort, request
+from flask import Flask, abort, redirect, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
 from flask_wtf import CSRFProtect
@@ -247,6 +247,20 @@ def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:
             )
 
 
+def _canonical_public_host(app: Flask, trusted_hosts: set[str]) -> tuple[str, str] | None:
+    configured_base_url = str(app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    if not configured_base_url:
+        return None
+
+    parsed = urlsplit(configured_base_url)
+    canonical_host = (parsed.hostname or "").strip().lower()
+    if not parsed.scheme or not parsed.netloc or not canonical_host:
+        return None
+    if canonical_host not in trusted_hosts:
+        return None
+    return canonical_host, configured_base_url
+
+
 def _build_app() -> Flask:
     app = Flask(__name__)
 
@@ -302,12 +316,16 @@ def _build_app() -> Flask:
             for host in app.config.get("TRUSTED_HOSTS", [])
             if host.strip()
         }
+        canonical_public_host = _canonical_public_host(app, trusted_hosts)
 
         @app.before_request
         def enforce_trusted_hosts():
             host = (request.host or "").split(":", 1)[0].strip().lower()
             if host not in trusted_hosts:
                 abort(400)
+            if canonical_public_host and host != canonical_public_host[0]:
+                request_path = request.full_path if request.query_string else request.path
+                return redirect(f"{canonical_public_host[1]}{request_path}", code=308)
             return None
 
     if app.config.get("TRUST_PROXY"):
