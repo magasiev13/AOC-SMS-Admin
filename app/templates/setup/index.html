@@ -141,6 +141,9 @@
                     Platform support still needs to validate the external Twilio account before live messaging unlocks in the workspace.
                     {% endif %}
                 </p>
+                <div class="setup-actions">
+                    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">View billing</a>
+                </div>
                 <div class="platform-note">
                     <div class="platform-note__title">Workspace owners are read-only here</div>
                     <div class="platform-note__copy">Only platform admins can edit the external Twilio connection. Once validation finishes, this setup runway unlocks the workspace automatically.</div>
@@ -179,9 +182,6 @@
                         <strong>{{ a2p_status.next_step }}</strong>
                     </div>
                 </div>
-                <div class="setup-actions">
-                    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">View billing</a>
-                </div>
             </section>
             {% elif current_step == 'launch' %}
             <section class="app-card setup-panel">
@@ -198,6 +198,13 @@
                     External Twilio activation is still in progress. Return to the provider step for the latest status.
                     {% endif %}
                 </p>
+                <div class="setup-actions">
+                    {% if setup_status.messaging.can_send %}
+                    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Open workspace</a>
+                    {% else %}
+                    <a href="{{ url_for('main.setup', step='provider') }}" class="btn btn-outline-primary">Back to external activation</a>
+                    {% endif %}
+                </div>
                 <div class="setup-summary-grid">
                     <div class="setup-summary-card">
                         <span>Billing</span>
@@ -215,13 +222,6 @@
                         <span>Sender</span>
                         <strong>{{ setup_status.messaging.from_number or 'pending validation' }}</strong>
                     </div>
-                </div>
-                <div class="setup-actions">
-                    {% if setup_status.messaging.can_send %}
-                    <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Open workspace</a>
-                    {% else %}
-                    <a href="{{ url_for('main.setup', step='provider') }}" class="btn btn-outline-primary">Back to external activation</a>
-                    {% endif %}
                 </div>
             </section>
             {% else %}

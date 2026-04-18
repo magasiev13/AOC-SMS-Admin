@@ -667,6 +667,102 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"customer-managed Twilio connection", response.data)
         self.assertIn(b"External messaging:", response.data)
+        self.assertNotIn(b"Legal business name", response.data)
+        self.assertNotIn(b"Submit for Twilio review", response.data)
+
+    def test_setup_status_payload_for_platform_managed_owner_exposes_billing_step_contract(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "billing")
+        self.assertFalse(payload["setup_complete"])
+        self.assertEqual(payload["subscription"]["status"], "incomplete")
+        self.assertFalse(payload["subscription"]["can_send"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "platform_managed")
+        self.assertIn("heading", payload["launch_readiness"])
+        self.assertIn("summary", payload["onboarding"])
+
+    def test_setup_status_payload_for_customer_managed_workspace_exposes_provider_state(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-status",
+            username="customer-managed-status",
+            email="customer-managed-status@acme.test",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "provider")
+        self.assertFalse(payload["setup_complete"])
+        self.assertTrue(payload["onboarding"]["external_managed"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "customer_managed")
+        self.assertEqual(payload["messaging"]["provider_status"], "pending")
+
+    def test_setup_status_payload_is_available_to_platform_managed_staff_pending_setup(self) -> None:
+        staff_user = self.AppUser(
+            username="pending-staff",
+            email="pending-staff@acme.test",
+            full_name="Pending Staff",
+            phone="+15550000055",
+            role="social_manager",
+            must_change_password=False,
+        )
+        staff_user.set_password("PendingStaff-pass1!")
+        self.db.session.add(staff_user)
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=self.organization.id,
+                user_id=staff_user.id,
+                role="staff",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_with_credentials(staff_user.email, "PendingStaff-pass1!")
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "billing")
+        self.assertFalse(payload["setup_complete"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "platform_managed")
+
+    def test_platform_managed_invalid_setup_step_falls_back_to_current_step(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup?step=provider")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-current-step="billing"', response.data)
+        self.assertIn(b"Activate billing", response.data)
+
+    def test_customer_managed_invalid_setup_step_falls_back_to_provider(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-invalid-step",
+            username="customer-managed-invalid-step",
+            email="customer-managed-invalid-step@acme.test",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup?step=compliance")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-current-step="provider"', response.data)
+        self.assertIn(b"External Twilio activation", response.data)
+
+    def test_setup_pending_redirects_owner_back_to_setup(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup/pending", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup", response.headers.get("Location", ""))
 
     def test_suspended_organization_owner_cannot_log_in(self) -> None:
         self.organization.status = "suspended"
@@ -1034,6 +1130,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
+        self.assertIn(b'data-current-step="billing"', response.data)
         self.assertEqual(self.organization.subscription.status, "trialing")
         self.assertIsNotNone(self.organization.subscription.current_period_end)
 
@@ -2807,6 +2904,53 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(recipients[0].phone, "+15550000003")
         self.assertEqual(recipients[0].label, "New Owner")
 
+    def test_invitation_accept_redirects_staff_to_pending_setup_when_workspace_is_not_live(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="new-staff@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/invites/{invitation.token}",
+            data={
+                "username": "new-staff",
+                "full_name": "New Staff",
+                "phone": "+15550000004",
+                "password": "Stronger-pass1!",
+                "confirm_password": "Stronger-pass1!",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup/pending", response.headers.get("Location", ""))
+        user = self.AppUser.query.filter_by(email="new-staff@acme.test").first()
+        self.assertIsNotNone(user)
+        membership = self.OrganizationMembership.query.filter_by(user_id=user.id).first()
+        self.assertIsNotNone(membership)
+        self.assertEqual(membership.organization_id, self.organization.id)
+        self.assertEqual(membership.role, "staff")
+
+    def test_staff_invitation_page_describes_automatic_workspace_routing(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="pending-staff-copy@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        response = self.client.get(f"/invites/{invitation.token}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"route you to the right workspace page automatically", response.data)
+        self.assertNotIn(b"land in the workspace dashboard", response.data)
+
     def test_invitation_accept_rejects_platform_admin_email(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -2871,7 +3015,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertIn("/setup/pending", response.headers.get("Location", ""))
         user = self.AppUser.query.filter_by(email="phone-reuse@acme.test").first()
         self.assertIsNotNone(user)
         self.assertEqual(user.phone, "+15550000003")

@@ -5316,7 +5316,7 @@ def invitation_accept(token):
         if invitation.role == 'owner':
             return redirect(url_for('main.setup'))
         flash('Invitation accepted.', 'success')
-        return redirect(url_for('main.dashboard'))
+        return redirect(url_for(home_endpoint_for_user(user)))
 
     return render_template('auth/accept_invitation.html', invitation=invitation)
 
