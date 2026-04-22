@@ -48,6 +48,7 @@ class TestTwilioA2PService(unittest.TestCase):
             ingest_a2p_event_stream_payload,
             process_a2p_onboarding,
             ProviderProvisioningError,
+            reconcile_pending_a2p_onboardings,
             reconcile_a2p_twilio_state,
             submit_a2p_onboarding,
             sync_a2p_onboarding_status,
@@ -67,6 +68,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.ensure_a2p_onboarding = ensure_a2p_onboarding
         self.ingest_a2p_event_stream_payload = ingest_a2p_event_stream_payload
         self.process_a2p_onboarding = process_a2p_onboarding
+        self.reconcile_pending_a2p_onboardings = reconcile_pending_a2p_onboardings
         self.submit_a2p_onboarding = submit_a2p_onboarding
         self.reconcile_a2p_twilio_state = reconcile_a2p_twilio_state
         self.sync_a2p_onboarding_status = sync_a2p_onboarding_status
@@ -231,6 +233,118 @@ class TestTwilioA2PService(unittest.TestCase):
         refresh_a2p_onboarding(self.organization.id, actor_user_id=55)
 
         queue.enqueue.assert_called_once_with("app.tasks.sync_a2p_onboarding_status_job", self.organization.id, 55)
+
+    @patch("app.services.twilio_a2p_service.process_a2p_onboarding")
+    @patch("app.services.twilio_a2p_service.sync_a2p_onboarding_status")
+    def test_reconcile_pending_a2p_onboardings_routes_by_status(self, mock_sync, mock_process) -> None:
+        queued_org = self.Organization(name="Queued", slug="queued", status="active")
+        queued_profile = self.OrganizationMessagingProfile(
+            organization=queued_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACqueued",
+            twilio_auth_token_encrypted=self.encrypt_provider_secret("queued-token"),
+            messaging_service_sid="MGqueued",
+            status="pending",
+            provider_status="pending",
+        )
+        queued_onboarding = self.OrganizationA2POnboarding(
+            organization=queued_org,
+            onboarding_status="queued",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+        )
+        processing_org = self.Organization(name="Processing", slug="processing", status="active")
+        processing_profile = self.OrganizationMessagingProfile(
+            organization=processing_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACprocessing",
+            twilio_auth_token_encrypted=self.encrypt_provider_secret("processing-token"),
+            messaging_service_sid="MGprocessing",
+            status="pending",
+            provider_status="pending",
+        )
+        processing_onboarding = self.OrganizationA2POnboarding(
+            organization=processing_org,
+            onboarding_status="processing",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+        )
+        pending_org = self.Organization(name="Pending", slug="pending", status="active")
+        pending_profile = self.OrganizationMessagingProfile(
+            organization=pending_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACpending",
+            twilio_auth_token_encrypted=self.encrypt_provider_secret("pending-token"),
+            messaging_service_sid="MGpending",
+            status="pending",
+            provider_status="pending",
+        )
+        pending_onboarding = self.OrganizationA2POnboarding(
+            organization=pending_org,
+            onboarding_status="pending",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+        )
+        needs_action_org = self.Organization(name="Needs Action", slug="needs-action", status="active")
+        needs_action_profile = self.OrganizationMessagingProfile(
+            organization=needs_action_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACneedsaction",
+            twilio_auth_token_encrypted=self.encrypt_provider_secret("needs-action-token"),
+            messaging_service_sid="MGneedsaction",
+            status="pending",
+            provider_status="pending",
+        )
+        needs_action_onboarding = self.OrganizationA2POnboarding(
+            organization=needs_action_org,
+            onboarding_status="needs_action",
+            campaign_use_case="ACCOUNT_NOTIFICATION",
+        )
+        self.db.session.add_all(
+            [
+                queued_org,
+                queued_profile,
+                queued_onboarding,
+                processing_org,
+                processing_profile,
+                processing_onboarding,
+                pending_org,
+                pending_profile,
+                pending_onboarding,
+                needs_action_org,
+                needs_action_profile,
+                needs_action_onboarding,
+            ]
+        )
+        self.db.session.commit()
+
+        summary = self.reconcile_pending_a2p_onboardings()
+
+        self.assertEqual(summary, {"records_seen": 4, "records_processed": 4, "records_failed": 0})
+        mock_process.assert_any_call(queued_org.id)
+        mock_process.assert_any_call(processing_org.id)
+        self.assertEqual(mock_process.call_count, 2)
+        mock_sync.assert_any_call(pending_org.id)
+        mock_sync.assert_any_call(needs_action_org.id)
+        self.assertEqual(mock_sync.call_count, 2)
+
+    @patch("app.services.twilio_a2p_service.process_a2p_onboarding")
+    @patch("app.services.twilio_a2p_service.sync_a2p_onboarding_status")
+    def test_reconcile_pending_a2p_onboardings_allows_status_sync_when_automation_disabled(
+        self,
+        mock_sync,
+        mock_process,
+    ) -> None:
+        onboarding = self.ensure_a2p_onboarding(self.organization)
+        onboarding.onboarding_status = "pending"
+        onboarding.brand_status = "approved"
+        onboarding.campaign_status = "in_progress"
+        self.db.session.commit()
+        self.app.config["TWILIO_A2P_ONBOARDING_ENABLED"] = False
+        mock_sync.return_value = onboarding
+
+        summary = self.reconcile_pending_a2p_onboardings()
+
+        self.assertEqual(summary, {"records_seen": 1, "records_processed": 1, "records_failed": 0})
+        mock_sync.assert_called_once_with(self.organization.id)
+        mock_process.assert_not_called()
 
     def test_submit_a2p_onboarding_rejects_invalid_number_strategy_payload(self) -> None:
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Choose a valid Twilio A2P number strategy."):

@@ -114,6 +114,8 @@ The self-serve A2P flow defaults eligible EIN-backed businesses to `low_volume_s
 
 When an org drifts away from the live Twilio A2P resources, the app now stores a recovery snapshot instead of silently rebuilding state. Background refresh is status-only: it reads Twilio state through the org's stored subaccount auth token, clears stale transient errors when the stored subaccount packet is still valid, and can detect stale provider identifiers, a missing campaign, or transient Twilio connectivity failures. It does not auto-create a new campaign or silently swap A2P resources. Platform admins must explicitly reconcile live Twilio resources and explicitly create a campaign from the onboarding page when a new Twilio vetting cycle would be triggered.
 
+`TWILIO_A2P_ONBOARDING_ENABLED` gates automated Twilio onboarding/provisioning work. Status refresh for already-submitted A2P records can still run without it. `TWILIO_A2P_EVENT_STREAMS_ENABLED=1` is required if production should accept Twilio Event Streams callbacks at `/webhooks/twilio/a2p-events`.
+
 ## Database
 
 | Variable | Default | Notes |

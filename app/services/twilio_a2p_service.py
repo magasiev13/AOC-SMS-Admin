@@ -4078,7 +4078,11 @@ def reconcile_pending_a2p_onboardings() -> dict[str, int]:
     for onboarding in pending_records:
         summary["records_seen"] += 1
         try:
-            process_a2p_onboarding(onboarding.organization_id)
+            status = (onboarding.onboarding_status or "").strip().lower()
+            if status in {"queued", "processing"}:
+                process_a2p_onboarding(onboarding.organization_id)
+            else:
+                sync_a2p_onboarding_status(onboarding.organization_id)
             summary["records_processed"] += 1
         except ProviderProvisioningError:
             current_app.logger.exception(
