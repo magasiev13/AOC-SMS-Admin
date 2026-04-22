@@ -6,6 +6,11 @@ from app import create_app, db
 from app.models import MessageLog, Organization
 from app.services.billing_service import organization_transmit_block_reason
 from app.tenant import organization_context
+from app.services.outbound_idempotency_service import (
+    build_blast_send_fingerprint,
+    recipient_fingerprint_phones,
+)
+from app.services.recipient_service import dedupe_recipients_by_phone
 from app.services.suppression_service import process_failure_details
 from app.services.suppression_backfill import backfill_suppressions
 from app.services.twilio_service import (
@@ -88,13 +93,26 @@ def send_bulk_job(
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         with organization_context(organization_id):
+            deduped_recipient_data, duplicate_recipients, _ = dedupe_recipients_by_phone(recipient_data)
+            duplicate_count = len(duplicate_recipients)
+            recipient_data = deduped_recipient_data
+            send_fingerprint = build_blast_send_fingerprint(
+                organization_id=organization_id,
+                target=log.target if (log := MessageLog.query.filter_by(id=log_id).first()) else "community",
+                event_id=log.event_id if log else None,
+                test_mode=bool(log.test_mode) if log else False,
+                final_message=final_message,
+                recipient_data=recipient_data,
+            )
             current_app.logger.info(
-                "Starting bulk send job log_id=%s organization_id=%s recipients=%s",
+                "Starting bulk send job log_id=%s organization_id=%s unique_recipients=%s skipped_duplicates=%s fingerprint=%s phones=%s",
                 log_id,
                 organization_id,
                 len(recipient_data),
+                duplicate_count,
+                send_fingerprint,
+                recipient_fingerprint_phones(recipient_data),
             )
-            log = MessageLog.query.filter_by(id=log_id).first()
             if not log:
                 raise ValueError(f"MessageLog {log_id} not found")
 
@@ -148,7 +166,13 @@ def send_bulk_job(
 
             try:
                 twilio = get_twilio_service(organization_id)
-                result = twilio.send_bulk(remaining_recipients, final_message, delay=delay, raise_on_transient=True)
+                result = twilio.send_bulk(
+                    remaining_recipients,
+                    final_message,
+                    delay=delay,
+                    raise_on_transient=True,
+                    send_kind='blast',
+                )
                 combined_details = existing_details + result['details']
                 log.total_recipients = len(recipient_data)
                 log.success_count = existing_success + result['success_count']
@@ -163,12 +187,15 @@ def send_bulk_job(
                     source='blast',
                 )
                 current_app.logger.info(
-                    "Bulk send job finished log_id=%s organization_id=%s status=%s success_count=%s failure_count=%s",
+                    "Bulk send job finished log_id=%s organization_id=%s status=%s success_count=%s failure_count=%s unique_recipients=%s skipped_duplicates=%s fingerprint=%s",
                     log.id,
                     organization_id,
                     log.status,
                     log.success_count,
                     log.failure_count,
+                    len(recipient_data),
+                    duplicate_count,
+                    send_fingerprint,
                 )
                 try:
                     process_failure_details(combined_details, log.id)
@@ -210,11 +237,15 @@ def send_bulk_job(
                         process_exc,
                     )
                 current_app.logger.warning(
-                    "Bulk send job transient failure log_id=%s organization_id=%s success_count=%s failure_count=%s",
+                    "Bulk send job transient failure log_id=%s organization_id=%s success_count=%s failure_count=%s unique_recipients=%s skipped_duplicates=%s fingerprint=%s retries_left=%s",
                     log.id,
                     organization_id,
                     log.success_count,
                     log.failure_count,
+                    len(recipient_data),
+                    duplicate_count,
+                    send_fingerprint,
+                    getattr(get_current_job(), 'retries_left', None),
                 )
                 raise
             except Exception as exc:
@@ -235,10 +266,13 @@ def send_bulk_job(
                         process_exc,
                     )
                 current_app.logger.error(
-                    "Bulk send job failed log_id=%s organization_id=%s error=%s",
+                    "Bulk send job failed log_id=%s organization_id=%s error=%s unique_recipients=%s skipped_duplicates=%s fingerprint=%s",
                     log.id,
                     organization_id,
                     exc,
+                    len(recipient_data),
+                    duplicate_count,
+                    send_fingerprint,
                 )
 
 

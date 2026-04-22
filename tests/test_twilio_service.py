@@ -280,6 +280,109 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertTrue(str(result["sid"]).startswith("SM"))
         self.assertEqual(result["num_segments"], "1")
 
+    def test_send_message_blocks_auth_alert_in_testing_without_override(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="complimentary",
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive0002",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0002",
+        )
+
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+
+        result = service.send_message("+15550002222", "Auth alert", send_kind="auth_alert")
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "testing_live_send_blocked")
+        service.client.messages.create.assert_not_called()
+
+    def test_send_message_blocks_automation_reply_in_testing_without_override(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="complimentary",
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive0002b",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0002b",
+        )
+
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+
+        result = service.send_message("+15550002224", "Auto reply", send_kind="automation_reply")
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "testing_live_send_blocked")
+        service.client.messages.create.assert_not_called()
+
+    def test_send_message_allows_manual_live_test_and_warns_on_magic_number(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="complimentary",
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive0003",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0003",
+        )
+
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+        service.client.messages.create.return_value = SimpleNamespace(
+            sid="SM-manual-live-1",
+            status="sent",
+            account_sid="ACactive0003",
+            num_segments="1",
+            price=None,
+            price_unit="usd",
+        )
+
+        with patch.object(self.app.logger, "warning") as logger_warning:
+            result = service.send_message("+15005550006", "Live operational test", send_kind="manual_live_test")
+
+        self.assertTrue(result["success"])
+        service.client.messages.create.assert_called_once()
+        logger_warning.assert_called_once()
+
+    def test_send_message_allows_auth_alert_when_testing_override_is_enabled(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        self.app.config["TWILIO_ALLOW_LIVE_SENDS_IN_TESTING"] = True
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="complimentary",
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive0004",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0004",
+        )
+
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+        service.client.messages.create.return_value = SimpleNamespace(
+            sid="SM-auth-override",
+            status="sent",
+            account_sid="ACactive0004",
+            num_segments="1",
+            price=None,
+            price_unit="usd",
+        )
+
+        result = service.send_message("+15550002223", "Auth alert", send_kind="auth_alert")
+
+        self.assertTrue(result["success"])
+        service.client.messages.create.assert_called_once()
+
     def test_twilio_imported_service_address_cannot_override_app_input(self) -> None:
         from app.services.twilio_service import save_service_address_from_twilio_import
 
@@ -1016,6 +1119,43 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(record.twilio_subaccount_sid, "ACsub0001")
         self.assertEqual(record.reconciliation_status, "pending")
 
+    @patch("app.services.twilio_service.get_twilio_service")
+    def test_operational_test_send_records_usage_row(self, mock_get_twilio_service) -> None:
+        from app.services.twilio_service import send_operational_test_message
+
+        organization, _ = self._create_org_with_profile(
+            provider_status="active",
+            status="active",
+            from_number="+15550001111",
+        )
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM-op-test-1",
+            "status": "sent",
+            "account_sid": "ACsub-op-1",
+        }
+        mock_get_twilio_service.return_value = mock_service
+
+        result = send_operational_test_message(
+            organization.id,
+            to_number="+15550009998",
+            body="Operational — test",
+            actor_user_id=17,
+        )
+
+        self.assertTrue(result["success"])
+        mock_service.send_message.assert_called_once_with(
+            "+15550009998",
+            "Operational - test",
+            raise_on_transient=True,
+            send_kind="manual_live_test",
+        )
+        record = self.MessagingUsageRecord.query.filter_by(message_sid="SM-op-test-1").one()
+        self.assertEqual(record.organization_id, organization.id)
+        self.assertEqual(record.source, "operational_test")
+        self.assertEqual(record.twilio_subaccount_sid, "ACsub-op-1")
+
     @patch("app.services.twilio_service._build_subaccount_client")
     def test_reconcile_messaging_usage_uses_read_only_client_for_suspended_provider(self, mock_build_subaccount_client) -> None:
         from app.services.provider_secret_service import encrypt_provider_secret
@@ -1096,6 +1236,110 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(record.sell_rate, Decimal("0"))
         self.assertEqual(record.sell_amount, Decimal("0"))
         self.assertEqual(record.margin, Decimal("-0.0400"))
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_reconcile_messaging_usage_suppresses_hard_fail_destinations(self, mock_build_subaccount_client) -> None:
+        from app.models import CommunityMember, MessageLog, SuppressedContact
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import reconcile_messaging_usage
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0005",
+            twilio_auth_token_encrypted=encrypt_provider_secret("subaccount-token-5"),
+            provider_status="active",
+            status="active",
+        )
+        self.db.session.add(CommunityMember(organization_id=organization.id, name="Dead Number", phone="+15550003333"))
+        log = MessageLog(
+            organization_id=organization.id,
+            message_body="Hello",
+            target="community",
+            status="failed",
+            total_recipients=1,
+            success_count=0,
+            failure_count=1,
+            details='[{"phone":"+15550003333","name":"Dead Number","sid":"SMusage-hard-fail"}]',
+        )
+        self.db.session.add(log)
+        self.db.session.add(
+            self.MessagingUsageRecord(
+                organization_id=organization.id,
+                message_sid="SMusage-hard-fail",
+                source="blast",
+                reconciliation_status="pending",
+            )
+        )
+        self.db.session.commit()
+
+        mock_client = mock_build_subaccount_client.return_value
+        mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            status="undelivered",
+            error_code=30003,
+            error_message="Unknown subscriber",
+            num_segments="1",
+            price="-0.0200",
+            price_unit="usd",
+            date_created=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            account_sid="ACsub0005",
+        )
+
+        summary = reconcile_messaging_usage()
+
+        self.assertEqual(summary["suppression_actions"], 1)
+        self.assertIsNotNone(SuppressedContact.query.filter_by(phone="+15550003333").first())
+        self.assertIsNone(CommunityMember.query.filter_by(phone="+15550003333").first())
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_reconcile_messaging_usage_keeps_soft_fail_destinations_sendable(self, mock_build_subaccount_client) -> None:
+        from app.models import CommunityMember, MessageLog, SuppressedContact
+        from app.services.provider_secret_service import encrypt_provider_secret
+        from app.services.twilio_service import reconcile_messaging_usage
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0006",
+            twilio_auth_token_encrypted=encrypt_provider_secret("subaccount-token-6"),
+            provider_status="active",
+            status="active",
+        )
+        self.db.session.add(CommunityMember(organization_id=organization.id, name="Retry Later", phone="+15550004444"))
+        log = MessageLog(
+            organization_id=organization.id,
+            message_body="Hello",
+            target="community",
+            status="failed",
+            total_recipients=1,
+            success_count=0,
+            failure_count=1,
+            details='[{"phone":"+15550004444","name":"Retry Later","sid":"SMusage-soft-fail"}]',
+        )
+        self.db.session.add(log)
+        self.db.session.add(
+            self.MessagingUsageRecord(
+                organization_id=organization.id,
+                message_sid="SMusage-soft-fail",
+                source="blast",
+                reconciliation_status="pending",
+            )
+        )
+        self.db.session.commit()
+
+        mock_client = mock_build_subaccount_client.return_value
+        mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            status="undelivered",
+            error_code=30001,
+            error_message="Queue overflow",
+            num_segments="1",
+            price="-0.0200",
+            price_unit="usd",
+            date_created=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc),
+            account_sid="ACsub0006",
+        )
+
+        summary = reconcile_messaging_usage()
+
+        self.assertEqual(summary["suppression_actions"], 0)
+        self.assertIsNone(SuppressedContact.query.filter_by(phone="+15550004444").first())
+        self.assertIsNotNone(CommunityMember.query.filter_by(phone="+15550004444").first())
 
     def test_upsert_closed_usage_billing_periods_summarizes_overage(self) -> None:
         from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods

@@ -29,6 +29,7 @@ from app.tenant import organization_context, saas_mode_enabled
 from app.utils import (
     normalize_keyword,
     normalize_phone,
+    normalize_sms_body,
     phone_digits_sql,
     phone_lookup_variants,
     validate_phone,
@@ -186,7 +187,7 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
     if thread is None:
         return {'success': False, 'error': 'thread_not_found'}
 
-    reply_body = (body or '').strip()
+    reply_body = normalize_sms_body((body or '').strip())
     if not reply_body:
         return {'success': False, 'error': 'empty_message'}
 
@@ -200,7 +201,7 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
 
     try:
         twilio = get_twilio_service(thread.organization_id)
-        result = twilio.send_message(thread.phone, reply_body)
+        result = twilio.send_message(thread.phone, reply_body, send_kind='manual_reply')
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
 
@@ -426,7 +427,7 @@ def _send_automated_reply(
     source: str,
     source_id: int | None = None,
 ) -> dict:
-    body = (body or '').strip()
+    body = normalize_sms_body((body or '').strip())
     if not body:
         return {'success': False, 'status': 'skipped', 'sid': None, 'error': 'empty_body'}
 
@@ -446,7 +447,7 @@ def _send_automated_reply(
 
     try:
         twilio = get_twilio_service(thread.organization_id)
-        result = twilio.send_message(phone, body)
+        result = twilio.send_message(phone, body, send_kind='automation_reply')
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
 

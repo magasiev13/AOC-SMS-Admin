@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+from collections import Counter
 from datetime import timezone
 from typing import Optional
 from urllib.parse import urljoin, urlparse
@@ -15,6 +16,25 @@ _TEMPLATE_TOKEN_RE = re.compile(
 )
 _TEMPLATE_TOKEN_SCAN_RE = re.compile(r"\{([^{}]+)\}")
 _CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_SMS_NORMALIZATION_REPLACEMENTS = {
+    "’": "'",
+    "‘": "'",
+    "“": '"',
+    "”": '"',
+    "–": "-",
+    "—": "-",
+    "…": "...",
+    "\u00a0": " ",
+    "\u2007": " ",
+    "\u2009": " ",
+    "\u202f": " ",
+    "•": "-",
+}
+_GSM_7_BASIC_CHARSET = set(
+    "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ !\"#¤%&'()*+,-./0123456789:;<=>?"
+    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+)
+_GSM_7_EXTENDED_CHARSET = set("^{}\\[~]|€")
 
 
 def escape_like(value: str) -> str:
@@ -46,6 +66,102 @@ def as_utc_datetime(value):
 def normalize_keyword(value: str) -> str:
     """Normalize automation/survey keywords for storage and matching."""
     return ' '.join((value or '').upper().strip().split())
+
+
+def normalize_sms_body(value: str | None) -> str:
+    """Normalize deterministic high-cost SMS punctuation before persistence/send."""
+    return _normalize_sms_body_with_details(value or "")["normalized_body"]
+
+
+def analyze_sms_body(value: str | None, *, apply_normalization: bool = True) -> dict[str, object]:
+    original_body = value or ""
+    normalized_payload = (
+        _normalize_sms_body_with_details(original_body)
+        if apply_normalization
+        else {
+            "normalized_body": original_body,
+            "normalization_applied": False,
+            "normalized_character_delta": 0,
+            "normalized_character_savings": 0,
+            "replacement_count": 0,
+            "replacements": [],
+        }
+    )
+    normalized_body = normalized_payload["normalized_body"]
+    original_metrics = _sms_body_metrics(original_body)
+    normalized_metrics = _sms_body_metrics(normalized_body)
+    original_segments = int(original_metrics["segment_count"])
+    normalized_segments = int(normalized_metrics["segment_count"])
+
+    return {
+        "original_body": original_body,
+        "normalized_body": normalized_body,
+        "normalization_applied": bool(normalized_payload["normalization_applied"]),
+        "normalized_character_delta": int(normalized_payload["normalized_character_delta"]),
+        "normalized_character_savings": int(normalized_payload["normalized_character_savings"]),
+        "replacement_count": int(normalized_payload["replacement_count"]),
+        "replacements": list(normalized_payload["replacements"]),
+        "encoding": normalized_metrics["encoding"],
+        "segment_count": normalized_segments,
+        "characters_used": int(normalized_metrics["characters_used"]),
+        "characters_to_next_segment": int(normalized_metrics["characters_to_next_segment"]),
+        "segment_limit": int(normalized_metrics["segment_limit"]),
+        "original_encoding": original_metrics["encoding"],
+        "original_segment_count": original_segments,
+        "original_characters_used": int(original_metrics["characters_used"]),
+        "original_characters_to_next_segment": int(original_metrics["characters_to_next_segment"]),
+        "original_segment_limit": int(original_metrics["segment_limit"]),
+        "normalized_segment_delta": normalized_segments - original_segments,
+        "segments_saved": max(0, original_segments - normalized_segments),
+    }
+
+
+def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | None) -> dict[str, object]:
+    prepared_body = body or ""
+    prepared_recipients = recipients or []
+
+    if not prepared_recipients:
+        return {
+            "unique_recipients": 0,
+            "min_segment_count": 0,
+            "max_segment_count": 0,
+            "total_segments": 0,
+            "encodings": [],
+            "per_recipient": [],
+        }
+
+    per_recipient: list[dict[str, object]] = []
+    total_segments = 0
+    min_segments: int | None = None
+    max_segments = 0
+    encodings: set[str] = set()
+
+    for recipient in prepared_recipients:
+        personalized_body = render_message_template(prepared_body, recipient)
+        analysis = analyze_sms_body(personalized_body, apply_normalization=False)
+        segment_count = int(analysis["segment_count"])
+        total_segments += segment_count
+        min_segments = segment_count if min_segments is None else min(min_segments, segment_count)
+        max_segments = max(max_segments, segment_count)
+        encodings.add(str(analysis["encoding"]))
+        per_recipient.append(
+            {
+                "phone": recipient.get("phone"),
+                "name": recipient.get("name"),
+                "segment_count": segment_count,
+                "encoding": analysis["encoding"],
+                "characters_used": analysis["characters_used"],
+            }
+        )
+
+    return {
+        "unique_recipients": len(prepared_recipients),
+        "min_segment_count": min_segments or 0,
+        "max_segment_count": max_segments,
+        "total_segments": total_segments,
+        "encodings": sorted(encodings),
+        "per_recipient": per_recipient,
+    }
 
 
 def normalize_phone(phone: object) -> str:
@@ -268,6 +384,80 @@ def parse_recipients_csv(file_content: str) -> list:
             recipients.append({'name': name, 'phone': phone})
     
     return recipients
+
+
+def _normalize_sms_body_with_details(value: str) -> dict[str, object]:
+    normalized_parts: list[str] = []
+    replacements: Counter[tuple[str, str]] = Counter()
+
+    for char in value:
+        replacement = _SMS_NORMALIZATION_REPLACEMENTS.get(char)
+        if replacement is None:
+            normalized_parts.append(char)
+            continue
+        normalized_parts.append(replacement)
+        replacements[(char, replacement)] += 1
+
+    normalized_body = ''.join(normalized_parts)
+    replacement_rows = [
+        {"from": source, "to": target, "count": count}
+        for (source, target), count in sorted(replacements.items(), key=lambda item: (item[0][0], item[0][1]))
+    ]
+    return {
+        "normalized_body": normalized_body,
+        "normalization_applied": normalized_body != value,
+        "normalized_character_delta": len(normalized_body) - len(value),
+        "normalized_character_savings": max(0, len(value) - len(normalized_body)),
+        "replacement_count": sum(replacements.values()),
+        "replacements": replacement_rows,
+    }
+
+
+def _sms_body_metrics(value: str) -> dict[str, object]:
+    body = value or ""
+    if not body:
+        return {
+            "encoding": "gsm-7",
+            "segment_count": 0,
+            "characters_used": 0,
+            "characters_to_next_segment": 160,
+            "segment_limit": 160,
+        }
+
+    encoding = "gsm-7"
+    character_units = 0
+    for char in body:
+        if char in _GSM_7_BASIC_CHARSET:
+            character_units += 1
+            continue
+        if char in _GSM_7_EXTENDED_CHARSET:
+            character_units += 2
+            continue
+        encoding = "ucs-2"
+        break
+
+    if encoding == "ucs-2":
+        character_units = len(body)
+        single_segment_limit = 70
+        multi_segment_limit = 67
+    else:
+        single_segment_limit = 160
+        multi_segment_limit = 153
+
+    if character_units <= single_segment_limit:
+        segment_count = 1
+        segment_limit = single_segment_limit
+    else:
+        segment_count = ((character_units - 1) // multi_segment_limit) + 1
+        segment_limit = segment_count * multi_segment_limit
+
+    return {
+        "encoding": encoding,
+        "segment_count": segment_count,
+        "characters_used": character_units,
+        "characters_to_next_segment": max(0, segment_limit - character_units),
+        "segment_limit": segment_limit,
+    }
 
 
 def parse_phones_csv(file_content: str) -> list:

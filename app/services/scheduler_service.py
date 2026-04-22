@@ -7,6 +7,10 @@ from sqlalchemy import func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from twilio.base.exceptions import TwilioRestException
+from app.services.outbound_idempotency_service import (
+    build_blast_send_fingerprint,
+    recipient_fingerprint_phones,
+)
 from app.services.twilio_service import (
     TwilioTransientError,
     get_twilio_service,
@@ -207,6 +211,9 @@ def _handle_transient_failure(
     max_retries: int,
     base_backoff_seconds: int,
     max_backoff_seconds: int,
+    send_fingerprint: str | None,
+    unique_recipient_count: int,
+    duplicate_count: int,
     db,
 ) -> bool:
     """
@@ -232,11 +239,15 @@ def _handle_transient_failure(
         )
         db.session.commit()
         logger.warning(
-            "[Scheduler] Message id=%d transient failure on attempt %d; retrying in %ds (remaining retries=%d): %s",
+            "[Scheduler] Message id=%d organization_id=%s transient failure on attempt %d; retrying in %ds (remaining retries=%d) unique_recipients=%d skipped_duplicates=%d fingerprint=%s: %s",
             scheduled.id,
+            scheduled.organization_id,
             attempt_count,
             backoff_seconds,
             retries_remaining - 1,
+            unique_recipient_count,
+            duplicate_count,
+            send_fingerprint,
             error,
         )
         return True
@@ -250,9 +261,13 @@ def _handle_transient_failure(
     scheduled.next_retry_at = None
     db.session.commit()
     logger.error(
-        "[Scheduler] Message id=%d transient failure exhausted retries after %d attempts: %s",
+        "[Scheduler] Message id=%d organization_id=%s transient failure exhausted retries after %d attempts unique_recipients=%d skipped_duplicates=%d fingerprint=%s: %s",
         scheduled.id,
+        scheduled.organization_id,
         attempt_count,
+        unique_recipient_count,
+        duplicate_count,
+        send_fingerprint,
         error,
     )
     return False
@@ -282,10 +297,11 @@ def send_scheduled_messages(app):
         )
         from app.services.billing_service import organization_transmit_block_reason
         from app.services.recipient_service import (
+            dedupe_recipients_by_phone,
             filter_suppressed_recipients,
             filter_unsubscribed_recipients,
+            load_recipient_snapshot,
         )
-        from app.services.test_recipient_service import load_test_recipient_snapshot
         from app.services.suppression_service import process_failure_details
         from app.utils import normalize_phone
         now = utc_now().replace(tzinfo=None)
@@ -303,6 +319,22 @@ def send_scheduled_messages(app):
             int(current_app.config.get('SCHEDULED_SEND_RETRY_MAX_BACKOFF_SECONDS', 900)),
         )
         logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
+
+        def _load_scheduled_snapshot(scheduled_message) -> list[dict[str, str]]:
+            if scheduled_message.test_mode:
+                return load_recipient_snapshot(
+                    scheduled_message.test_recipient_snapshot_json,
+                    missing_message=(
+                        "This scheduled test message predates saved test-recipient snapshots. Recreate it to continue."
+                    ),
+                    invalid_message=(
+                        "This scheduled test message has an invalid recipient snapshot. Recreate it to continue."
+                    ),
+                    unusable_message=(
+                        "This scheduled test message does not have a usable recipient snapshot. Recreate it to continue."
+                    ),
+                )
+            return load_recipient_snapshot(scheduled_message.test_recipient_snapshot_json)
         
         # Step 1: Handle stuck 'processing' messages (timed out after configured threshold)
         processing_timeout = now - timedelta(minutes=processing_timeout_minutes)
@@ -445,11 +477,9 @@ def send_scheduled_messages(app):
                             )
                             continue
 
-                    if scheduled.test_mode:
+                    if scheduled.test_mode or scheduled.test_recipient_snapshot_json:
                         try:
-                            recipient_data = load_test_recipient_snapshot(
-                                scheduled.test_recipient_snapshot_json
-                            )
+                            recipient_data = _load_scheduled_snapshot(scheduled)
                         except ValueError as exc:
                             scheduled.status = 'failed'
                             scheduled.error_message = str(exc)
@@ -470,14 +500,29 @@ def send_scheduled_messages(app):
                         registrations = EventRegistration.query.filter_by(event_id=scheduled.event_id).all()
                         recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
 
+                    duplicate_skipped = 0
+                    unsubscribed_skipped = 0
+                    suppressed_skipped = 0
                     if not scheduled.test_mode:
                         recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
+                        unsubscribed_skipped = len(skipped)
                         if skipped:
                             logger.info("[Scheduler] Message id=%d: skipped %d unsubscribed recipient(s)", scheduled.id, len(skipped))
 
-                        recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
-                        if suppressed_skipped:
-                            logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_skipped))
+                        recipient_data, suppressed_rows, _ = filter_suppressed_recipients(recipient_data)
+                        suppressed_skipped = len(suppressed_rows)
+                        if suppressed_rows:
+                            logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_rows))
+
+                    recipient_data, duplicate_rows, _ = dedupe_recipients_by_phone(recipient_data)
+                    duplicate_skipped = len(duplicate_rows)
+                    if duplicate_skipped:
+                        logger.warning(
+                            "[Scheduler] Message id=%d organization_id=%s removed %d duplicate recipient(s) before send",
+                            scheduled.id,
+                            scheduled.organization_id,
+                            duplicate_skipped,
+                        )
 
                     recipient_data, already_sent_skipped = _filter_previously_sent_recipients(
                         scheduled=scheduled,
@@ -492,6 +537,15 @@ def send_scheduled_messages(app):
                             scheduled.id,
                             already_sent_skipped,
                         )
+
+                    send_fingerprint = build_blast_send_fingerprint(
+                        organization_id=scheduled.organization_id,
+                        target=scheduled.target,
+                        event_id=scheduled.event_id,
+                        test_mode=bool(scheduled.test_mode),
+                        final_message=scheduled.message_body,
+                        recipient_data=recipient_data,
+                    )
 
                     if not recipient_data:
                         if already_sent_skipped:
@@ -513,14 +567,36 @@ def send_scheduled_messages(app):
                         scheduled.next_retry_at = None
                         db.session.commit()
                         failed_count += 1
-                        logger.warning("[Scheduler] Message id=%d FAILED: no recipients found", scheduled.id)
+                        logger.warning(
+                            "[Scheduler] Message id=%d organization_id=%s FAILED: no recipients found unique_recipients=0 skipped_duplicates=%d skipped_unsubscribed=%d skipped_suppressed=%d skipped_already_sent=%d fingerprint=%s",
+                            scheduled.id,
+                            scheduled.organization_id,
+                            duplicate_skipped,
+                            unsubscribed_skipped,
+                            suppressed_skipped,
+                            already_sent_skipped,
+                            send_fingerprint,
+                        )
                         continue
 
+                    logger.info(
+                        "[Scheduler] Message id=%d organization_id=%s starting send unique_recipients=%d skipped_duplicates=%d skipped_unsubscribed=%d skipped_suppressed=%d skipped_already_sent=%d fingerprint=%s phones=%s",
+                        scheduled.id,
+                        scheduled.organization_id,
+                        len(recipient_data),
+                        duplicate_skipped,
+                        unsubscribed_skipped,
+                        suppressed_skipped,
+                        already_sent_skipped,
+                        send_fingerprint,
+                        recipient_fingerprint_phones(recipient_data),
+                    )
                     twilio = get_twilio_service(scheduled.organization_id)
                     result = twilio.send_bulk(
                         recipient_data,
                         scheduled.message_body,
                         raise_on_transient=True,
+                        send_kind='blast',
                     )
 
                     log = _upsert_message_log_for_scheduled_send(
@@ -546,12 +622,14 @@ def send_scheduled_messages(app):
 
                     sent_count += 1
                     logger.info(
-                        "[Scheduler] Message id=%d organization_id=%s SENT: log_id=%d %d/%d successful (status: processing -> sent)",
+                        "[Scheduler] Message id=%d organization_id=%s SENT: log_id=%d %d/%d successful skipped_duplicates=%d fingerprint=%s (status: processing -> sent)",
                         scheduled.id,
                         scheduled.organization_id,
                         log.id,
                         log.success_count,
                         log.total_recipients,
+                        duplicate_skipped,
+                        send_fingerprint,
                     )
 
                     try:
@@ -567,12 +645,23 @@ def send_scheduled_messages(app):
                 partial_result = getattr(e, 'results', None)
                 if not isinstance(partial_result, dict):
                     partial_result = {}
+                partial_recipient_rows = _coerce_detail_rows(partial_result.get('details'))
+                partial_fingerprint = build_blast_send_fingerprint(
+                    organization_id=scheduled.organization_id,
+                    target=scheduled.target,
+                    event_id=scheduled.event_id,
+                    test_mode=bool(scheduled.test_mode),
+                    final_message=scheduled.message_body,
+                    recipient_data=partial_recipient_rows,
+                )
                 if partial_result:
                     logger.warning(
-                        "[Scheduler] Message id=%d transient failure after partial progress: success_count=%s failure_count=%s",
+                        "[Scheduler] Message id=%d organization_id=%s transient failure after partial progress: success_count=%s failure_count=%s fingerprint=%s",
                         scheduled.id,
+                        scheduled.organization_id,
                         partial_result.get('success_count', 0),
                         partial_result.get('failure_count', 0),
+                        partial_fingerprint,
                     )
                     _upsert_message_log_for_scheduled_send(
                         scheduled=scheduled,
@@ -595,6 +684,9 @@ def send_scheduled_messages(app):
                     max_retries=max_retries,
                     base_backoff_seconds=retry_backoff_seconds,
                     max_backoff_seconds=retry_max_backoff_seconds,
+                    send_fingerprint=partial_fingerprint,
+                    unique_recipient_count=len(partial_recipient_rows),
+                    duplicate_count=0,
                     db=db,
                 )
                 if was_requeued:
@@ -603,6 +695,14 @@ def send_scheduled_messages(app):
                     failed_count += 1
             except Exception as e:
                 if _is_transient_send_error(e):
+                    transient_fingerprint = build_blast_send_fingerprint(
+                        organization_id=scheduled.organization_id,
+                        target=scheduled.target,
+                        event_id=scheduled.event_id,
+                        test_mode=bool(scheduled.test_mode),
+                        final_message=scheduled.message_body,
+                        recipient_data=[],
+                    )
                     was_requeued = _handle_transient_failure(
                         scheduled=scheduled,
                         error=e,
@@ -610,6 +710,9 @@ def send_scheduled_messages(app):
                         max_retries=max_retries,
                         base_backoff_seconds=retry_backoff_seconds,
                         max_backoff_seconds=retry_max_backoff_seconds,
+                        send_fingerprint=transient_fingerprint,
+                        unique_recipient_count=0,
+                        duplicate_count=0,
                         db=db,
                     )
                     if was_requeued:

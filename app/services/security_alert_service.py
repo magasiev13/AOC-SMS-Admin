@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 from flask import current_app
 
-from app.services.twilio_service import get_twilio_service
+from app import db
+from app.services.twilio_service import get_twilio_service, record_usage_candidates
 from app.utils import normalize_phone, validate_phone
 
 
@@ -38,9 +39,36 @@ def send_security_alert(user, event_type: str) -> dict:
     try:
         service = get_twilio_service()
         body = _format_alert_message(event_type, user.username)
-        result = service.send_message(phone, body)
+        result = service.send_message(phone, body, send_kind="auth_alert")
         if result.get("success"):
+            organization_id = getattr(user, "organization_id", None)
+            if organization_id:
+                try:
+                    record_usage_candidates(organization_id, [result], source="auth_alert")
+                except Exception as exc:  # noqa: BLE001
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "Failed recording auth alert usage user_id=%s organization_id=%s sid=%s: %s",
+                        getattr(user, "id", None),
+                        organization_id,
+                        result.get("sid"),
+                        exc,
+                    )
+            else:
+                current_app.logger.info(
+                    "Auth alert sent without organization attribution user_id=%s username=%s sid=%s event_type=%s",
+                    getattr(user, "id", None),
+                    getattr(user, "username", None),
+                    result.get("sid"),
+                    event_type,
+                )
             return {"success": True, "skipped": False, "reason": None}
+        if result.get("skipped"):
+            return {
+                "success": False,
+                "skipped": True,
+                "reason": result.get("reason") or result.get("error") or "twilio_send_skipped",
+            }
         return {
             "success": False,
             "skipped": False,

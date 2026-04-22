@@ -531,6 +531,7 @@
                                     maxlength="1600"
                                     placeholder="Platform operational test from Twinevia."
                                 ></textarea>
+                                <div class="form-text" id="platformTestBodyStats" aria-live="polite"></div>
                             </div>
                         </div>
 
@@ -583,6 +584,7 @@
 
 {% block scripts %}
 {{ super() }}
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     (() => {
         const providerModeInput = document.getElementById('provider_mode');
@@ -606,6 +608,25 @@
 
         providerModeInput.addEventListener('change', syncProviderMode);
         syncProviderMode();
+    })();
+
+    (() => {
+        const textarea = document.getElementById('platform_test_body');
+        const stats = document.getElementById('platformTestBodyStats');
+        if (!textarea || !stats || !window.TwineviaSmsAnalysis) {
+            return;
+        }
+
+        const updateStats = () => {
+            const analysis = window.TwineviaSmsAnalysis.analyzeBody(textarea.value || '');
+            const normalizationNote = analysis.normalizationApplied
+                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before send.`
+                : '';
+            stats.textContent = `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`;
+        };
+
+        textarea.addEventListener('input', updateStats);
+        updateStats();
     })();
 </script>
 {% endblock %}

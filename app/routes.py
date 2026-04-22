@@ -91,7 +91,18 @@ from app.services.platform_operations_service import (
     enqueue_platform_service_restart_request,
     latest_platform_service_restart_request,
 )
+from app.services.outbound_idempotency_service import (
+    BLAST_IDEMPOTENCY_TTL_SECONDS,
+    BLAST_JOB_TIMEOUT_SECONDS,
+    DIRECT_SEND_IDEMPOTENCY_TTL_SECONDS,
+    bind_idempotency_log_id,
+    build_blast_send_fingerprint,
+    build_outbound_fingerprint,
+    claim_outbound_idempotency,
+    release_outbound_idempotency,
+)
 from app.services.recipient_service import (
+    dedupe_recipients_by_phone as dedupe_recipients_by_phone_service,
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
     get_unsubscribed_phone_set,
@@ -152,12 +163,15 @@ from app.sort_utils import normalize_sort_params
 from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
+    analyze_personalized_sms_blast,
+    analyze_sms_body,
     as_utc_datetime,
     escape_like,
     find_invalid_template_tokens,
     is_safe_url,
     normalize_keyword,
     normalize_phone,
+    normalize_sms_body,
     parse_recipients_csv,
     phone_digits_sql,
     sanitize_csv_cell,
@@ -172,6 +186,7 @@ BLAST_QUEUE_UNAVAILABLE_FLASH = (
 BACKFILL_QUEUE_UNAVAILABLE_FLASH = (
     'Background queue is unavailable right now. Backfill was not queued. Check Redis/worker health and try again.'
 )
+BLAST_UNSUBSCRIBE_FOOTER = "\n\nReply STOP to unsubscribe."
 
 
 def _is_explicit_production() -> bool:
@@ -3224,19 +3239,72 @@ def _read_uploaded_csv_text(
 
 
 def _dedupe_recipients_by_phone(parsed: list[dict]) -> tuple[list[dict], int]:
-    unique_recipients: list[dict] = []
-    seen_phones: set[str] = set()
-    duplicate_count = 0
+    unique_recipients, duplicate_rows, _ = dedupe_recipients_by_phone_service(parsed)
+    return unique_recipients, len(duplicate_rows)
 
-    for recipient in parsed:
-        phone = recipient['phone']
-        if phone in seen_phones:
-            duplicate_count += 1
-            continue
-        seen_phones.add(phone)
-        unique_recipients.append(recipient)
 
-    return unique_recipients, duplicate_count
+def _load_blast_target_recipients(
+    *,
+    target: str,
+    event_id: int | None,
+    test_mode: bool,
+    test_recipient_data: list[dict] | None,
+) -> list[dict]:
+    if test_mode:
+        return list(test_recipient_data or [])
+    if target == 'community':
+        members = CommunityMember.query.all()
+        return [{'phone': member.phone, 'name': member.name} for member in members]
+    registrations = EventRegistration.query.filter_by(event_id=event_id).all()
+    return [{'phone': registration.phone, 'name': registration.name} for registration in registrations]
+
+
+def _prepare_sendable_blast_recipients(
+    recipient_data: list[dict],
+    *,
+    apply_opt_out_filters: bool,
+) -> tuple[list[dict], dict[str, int]]:
+    counts = {
+        'unsubscribed': 0,
+        'suppressed': 0,
+        'duplicates': 0,
+    }
+    prepared = list(recipient_data)
+    if apply_opt_out_filters:
+        prepared, skipped_unsubscribed, _ = filter_unsubscribed_recipients(prepared)
+        counts['unsubscribed'] = len(skipped_unsubscribed)
+        prepared, skipped_suppressed, _ = filter_suppressed_recipients(prepared)
+        counts['suppressed'] = len(skipped_suppressed)
+
+    prepared, duplicate_rows, _ = dedupe_recipients_by_phone_service(prepared)
+    counts['duplicates'] = len(duplicate_rows)
+    return prepared, counts
+
+
+def _flash_blast_recipient_adjustments(counts: dict[str, int]) -> None:
+    if counts.get('unsubscribed'):
+        flash(f"Skipped {counts['unsubscribed']} unsubscribed recipient(s).", 'warning')
+    if counts.get('suppressed'):
+        flash(f"Skipped {counts['suppressed']} suppressed recipient(s).", 'warning')
+    if counts.get('duplicates'):
+        flash(f"Skipped {counts['duplicates']} duplicate recipient(s).", 'warning')
+
+
+def _format_blast_estimate_summary(estimate: dict[str, object]) -> str:
+    unique_recipients = int(estimate.get('unique_recipients') or 0)
+    min_segments = int(estimate.get('min_segment_count') or 0)
+    max_segments = int(estimate.get('max_segment_count') or 0)
+    total_segments = int(estimate.get('total_segments') or 0)
+    if unique_recipients <= 0:
+        return 'No deliverable recipients were resolved.'
+    if min_segments == max_segments:
+        segment_text = f'{min_segments} segment{"s" if min_segments != 1 else ""} each'
+    else:
+        segment_text = f'{min_segments}-{max_segments} segments each'
+    return (
+        f'Estimated billing: {unique_recipients} unique recipient(s), '
+        f'{total_segments} total segment(s), {segment_text}.'
+    )
 
 
 def _csv_download_response(filename: str, rows: object) -> Response:
@@ -3529,6 +3597,14 @@ def dashboard():
         subscription_view = _subscription_view(subscription)
         messaging_profile = organization.messaging_profile if organization is not None else None
         a2p_status_view = _a2p_status_view(organization.a2p_onboarding if organization is not None else None, messaging_profile)
+        event_recipient_counts = {
+            int(row[0]): int(row[1] or 0)
+            for row in (
+                db.session.query(EventRegistration.event_id, db.func.count(EventRegistration.id))
+                .group_by(EventRegistration.event_id)
+                .all()
+            )
+        }
         community_count = CommunityMember.query.count()
         event_registration_count = EventRegistration.query.count()
         keyword_rule_count = KeywordAutomationRule.query.count()
@@ -3662,9 +3738,11 @@ def dashboard():
                 keyword_rule_count=keyword_rule_count,
                 survey_flow_count=survey_flow_count,
             ),
+            'event_recipient_counts': event_recipient_counts,
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
+            'blast_unsubscribe_footer': BLAST_UNSUBSCRIBE_FOOTER,
             'current_user_is_workspace_owner': _current_user_is_workspace_owner(),
             'dashboard_is_empty': (
                 total_recipients == 0
@@ -3694,7 +3772,7 @@ def dashboard():
         if subscription_gate is not None:
             return subscription_gate
 
-        message_body = request.form.get('message_body', '').strip()
+        message_body = normalize_sms_body(request.form.get('message_body', '').strip())
         target = request.form.get('target', 'community')
         event_id = request.form.get('event_id', type=int)
         test_mode = request.form.get('test_mode') == 'on'
@@ -3753,6 +3831,10 @@ def dashboard():
                 else:
                     flash(str(exc), 'error')
                 return render_dashboard()
+
+        final_message = message_body
+        if include_unsubscribe:
+            final_message = f"{message_body}{BLAST_UNSUBSCRIBE_FOOTER}"
         
         # Handle scheduled message
         if schedule_later:
@@ -3780,11 +3862,26 @@ def dashboard():
                 if scheduled_utc <= datetime.utcnow():
                     flash('Scheduled time must be in the future.', 'error')
                     return render_dashboard()
-                
-                # Append unsubscribe text if option is checked
-                final_message = message_body
-                if include_unsubscribe:
-                    final_message = message_body + "\n\nReply STOP to unsubscribe."
+
+                snapshot_recipient_data = _load_blast_target_recipients(
+                    target=target,
+                    event_id=event_id,
+                    test_mode=test_mode,
+                    test_recipient_data=test_recipient_data,
+                )
+                snapshot_recipient_data, schedule_counts = _prepare_sendable_blast_recipients(
+                    snapshot_recipient_data,
+                    apply_opt_out_filters=not test_mode,
+                )
+                _flash_blast_recipient_adjustments(schedule_counts)
+                if not snapshot_recipient_data:
+                    if test_mode:
+                        flash('No internal test recipients were resolved for this scheduled test send.', 'error')
+                    else:
+                        flash('No recipients were found for this scheduled blast.', 'error')
+                    return render_dashboard()
+
+                scheduled_estimate = analyze_personalized_sms_blast(final_message, snapshot_recipient_data)
                 
                 scheduled = ScheduledMessage(
                     message_body=final_message,
@@ -3795,14 +3892,25 @@ def dashboard():
                     test_recipient_selection_mode=(
                         test_recipient_selection_mode if test_mode else None
                     ),
-                    test_recipient_snapshot_json=(
-                        test_recipient_snapshot_json if test_mode else None
-                    ),
+                    test_recipient_snapshot_json=json.dumps(snapshot_recipient_data, sort_keys=True),
                 )
                 db.session.add(scheduled)
                 db.session.commit()
-                
+
+                current_app.logger.info(
+                    'Scheduled blast created scheduled_id=%s organization_id=%s target=%s event_id=%s test_mode=%s unique_recipients=%s min_segments=%s max_segments=%s estimated_total_segments=%s.',
+                    scheduled.id,
+                    scheduled.organization_id,
+                    scheduled.target,
+                    scheduled.event_id,
+                    scheduled.test_mode,
+                    scheduled_estimate['unique_recipients'],
+                    scheduled_estimate['min_segment_count'],
+                    scheduled_estimate['max_segment_count'],
+                    scheduled_estimate['total_segments'],
+                )
                 flash(f'Message scheduled for {scheduled_local.strftime("%Y-%m-%d %H:%M")}.', 'success')
+                flash(_format_blast_estimate_summary(scheduled_estimate), 'info')
                 return redirect(url_for('main.scheduled_list'))
                 
             except ValueError as e:
@@ -3810,43 +3918,71 @@ def dashboard():
                 return render_dashboard()
         
         # Immediate send
-        if test_mode:
-            recipient_data = test_recipient_data or []
-        else:
-            # Get recipients based on target
-            if target == 'community':
-                members = CommunityMember.query.all()
-                recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]
-            else:
-                # Get registrations for the event (they store phone/name directly)
-                registrations = EventRegistration.query.filter_by(event_id=event_id).all()
-                recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
+        raw_recipient_data = _load_blast_target_recipients(
+            target=target,
+            event_id=event_id,
+            test_mode=test_mode,
+            test_recipient_data=test_recipient_data,
+        )
+        recipient_data, recipient_counts = _prepare_sendable_blast_recipients(
+            raw_recipient_data,
+            apply_opt_out_filters=not test_mode,
+        )
+        _flash_blast_recipient_adjustments(recipient_counts)
 
-            recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
-            if skipped:
-                flash(f'Skipped {len(skipped)} unsubscribed recipient(s).', 'warning')
-
-            recipient_data, suppressed_skipped, _ = filter_suppressed_recipients(recipient_data)
-            if suppressed_skipped:
-                flash(f'Skipped {len(suppressed_skipped)} suppressed recipient(s).', 'warning')
-        
         if not recipient_data:
             if test_mode:
                 flash('No internal test recipients were resolved for this test send.', 'error')
             else:
                 flash('All recipients are unsubscribed or no recipients were found.', 'error')
             return render_dashboard()
-        
-        # Append unsubscribe text if option is checked
-        final_message = message_body
-        if include_unsubscribe:
-            final_message = message_body + "\n\nReply STOP to unsubscribe."
+
+        blast_estimate = analyze_personalized_sms_blast(final_message, recipient_data)
+
+        send_fingerprint = build_blast_send_fingerprint(
+            organization_id=_current_organization_id() if saas_mode_enabled() else None,
+            target=target,
+            event_id=event_id if target == 'event' else None,
+            test_mode=test_mode,
+            final_message=final_message,
+            recipient_data=recipient_data,
+        )
+        idempotency_claim = claim_outbound_idempotency(
+            'dashboard-blast',
+            {
+                'organization_id': _current_organization_id() if saas_mode_enabled() else None,
+                'target': target,
+                'event_id': event_id if target == 'event' else None,
+                'test_mode': bool(test_mode),
+                'message_body': final_message,
+                'phones': sorted(recipient.get('phone') for recipient in recipient_data if recipient.get('phone')),
+            },
+            ttl_seconds=BLAST_IDEMPOTENCY_TTL_SECONDS,
+        )
+        if not idempotency_claim.acquired:
+            current_app.logger.warning(
+                'Duplicate blast request suppressed organization_id=%s target=%s event_id=%s test_mode=%s unique_recipients=%s skipped_duplicates=%s fingerprint=%s existing_log_id=%s.',
+                _current_organization_id() if saas_mode_enabled() else None,
+                target,
+                event_id if target == 'event' else None,
+                test_mode,
+                len(recipient_data),
+                recipient_counts['duplicates'],
+                send_fingerprint,
+                idempotency_claim.existing_log_id,
+            )
+            if idempotency_claim.existing_log_id:
+                flash('Blast already queued. Reusing the existing log.', 'warning')
+                return redirect(url_for('main.log_detail', log_id=idempotency_claim.existing_log_id))
+            flash('An identical blast is already being queued. Refresh the logs in a moment.', 'warning')
+            return redirect(url_for('main.logs_list'))
 
         try:
             from rq import Retry
 
             queue = _get_queue_with_preflight()
         except Exception:
+            release_outbound_idempotency(idempotency_claim.redis_key)
             current_app.logger.exception(
                 'Background queue unavailable for blast enqueue organization_id=%s target=%s.',
                 _current_organization_id() if saas_mode_enabled() else None,
@@ -3869,6 +4005,27 @@ def dashboard():
         )
         db.session.add(log)
         db.session.commit()
+        bind_idempotency_log_id(
+            idempotency_claim.redis_key,
+            log.id,
+            ttl_seconds=BLAST_IDEMPOTENCY_TTL_SECONDS,
+        )
+        current_app.logger.info(
+            'Queued blast enqueue request log_id=%s organization_id=%s target=%s event_id=%s test_mode=%s unique_recipients=%s skipped_duplicates=%s skipped_unsubscribed=%s skipped_suppressed=%s min_segments=%s max_segments=%s estimated_total_segments=%s fingerprint=%s.',
+            log.id,
+            log.organization_id,
+            target,
+            log.event_id,
+            test_mode,
+            len(recipient_data),
+            recipient_counts['duplicates'],
+            recipient_counts['unsubscribed'],
+            recipient_counts['suppressed'],
+            blast_estimate['min_segment_count'],
+            blast_estimate['max_segment_count'],
+            blast_estimate['total_segments'],
+            send_fingerprint,
+        )
 
         try:
             queue.enqueue(
@@ -3877,11 +4034,14 @@ def dashboard():
                 log.organization_id,
                 recipient_data,
                 final_message,
-                retry=Retry(max=3, interval=[30, 120, 300])
+                retry=Retry(max=3, interval=[30, 120, 300]),
+                job_timeout=BLAST_JOB_TIMEOUT_SECONDS,
             )
             flash('Blast queued. Sending in the background.', 'success')
+            flash(_format_blast_estimate_summary(blast_estimate), 'info')
             return redirect(url_for('main.log_detail', log_id=log.id))
         except Exception:
+            release_outbound_idempotency(idempotency_claim.redis_key)
             current_app.logger.exception(
                 'Failed to enqueue blast log_id=%s organization_id=%s.',
                 log.id,
@@ -4960,12 +5120,45 @@ def platform_organizations_messaging_edit(organization_id):
                     raise ProviderProvisioningError(
                         'This organization is not ready for a live operational test send yet.'
                     )
-                send_operational_test_message(
-                    organization.id,
-                    to_number=request.form.get('platform_test_phone', ''),
-                    body=request.form.get('platform_test_body', ''),
-                    actor_user_id=current_user.id,
+                to_number = request.form.get('platform_test_phone', '')
+                body = request.form.get('platform_test_body', '')
+                normalized_body = normalize_sms_body((body or '').strip())
+                send_fingerprint = build_outbound_fingerprint(
+                    {
+                        'kind': 'platform_test_send',
+                        'organization_id': organization.id,
+                        'to_number': normalize_phone(to_number),
+                        'message_body': normalized_body,
+                    }
                 )
+                idempotency_claim = claim_outbound_idempotency(
+                    'platform-test-send',
+                    {
+                        'organization_id': organization.id,
+                        'to_number': normalize_phone(to_number),
+                        'message_body': normalized_body,
+                    },
+                    ttl_seconds=DIRECT_SEND_IDEMPOTENCY_TTL_SECONDS,
+                )
+                if not idempotency_claim.acquired:
+                    current_app.logger.warning(
+                        'Duplicate platform test send suppressed organization_id=%s actor_user_id=%s fingerprint=%s.',
+                        organization.id,
+                        current_user.id,
+                        send_fingerprint,
+                    )
+                    flash('An identical platform test send was already submitted. The duplicate request was ignored.', 'warning')
+                    return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
+                try:
+                    send_operational_test_message(
+                        organization.id,
+                        to_number=to_number,
+                        body=body,
+                        actor_user_id=current_user.id,
+                    )
+                except Exception:
+                    release_outbound_idempotency(idempotency_claim.redis_key)
+                    raise
                 flash('Platform operational test send completed.', 'success')
                 return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
         except ProviderProvisioningError as exc:
@@ -7259,10 +7452,46 @@ def inbox_reply(thread_id):
     if not body:
         flash('Reply message cannot be empty.', 'error')
         return redirect(url_for('main.inbox_list', thread=thread_id))
+    normalized_body = normalize_sms_body(body)
+
+    thread = _tenant_get_or_404(InboxThread, thread_id)
+    if get_unsubscribed_phone_set([thread.phone]):
+        flash('Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.', 'warning')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
+    send_fingerprint = build_outbound_fingerprint(
+        {
+            'kind': 'manual_reply',
+            'organization_id': thread.organization_id,
+            'thread_id': thread.id,
+            'phone': normalize_phone(thread.phone),
+            'message_body': normalized_body,
+        }
+    )
+    idempotency_claim = claim_outbound_idempotency(
+        'manual-reply',
+        {
+            'organization_id': thread.organization_id,
+            'thread_id': thread.id,
+            'phone': normalize_phone(thread.phone),
+            'message_body': normalized_body,
+        },
+        ttl_seconds=DIRECT_SEND_IDEMPOTENCY_TTL_SECONDS,
+    )
+    if not idempotency_claim.acquired:
+        current_app.logger.warning(
+            'Duplicate inbox reply suppressed organization_id=%s thread_id=%s actor=%s fingerprint=%s.',
+            thread.organization_id,
+            thread.id,
+            current_user.username,
+            send_fingerprint,
+        )
+        flash('An identical reply was already submitted. The duplicate request was ignored.', 'warning')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
 
     try:
         result = send_thread_reply(thread_id, body, actor=current_user.username)
     except Exception:
+        release_outbound_idempotency(idempotency_claim.redis_key)
         db.session.rollback()
         current_app.logger.exception('Failed sending manual inbox reply.')
         flash('Failed to send reply. Check server logs for details.', 'error')
@@ -7271,8 +7500,10 @@ def inbox_reply(thread_id):
     if result.get('success'):
         flash('Reply sent.', 'success')
     elif result.get('status') == 'blocked_opt_out':
+        release_outbound_idempotency(idempotency_claim.redis_key)
         flash('Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.', 'warning')
     else:
+        release_outbound_idempotency(idempotency_claim.redis_key)
         error = result.get('error') or 'Unknown error'
         flash(f'Reply could not be delivered: {error}', 'error')
 
@@ -7369,7 +7600,7 @@ def keyword_rule_add():
     form_data = {'keyword': '', 'response_body': '', 'is_active': True}
     if request.method == 'POST':
         keyword = request.form.get('keyword', '')
-        response_body = request.form.get('response_body', '').strip()
+        response_body = normalize_sms_body(request.form.get('response_body', '').strip())
         is_active = request.form.get('is_active') == 'on'
         normalized_keyword = normalize_keyword(keyword)
         form_data = {
@@ -7412,7 +7643,7 @@ def keyword_rule_edit(rule_id):
 
     if request.method == 'POST':
         keyword = request.form.get('keyword', '')
-        response_body = request.form.get('response_body', '').strip()
+        response_body = normalize_sms_body(request.form.get('response_body', '').strip())
         is_active = request.form.get('is_active') == 'on'
         normalized_keyword = normalize_keyword(keyword)
 
@@ -7549,8 +7780,8 @@ def survey_flow_add():
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
-        intro_message = request.form.get('intro_message', '').strip() or None
-        completion_message = request.form.get('completion_message', '').strip() or None
+        intro_message = normalize_sms_body(request.form.get('intro_message', '').strip()) or None
+        completion_message = normalize_sms_body(request.form.get('completion_message', '').strip()) or None
         questions_raw = request.form.get('questions', '')
         questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'
@@ -7647,8 +7878,8 @@ def survey_flow_edit(survey_id):
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
         trigger_keyword = normalize_keyword(request.form.get('trigger_keyword', ''))
-        intro_message = request.form.get('intro_message', '').strip() or None
-        completion_message = request.form.get('completion_message', '').strip() or None
+        intro_message = normalize_sms_body(request.form.get('intro_message', '').strip()) or None
+        completion_message = normalize_sms_body(request.form.get('completion_message', '').strip()) or None
         questions_raw = request.form.get('questions', '')
         questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'

@@ -52,9 +52,13 @@
                                       placeholder="Enter your message..." required maxlength="1600"></textarea>
                             <div class="form-text">
                                 <span><span id="charCount">0</span> / 1600 characters</span>
-                                <span class="ms-2">Estimated segments: <span id="segmentCount">0</span> (160 chars per segment, longer messages will split)</span>
+                                <span class="ms-2">Encoding: <span id="messageEncoding">GSM-7</span></span>
+                                <span class="ms-2">Per message: <span id="segmentCount">0</span> segment(s)</span>
+                                <span class="ms-2"><span id="charsToNextSegment">160</span> characters until the next segment</span>
                                 <span class="ms-2">Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</span>
                             </div>
+                            <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
+                            <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
                         </div>
 
                         <div class="mb-3">
@@ -85,8 +89,8 @@
                             <select class="form-select" id="event_id" name="event_id">
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
-                                <option value="{{ event.id }}">
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}">
+                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} recipients
                                 </option>
                                 {% endfor %}
                             </select>
@@ -568,12 +572,18 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     const messageBody = document.getElementById('message_body');
     const charCount = document.getElementById('charCount');
+    const messageEncoding = document.getElementById('messageEncoding');
     const segmentCount = document.getElementById('segmentCount');
+    const charsToNextSegment = document.getElementById('charsToNextSegment');
+    const messageNormalizationHint = document.getElementById('messageNormalizationHint');
+    const messageUnitEstimate = document.getElementById('messageUnitEstimate');
     const targetEvent = document.getElementById('targetEvent');
     const targetCommunity = document.getElementById('targetCommunity');
+    const eventSelect = document.getElementById('event_id');
     const eventSelectWrapper = document.getElementById('eventSelectWrapper');
     const sendForm = document.getElementById('sendForm');
     const sendBtn = document.getElementById('sendBtn');
@@ -591,6 +601,10 @@
     const testRecipientModeAll = document.getElementById('testRecipientModeAll');
     const testRecipientPhone = document.getElementById('testRecipientPhone');
     const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
+    const includeUnsubscribe = document.getElementById('includeUnsubscribe');
+    const unsubscribeFooter = {{ blast_unsubscribe_footer|tojson }};
+    const communityRecipientCount = {{ community_count|int }};
+    const savedTestRecipientCount = {{ saved_test_recipient_count|int }};
 
     function getCookieValue(name) {
         const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -622,21 +636,52 @@
         }
     }
 
-    function estimateSegments(length) {
-        if (length === 0) {
-            return 0;
+    function estimatedRecipientCount() {
+        if (testMode && testMode.checked) {
+            if (testRecipientModeOne && testRecipientModeOne.checked) {
+                return testRecipientPhone && testRecipientPhone.value ? 1 : 0;
+            }
+            return savedTestRecipientCount;
         }
-        if (length <= 160) {
-            return 1;
+        if (targetEvent.checked) {
+            return Number(eventSelect?.selectedOptions?.[0]?.dataset?.recipientCount || 0);
         }
-        return Math.ceil(length / 153);
+        return communityRecipientCount;
     }
 
     function updateMessageStats() {
-        const length = messageBody.value.length;
-        charCount.textContent = length;
+        const footer = includeUnsubscribe && includeUnsubscribe.checked ? unsubscribeFooter : '';
+        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
+        const recipientEstimate = estimatedRecipientCount();
+
+        charCount.textContent = analysis.normalizedBody.length;
         if (segmentCount) {
-            segmentCount.textContent = estimateSegments(length);
+            segmentCount.textContent = analysis.segmentCount;
+        }
+        if (messageEncoding) {
+            messageEncoding.textContent = window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
+        }
+        if (charsToNextSegment) {
+            charsToNextSegment.textContent = analysis.charactersToNextSegment;
+        }
+        if (messageNormalizationHint) {
+            if (analysis.normalizationApplied) {
+                const segmentNote = analysis.segmentsSaved > 0
+                    ? ` Normalization saves ${analysis.segmentsSaved} segment(s).`
+                    : '';
+                messageNormalizationHint.textContent = `Twinevia will normalize ${analysis.replacementCount} deterministic punctuation/spacing character(s) before send.${segmentNote}`;
+            } else {
+                messageNormalizationHint.textContent = `Live preview includes the current STOP footer setting.`;
+            }
+        }
+        if (messageUnitEstimate) {
+            if (recipientEstimate > 0 && analysis.segmentCount > 0) {
+                messageUnitEstimate.textContent = `Estimated total units: ${recipientEstimate * analysis.segmentCount} (${recipientEstimate} recipient estimate; server finalizes after dedupe, personalization, and suppression filtering).`;
+            } else if (analysis.segmentCount > 0) {
+                messageUnitEstimate.textContent = 'Estimated total units will appear once a recipient estimate is available.';
+            } else {
+                messageUnitEstimate.textContent = 'Estimated total units: 0';
+            }
         }
     }
 
@@ -645,6 +690,7 @@
 
     function toggleEventSelect() {
         eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';
+        updateMessageStats();
     }
 
     function toggleSchedule() {
@@ -670,6 +716,7 @@
         if (testRecipientPhone) {
             testRecipientPhone.required = Boolean(testMode && testMode.checked && selectingOneRecipient);
         }
+        updateMessageStats();
     }
 
     function toggleTestModeOptions() {
@@ -678,11 +725,18 @@
         }
         testModeOptions.style.display = testMode.checked ? 'block' : 'none';
         updateTestModeRecipientControls();
+        updateMessageStats();
     }
 
     targetEvent.addEventListener('change', toggleEventSelect);
     targetCommunity.addEventListener('change', toggleEventSelect);
     scheduleLater.addEventListener('change', toggleSchedule);
+    if (eventSelect) {
+        eventSelect.addEventListener('change', updateMessageStats);
+    }
+    if (includeUnsubscribe) {
+        includeUnsubscribe.addEventListener('change', updateMessageStats);
+    }
     if (testMode) {
         testMode.addEventListener('change', toggleTestModeOptions);
     }
@@ -691,6 +745,9 @@
     }
     if (testRecipientModeAll) {
         testRecipientModeAll.addEventListener('change', updateTestModeRecipientControls);
+    }
+    if (testRecipientPhone) {
+        testRecipientPhone.addEventListener('change', updateMessageStats);
     }
     toggleEventSelect();
     toggleSchedule();
@@ -713,7 +770,7 @@
         messageBody.classList.remove('is-invalid');
         scheduleDate.classList.remove('is-invalid');
         scheduleTime.classList.remove('is-invalid');
-        document.getElementById('event_id').classList.remove('is-invalid');
+        eventSelect.classList.remove('is-invalid');
         if (testRecipientPhone) {
             testRecipientPhone.classList.remove('is-invalid');
         }
@@ -733,7 +790,6 @@
         }
 
         if (targetEvent.checked) {
-            const eventSelect = document.getElementById('event_id');
             if (!eventSelect.value) {
                 errors.push('Please select an event for the event blast.');
                 eventSelect.classList.add('is-invalid');

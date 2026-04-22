@@ -8,10 +8,26 @@ from app.utils import normalize_phone, validate_phone
 
 
 OptOutCategory = Literal['opt_out', 'hard_fail', 'soft_fail']
+HARD_FAIL_ERROR_CODES = {'21610', '30003', '30004', '30005', '30006', '30007'}
 
 
-def classify_failure(error_text: str) -> OptOutCategory:
+def classify_failure(
+    error_text: str,
+    *,
+    error_code: object | None = None,
+    status: str | None = None,
+) -> OptOutCategory:
+    normalized_error_code = str(error_code or '').strip()
+    normalized_status = (status or '').strip().lower()
+
+    if normalized_error_code == '21610':
+        return 'opt_out'
+    if normalized_error_code in {'30003', '30004', '30005', '30006', '30007'}:
+        return 'hard_fail'
+
     if not error_text:
+        if normalized_status in {'failed', 'undelivered'}:
+            return 'soft_fail'
         return 'soft_fail'
 
     message = error_text.lower()
@@ -28,7 +44,6 @@ def classify_failure(error_text: str) -> OptOutCategory:
     ]
     # Keep opt-out detection strict to avoid suppressing valid contacts on
     # generic carrier blocks/transient failures.
-    opt_out_codes = {'21610'}
     hard_fail_patterns = [
         'invalid',
         'not a valid',
@@ -45,6 +60,7 @@ def classify_failure(error_text: str) -> OptOutCategory:
         '30003',
         '30004',
         '30005',
+        '30006',
         '30007',
     ]
     soft_fail_patterns = [
@@ -69,7 +85,7 @@ def classify_failure(error_text: str) -> OptOutCategory:
 
     if any(pattern in message for pattern in opt_out_phrases):
         return 'opt_out'
-    if any(code in message for code in opt_out_codes):
+    if normalized_error_code == '21610' or '21610' in message:
         return 'opt_out'
     if any(pattern in message for pattern in hard_fail_patterns):
         return 'hard_fail'
@@ -77,6 +93,97 @@ def classify_failure(error_text: str) -> OptOutCategory:
         return 'soft_fail'
 
     return 'soft_fail'
+
+
+def apply_failure_suppression(
+    *,
+    organization_id: int | None,
+    phone: str | None,
+    name: str | None = None,
+    error_text: str | None = None,
+    error_code: object | None = None,
+    status: str | None = None,
+    source: str = 'message_failure',
+    source_type: str | None = 'message_log',
+    source_message_log_id: int | None = None,
+    purge_related_rows: bool = True,
+    commit: bool = False,
+) -> dict:
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return {'applied': False, 'category': 'soft_fail', 'reason': None}
+    if not validate_phone(normalized_phone):
+        return {'applied': False, 'category': 'soft_fail', 'reason': None}
+
+    reason = str(error_text or error_code or status or '').strip() or None
+    category = classify_failure(reason or '', error_code=error_code, status=status)
+    applied = False
+
+    if category == 'opt_out':
+        existing = UnsubscribedContact.query.filter_by(
+            phone=normalized_phone,
+            organization_id=organization_id,
+        ).first()
+        if existing:
+            existing.source = source
+            if reason:
+                existing.reason = reason
+            if name and not existing.name:
+                existing.name = name
+        else:
+            db.session.add(
+                UnsubscribedContact(
+                    organization_id=organization_id,
+                    name=name,
+                    phone=normalized_phone,
+                    reason=reason,
+                    source=source,
+                )
+            )
+        applied = True
+    elif category == 'hard_fail':
+        existing = SuppressedContact.query.filter_by(
+            phone=normalized_phone,
+            organization_id=organization_id,
+        ).first()
+        if existing:
+            existing.reason = reason
+            existing.category = category
+            existing.source = source
+            existing.source_type = source_type
+            existing.source_message_log_id = source_message_log_id
+            existing.updated_at = utc_now()
+        else:
+            db.session.add(
+                SuppressedContact(
+                    organization_id=organization_id,
+                    phone=normalized_phone,
+                    reason=reason,
+                    category=category,
+                    source=source,
+                    source_type=source_type,
+                    source_message_log_id=source_message_log_id,
+                )
+            )
+        applied = True
+
+    if not applied:
+        return {'applied': False, 'category': category, 'reason': reason}
+
+    if purge_related_rows:
+        CommunityMember.query.filter(
+            CommunityMember.organization_id == organization_id,
+            CommunityMember.phone == normalized_phone,
+        ).delete(synchronize_session=False)
+        EventRegistration.query.filter(
+            EventRegistration.organization_id == organization_id,
+            EventRegistration.phone == normalized_phone,
+        ).delete(synchronize_session=False)
+
+    if commit:
+        db.session.commit()
+
+    return {'applied': True, 'category': category, 'reason': reason}
 
 
 def process_failure_details(details: list, source_message_log_id: int) -> dict:
@@ -124,56 +231,43 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 counts['skipped_invalid'] += 1
                 continue
 
-            category = classify_failure(error_text)
+            category = classify_failure(
+                error_text,
+                error_code=detail.get('error_code'),
+                status=status,
+            )
             counts[category] += 1
 
             if category == 'opt_out':
-                existing = UnsubscribedContact.query.filter_by(
-                    phone=normalized_phone,
+                apply_failure_suppression(
                     organization_id=organization_id,
-                ).first()
-                if existing:
-                    existing.source = 'message_failure'
-                    if error_text:
-                        existing.reason = error_text
-                    if detail.get('name') and not existing.name:
-                        existing.name = detail.get('name')
-                else:
-                    db.session.add(
-                        UnsubscribedContact(
-                            organization_id=organization_id,
-                            name=detail.get('name'),
-                            phone=normalized_phone,
-                            reason=error_text or None,
-                            source='message_failure',
-                        )
-                    )
+                    phone=normalized_phone,
+                    name=detail.get('name'),
+                    error_text=error_text,
+                    error_code=detail.get('error_code'),
+                    status=status,
+                    source='message_failure',
+                    source_type='message_log',
+                    source_message_log_id=source_message_log_id,
+                    purge_related_rows=False,
+                    commit=False,
+                )
                 counts['unsubscribed_upserts'] += 1
                 suppressed_phones.add(normalized_phone)
             elif category == 'hard_fail':
-                existing = SuppressedContact.query.filter_by(
-                    phone=normalized_phone,
+                apply_failure_suppression(
                     organization_id=organization_id,
-                ).first()
-                if existing:
-                    existing.reason = error_text
-                    existing.category = category
-                    existing.source = 'message_failure'
-                    existing.source_type = 'message_log'
-                    existing.source_message_log_id = source_message_log_id
-                    existing.updated_at = utc_now()
-                else:
-                    db.session.add(
-                        SuppressedContact(
-                            organization_id=organization_id,
-                            phone=normalized_phone,
-                            reason=error_text,
-                            category=category,
-                            source='message_failure',
-                            source_type='message_log',
-                            source_message_log_id=source_message_log_id,
-                        )
-                    )
+                    phone=normalized_phone,
+                    name=detail.get('name'),
+                    error_text=error_text,
+                    error_code=detail.get('error_code'),
+                    status=status,
+                    source='message_failure',
+                    source_type='message_log',
+                    source_message_log_id=source_message_log_id,
+                    purge_related_rows=False,
+                    commit=False,
+                )
                 counts['suppressed_upserts'] += 1
                 suppressed_phones.add(normalized_phone)
 
