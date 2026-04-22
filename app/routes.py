@@ -66,6 +66,7 @@ from app.services.billing_service import (
     create_billing_portal_session,
     create_checkout_session,
     is_fake_checkout_session_id,
+    organization_can_transmit_messages,
     mark_subscription_complimentary,
     organization_can_send,
     process_stripe_webhook_event,
@@ -917,7 +918,7 @@ def _current_subscription() -> OrganizationSubscription | None:
 
 
 def _organization_setup_complete(organization: Organization | None) -> bool:
-    return organization_can_send(organization) and _organization_has_active_messaging(organization)
+    return organization_can_transmit_messages(organization)
 
 
 def _a2p_profile_ready(onboarding: OrganizationA2POnboarding | None) -> bool:
@@ -1860,13 +1861,8 @@ def _billing_context(organization: Organization | None) -> dict:
     }
 
 
-def _organization_has_active_messaging(organization: Organization | None) -> bool:
-    profile = organization.messaging_profile if organization is not None else None
-    return bool(profile is not None and profile.can_send)
-
-
 def _organization_can_transmit_messages(organization: Organization | None) -> bool:
-    return organization_can_send(organization) and _organization_has_active_messaging(organization)
+    return organization_can_transmit_messages(organization)
 
 
 def _send_access_denied_response(organization: Organization | None):
