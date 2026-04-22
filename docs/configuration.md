@@ -7,6 +7,7 @@ The parser behavior is strict:
 - booleans must be valid values such as `1/0`, `true/false`, `yes/no`, or `on/off`
 - integers must parse cleanly
 - comma-separated host lists are parsed with trimming
+- `SESSION_COOKIE_SAMESITE` accepts `Lax`, `Strict`, or `None` case-insensitively and is normalized to Flask's expected casing
 
 Production behavior is also strict:
 
@@ -39,7 +40,7 @@ Production behavior is also strict:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SESSION_COOKIE_SAMESITE` | `Lax` | Production must be `Lax` or `Strict`. |
+| `SESSION_COOKIE_SAMESITE` | `Lax` | Input is case-insensitive; production must resolve to `Lax` or `Strict`. |
 | `SESSION_COOKIE_SECURE` | `1` outside debug, `0` in debug | Production must be enabled. |
 | `REMEMBER_COOKIE_SECURE` | mirrors `SESSION_COOKIE_SECURE` | Production must be enabled. |
 | `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Also drives `PERMANENT_SESSION_LIFETIME`. |

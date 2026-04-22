@@ -3,7 +3,8 @@ import json
 from flask import current_app
 from rq import get_current_job
 from app import create_app, db
-from app.models import MessageLog
+from app.models import MessageLog, Organization
+from app.services.billing_service import organization_transmit_block_reason
 from app.tenant import organization_context
 from app.services.suppression_service import process_failure_details
 from app.services.suppression_backfill import backfill_suppressions
@@ -108,6 +109,26 @@ def send_bulk_job(
 
             existing_success = sum(1 for detail in existing_details if detail.get('success') is True)
             existing_failure = sum(1 for detail in existing_details if detail.get('success') is False)
+
+            if current_app.config.get("SAAS_MODE"):
+                organization = db.session.get(Organization, organization_id) if organization_id else None
+                send_block_reason = organization_transmit_block_reason(organization)
+                if send_block_reason:
+                    combined_details = _append_error_detail(existing_details, send_block_reason)
+                    log.total_recipients = len(recipient_data)
+                    log.success_count = max(log.success_count or 0, existing_success)
+                    log.failure_count = max(log.failure_count or 0, existing_failure + 1)
+                    log.status = "failed"
+                    log.details = json.dumps(combined_details)
+                    db.session.commit()
+                    current_app.logger.warning(
+                        "Bulk send job blocked log_id=%s organization_id=%s reason=%s",
+                        log.id,
+                        organization_id,
+                        send_block_reason,
+                    )
+                    return
+
             start_index = len(existing_details)
             remaining_recipients = recipient_data[start_index:]
 

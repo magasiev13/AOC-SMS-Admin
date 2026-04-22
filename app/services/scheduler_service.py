@@ -272,7 +272,15 @@ def send_scheduled_messages(app):
     with app.app_context():
         from flask import current_app
         from app import db
-        from app.models import ScheduledMessage, MessageLog, CommunityMember, EventRegistration, utc_now
+        from app.models import (
+            ScheduledMessage,
+            MessageLog,
+            CommunityMember,
+            EventRegistration,
+            Organization,
+            utc_now,
+        )
+        from app.services.billing_service import organization_transmit_block_reason
         from app.services.recipient_service import (
             filter_suppressed_recipients,
             filter_unsubscribed_recipients,
@@ -418,6 +426,25 @@ def send_scheduled_messages(app):
                 continue
             try:
                 with organization_context(scheduled.organization_id):
+                    if current_app.config.get("SAAS_MODE"):
+                        organization = db.session.get(Organization, scheduled.organization_id) if scheduled.organization_id else None
+                        send_block_reason = organization_transmit_block_reason(organization)
+                        if send_block_reason:
+                            scheduled.status = 'failed'
+                            scheduled.error_message = send_block_reason
+                            scheduled.sent_at = now
+                            scheduled.processing_started_at = None
+                            scheduled.next_retry_at = None
+                            db.session.commit()
+                            failed_count += 1
+                            logger.warning(
+                                "[Scheduler] Message id=%d organization_id=%s blocked before send: %s",
+                                scheduled.id,
+                                scheduled.organization_id,
+                                send_block_reason,
+                            )
+                            continue
+
                     if scheduled.test_mode:
                         try:
                             recipient_data = load_test_recipient_snapshot(

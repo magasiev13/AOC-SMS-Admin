@@ -53,7 +53,7 @@ test('owner can manage test recipients and use dashboard test mode states', asyn
     await page.getByRole('link', { name: 'Manage test recipients' }).click();
     await expect(page).toHaveURL(/\/settings\/test-recipients$/);
     await expect(page.getByRole('heading', { name: 'Test Recipients', exact: true })).toBeVisible();
-    await expect(page.getByText('Recent Changes')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Recent changes', exact: true })).toBeVisible();
     await expect(page.locator('.recipient-row')).toHaveCount(2);
     await expect(page.locator('.recipient-row').nth(0).getByLabel('Label')).toHaveValue('Board Chair');
     await expect(page.locator('.recipient-row').nth(0).getByLabel('Phone')).toHaveValue('+17205550121');

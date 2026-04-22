@@ -55,6 +55,7 @@ Key responsibilities:
 Important helper concepts:
 
 - `organization_can_send()` is the billing gate used by setup and messaging flows
+- `organization_can_transmit_messages()` is the runtime send gate used by workers and timers before delivery starts
 - `StripeWebhookEvent` is the idempotency/audit ledger
 - usage billing is downstream of Twilio usage reconciliation, not inline with a send request
 
@@ -151,6 +152,7 @@ Key responsibilities:
 - find due `ScheduledMessage` rows
 - detect and recover stuck processing rows
 - retry transient failures with backoff
+- fail closed when a SaaS organization loses billing or provider readiness before execution time
 - create corresponding `MessageLog` entries
 - capture usage candidates without breaking the send path
 
