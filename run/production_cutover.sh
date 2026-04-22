@@ -62,7 +62,7 @@ resolve_default_deploy_branch() {
   while IFS= read -r candidate; do
     [[ -z "${candidate}" ]] && continue
     candidate="${candidate#origin/}"
-    if [[ " ${candidates[*]} " != *" ${candidate} "* ]]; then
+    if [[ " ${candidates[*]-} " != *" ${candidate} "* ]]; then
       candidates+=("${candidate}")
     fi
   done < <(git -C "${REPO_ROOT}" for-each-ref --format='%(refname:short)' --points-at HEAD refs/heads refs/remotes/origin 2>/dev/null)

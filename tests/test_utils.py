@@ -7,12 +7,15 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from app.utils import (
+    analyze_personalized_sms_blast,
+    analyze_sms_body,
     as_utc_datetime,
     escape_like,
     find_invalid_template_tokens,
     is_safe_url,
     normalize_keyword,
     normalize_phone,
+    normalize_sms_body,
     parse_recipients_csv,
     parse_phones_csv,
     phone_lookup_variants,
@@ -132,6 +135,49 @@ class TestNormalizeKeyword(unittest.TestCase):
 
     def test_empty_input_stays_empty(self) -> None:
         self.assertEqual(normalize_keyword("   "), "")
+
+
+class TestSmsBodyAnalysis(unittest.TestCase):
+    def test_normalize_sms_body_rewrites_deterministic_high_cost_characters(self) -> None:
+        raw = '“Hello” — world…\u00a0•'
+        self.assertEqual(normalize_sms_body(raw), '"Hello" - world... -')
+
+    def test_analyze_sms_body_uses_gsm7_extended_character_units(self) -> None:
+        analysis = analyze_sms_body(("a" * 159) + "^", apply_normalization=False)
+
+        self.assertEqual(analysis["encoding"], "gsm-7")
+        self.assertEqual(analysis["characters_used"], 161)
+        self.assertEqual(analysis["segment_count"], 2)
+
+    def test_analyze_sms_body_normalization_can_save_segments(self) -> None:
+        analysis = analyze_sms_body("—" * 71)
+
+        self.assertEqual(analysis["original_encoding"], "ucs-2")
+        self.assertEqual(analysis["original_segment_count"], 2)
+        self.assertEqual(analysis["encoding"], "gsm-7")
+        self.assertEqual(analysis["segment_count"], 1)
+        self.assertEqual(analysis["segments_saved"], 1)
+
+    def test_analyze_sms_body_counts_stop_footer(self) -> None:
+        analysis = analyze_sms_body("Hello\n\nReply STOP to unsubscribe.", apply_normalization=False)
+
+        self.assertEqual(analysis["encoding"], "gsm-7")
+        self.assertEqual(analysis["segment_count"], 1)
+        self.assertGreater(analysis["characters_used"], len("Hello"))
+
+    def test_analyze_personalized_sms_blast_tracks_segment_variance(self) -> None:
+        analysis = analyze_personalized_sms_blast(
+            "Hello {first_name}, " + ("A" * 145),
+            [
+                {"name": "Al", "phone": "+15550000001"},
+                {"name": "Alexandria Cassandra", "phone": "+15550000002"},
+            ],
+        )
+
+        self.assertEqual(analysis["unique_recipients"], 2)
+        self.assertEqual(analysis["min_segment_count"], 1)
+        self.assertEqual(analysis["max_segment_count"], 2)
+        self.assertEqual(analysis["total_segments"], 3)
 
 
 class TestParseRecipientsCsv(unittest.TestCase):

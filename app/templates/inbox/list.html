@@ -252,6 +252,7 @@
                             <i class="bi bi-send me-1"></i>Send
                         </button>
                     </div>
+                    <div class="form-text" id="replyBodyStats" aria-live="polite"></div>
                 </form>
             </div>
             {% else %}
@@ -269,6 +270,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     const pane = document.getElementById('inboxMessagePane');
     if (pane) {
@@ -299,6 +301,20 @@
     document.querySelectorAll('[data-inbox-loading-trigger]').forEach((trigger) => {
         trigger.addEventListener('click', showInboxLoadingState);
     });
+
+    const replyBody = document.getElementById('replyBody');
+    const replyBodyStats = document.getElementById('replyBodyStats');
+    if (replyBody && replyBodyStats && window.TwineviaSmsAnalysis) {
+        const updateReplyStats = () => {
+            const analysis = window.TwineviaSmsAnalysis.analyzeBody(replyBody.value || '');
+            const normalizationNote = analysis.normalizationApplied
+                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before send.`
+                : '';
+            replyBodyStats.textContent = `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`;
+        };
+        replyBody.addEventListener('input', updateReplyStats);
+        updateReplyStats();
+    }
 
     function bindSelectAll(selectAllId, itemSelector, onSelectAllChange) {
         const selectAll = document.getElementById(selectAllId);

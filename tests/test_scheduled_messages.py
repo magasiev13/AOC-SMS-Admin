@@ -88,6 +88,47 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         self.assertEqual(updated.status, "sent", "Message should transition from pending to sent")
         self.assertIsNotNone(updated.sent_at)
 
+    def test_scheduled_message_uses_saved_recipient_snapshot_instead_of_live_membership(self):
+        db.session.add(CommunityMember(name="Snapshot User", phone="+15551234569"))
+        db.session.commit()
+
+        past_time = utc_now_naive() - timedelta(minutes=1)
+        scheduled = ScheduledMessage(
+            message_body="Snapshot message",
+            target="community",
+            scheduled_at=past_time,
+            status="pending",
+            test_mode=False,
+            test_recipient_snapshot_json=json.dumps(
+                [{"phone": "+15551234569", "name": "Snapshot User"}],
+                sort_keys=True,
+            ),
+        )
+        db.session.add(scheduled)
+        db.session.commit()
+        msg_id = scheduled.id
+
+        db.session.add(CommunityMember(name="Late Joiner", phone="+15551234570"))
+        db.session.commit()
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            mock_service = MagicMock()
+            mock_service.send_bulk.return_value = {
+                "total": 1,
+                "success_count": 1,
+                "failure_count": 0,
+                "details": [{"phone": "+15551234569", "status": "sent", "sid": "SMsnap-1"}],
+            }
+            mock_twilio.return_value = mock_service
+
+            send_scheduled_messages(self.app)
+
+        send_args = mock_service.send_bulk.call_args.args[0]
+        self.assertEqual(send_args, [{"phone": "+15551234569", "name": "Snapshot User"}])
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "sent")
+
     @patch("app.services.scheduler_service.record_usage_candidates")
     @patch("app.services.scheduler_service.get_twilio_service")
     def test_usage_recording_failure_does_not_mark_sent_message_failed(self, mock_twilio, mock_record_usage_candidates):
@@ -266,6 +307,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
             [{"phone": "+15550001111", "name": "Board Chair"}],
             "Snapshot test message",
             raise_on_transient=True,
+            send_kind="blast",
         )
 
     def test_test_mode_without_snapshot_fails_clearly(self):

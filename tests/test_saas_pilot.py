@@ -8,6 +8,34 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
+class FakeRedis:
+    def __init__(self) -> None:
+        self._values: dict[str, tuple[str, int | None]] = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self._values:
+            return False
+        normalized = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        self._values[key] = (normalized, ex)
+        return True
+
+    def get(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return None
+        return entry[0]
+
+    def ttl(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return -2
+        return entry[1] if entry[1] is not None else -1
+
+    def delete(self, key):
+        self._values.pop(key, None)
+        return 1
+
+
 class TestSaasPilotFoundation(unittest.TestCase):
     def setUp(self) -> None:
         self._original_env = {
@@ -36,6 +64,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             InboxThread,
             KeywordAutomationRule,
             MessageLog,
+            MessagingUsageRecord,
             Organization,
             OrganizationA2POnboarding,
             OrganizationInvitation,
@@ -57,6 +86,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
         self.MessageLog = MessageLog
+        self.MessagingUsageRecord = MessagingUsageRecord
         self.Organization = Organization
         self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationInvitation = OrganizationInvitation
@@ -1938,6 +1968,172 @@ class TestSaasPilotFoundation(unittest.TestCase):
             body="Operational test",
             actor_user_id=self.platform_admin.id,
         )
+
+    @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_duplicate_test_send_is_suppressed(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            first_response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=False,
+            )
+            second_response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(first_response.status_code, 302)
+        self.assertEqual(second_response.status_code, 200)
+        mock_send_operational_test_message.assert_called_once_with(
+            self.organization.id,
+            to_number="+15550001234",
+            body="Operational test",
+            actor_user_id=self.platform_admin.id,
+        )
+        self.assertIn(
+            b"An identical platform test send was already submitted. The duplicate request was ignored.",
+            second_response.data,
+        )
+
+    def test_platform_organizations_messaging_edit_rejects_invalid_test_phone(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "not-a-phone",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Enter a valid E.164 phone number for the operational test send.",
+            response.data,
+        )
+
+    def test_platform_organizations_messaging_edit_rejects_blank_test_body(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "   ",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Message body is required for the operational test send.",
+            response.data,
+        )
+
+    @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_rejects_test_send_when_org_not_ready(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "platform_test_send",
+                "platform_test_phone": "+15550001234",
+                "platform_test_body": "Operational test",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"This organization is not ready for a live operational test send yet.",
+            response.data,
+        )
+        mock_send_operational_test_message.assert_not_called()
+
+    def test_platform_organizations_messaging_edit_browser_fake_test_send_records_normalized_metadata(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+        self.app.config["TWILIO_BROWSER_FAKE_SENDS"] = True
+        self.app.config["TWILIO_ACCOUNT_SID"] = "ACplatformtest"
+        self.app.config["TWILIO_AUTH_TOKEN"] = "platform-token"
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "—" * 71,
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Platform operational test send completed.", response.data)
+        record = self.MessagingUsageRecord.query.one()
+        self.assertEqual(record.organization_id, self.organization.id)
+        self.assertEqual(record.source, "operational_test")
+        self.assertEqual(record.twilio_message_status, "sent")
+        audit_log = (
+            self.OrganizationProviderAuditLog.query.filter_by(
+                organization_id=self.organization.id,
+                action="operational_test_send",
+                status="success",
+            )
+            .order_by(self.OrganizationProviderAuditLog.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(audit_log)
+        metadata = json.loads(audit_log.metadata_json or "{}")
+        self.assertEqual(metadata.get("segment_count"), 1)
+        self.assertEqual(metadata.get("encoding"), "gsm-7")
+        self.assertTrue(str(metadata.get("message_sid", "")).startswith("SM"))
 
     def test_sync_customer_managed_onboarding_state_keeps_external_identifiers_out_of_unique_columns(self) -> None:
         from app.routes import _sync_customer_managed_onboarding_state

@@ -5,6 +5,7 @@ from flask import current_app
 
 from app.models import MessageLog
 from app.services.suppression_service import process_failure_details
+from app.services.twilio_service import backfill_usage_record_failure_suppressions
 
 
 def _load_details(log: MessageLog) -> list:
@@ -88,6 +89,15 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
         total_suppressed,
     )
 
+    usage_summary = backfill_usage_record_failure_suppressions(logger=log)
+    log.info(
+        "Backfill usage-record suppressions records_seen=%s records_checked=%s suppression_actions=%s errors=%s",
+        usage_summary.get('records_seen', 0),
+        usage_summary.get('records_checked', 0),
+        usage_summary.get('suppression_actions', 0),
+        usage_summary.get('errors', 0),
+    )
+
     return {
         'batches': batch_number,
         'logs': total_logs,
@@ -95,4 +105,8 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
         'details': total_details,
         'unsubscribed': total_unsubscribed,
         'suppressed': total_suppressed,
+        'usage_records_seen': usage_summary.get('records_seen', 0),
+        'usage_records_checked': usage_summary.get('records_checked', 0),
+        'usage_suppression_actions': usage_summary.get('suppression_actions', 0),
+        'usage_errors': usage_summary.get('errors', 0),
     }

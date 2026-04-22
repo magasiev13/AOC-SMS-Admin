@@ -597,6 +597,15 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("BETA_SIGNOFF_HOST is deprecated", completed.stderr)
         self.assertIn("BETA_SIGNOFF_SSH_TARGET is deprecated", completed.stderr)
 
+    def test_production_snapshot_script_surfaces_customer_managed_reads_and_out_of_band_activity(self) -> None:
+        snapshot_script = self._read_repo_file("run", "public_readiness_production_snapshot.sh")
+
+        self.assertIn('provider_mode == \\"customer_managed\\"', snapshot_script)
+        self.assertIn('profile.twilio_account_sid', snapshot_script)
+        self.assertIn('_normalized_sid', snapshot_script)
+        self.assertIn('twilio_out_of_band.json', snapshot_script)
+        self.assertIn('Top out-of-band destinations', snapshot_script)
+
     def test_doc_smoke_runs_naming_audit_for_retired_beta_refs(self) -> None:
         doc_smoke_script = self._read_repo_file("run", "doc_smoke.sh")
         naming_audit_script = self._read_repo_file("run", "naming_audit.sh")
