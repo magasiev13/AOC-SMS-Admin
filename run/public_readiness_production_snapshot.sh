@@ -243,10 +243,6 @@ import os
 from app import create_app
 from app.models import Organization
 
-
-def _normalized_sid(value):
-    return (value or "").strip().lower() or None
-
 app = create_app(run_startup_tasks=False, start_scheduler=False)
 slug = os.environ[\"ORG_SLUG\"]
 
