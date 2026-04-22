@@ -64,6 +64,23 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         self.assertIn("INBOUND_AUTO_REPLY_ENABLED must be a boolean value", str(ctx.exception))
 
+    def test_cookie_samesite_is_normalized_case_insensitively(self) -> None:
+        os.environ["SESSION_COOKIE_SAMESITE"] = "strict"
+
+        config_module = self._reload_config_module()
+        Config = config_module.Config
+
+        self.assertEqual(Config.SESSION_COOKIE_SAMESITE, "Strict")
+        self.assertEqual(Config.REMEMBER_COOKIE_SAMESITE, "Strict")
+
+    def test_invalid_cookie_samesite_raises_clear_error(self) -> None:
+        os.environ["SESSION_COOKIE_SAMESITE"] = "sideways"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reload_config_module()
+
+        self.assertIn("SESSION_COOKIE_SAMESITE must be one of Lax, Strict, or None", str(ctx.exception))
+
     def test_production_requires_trusted_hosts(self) -> None:
         os.environ["FLASK_ENV"] = "production"
         os.environ["SECRET_KEY"] = "test-production-secret-key"
@@ -77,6 +94,20 @@ class TestConfigSecurityHardening(unittest.TestCase):
             create_app(run_startup_tasks=False, start_scheduler=False)
 
         self.assertIn("TRUSTED_HOSTS must include your production hostnames", str(ctx.exception))
+
+    def test_production_accepts_lowercase_cookie_samesite(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["TRUSTED_HOSTS"] = "sms.example.org"
+        os.environ["SESSION_COOKIE_SAMESITE"] = "lax"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        self.assertEqual(app.config["SESSION_COOKIE_SAMESITE"], "Lax")
+        self.assertEqual(app.config["REMEMBER_COOKIE_SAMESITE"], "Lax")
 
     def test_security_variables_have_non_technical_comments(self) -> None:
         config_path = os.path.join(os.path.dirname(__file__), "..", "app", "config.py")
