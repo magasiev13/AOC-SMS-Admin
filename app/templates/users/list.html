@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Users - {{ product_name }}{% endblock %}
 
@@ -28,14 +29,17 @@
 {% endblock %}
 
 {% block content %}
+<div class="collection-shell">
 {% if users_missing_email %}
-<div class="alert alert-warning" role="alert">
-    <strong>Email cleanup needed.</strong>
-    {{ users_missing_email|length }} user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
-    Those accounts can still sign in, but invite recovery and password reset hygiene remain incomplete until email is backfilled.
+<div class="workspace-callout workspace-callout--warning" role="alert">
+    <div class="workspace-callout__title">Email cleanup needed</div>
+    <p class="workspace-callout__copy">
+        {{ users_missing_email|length }} user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
+        Those accounts can still sign in, but invite recovery and password reset stay limited until email is backfilled.
+    </p>
 </div>
 {% endif %}
-<div class="card app-card">
+<div class="card app-card collection-panel collection-panel--results">
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover mb-0" data-sortable="client">
             <thead class="table-light">
@@ -128,7 +132,13 @@
                 {% else %}
                     <tr>
                         <td colspan="6" class="text-center text-muted py-4">
-                            No users found.
+                            {{ ui.empty_state(
+                                'bi-people',
+                                'No users found',
+                                'Invite your first teammate to get started.' if config.SAAS_MODE and not current_user.is_platform_admin else ('Add another platform admin to share platform access.' if config.SAAS_MODE and current_user.is_platform_admin else 'Create a user to grant dashboard access.'),
+                                url_for('main.team_invite') if config.SAAS_MODE and not current_user.is_platform_admin else url_for('main.users_add'),
+                                'Invite Team Member' if config.SAAS_MODE and not current_user.is_platform_admin else ('Add Platform Admin' if config.SAAS_MODE and current_user.is_platform_admin else 'Add User')
+                            ) }}
                         </td>
                     </tr>
                 {% endif %}
@@ -178,37 +188,24 @@
             </div>
             {% endfor %}
         {% else %}
-        <div class="empty-state py-4">
-            <i class="bi bi-people empty-state__icon"></i>
-            <div class="empty-state__title">No users found</div>
-            <div class="empty-state__text">
-                {% if config.SAAS_MODE and not current_user.is_platform_admin %}
-                Invite your first teammate to test the owner + staff workflow.
-                {% elif config.SAAS_MODE and current_user.is_platform_admin %}
-                Create another platform admin to help manage the control plane.
-                {% else %}
-                Create a user to grant dashboard access.
-                {% endif %}
-            </div>
-            {% if config.SAAS_MODE and not current_user.is_platform_admin %}
-            <a href="{{ url_for('main.team_invite') }}" class="btn btn-sm btn-outline-primary empty-state__action">Invite Team Member</a>
-            {% elif config.SAAS_MODE and current_user.is_platform_admin %}
-            <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add Platform Admin</a>
-            {% else %}
-            <a href="{{ url_for('main.users_add') }}" class="btn btn-sm btn-outline-primary empty-state__action">Add User</a>
-            {% endif %}
+        <div class="py-4">
+            {{ ui.empty_state(
+                'bi-people',
+                'No users found',
+                'Invite your first teammate to get started.' if config.SAAS_MODE and not current_user.is_platform_admin else ('Add another platform admin to share platform access.' if config.SAAS_MODE and current_user.is_platform_admin else 'Create a user to grant dashboard access.'),
+                url_for('main.team_invite') if config.SAAS_MODE and not current_user.is_platform_admin else url_for('main.users_add'),
+                'Invite Team Member' if config.SAAS_MODE and not current_user.is_platform_admin else ('Add Platform Admin' if config.SAAS_MODE and current_user.is_platform_admin else 'Add User')
+            ) }}
         </div>
         {% endif %}
     </div>
     {% if users %}
-    <div class="card-footer text-muted">
-        Showing {{ users|length }} user(s)
-    </div>
+    {{ ui.collection_footer(users|length, 'user') }}
     {% endif %}
 </div>
 
 {% if pending_invitations %}
-<div class="card app-card mt-4">
+<div class="card app-card collection-panel collection-panel--results">
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-envelope-paper me-2"></i>Pending Invitations</h6>
     </div>
@@ -299,6 +296,7 @@
     </div>
 </div>
 {% endif %}
+</div>
 
 <div class="modal fade" id="deleteUserModal" tabindex="-1">
     <div class="modal-dialog modal-sm">

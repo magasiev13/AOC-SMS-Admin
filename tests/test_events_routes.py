@@ -226,6 +226,22 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertIn(b"Added 1 registrations.", response.data)
         self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
 
+    def test_event_detail_uses_shared_summary_and_detail_layout(self) -> None:
+        self._login()
+        event = self.Event(title="Community Picnic")
+        self.db.session.add(event)
+        self.db.session.flush()
+        self.db.session.add(self.EventRegistration(event_id=event.id, name="Pat", phone="+15550002007"))
+        self.db.session.commit()
+
+        response = self.client.get(f"/events/{event.id}", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b"workspace-detail-layout", response.data)
+        self.assertIn(b"workspace-summary__stats--2", response.data)
+        self.assertIn(b"Registrations", response.data)
+
 
 if __name__ == "__main__":
     unittest.main()

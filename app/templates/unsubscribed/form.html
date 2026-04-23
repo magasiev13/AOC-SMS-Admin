@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Add to Suppression - {{ product_name }}{% endblock %}
 
@@ -17,32 +18,47 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-body">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-form-layout workspace-form-layout--centered">
+        <div class="workspace-form-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Add suppression entry</h2>
+                        <p class="workspace-panel__meta">Save a contact that should stay off outbound send lists.</p>
+                    </div>
+                </div>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label for="name" class="form-label">Name (optional)</label>
-                        <input type="text" class="form-control" id="name" name="name" autocomplete="name" placeholder="Contact name">
+                    <div class="workspace-panel__body">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Name (optional)</label>
+                            <input type="text" class="form-control" id="name" name="name" autocomplete="name" placeholder="Contact name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="phone" class="form-label">Phone</label>
+                            <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" placeholder="+1 (555) 555-5555" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="reason" class="form-label">Reason (optional)</label>
+                            <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is suppressed"></textarea>
+                        </div>
+                        <div class="mb-0">
+                            <label for="source" class="form-label">Source</label>
+                            <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
+                            <div class="form-text">Use a short source label such as `manual` or `event:123`.</div>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="phone" class="form-label">Phone</label>
-                        <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" placeholder="+1 (555) 555-5555" required>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Suppressed numbers stay excluded from future sends until removed.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">Add to Suppression</button>
+                            <a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <label for="reason" class="form-label">Reason (optional)</label>
-                        <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is suppressed"></textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label for="source" class="form-label">Source</label>
-                        <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
-                        <div class="form-text">Helps track why the number is suppressed (e.g., manual, event:123).</div>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">Add to Suppression</button>
                 </form>
-            </div>
+            </section>
         </div>
     </div>
 </div>

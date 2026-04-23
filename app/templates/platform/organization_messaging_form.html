@@ -23,7 +23,7 @@
 {% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') or 'auto_buy' %}
 {% set customer_activation_state_value = customer_managed_activation_state or 'unvalidated' %}
 {% set customer_activation_ready = provider_is_customer_managed and messaging_profile and messaging_profile.twilio_account_sid and messaging_profile.from_number and messaging_profile.sender_review_status == 'approved' %}
-<div class="platform-shell">
+<div class="platform-shell platform-shell--compact">
     <section class="platform-shell__summary">
         <div class="platform-shell__summary-header">
             <div class="platform-shell__summary-body">
@@ -31,9 +31,9 @@
                 <h2 class="platform-shell__summary-title">{{ organization.name }}</h2>
                 <p class="platform-shell__summary-copy">
                     {% if provider_is_customer_managed %}
-                    Validate the customer-owned Twilio account, sender, and Messaging Service exactly as they exist today, then activate cutover only when you are ready for Twinevia to take over inbound routing.
+                    Validate the external provider first, then activate cutover when you are ready for {{ product_name }} to take over inbound routing.
                     {% else %}
-                    Provision the platform-managed Twilio account first, then let {{ product_name }} validate the service address, attach the sender, sync emergency registration, and unlock live sending.
+                    Provision the provider, save the service address, then finalize the sender.
                     {% endif %}
                 </p>
             </div>
@@ -62,61 +62,6 @@
         <div class="platform-main">
             <div class="card app-card platform-section-card">
                 <div class="card-body">
-                    <div class="platform-note mb-4" role="note">
-                        <div class="platform-note__title">
-                            {{ 'Customer-managed Twilio' if provider_is_customer_managed else 'Platform-managed Twilio' }}
-                        </div>
-                        <div class="platform-note__copy">
-                            {% if provider_is_customer_managed %}
-                            This workspace keeps its own Twilio account. Step 1 validates the external account, sender number, and Messaging Service without touching inbound routing. Step 2 activates Twinevia as the inbound webhook destination and enables Twilio event-stream sync.
-                            {% else %}
-                            This workspace gets its own Twilio subaccount and Messaging Service. Provision first, save the org service address, then run sender finalization so the app can buy or attach the number, sync the emergency address, and activate the provider.
-                            {% endif %}
-                        </div>
-                    </div>
-
-                    <div class="platform-note mb-4" role="note">
-                        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <div>
-                                <div class="platform-note__title">A2P onboarding</div>
-                                <div class="platform-note__copy">
-                                    Status: <strong>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</strong>
-                                    {% if a2p_status %}
-                                    · Brand: {{ a2p_status.brand_status }}
-                                    · Campaign: {{ a2p_status.campaign_status }}
-                                    {% endif %}
-                                </div>
-                                {% if a2p_status %}
-                                <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
-                                {% if a2p_status.failure_reason %}
-                                <div class="platform-note__copy mt-1 text-danger">
-                                    {% if a2p_status.failure_code %}<strong>Twilio {{ a2p_status.failure_code }}:</strong> {% endif %}
-                                    {{ a2p_status.failure_reason }}
-                                </div>
-                                {% endif %}
-                                <div class="small text-muted mt-1">
-                                    {{ a2p_status.eta }}
-                                    {% if a2p_status.last_checked_display %}
-                                    · Last checked {{ a2p_status.last_checked_display }}
-                                    {% endif %}
-                                </div>
-                                {% endif %}
-                            </div>
-                            <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
-                                {{ 'View External A2P Status' if provider_is_customer_managed else 'Manage A2P Onboarding' }}
-                            </a>
-                        </div>
-                    </div>
-
-                    {% if onboarding and onboarding.is_pending_review and not provider_is_customer_managed %}
-                    <div class="platform-note mb-4" role="status">
-                        <div class="platform-note__title">Automatic refresh is on</div>
-                        <div class="platform-note__copy">
-                            This page checks for new A2P status updates automatically about every 15 seconds while carrier review is in progress.
-                        </div>
-                    </div>
-                    {% endif %}
-
                     {% if messaging_profile and messaging_profile.provider_status == 'error' and messaging_profile.last_provision_error %}
                     <div class="platform-note platform-note--danger mb-4" role="alert">
                         <div class="platform-note__title">Provider sync error</div>
@@ -144,82 +89,225 @@
                     </div>
                     {% endif %}
 
-                    <div class="mb-4">
-                        {% set launch_readiness_title = 'Launch readiness' %}
-                        {% include 'includes/launch_readiness_panel.html' %}
-                    </div>
-
-                    {% if not provider_is_customer_managed and launch_readiness.awaiting_sender_assignment %}
-                    <div class="platform-note mb-4" role="note">
-                        <div class="platform-note__title">Next operator action</div>
-                        <div class="platform-note__copy">{{ launch_readiness.sender_action }}</div>
-                    </div>
-                    {% endif %}
-
-                    <div class="platform-key-grid mb-4">
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Provider mode</div>
-                            <div class="platform-key-value">{{ messaging_profile.provider_mode if messaging_profile else selected_provider_mode }}</div>
-                        </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">{{ 'Sender review' if provider_is_customer_managed else 'Sender finalization' }}</div>
-                            <div class="platform-key-value">
+                    <div class="platform-section-header mb-4">
+                        <div>
+                            <div class="platform-shell__eyebrow mb-2">{{ 'Customer-managed Twilio' if provider_is_customer_managed else 'Platform-managed Twilio' }}</div>
+                            <h3 class="platform-section-title mb-2">Provider settings</h3>
+                            <p class="text-muted small mb-0">
                                 {% if provider_is_customer_managed %}
-                                {{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}
+                                Validate the external account, sender number, and Messaging Service first. Activate cutover only when you want {{ product_name }} to own inbound SMS.
                                 {% else %}
-                                {{ messaging_profile.effective_sender_finalization_status if messaging_profile else 'awaiting_a2p_approval' }}
+                                Save the service address and sender settings here, then run provisioning and finalization once the provider is ready.
                                 {% endif %}
-                            </div>
+                            </p>
                         </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">{{ 'Twilio account' if provider_is_customer_managed else 'Twilio subaccount' }}</div>
-                            <div class="platform-key-value">
-                                <code>
-                                    {% if provider_is_customer_managed %}
-                                    {{ messaging_profile.twilio_account_sid or 'Not configured yet' }}
-                                    {% else %}
-                                    {{ messaging_profile.twilio_subaccount_sid or 'Not provisioned yet' }}
-                                    {% endif %}
-                                </code>
-                            </div>
-                        </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Messaging Service</div>
-                            <div class="platform-key-value"><code>{{ messaging_profile.messaging_service_sid or 'Not configured yet' }}</code></div>
-                        </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Sender number</div>
-                            <div class="platform-key-value">{{ messaging_profile.from_number or 'Not assigned yet' }}</div>
-                        </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Phone number SID</div>
-                            <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
-                        </div>
-                        {% if provider_is_customer_managed %}
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Activation state</div>
-                            <div class="platform-key-value">{{ customer_activation_state_value }}</div>
-                        </div>
-                        {% endif %}
-                        {% if not provider_is_customer_managed %}
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Service address</div>
-                            <div class="platform-key-value">
-                                {% if messaging_profile and messaging_profile.service_address_complete %}
-                                {{ messaging_profile.service_address_line1 }}, {{ messaging_profile.service_address_city }}, {{ messaging_profile.service_address_region }} {{ messaging_profile.service_address_postal_code }}
-                                {% else %}
-                                Not saved yet
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="platform-key-item">
-                            <div class="platform-key-label">Emergency address sync</div>
-                            <div class="platform-key-value">{{ messaging_profile.emergency_address_status if messaging_profile and messaging_profile.emergency_address_status else 'pending' }}</div>
-                        </div>
-                        {% endif %}
+                        <a href="{{ url_for('main.platform_organizations_messaging_onboarding', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">
+                            {{ 'View External A2P Status' if provider_is_customer_managed else 'Manage A2P Onboarding' }}
+                        </a>
                     </div>
 
-                    <div class="platform-form-actions mb-4">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action" value="save">
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label" for="provider_mode">Provider Mode</label>
+                                <select class="form-select" id="provider_mode" name="provider_mode">
+                                    <option value="platform_managed" {% if selected_provider_mode == 'platform_managed' %}selected{% endif %}>platform_managed</option>
+                                    <option value="customer_managed" {% if selected_provider_mode == 'customer_managed' %}selected{% endif %}>customer_managed</option>
+                                </select>
+                                <div class="form-text">
+                                    Use customer-managed when the tenant keeps its own Twilio account, sender, and A2P registration.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="business_type">Business Type</label>
+                                <input
+                                    class="form-control"
+                                    id="business_type"
+                                    name="business_type"
+                                    placeholder="Real estate, nonprofit, church"
+                                    value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="use_case">Use Case</label>
+                                <input
+                                    class="form-control"
+                                    id="use_case"
+                                    name="use_case"
+                                    placeholder="Announcements, reminders, campaigns"
+                                    value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1" data-platform-managed-fields {% if provider_is_customer_managed %}hidden{% endif %}>
+                            <div class="col-md-6">
+                                <label class="form-label" for="service_address_line1">Service Address Line 1</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_line1"
+                                    name="service_address_line1"
+                                    placeholder="123 Main Street"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_line1', messaging_profile.service_address_line1 if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="service_address_line2">Service Address Line 2</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_line2"
+                                    name="service_address_line2"
+                                    placeholder="Suite 200"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_line2', messaging_profile.service_address_line2 if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="service_address_city">City</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_city"
+                                    name="service_address_city"
+                                    placeholder="Denver"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_city', messaging_profile.service_address_city if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label" for="service_address_region">State / Province</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_region"
+                                    name="service_address_region"
+                                    placeholder="CO"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_region', messaging_profile.service_address_region if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label" for="service_address_postal_code">Postal Code</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_postal_code"
+                                    name="service_address_postal_code"
+                                    placeholder="80202"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_postal_code', messaging_profile.service_address_postal_code if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label" for="service_address_country">Country</label>
+                                <input
+                                    class="form-control"
+                                    id="service_address_country"
+                                    name="service_address_country"
+                                    placeholder="US"
+                                    maxlength="2"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('service_address_country', messaging_profile.service_address_country if messaging_profile else '') or '' }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="number_strategy">Number Strategy</label>
+                                <select class="form-select" id="number_strategy" name="number_strategy" {% if provider_is_customer_managed %}disabled{% endif %}>
+                                    {% for value, label in number_strategy_choices %}
+                                    <option value="{{ value }}" {% if selected_number_strategy == value %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">
+                                    `auto_buy` is the default SaaS path. Manual PN strategies stay available when you already know the number that should be attached.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="phone_number_sid">Target Phone Number SID</label>
+                                <input
+                                    class="form-control"
+                                    id="phone_number_sid"
+                                    name="phone_number_sid"
+                                    placeholder="PNxxxxxxxx"
+                                    {% if provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') or '' }}"
+                                >
+                                <div class="form-text">
+                                    Required for `existing_subaccount_number`, `transfer_parent_number`, and manual `platform_assign`. Leave blank for `auto_buy`.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-1" data-customer-managed-fields {% if not provider_is_customer_managed %}hidden{% endif %}>
+                            <div class="col-md-6">
+                                <label class="form-label" for="twilio_account_sid">Twilio Account SID</label>
+                                <input
+                                    class="form-control"
+                                    id="twilio_account_sid"
+                                    name="twilio_account_sid"
+                                    placeholder="ACxxxxxxxx"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ current_account_sid }}"
+                                >
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="twilio_auth_token">Twilio Auth Token</label>
+                                <input
+                                    class="form-control"
+                                    id="twilio_auth_token"
+                                    name="twilio_auth_token"
+                                    type="password"
+                                    autocomplete="new-password"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    placeholder="{{ 'Leave blank to keep the stored token' if messaging_profile and messaging_profile.twilio_account_sid else 'Enter Twilio auth token' }}"
+                                >
+                                <div class="form-text">
+                                    {% if messaging_profile and messaging_profile.twilio_account_sid %}
+                                    Leave blank to keep the currently stored token for the same account SID.
+                                    {% else %}
+                                    Required to validate the external Twilio account. Activation happens as a separate cutover step.
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="sender_number_customer">Sender Number</label>
+                                <input
+                                    class="form-control"
+                                    id="sender_number_customer"
+                                    name="sender_number"
+                                    placeholder="+15551234567"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
+                                >
+                                <div class="form-text">
+                                    Enter the customer-owned phone number already approved in the external Twilio account.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label" for="messaging_service_sid">Messaging Service SID</label>
+                                <input
+                                    class="form-control"
+                                    id="messaging_service_sid"
+                                    name="messaging_service_sid"
+                                    placeholder="MGxxxxxxxx"
+                                    {% if not provider_is_customer_managed %}disabled{% endif %}
+                                    value="{{ customer_service_sid }}"
+                                >
+                                <div class="form-text">
+                                    Optional, but recommended when the customer already sends through a Messaging Service.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="platform-form-actions mt-4">
+                            <button type="submit" class="btn btn-primary">
+                                {{ 'Validate External Twilio' if provider_is_customer_managed else ('Save Provider Settings' if provider_configured else 'Save Draft Settings') }}
+                            </button>
+                            <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
+                        </div>
+                    </form>
+
+                    <div class="platform-form-actions mt-4 mb-4">
                         {% if not provider_is_customer_managed %}
                         <form method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -297,210 +385,114 @@
                         {% endif %}
                     </div>
 
-                    <div class="mb-4">
-                        {% include 'includes/provider_activity_timeline.html' %}
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">A2P onboarding</div>
+                        <div class="platform-note__copy">
+                            Status: <strong>{{ a2p_status.title if a2p_status else (onboarding.onboarding_status if onboarding else 'draft') }}</strong>
+                            {% if a2p_status %}
+                            · Brand: {{ a2p_status.brand_status }}
+                            · Campaign: {{ a2p_status.campaign_status }}
+                            {% endif %}
+                        </div>
+                        {% if a2p_status %}
+                        <div class="platform-note__copy mt-1">{{ a2p_status.next_step }}</div>
+                        {% if a2p_status.failure_reason %}
+                        <div class="platform-note__copy mt-1 text-danger">
+                            {% if a2p_status.failure_code %}<strong>Twilio {{ a2p_status.failure_code }}:</strong> {% endif %}
+                            {{ a2p_status.failure_reason }}
+                        </div>
+                        {% endif %}
+                        <div class="small text-muted mt-1">
+                            {{ a2p_status.eta }}
+                            {% if a2p_status.last_checked_display %}
+                            · Last checked {{ a2p_status.last_checked_display }}
+                            {% endif %}
+                        </div>
+                        {% endif %}
                     </div>
 
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="save">
+                    {% if onboarding and onboarding.is_pending_review and not provider_is_customer_managed %}
+                    <div class="platform-note mb-4" role="status">
+                        <div class="platform-note__title">Automatic refresh is on</div>
+                        <div class="platform-note__copy">
+                            This page checks for new A2P status updates automatically about every 15 seconds while carrier review is in progress.
+                        </div>
+                    </div>
+                    {% endif %}
 
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label" for="provider_mode">Provider Mode</label>
-                                <select class="form-select" id="provider_mode" name="provider_mode">
-                                    <option value="platform_managed" {% if selected_provider_mode == 'platform_managed' %}selected{% endif %}>platform_managed</option>
-                                    <option value="customer_managed" {% if selected_provider_mode == 'customer_managed' %}selected{% endif %}>customer_managed</option>
-                                </select>
-                                <div class="form-text">
-                                    Use customer-managed when the tenant keeps its own Twilio account, sender, and A2P registration.
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="business_type">Business Type</label>
-                                <input
-                                    class="form-control"
-                                    id="business_type"
-                                    name="business_type"
-                                    placeholder="Real estate, nonprofit, church"
-                                    value="{{ request.form.get('business_type', messaging_profile.business_type if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="use_case">Use Case</label>
-                                <input
-                                    class="form-control"
-                                    id="use_case"
-                                    name="use_case"
-                                    placeholder="Announcements, reminders, campaigns"
-                                    value="{{ request.form.get('use_case', messaging_profile.use_case if messaging_profile else '') or '' }}"
-                                >
+                    <div class="mb-4">
+                        {% set launch_readiness_title = 'Launch readiness' %}
+                        {% set launch_readiness_show_follow_up = false %}
+                        {% set launch_readiness_show_runbook = false %}
+                        {% include 'includes/launch_readiness_panel.html' %}
+                    </div>
+
+                    <div class="platform-key-grid mb-4">
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Provider mode</div>
+                            <div class="platform-key-value">{{ messaging_profile.provider_mode if messaging_profile else selected_provider_mode }}</div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">{{ 'Sender review' if provider_is_customer_managed else 'Sender finalization' }}</div>
+                            <div class="platform-key-value">
+                                {% if provider_is_customer_managed %}
+                                {{ messaging_profile.sender_review_status if messaging_profile else 'pending' }}
+                                {% else %}
+                                {{ messaging_profile.effective_sender_finalization_status if messaging_profile else 'awaiting_a2p_approval' }}
+                                {% endif %}
                             </div>
                         </div>
-
-                        <div class="row g-3 mt-1" data-platform-managed-fields {% if provider_is_customer_managed %}hidden{% endif %}>
-                            <div class="col-md-6">
-                                <label class="form-label" for="number_strategy">Number Strategy</label>
-                                <select class="form-select" id="number_strategy" name="number_strategy" {% if provider_is_customer_managed %}disabled{% endif %}>
-                                    {% for value, label in number_strategy_choices %}
-                                    <option value="{{ value }}" {% if selected_number_strategy == value %}selected{% endif %}>{{ label }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text">
-                                    `auto_buy` is the default SaaS path. Manual PN strategies stay available when you already know the number that should be attached.
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="phone_number_sid">Target Phone Number SID</label>
-                                <input
-                                    class="form-control"
-                                id="phone_number_sid"
-                                name="phone_number_sid"
-                                placeholder="PNxxxxxxxx"
-                                {% if provider_is_customer_managed %}disabled{% endif %}
-                                value="{{ request.form.get('phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') or '' }}"
-                            >
-                                <div class="form-text">
-                                    Required for `existing_subaccount_number`, `transfer_parent_number`, and manual `platform_assign`. Leave blank for `auto_buy`.
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="service_address_line1">Service Address Line 1</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_line1"
-                                    name="service_address_line1"
-                                    placeholder="123 Main Street"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_line1', messaging_profile.service_address_line1 if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="service_address_line2">Service Address Line 2</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_line2"
-                                    name="service_address_line2"
-                                    placeholder="Suite 200"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_line2', messaging_profile.service_address_line2 if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label" for="service_address_city">City</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_city"
-                                    name="service_address_city"
-                                    placeholder="Denver"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_city', messaging_profile.service_address_city if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label" for="service_address_region">State / Province</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_region"
-                                    name="service_address_region"
-                                    placeholder="CO"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_region', messaging_profile.service_address_region if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label" for="service_address_postal_code">Postal Code</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_postal_code"
-                                    name="service_address_postal_code"
-                                    placeholder="80202"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_postal_code', messaging_profile.service_address_postal_code if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                            <div class="col-md-2">
-                                <label class="form-label" for="service_address_country">Country</label>
-                                <input
-                                    class="form-control"
-                                    id="service_address_country"
-                                    name="service_address_country"
-                                    placeholder="US"
-                                    maxlength="2"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('service_address_country', messaging_profile.service_address_country if messaging_profile else '') or '' }}"
-                                >
-                            </div>
-                        </div>
-
-                        <div class="row g-3 mt-1" data-customer-managed-fields {% if not provider_is_customer_managed %}hidden{% endif %}>
-                            <div class="col-md-6">
-                                <label class="form-label" for="twilio_account_sid">Twilio Account SID</label>
-                                <input
-                                    class="form-control"
-                                    id="twilio_account_sid"
-                                    name="twilio_account_sid"
-                                    placeholder="ACxxxxxxxx"
-                                    {% if not provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ current_account_sid }}"
-                                >
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="twilio_auth_token">Twilio Auth Token</label>
-                                <input
-                                    class="form-control"
-                                    id="twilio_auth_token"
-                                    name="twilio_auth_token"
-                                    type="password"
-                                    autocomplete="new-password"
-                                    {% if not provider_is_customer_managed %}disabled{% endif %}
-                                    placeholder="{{ 'Leave blank to keep the stored token' if messaging_profile and messaging_profile.twilio_account_sid else 'Enter Twilio auth token' }}"
-                                >
-                                <div class="form-text">
-                                    {% if messaging_profile and messaging_profile.twilio_account_sid %}
-                                    Leave blank to keep the currently stored token for the same account SID.
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">{{ 'Twilio account' if provider_is_customer_managed else 'Twilio subaccount' }}</div>
+                            <div class="platform-key-value">
+                                <code>
+                                    {% if provider_is_customer_managed %}
+                                    {{ messaging_profile.twilio_account_sid or 'Not configured yet' }}
                                     {% else %}
-                                    Required to validate the external Twilio account. Activation happens as a separate cutover step.
+                                    {{ messaging_profile.twilio_subaccount_sid or 'Not provisioned yet' }}
                                     {% endif %}
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="sender_number_customer">Sender Number</label>
-                                <input
-                                    class="form-control"
-                                    id="sender_number_customer"
-                                    name="sender_number"
-                                    placeholder="+15551234567"
-                                    {% if not provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('sender_number', messaging_profile.from_number if messaging_profile else '') or '' }}"
-                                >
-                                <div class="form-text">
-                                    Enter the customer-owned phone number already approved in the external Twilio account.
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="messaging_service_sid">Messaging Service SID</label>
-                                <input
-                                    class="form-control"
-                                    id="messaging_service_sid"
-                                    name="messaging_service_sid"
-                                    placeholder="MGxxxxxxxx"
-                                    {% if not provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ customer_service_sid }}"
-                                >
-                                <div class="form-text">
-                                    Optional, but recommended when the customer already sends through a Messaging Service.
-                                </div>
+                                </code>
                             </div>
                         </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Messaging Service</div>
+                            <div class="platform-key-value"><code>{{ messaging_profile.messaging_service_sid or 'Not configured yet' }}</code></div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Sender number</div>
+                            <div class="platform-key-value">{{ messaging_profile.from_number or 'Not assigned yet' }}</div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Phone number SID</div>
+                            <div class="platform-key-value"><code>{{ messaging_profile.phone_number_sid or 'Not assigned yet' }}</code></div>
+                        </div>
+                        {% if provider_is_customer_managed %}
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Activation state</div>
+                            <div class="platform-key-value">{{ customer_activation_state_value }}</div>
+                        </div>
+                        {% endif %}
+                        {% if not provider_is_customer_managed %}
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Service address</div>
+                            <div class="platform-key-value">
+                                {% if messaging_profile and messaging_profile.service_address_complete %}
+                                {{ messaging_profile.service_address_line1 }}, {{ messaging_profile.service_address_city }}, {{ messaging_profile.service_address_region }} {{ messaging_profile.service_address_postal_code }}
+                                {% else %}
+                                Not saved yet
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="platform-key-item">
+                            <div class="platform-key-label">Emergency address sync</div>
+                            <div class="platform-key-value">{{ messaging_profile.emergency_address_status if messaging_profile and messaging_profile.emergency_address_status else 'pending' }}</div>
+                        </div>
+                        {% endif %}
+                    </div>
 
-                        <div class="platform-form-actions mt-4">
-                            <button type="submit" class="btn btn-primary">
-                                {{ 'Validate External Twilio' if provider_is_customer_managed else ('Save Provider Settings' if provider_configured else 'Save Draft Settings') }}
-                            </button>
-                            <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
-                        </div>
-                    </form>
+                    <div class="mb-0">
+                        {% include 'includes/provider_activity_timeline.html' %}
+                    </div>
                 </div>
             </div>
 
@@ -539,6 +531,7 @@
                                     maxlength="1600"
                                     placeholder="Platform operational test from Twinevia."
                                 ></textarea>
+                                <div class="form-text" id="platformTestBodyStats" aria-live="polite"></div>
                             </div>
                         </div>
 
@@ -591,6 +584,7 @@
 
 {% block scripts %}
 {{ super() }}
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     (() => {
         const providerModeInput = document.getElementById('provider_mode');
@@ -614,6 +608,25 @@
 
         providerModeInput.addEventListener('change', syncProviderMode);
         syncProviderMode();
+    })();
+
+    (() => {
+        const textarea = document.getElementById('platform_test_body');
+        const stats = document.getElementById('platformTestBodyStats');
+        if (!textarea || !stats || !window.TwineviaSmsAnalysis) {
+            return;
+        }
+
+        const updateStats = () => {
+            const analysis = window.TwineviaSmsAnalysis.analyzeBody(textarea.value || '');
+            const normalizationNote = analysis.normalizationApplied
+                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before send.`
+                : '';
+            stats.textContent = `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`;
+        };
+
+        textarea.addEventListener('input', updateStats);
+        updateStats();
     })();
 </script>
 {% endblock %}

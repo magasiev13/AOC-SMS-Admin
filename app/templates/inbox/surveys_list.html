@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Survey Flows - {{ product_name }}{% endblock %}
 
@@ -18,146 +19,158 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form method="GET" class="filter-bar">
-            <div class="input-group">
-                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Search survey flows">
-            </div>
-        </form>
-    </div>
-</div>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="collection-shell">
+        {{ ui.collection_search_panel(
+            url_for('main.survey_flows_list'),
+            'Search survey flows',
+            value=search,
+            aria_label='Search survey flows',
+            title='Search',
+            meta='Filter by survey name, trigger keyword, or message copy.'
+        ) }}
 
-<div class="card app-card">
-    <div class="table-responsive d-none d-lg-block">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Name</th>
-                    <th>Trigger</th>
-                    <th>Questions</th>
-                    <th>Starts</th>
-                    <th>Completions</th>
-                    <th>Status</th>
-                    <th width="300">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
+        <section class="collection-panel collection-panel--results">
+            <div class="table-responsive d-none d-lg-block">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Name</th>
+                            <th>Trigger</th>
+                            <th>Questions</th>
+                            <th>Starts</th>
+                            <th>Completions</th>
+                            <th>Status</th>
+                            <th width="300">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if surveys %}
+                            {% for survey in surveys %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ survey.name }}</div>
+                                    {% if survey.intro_message %}
+                                    <div class="small text-muted">{{ survey.intro_message|truncate(80) }}</div>
+                                    {% endif %}
+                                </td>
+                                <td><code>{{ survey.trigger_keyword }}</code></td>
+                                <td>{{ survey.questions|length }}</td>
+                                <td>{{ survey.start_count or 0 }}</td>
+                                <td>{{ survey.completion_count or 0 }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
+                                        {{ 'Active' if survey.is_active else 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="automation-actions row-actions" data-row-actions data-row-actions-primary="1">
+                                        <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
+                                            <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary" aria-label="Edit survey flow">
+                                                <i class="bi bi-pencil me-1"></i>Edit
+                                            </a>
+                                            <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-outline-secondary" aria-label="View submissions">
+                                                <i class="bi bi-list-ul me-1"></i>Submissions
+                                            </a>
+                                        </div>
+                                        <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="btn btn-sm btn-soft-danger" type="submit"
+                                                    data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
+                                                <i class="bi bi-trash me-1"></i>Delete
+                                            </button>
+                                        </form>
+                                        {% if survey.is_active %}
+                                        <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button class="btn btn-sm btn-soft-warning" type="submit"
+                                                    data-confirm="Deactivate this survey flow?">
+                                                <i class="bi bi-pause-circle me-1"></i>Deactivate
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="py-5">
+                                {{ ui.empty_state(
+                                    'bi-list-check',
+                                    'No survey flows found',
+                                    'Add your first survey to automate question flows.',
+                                    primary_href=url_for('main.survey_flow_add'),
+                                    primary_label='Add survey flow'
+                                ) }}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-list d-lg-none">
                 {% if surveys %}
                     {% for survey in surveys %}
-                    <tr>
-                        <td>
-                            <div class="fw-semibold">{{ survey.name }}</div>
-                            {% if survey.intro_message %}
-                            <div class="small text-muted">{{ survey.intro_message|truncate(80) }}</div>
-                            {% endif %}
-                        </td>
-                        <td><code>{{ survey.trigger_keyword }}</code></td>
-                        <td>{{ survey.questions|length }}</td>
-                        <td>{{ survey.start_count or 0 }}</td>
-                        <td>{{ survey.completion_count or 0 }}</td>
-                        <td>
-                            <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
-                                {{ 'Active' if survey.is_active else 'Inactive' }}
-                            </span>
-                        </td>
-                        <td>
-                            <div class="automation-actions row-actions" data-row-actions data-row-actions-primary="1">
-                                <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
-                                    <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary" aria-label="Edit survey flow">
-                                        <i class="bi bi-pencil me-1"></i>Edit
-                                    </a>
-                                    <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-outline-secondary" aria-label="View submissions">
-                                        <i class="bi bi-list-ul me-1"></i>Submissions
-                                    </a>
-                                </div>
-                                <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-sm btn-soft-danger" type="submit"
-                                            data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
-                                        <i class="bi bi-trash me-1"></i>Delete
-                                    </button>
-                                </form>
-                                {% if survey.is_active %}
-                                <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-sm btn-soft-warning" type="submit"
-                                            data-confirm="Deactivate this survey flow?">
-                                        <i class="bi bi-pause-circle me-1"></i>Deactivate
-                                    </button>
-                                </form>
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1">{{ survey.name }}</h6>
+                                <div class="text-muted small"><code>{{ survey.trigger_keyword }}</code></div>
+                                {% if survey.intro_message %}
+                                <div class="text-muted small mt-1">{{ survey.intro_message|truncate(80) }}</div>
                                 {% endif %}
+                                <div class="d-flex flex-wrap gap-2 mt-2">
+                                    <span class="badge bg-light text-dark">{{ survey.questions|length }} questions</span>
+                                    <span class="badge bg-light text-dark">{{ survey.start_count or 0 }} starts</span>
+                                    <span class="badge bg-light text-dark">{{ survey.completion_count or 0 }} completions</span>
+                                    <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
+                                        {{ 'Active' if survey.is_active else 'Inactive' }}
+                                    </span>
+                                </div>
                             </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                {% else %}
-                <tr>
-                    <td colspan="7" class="text-center text-muted py-4">
-                        No survey flows found. <a href="{{ url_for('main.survey_flow_add') }}">Add your first survey</a>.
-                    </td>
-                </tr>
-                {% endif %}
-            </tbody>
-        </table>
-    </div>
-    <div class="card-list d-lg-none">
-        {% if surveys %}
-            {% for survey in surveys %}
-            <div class="card-list-item">
-                <div class="d-flex justify-content-between align-items-start gap-2">
-                    <div>
-                        <h6 class="mb-1">{{ survey.name }}</h6>
-                        <div class="text-muted small"><code>{{ survey.trigger_keyword }}</code></div>
-                        {% if survey.intro_message %}
-                        <div class="text-muted small mt-1">{{ survey.intro_message|truncate(80) }}</div>
-                        {% endif %}
-                        <div class="d-flex flex-wrap gap-2 mt-2">
-                            <span class="badge bg-light text-dark">{{ survey.questions|length }} questions</span>
-                            <span class="badge bg-light text-dark">{{ survey.start_count or 0 }} starts</span>
-                            <span class="badge bg-light text-dark">{{ survey.completion_count or 0 }} completions</span>
-                            <span class="badge bg-{{ 'success' if survey.is_active else 'secondary' }}">
-                                {{ 'Active' if survey.is_active else 'Inactive' }}
-                            </span>
+                        </div>
+                        <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions data-row-actions-primary="1">
+                            <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
+                                <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary">
+                                    <i class="bi bi-pencil me-1"></i>Edit
+                                </a>
+                                <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-outline-secondary">
+                                    <i class="bi bi-list-ul me-1"></i>Submissions
+                                </a>
+                            </div>
+                            <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-soft-danger" type="submit"
+                                        data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
+                                    <i class="bi bi-trash me-1"></i>Delete
+                                </button>
+                            </form>
+                            {% if survey.is_active %}
+                            <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-soft-warning" type="submit"
+                                        data-confirm="Deactivate this survey flow?">
+                                    <i class="bi bi-pause-circle me-1"></i>Deactivate
+                                </button>
+                            </form>
+                            {% endif %}
                         </div>
                     </div>
-                </div>
-                <div class="row-actions automation-actions automation-actions--mobile mt-3" data-row-actions data-row-actions-primary="1">
-                    <div class="btn-group btn-group-sm automation-actions__primary" role="group" aria-label="Survey flow primary actions">
-                        <a href="{{ url_for('main.survey_flow_edit', survey_id=survey.id) }}" class="btn btn-outline-primary">
-                            <i class="bi bi-pencil me-1"></i>Edit
-                        </a>
-                        <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-outline-secondary">
-                            <i class="bi bi-list-ul me-1"></i>Submissions
-                        </a>
-                    </div>
-                    <form method="POST" action="{{ url_for('main.survey_flow_delete', survey_id=survey.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-soft-danger" type="submit"
-                                data-confirm="Delete this survey flow and all submissions? This cannot be undone.">
-                            <i class="bi bi-trash me-1"></i>Delete
-                        </button>
-                    </form>
-                    {% if survey.is_active %}
-                    <form method="POST" action="{{ url_for('main.survey_flow_deactivate', survey_id=survey.id) }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="btn btn-sm btn-soft-warning" type="submit"
-                                data-confirm="Deactivate this survey flow?">
-                            <i class="bi bi-pause-circle me-1"></i>Deactivate
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
+                    {% endfor %}
+                {% else %}
+                {{ ui.empty_state(
+                    'bi-list-check',
+                    'No survey flows found',
+                    'Add your first survey to automate question flows.',
+                    primary_href=url_for('main.survey_flow_add'),
+                    primary_label='Add survey flow'
+                ) }}
+                {% endif %}
             </div>
-            {% endfor %}
-        {% else %}
-        <div class="empty-state py-4">
-            <i class="bi bi-list-check empty-state__icon"></i>
-            <div class="empty-state__title">No survey flows found</div>
-            <div class="empty-state__text">Add your first survey to automate question flows.</div>
-        </div>
-        {% endif %}
+            {{ ui.collection_footer(surveys|length, 'survey') }}
+        </section>
     </div>
 </div>
 {% endblock %}

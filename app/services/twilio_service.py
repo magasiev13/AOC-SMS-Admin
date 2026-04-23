@@ -16,6 +16,8 @@ from twilio.rest import Client
 
 from app import db
 from app.models import (
+    InboxMessage,
+    MessageLog,
     MessagingUsageRecord,
     Organization,
     OrganizationA2POnboarding,
@@ -24,15 +26,25 @@ from app.models import (
     OrganizationUsageBillingPeriod,
     utc_now,
 )
+from app.services.suppression_service import apply_failure_suppression, classify_failure
 from app.services.provider_secret_service import (
     decrypt_provider_secret,
     encrypt_provider_secret,
 )
 from app.services.test_recipient_service import mask_phone_for_audit
-from app.utils import normalize_phone, render_message_template
+from app.utils import analyze_sms_body, normalize_phone, normalize_sms_body, render_message_template
 
 
 TERMINAL_MESSAGE_STATUSES = {"delivered", "sent", "undelivered", "failed"}
+ALLOWED_OUTBOUND_SEND_KINDS = {
+    "auth_alert",
+    "automation_reply",
+    "blast",
+    "manual_live_test",
+    "manual_reply",
+}
+TESTING_BLOCKED_SEND_KINDS = {"auth_alert", "automation_reply"}
+HARD_FAIL_ERROR_CODES = {"21610", "30003", "30004", "30005", "30006", "30007"}
 CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "active", "verified"}
 CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES = {"failed", "rejected", "deleted"}
@@ -51,6 +63,11 @@ SENDER_FINALIZATION_WAITING_STATUSES = {
 DEFAULT_NEW_ORG_NUMBER_STRATEGY = "auto_buy"
 SERVICE_ADDRESS_SOURCE_APP_INPUT = "app_input"
 SERVICE_ADDRESS_SOURCE_TWILIO_IMPORT = "twilio_import"
+TWILIO_MAGIC_TEST_NUMBER_PREFIXES = ("+150055500",)
+TWILIO_MAGIC_TEST_WARNING_NUMBERS = {
+    "+15550000005",
+    "+15550004001",
+}
 
 
 class TwilioTransientError(Exception):
@@ -210,6 +227,31 @@ def _decimal_value(value: object, default: str = "0") -> Decimal:
 
 def _absolute_decimal(value: object) -> Decimal:
     return abs(_decimal_value(value))
+
+
+def _normalize_send_kind(send_kind: str | None) -> str:
+    normalized = (send_kind or "blast").strip().lower() or "blast"
+    if normalized not in ALLOWED_OUTBOUND_SEND_KINDS:
+        return "blast"
+    return normalized
+
+
+def _should_block_live_send_in_testing(send_kind: str) -> bool:
+    if send_kind not in TESTING_BLOCKED_SEND_KINDS:
+        return False
+    if not current_app.config.get("TESTING"):
+        return False
+    return not current_app.config.get("TWILIO_ALLOW_LIVE_SENDS_IN_TESTING", False)
+
+
+def _looks_like_twilio_magic_test_number(phone: str | None) -> bool:
+    normalized_phone = normalize_phone(phone)
+    if not normalized_phone:
+        return False
+    return (
+        normalized_phone in TWILIO_MAGIC_TEST_WARNING_NUMBERS
+        or any(normalized_phone.startswith(prefix) for prefix in TWILIO_MAGIC_TEST_NUMBER_PREFIXES)
+    )
 
 
 def _currency_rate() -> Decimal:
@@ -1111,6 +1153,145 @@ def _message_status_is_terminal(status: str | None) -> bool:
     return (status or "").strip().lower() in TERMINAL_MESSAGE_STATUSES
 
 
+def _parse_message_log_details(raw_details: str | None) -> list[dict[str, Any]]:
+    if not raw_details:
+        return []
+    try:
+        payload = json.loads(raw_details)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(payload, list):
+        return [dict(item) for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        nested = payload.get("details") or payload.get("results")
+        if isinstance(nested, list):
+            return [dict(item) for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _resolve_message_log_detail_for_sid(
+    organization_id: int | None,
+    message_sid: str | None,
+) -> tuple[MessageLog | None, dict[str, Any] | None]:
+    normalized_sid = (message_sid or "").strip()
+    if not organization_id or not normalized_sid:
+        return None, None
+
+    candidate_logs = (
+        MessageLog.query
+        .filter(MessageLog.organization_id == organization_id)
+        .filter(MessageLog.details.isnot(None))
+        .filter(MessageLog.details.contains(normalized_sid))
+        .order_by(MessageLog.created_at.desc(), MessageLog.id.desc())
+        .limit(25)
+        .all()
+    )
+    for log in candidate_logs:
+        for detail in _parse_message_log_details(log.details):
+            if (detail.get("sid") or "").strip() == normalized_sid:
+                return log, detail
+    return None, None
+
+
+def _resolve_usage_record_delivery_context(record: MessagingUsageRecord) -> dict[str, Any]:
+    inbox_message = InboxMessage.query.filter_by(message_sid=record.message_sid).first()
+    if inbox_message is not None:
+        return {
+            "phone": normalize_phone(inbox_message.phone),
+            "name": None,
+            "source_type": "inbox_message",
+            "source_message_log_id": None,
+        }
+
+    log, detail = _resolve_message_log_detail_for_sid(record.organization_id, record.message_sid)
+    if detail is not None:
+        return {
+            "phone": normalize_phone(detail.get("phone") or detail.get("to") or detail.get("recipient")),
+            "name": detail.get("name"),
+            "source_type": "message_log",
+            "source_message_log_id": log.id if log is not None else None,
+        }
+
+    return {
+        "phone": "",
+        "name": None,
+        "source_type": None,
+        "source_message_log_id": None,
+    }
+
+
+def apply_usage_record_failure_suppression(
+    record: MessagingUsageRecord,
+    *,
+    twilio_message: object | None = None,
+) -> dict[str, Any]:
+    status = (getattr(twilio_message, "status", None) or record.twilio_message_status or "").strip().lower()
+    error_code = getattr(twilio_message, "error_code", None)
+    error_text = (
+        getattr(twilio_message, "error_message", None)
+        or getattr(twilio_message, "error_code", None)
+        or record.last_error
+        or ""
+    )
+    category = classify_failure(error_text, error_code=error_code, status=status)
+    result = {
+        "applied": False,
+        "category": category,
+        "phone": None,
+        "reason": None,
+    }
+
+    if category not in {"opt_out", "hard_fail"}:
+        return result
+    if str(error_code or "").strip() not in HARD_FAIL_ERROR_CODES:
+        return result
+
+    context = _resolve_usage_record_delivery_context(record)
+    phone = context.get("phone") or ""
+    if not phone:
+        current_app.logger.info(
+            "Skipped terminal suppression without phone resolution organization_id=%s sid=%s source=%s status=%s error_code=%s.",
+            record.organization_id,
+            record.message_sid,
+            record.source,
+            status or None,
+            error_code,
+        )
+        return result
+
+    suppression = apply_failure_suppression(
+        organization_id=record.organization_id,
+        phone=phone,
+        name=context.get("name"),
+        error_text=str(error_text or error_code or status or "Terminal Twilio failure"),
+        error_code=error_code,
+        status=status,
+        source="usage_reconciliation",
+        source_type=context.get("source_type"),
+        source_message_log_id=context.get("source_message_log_id"),
+        commit=False,
+    )
+    result.update(
+        {
+            "applied": bool(suppression.get("applied")),
+            "category": suppression.get("category"),
+            "phone": phone,
+            "reason": suppression.get("reason"),
+        }
+    )
+    if result["applied"]:
+        current_app.logger.info(
+            "Applied terminal Twilio suppression organization_id=%s sid=%s phone=%s category=%s source=%s error_code=%s.",
+            record.organization_id,
+            record.message_sid,
+            phone,
+            result["category"],
+            record.source,
+            error_code,
+        )
+    return result
+
+
 class TwilioService:
     def __init__(self, organization_id: int | None = None):
         self.organization_id = organization_id
@@ -1150,28 +1331,81 @@ class TwilioService:
         status = getattr(error, "status", None)
         return status in {429} or (isinstance(status, int) and status >= 500)
 
-    def _browser_fake_send_result(self, *, to_number: str, body: str) -> dict:
+    def _skipped_send_result(self, *, to_number: str, body: str, reason: str, send_kind: str) -> dict:
+        analysis = analyze_sms_body(body, apply_normalization=False)
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": reason,
+            "sid": None,
+            "status": "skipped",
+            "error": reason,
+            "account_sid": self.account_sid,
+            "num_segments": str(analysis["segment_count"]),
+            "provider_price": None,
+            "provider_currency": _usage_currency(),
+            "send_kind": send_kind,
+            "to": to_number,
+        }
+
+    def _browser_fake_send_result(self, *, to_number: str, body: str, send_kind: str) -> dict:
         fingerprint = f"{self.account_sid}|{to_number}|{body}|{self.messaging_service_sid or self.from_number or ''}"
         fake_sid = f"SM{hashlib.sha1(fingerprint.encode('utf-8')).hexdigest()[:32]}"
-        segment_count = max(1, (len(body or "") + 159) // 160)
+        analysis = analyze_sms_body(body, apply_normalization=False)
         return {
             "success": True,
             "sid": fake_sid,
             "status": "sent",
             "error": None,
             "account_sid": self.account_sid,
-            "num_segments": str(segment_count),
+            "num_segments": str(analysis["segment_count"]),
             "provider_price": None,
             "provider_currency": "usd",
+            "send_kind": send_kind,
         }
 
-    def send_message(self, to_number: str, body: str, raise_on_transient: bool = False) -> dict:
+    def send_message(
+        self,
+        to_number: str,
+        body: str,
+        raise_on_transient: bool = False,
+        *,
+        send_kind: str = "blast",
+    ) -> dict:
+        normalized_send_kind = _normalize_send_kind(send_kind)
+        normalized_phone = normalize_phone(to_number)
+        if _should_block_live_send_in_testing(normalized_send_kind):
+            current_app.logger.info(
+                "Blocked live Twilio send in TESTING organization_id=%s send_kind=%s to=%s.",
+                self.organization_id,
+                normalized_send_kind,
+                normalized_phone or to_number,
+            )
+            return self._skipped_send_result(
+                to_number=normalized_phone or to_number,
+                body=body,
+                reason="testing_live_send_blocked",
+                send_kind=normalized_send_kind,
+            )
+
         if current_app.config.get("TWILIO_BROWSER_FAKE_SENDS"):
-            return self._browser_fake_send_result(to_number=to_number, body=body)
+            return self._browser_fake_send_result(
+                to_number=normalized_phone or to_number,
+                body=body,
+                send_kind=normalized_send_kind,
+            )
+
+        if _looks_like_twilio_magic_test_number(normalized_phone):
+            current_app.logger.warning(
+                "Live Twilio send targeting test number organization_id=%s send_kind=%s to=%s.",
+                self.organization_id,
+                normalized_send_kind,
+                normalized_phone,
+            )
 
         create_params = {
             "body": body,
-            "to": to_number,
+            "to": normalized_phone or to_number,
         }
         if self.messaging_service_sid:
             create_params["messaging_service_sid"] = self.messaging_service_sid
@@ -1188,6 +1422,7 @@ class TwilioService:
                 "num_segments": getattr(message, "num_segments", None),
                 "provider_price": getattr(message, "price", None),
                 "provider_currency": getattr(message, "price_unit", None),
+                "send_kind": normalized_send_kind,
             }
         except TwilioRestException as exc:
             if raise_on_transient and self._is_transient_error(exc):
@@ -1198,6 +1433,7 @@ class TwilioService:
                 "status": "failed",
                 "error": str(exc.msg) if hasattr(exc, "msg") else str(exc),
                 "account_sid": None,
+                "send_kind": normalized_send_kind,
             }
         except Exception as exc:
             if raise_on_transient:
@@ -1208,6 +1444,7 @@ class TwilioService:
                 "status": "failed",
                 "error": str(exc),
                 "account_sid": None,
+                "send_kind": normalized_send_kind,
             }
 
     def send_bulk(
@@ -1216,6 +1453,8 @@ class TwilioService:
         body: str,
         delay: float = 0.1,
         raise_on_transient: bool = False,
+        *,
+        send_kind: str = "blast",
     ) -> dict:
         results = {
             "total": len(recipients),
@@ -1230,7 +1469,12 @@ class TwilioService:
             personalized_body = render_message_template(body, recipient)
 
             try:
-                result = self.send_message(phone, personalized_body, raise_on_transient=raise_on_transient)
+                result = self.send_message(
+                    phone,
+                    personalized_body,
+                    raise_on_transient=raise_on_transient,
+                    send_kind=send_kind,
+                )
             except TwilioTransientError as exc:
                 raise TwilioTransientError(
                     str(exc),
@@ -1246,6 +1490,7 @@ class TwilioService:
                 "sid": result.get("sid"),
                 "status": result.get("status"),
                 "account_sid": result.get("account_sid"),
+                "num_segments": result.get("num_segments"),
             }
             results["details"].append(detail)
 
@@ -1281,7 +1526,8 @@ def send_operational_test_message(
 
     profile = ensure_messaging_profile(organization)
     normalized_to = normalize_phone(to_number)
-    message_body = (body or "").strip()
+    message_body = normalize_sms_body((body or "").strip())
+    body_analysis = analyze_sms_body(message_body, apply_normalization=False)
 
     if not normalized_to:
         raise ProviderProvisioningError("Enter a valid E.164 phone number for the operational test send.")
@@ -1293,6 +1539,8 @@ def send_operational_test_message(
     audit_metadata = {
         "destination": mask_phone_for_audit(normalized_to),
         "message_length": len(message_body),
+        "encoding": body_analysis["encoding"],
+        "segment_count": body_analysis["segment_count"],
         "provider_mode": profile.provider_mode,
     }
 
@@ -1301,6 +1549,7 @@ def send_operational_test_message(
             normalized_to,
             message_body,
             raise_on_transient=True,
+            send_kind="manual_live_test",
         )
     except Exception as exc:
         _record_provider_audit(
@@ -1340,6 +1589,17 @@ def send_operational_test_message(
         },
     )
     db.session.commit()
+    try:
+        record_usage_candidates(organization_id, [result], source="operational_test")
+    except Exception as exc:  # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.exception(
+            "Failed recording operational test usage organization_id=%s actor_user_id=%s sid=%s: %s",
+            organization_id,
+            actor_user_id,
+            result.get("sid"),
+            exc,
+        )
     return result
 
 
@@ -2251,6 +2511,7 @@ def reconcile_messaging_usage() -> dict[str, int]:
         "records_pending": 0,
         "records_errored": 0,
         "periods_updated": 0,
+        "suppression_actions": 0,
     }
     pending_records = MessagingUsageRecord.query.filter(
         MessagingUsageRecord.reconciliation_status.in_(("pending", "error"))
@@ -2302,6 +2563,9 @@ def reconcile_messaging_usage() -> dict[str, int]:
             record.reconciled_at = utc_now()
             if _message_status_is_terminal(status):
                 record.reconciliation_status = "finalized"
+                suppression_result = apply_usage_record_failure_suppression(record, twilio_message=message)
+                if suppression_result.get("applied"):
+                    summary["suppression_actions"] += 1
                 summary["records_finalized"] += 1
             else:
                 record.reconciliation_status = "pending"
@@ -2314,6 +2578,59 @@ def reconcile_messaging_usage() -> dict[str, int]:
 
     db.session.commit()
     summary["periods_updated"] = upsert_closed_usage_billing_periods()
+    return summary
+
+
+def backfill_usage_record_failure_suppressions(
+    *,
+    batch_size: int = 200,
+    logger: object | None = None,
+) -> dict[str, int]:
+    log = logger or current_app.logger
+    summary = {
+        "records_seen": 0,
+        "records_checked": 0,
+        "suppression_actions": 0,
+        "errors": 0,
+    }
+    last_id = 0
+
+    while True:
+        batch = (
+            MessagingUsageRecord.query
+            .filter(MessagingUsageRecord.id > last_id)
+            .filter(MessagingUsageRecord.reconciliation_status == "finalized")
+            .filter(MessagingUsageRecord.twilio_message_status.in_(("failed", "undelivered")))
+            .order_by(MessagingUsageRecord.id.asc())
+            .limit(batch_size)
+            .all()
+        )
+        if not batch:
+            break
+
+        for record in batch:
+            summary["records_seen"] += 1
+            try:
+                client = _client_for_usage_reconciliation(record.organization_id)
+                message = client.messages(record.message_sid).fetch()
+                suppression = apply_usage_record_failure_suppression(record, twilio_message=message)
+                summary["records_checked"] += 1
+                if suppression.get("applied"):
+                    summary["suppression_actions"] += 1
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                summary["errors"] += 1
+                log.warning(
+                    "Usage-record suppression backfill failed id=%s sid=%s organization_id=%s: %s",
+                    record.id,
+                    record.message_sid,
+                    record.organization_id,
+                    exc,
+                )
+
+        last_id = batch[-1].id
+
     return summary
 
 

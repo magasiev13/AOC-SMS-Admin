@@ -181,6 +181,23 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
         self.assertIn(b"already used as a survey trigger", response.data)
         self.assertIsNone(self.KeywordAutomationRule.query.filter_by(keyword="RSVP").first())
 
+    def test_keyword_rule_add_normalizes_response_body_before_save(self) -> None:
+        self._login()
+
+        response = self.client.post(
+            "/inbox/keywords/add",
+            data={
+                "keyword": "info",
+                "response_body": "“Hello” — team…",
+                "is_active": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        rule = self.KeywordAutomationRule.query.filter_by(keyword="INFO").one()
+        self.assertEqual(rule.response_body, '"Hello" - team...')
+
     def test_keyword_rule_edit_rejects_existing_survey_keyword(self) -> None:
         self._login()
         self._create_survey(name="Info Flow", trigger_keyword="INFO")
@@ -221,7 +238,30 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
+        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b"workspace-form-layout", response.data)
         self.assertIsNone(self.SurveyFlow.query.filter_by(trigger_keyword="HELP").first())
+
+    def test_survey_add_normalizes_intro_and_completion_messages_before_save(self) -> None:
+        self._login()
+
+        response = self.client.post(
+            "/inbox/surveys/add",
+            data={
+                "name": "Welcome Survey",
+                "trigger_keyword": "welcome",
+                "intro_message": "“Welcome” — friends…",
+                "questions": "Question 1?",
+                "completion_message": "Done — thanks…",
+                "is_active": "on",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        survey = self.SurveyFlow.query.filter_by(trigger_keyword="WELCOME").one()
+        self.assertEqual(survey.intro_message, '"Welcome" - friends...')
+        self.assertEqual(survey.completion_message, "Done - thanks...")
 
     def test_survey_edit_rejects_existing_keyword_rule(self) -> None:
         self._login()
@@ -243,6 +283,8 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
+        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b"workspace-form-layout", response.data)
 
         refreshed = self.db.session.get(self.SurveyFlow, survey.id)
         self.assertEqual(refreshed.trigger_keyword, "RSVP")

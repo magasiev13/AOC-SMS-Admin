@@ -97,6 +97,8 @@ For platform-managed A2P, background sync is now non-destructive. It can detect 
 
 For platform-managed sender activation, the org service address is now the source of truth for sender provisioning. After A2P approval, use the organization messaging page to save or update the service address, choose the number strategy, and run `Finalize Sender Setup`. That workflow validates or updates the Twilio address, buys or reuses the sender number inside the org subaccount, binds inbound webhooks, syncs emergency-address registration, and only then flips the provider active.
 
+For platform-managed A2P, recurring status refresh remains non-destructive and can keep polling already-submitted records even when `TWILIO_A2P_ONBOARDING_ENABLED` is off. That flag only gates automated submission/provisioning work. If you expect Twilio Event Streams callbacks to update org state in real time, production must also set `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`.
+
 ## A2P Review To Go-Live
 
 While Twilio review is in progress, do not mutate the packet again unless the product explicitly shows a rejected or needs-action state.

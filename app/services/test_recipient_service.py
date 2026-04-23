@@ -10,6 +10,7 @@ from app.models import (
     OrganizationSettingsAuditLog,
     OrganizationTestRecipient,
 )
+from app.services.recipient_service import load_recipient_snapshot
 from app.utils import normalize_phone, validate_phone
 
 
@@ -299,42 +300,9 @@ def build_test_recipient_snapshot(
 
 
 def load_test_recipient_snapshot(snapshot_json: str | None) -> list[dict[str, str]]:
-    normalized = (snapshot_json or "").strip()
-    if not normalized:
-        raise ValueError(
-            "This scheduled test message predates saved test-recipient snapshots. Recreate it to continue."
-        )
-
-    try:
-        payload = json.loads(normalized)
-    except json.JSONDecodeError as exc:
-        raise ValueError(
-            "This scheduled test message has an invalid recipient snapshot. Recreate it to continue."
-        ) from exc
-
-    if not isinstance(payload, list) or not payload:
-        raise ValueError(
-            "This scheduled test message does not have a usable recipient snapshot. Recreate it to continue."
-        )
-
-    normalized_rows: list[dict[str, str]] = []
-    seen_phones: set[str] = set()
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        normalized_phone = normalize_phone(item.get("phone"))
-        if not validate_phone(normalized_phone) or normalized_phone in seen_phones:
-            continue
-        normalized_rows.append(
-            {
-                "phone": normalized_phone,
-                "name": (item.get("name") or item.get("label") or "").strip(),
-            }
-        )
-        seen_phones.add(normalized_phone)
-
-    if not normalized_rows:
-        raise ValueError(
-            "This scheduled test message does not have a usable recipient snapshot. Recreate it to continue."
-        )
-    return normalized_rows
+    return load_recipient_snapshot(
+        snapshot_json,
+        missing_message="This scheduled test message predates saved test-recipient snapshots. Recreate it to continue.",
+        invalid_message="This scheduled test message has an invalid recipient snapshot. Recreate it to continue.",
+        unusable_message="This scheduled test message does not have a usable recipient snapshot. Recreate it to continue.",
+    )

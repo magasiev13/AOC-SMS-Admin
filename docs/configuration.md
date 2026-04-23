@@ -7,6 +7,7 @@ The parser behavior is strict:
 - booleans must be valid values such as `1/0`, `true/false`, `yes/no`, or `on/off`
 - integers must parse cleanly
 - comma-separated host lists are parsed with trimming
+- `SESSION_COOKIE_SAMESITE` accepts `Lax`, `Strict`, or `None` case-insensitively and is normalized to Flask's expected casing
 
 Production behavior is also strict:
 
@@ -39,7 +40,7 @@ Production behavior is also strict:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SESSION_COOKIE_SAMESITE` | `Lax` | Production must be `Lax` or `Strict`. |
+| `SESSION_COOKIE_SAMESITE` | `Lax` | Input is case-insensitive; production must resolve to `Lax` or `Strict`. |
 | `SESSION_COOKIE_SECURE` | `1` outside debug, `0` in debug | Production must be enabled. |
 | `REMEMBER_COOKIE_SECURE` | mirrors `SESSION_COOKIE_SECURE` | Production must be enabled. |
 | `SESSION_IDLE_TIMEOUT_MINUTES` | `30` | Also drives `PERMANENT_SESSION_LIFETIME`. |
@@ -112,6 +113,8 @@ When `SAAS_BASE_URL` is set, the app also exposes tenant-hosted SMS compliance p
 The self-serve A2P flow defaults eligible EIN-backed businesses to `low_volume_standard` and defaults the campaign posture to `ACCOUNT_NOTIFICATION`. Organizations can still move to `standard` later when they need more throughput or explicitly request the upgrade.
 
 When an org drifts away from the live Twilio A2P resources, the app now stores a recovery snapshot instead of silently rebuilding state. Background refresh is status-only: it reads Twilio state through the org's stored subaccount auth token, clears stale transient errors when the stored subaccount packet is still valid, and can detect stale provider identifiers, a missing campaign, or transient Twilio connectivity failures. It does not auto-create a new campaign or silently swap A2P resources. Platform admins must explicitly reconcile live Twilio resources and explicitly create a campaign from the onboarding page when a new Twilio vetting cycle would be triggered.
+
+`TWILIO_A2P_ONBOARDING_ENABLED` gates automated Twilio onboarding/provisioning work. Status refresh for already-submitted A2P records can still run without it. `TWILIO_A2P_EVENT_STREAMS_ENABLED=1` is required if production should accept Twilio Event Streams callbacks at `/webhooks/twilio/a2p-events`.
 
 ## Database
 

@@ -25,12 +25,16 @@ class TestInboxService(unittest.TestCase):
             InboxMessage,
             InboxThread,
             KeywordAutomationRule,
+            MessagingUsageRecord,
+            Organization,
+            OrganizationMessagingProfile,
+            OrganizationSubscription,
             SurveyFlow,
             SurveyResponse,
             SurveySession,
             UnsubscribedContact,
         )
-        from app.services.inbox_service import process_inbound_sms, send_thread_reply
+        from app.services.inbox_service import _send_automated_reply, process_inbound_sms, send_thread_reply
 
         self.CommunityMember = CommunityMember
         self.db = db
@@ -39,10 +43,15 @@ class TestInboxService(unittest.TestCase):
         self.InboxMessage = InboxMessage
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
+        self.MessagingUsageRecord = MessagingUsageRecord
+        self.Organization = Organization
+        self.OrganizationMessagingProfile = OrganizationMessagingProfile
+        self.OrganizationSubscription = OrganizationSubscription
         self.SurveyFlow = SurveyFlow
         self.SurveySession = SurveySession
         self.SurveyResponse = SurveyResponse
         self.UnsubscribedContact = UnsubscribedContact
+        self.send_automated_reply = _send_automated_reply
         self.process_inbound_sms = process_inbound_sms
         self.send_thread_reply = send_thread_reply
 
@@ -71,6 +80,29 @@ class TestInboxService(unittest.TestCase):
         else:
             os.environ["FLASK_DEBUG"] = self._original_flask_debug
         os.environ.pop("DATABASE_URL", None)
+
+    def _create_messaging_org(self):
+        organization = self.Organization(name="Acme", slug="acme", status="active")
+        subscription = self.OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="complimentary",
+        )
+        messaging_profile = self.OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACsub_inbox",
+            messaging_service_sid="MGinbox0001",
+            phone_number_sid="PNinbox0001",
+            from_number="+15550009999",
+            inbound_identity="+15550009999",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+        )
+        self.db.session.add_all([organization, subscription, messaging_profile])
+        self.db.session.commit()
+        return organization, subscription, messaging_profile
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_keyword_rule_matches_and_replies(self, mock_get_twilio) -> None:
@@ -1072,6 +1104,115 @@ class TestInboxService(unittest.TestCase):
 
         outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
         self.assertEqual(outbound_count, 0)
+
+    @patch("app.services.inbox_service.get_twilio_service")
+    def test_send_thread_reply_normalizes_body_before_send_and_persistence(self, mock_get_twilio) -> None:
+        thread = self.InboxThread(phone="+15554445557", contact_name="Thread Name")
+        self.db.session.add(thread)
+        self.db.session.commit()
+
+        mock_service = MagicMock()
+        mock_service.send_message.return_value = {
+            "success": True,
+            "sid": "SM-manual-normalized",
+            "status": "sent",
+            "error": None,
+        }
+        mock_get_twilio.return_value = mock_service
+
+        result = self.send_thread_reply(thread.id, "“Hello” — team…", actor="admin")
+
+        self.assertTrue(result["success"])
+        mock_service.send_message.assert_called_once_with(
+            thread.phone,
+            '"Hello" - team...',
+            send_kind='manual_reply',
+        )
+        outbound_message = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound")
+            .order_by(self.InboxMessage.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(outbound_message)
+        self.assertEqual(outbound_message.body, '"Hello" - team...')
+
+    def test_send_automated_reply_blocks_live_send_in_testing_without_override(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        organization, _, _ = self._create_messaging_org()
+        thread = self.InboxThread(
+            organization_id=organization.id,
+            phone="+15554445558",
+            contact_name="Automation Contact",
+        )
+        self.db.session.add(thread)
+        self.db.session.commit()
+        self.app.config["TWILIO_ACCOUNT_SID"] = "ACplatformtest"
+        self.app.config["TWILIO_AUTH_TOKEN"] = "platform-token"
+
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+
+        with patch("app.services.inbox_service.get_twilio_service", return_value=service):
+            result = self.send_automated_reply(
+                thread.phone,
+                thread,
+                "Automation reply",
+                source="keyword",
+                source_id=42,
+            )
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["reason"], "testing_live_send_blocked")
+        service.client.messages.create.assert_not_called()
+        outbound_message = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound")
+            .order_by(self.InboxMessage.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(outbound_message)
+        self.assertEqual(outbound_message.delivery_status, "skipped")
+        self.assertEqual(outbound_message.delivery_error, "testing_live_send_blocked")
+        self.assertEqual(self.MessagingUsageRecord.query.count(), 0)
+
+    def test_send_automated_reply_allows_testing_override_with_browser_fake_send(self) -> None:
+        organization, _, _ = self._create_messaging_org()
+        thread = self.InboxThread(
+            organization_id=organization.id,
+            phone="+15554445559",
+            contact_name="Automation Contact",
+        )
+        self.db.session.add(thread)
+        self.db.session.commit()
+        self.app.config["TWILIO_ALLOW_LIVE_SENDS_IN_TESTING"] = True
+        self.app.config["TWILIO_BROWSER_FAKE_SENDS"] = True
+        self.app.config["TWILIO_ACCOUNT_SID"] = "ACplatformtest"
+        self.app.config["TWILIO_AUTH_TOKEN"] = "platform-token"
+
+        result = self.send_automated_reply(
+            thread.phone,
+            thread,
+            "—" * 71,
+            source="keyword",
+            source_id=43,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(str(result["sid"]).startswith("SM"))
+        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["num_segments"], "1")
+        outbound_message = (
+            self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound")
+            .order_by(self.InboxMessage.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(outbound_message)
+        self.assertEqual(outbound_message.body, "-" * 71)
+        usage_record = self.MessagingUsageRecord.query.filter_by(message_sid=result["sid"]).one()
+        self.assertEqual(usage_record.organization_id, organization.id)
+        self.assertEqual(usage_record.source, "keyword")
+        self.assertEqual(usage_record.twilio_message_status, "sent")
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_send_thread_reply_opt_out_failure_upserts_unsubscribed_with_message_failure_source(self, mock_get_twilio) -> None:

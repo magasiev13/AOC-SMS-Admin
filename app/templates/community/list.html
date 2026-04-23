@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Community Members - {{ product_name }}{% endblock %}
 
@@ -25,21 +26,18 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form method="GET" class="filter-bar" data-table-loading-target="communityTable">
-            <div class="flex-grow-1">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search by name or phone..." aria-label="Search community members"
-                           value="{{ search }}">
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
+<div class="collection-shell">
+    {{ ui.collection_search_panel(
+        url_for('main.community_list'),
+        'Search by name or phone',
+        search,
+        'Search community members',
+        'Search community',
+        'Find members and take action from one list.',
+        'communityTable'
+    ) }}
 
-<div class="card app-card">
+<div class="card app-card collection-panel collection-panel--results">
     {% if members and can_manage_community %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
@@ -163,21 +161,15 @@
                 {% else %}
                     <tr>
                         <td colspan="{{ 6 if can_manage_community else 4 }}" class="py-5">
-                            <div class="empty-state">
-                                <i class="bi bi-people empty-state__icon"></i>
-                                <div class="empty-state__title">No community members found</div>
-                                {% if can_manage_community %}
-                                <div class="empty-state__text">Add members to start sending messages.</div>
-                                <div class="d-flex gap-2 justify-content-center">
-                                    <a href="{{ url_for('main.community_add') }}" class="btn btn-primary btn-sm">
-                                        <i class="bi bi-plus-lg me-1"></i>Add Member
-                                    </a>
-                                    <a href="{{ url_for('main.community_import') }}" class="btn btn-outline-secondary btn-sm">
-                                        <i class="bi bi-upload me-1"></i>Import CSV
-                                    </a>
-                                </div>
-                                {% endif %}
-                            </div>
+                            {{ ui.empty_state(
+                                'bi-people',
+                                'No community members found',
+                                'Add members to start sending messages.' if can_manage_community else 'No community members match this search yet.',
+                                url_for('main.community_add') if can_manage_community else None,
+                                'Add Member' if can_manage_community else None,
+                                url_for('main.community_import') if can_manage_community else None,
+                                'Import CSV' if can_manage_community else None
+                            ) }}
                         </td>
                     </tr>
                 {% endif %}
@@ -247,28 +239,23 @@
             </div>
             {% endfor %}
         {% else %}
-            <div class="empty-state py-5">
-                <i class="bi bi-people empty-state__icon"></i>
-                <div class="empty-state__title">No community members found</div>
-                {% if can_manage_community %}
-                <div class="empty-state__text">Add members to start sending messages.</div>
-                <div class="d-flex gap-2 justify-content-center">
-                    <a href="{{ url_for('main.community_add') }}" class="btn btn-primary btn-sm">
-                        <i class="bi bi-plus-lg me-1"></i>Add Member
-                    </a>
-                    <a href="{{ url_for('main.community_import') }}" class="btn btn-outline-secondary btn-sm">
-                        <i class="bi bi-upload me-1"></i>Import CSV
-                    </a>
-                </div>
-                {% endif %}
+            <div class="py-5">
+                {{ ui.empty_state(
+                    'bi-people',
+                    'No community members found',
+                    'Add members to start sending messages.' if can_manage_community else 'No community members match this search yet.',
+                    url_for('main.community_add') if can_manage_community else None,
+                    'Add Member' if can_manage_community else None,
+                    url_for('main.community_import') if can_manage_community else None,
+                    'Import CSV' if can_manage_community else None
+                ) }}
             </div>
         {% endif %}
     </div>
     {% if members %}
-    <div class="card-footer text-muted">
-        Showing {{ members|length }} member(s)
-    </div>
+    {{ ui.collection_footer(members|length, 'member') }}
     {% endif %}
+</div>
 </div>
 
 {% if members and can_manage_community %}

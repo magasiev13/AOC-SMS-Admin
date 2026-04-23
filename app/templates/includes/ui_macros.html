@@ -1,0 +1,132 @@
+{% macro workspace_summary(summary) -%}
+{% set eyebrow = summary.get('eyebrow') %}
+{% set title = summary.get('title') %}
+{% set copy = summary.get('copy') %}
+{% set meta = summary.get('meta') %}
+{% set badges = summary.get('badges') %}
+{% set stats = summary.get('stats') %}
+{% set stat_count = stats|length if stats else 0 %}
+{% set stat_count_class = stat_count if stat_count <= 4 else 4 %}
+<section class="workspace-summary{% if summary.get('modifier') %} {{ summary.get('modifier') }}{% endif %}">
+    <div class="workspace-summary__header">
+        <div class="workspace-summary__body">
+            {% if eyebrow %}
+            <div class="workspace-summary__eyebrow">{{ eyebrow }}</div>
+            {% endif %}
+            <h2 class="workspace-summary__title">{{ title }}</h2>
+            {% if copy %}
+            <p class="workspace-summary__copy">{{ copy }}</p>
+            {% endif %}
+            {% if meta %}
+            <div class="workspace-summary__meta" aria-label="Workspace context">
+                {% for item in meta %}
+                <span class="workspace-summary__meta-item">{{ item }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        <div class="workspace-summary__rail">
+            {% if badges %}
+            <div class="workspace-summary__badges">
+                {% for badge in badges %}
+                <span class="badge {{ badge.class_name }}">{{ badge.label }}</span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if caller is defined %}
+            <div class="workspace-summary__actions">
+                {{ caller() }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% if stats %}
+    <div class="workspace-summary__stats workspace-summary__stats--{{ stat_count_class }}" aria-label="Workspace highlights">
+        {% for stat in stats %}
+        <div class="workspace-summary__stat">
+            <div class="workspace-summary__stat-label">{{ stat.label }}</div>
+            <div class="workspace-summary__stat-value">{{ stat.value }}</div>
+            {% if stat.meta %}
+            <div class="workspace-summary__stat-meta">{{ stat.meta }}</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{%- endmacro %}
+
+{% macro collection_search_panel(action, placeholder, value='', aria_label='', title='Search', meta=None, target_ids='') -%}
+<section class="collection-panel collection-panel--search">
+    <div class="collection-panel__header">
+        <div>
+            <h2 class="collection-panel__title">{{ title }}</h2>
+            {% if meta %}
+            <p class="collection-panel__meta">{{ meta }}</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="collection-panel__body">
+        <form method="GET" class="filter-bar" action="{{ action }}"{% if target_ids %} data-table-loading-target="{{ target_ids }}"{% endif %}>
+            <div class="flex-grow-1">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input
+                        type="text"
+                        class="form-control"
+                        name="search"
+                        placeholder="{{ placeholder }}"
+                        aria-label="{{ aria_label or placeholder }}"
+                        value="{{ value }}"
+                    >
+                </div>
+            </div>
+            {% if caller is defined %}
+            {{ caller() }}
+            {% endif %}
+        </form>
+    </div>
+</section>
+{%- endmacro %}
+
+{% macro collection_filters_panel(action, title='Filters', meta=None, target_ids='') -%}
+<section class="collection-panel collection-panel--filters">
+    <div class="collection-panel__header">
+        <div>
+            <h2 class="collection-panel__title">{{ title }}</h2>
+            {% if meta %}
+            <p class="collection-panel__meta">{{ meta }}</p>
+            {% endif %}
+        </div>
+    </div>
+    <div class="collection-panel__body">
+        <form method="GET" class="collection-filters-form" action="{{ action }}"{% if target_ids %} data-table-loading-target="{{ target_ids }}"{% endif %}>
+            {{ caller() }}
+        </form>
+    </div>
+</section>
+{%- endmacro %}
+
+{% macro empty_state(icon_class, title, text, primary_href=None, primary_label=None, secondary_href=None, secondary_label=None, primary_class='btn btn-primary btn-sm', secondary_class='btn btn-outline-secondary btn-sm') -%}
+<div class="empty-state">
+    <i class="bi {{ icon_class }} empty-state__icon" aria-hidden="true"></i>
+    <div class="empty-state__title">{{ title }}</div>
+    <div class="empty-state__text">{{ text }}</div>
+    {% if primary_href or secondary_href %}
+    <div class="empty-state__actions">
+        {% if primary_href and primary_label %}
+        <a href="{{ primary_href }}" class="{{ primary_class }}">{{ primary_label }}</a>
+        {% endif %}
+        {% if secondary_href and secondary_label %}
+        <a href="{{ secondary_href }}" class="{{ secondary_class }}">{{ secondary_label }}</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro collection_footer(count, noun) -%}
+<div class="collection-panel__footer text-muted">
+    Showing {{ count }} {{ noun }}{{ '' if count == 1 else 's' }}
+</div>
+{%- endmacro %}

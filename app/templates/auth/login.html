@@ -12,8 +12,7 @@
     <div class="auth-story">
         <a class="auth-brand" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}" aria-label="{{ product_name }}">
             <span class="brand-icon">
-                <span class="brand-icon__pulse"></span>
-                <i class="bi bi-send-fill"></i>
+                <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
             </span>
             <span class="brand-lockup">
                 <span class="brand-text">{{ product_name }}</span>
@@ -23,19 +22,19 @@
         <div class="login-intro">
             <div class="login-kicker">{{ 'Platform access' if is_platform else 'Workspace access' }}</div>
             <h1 class="login-title">
-                {{ 'Keep every customer workspace moving.' if is_platform else 'Run messaging from one calm workspace.' }}
+                {{ 'Review customer workspaces and account access.' if is_platform else 'Send messages and review replies in one workspace.' }}
             </h1>
             <p class="login-copy">
                 {% if is_platform %}
                 Review onboarding, workspace access, and sender readiness without stepping into customer delivery screens.
                 {% else %}
-                Send updates, review replies, and finish setup from one focused workspace built for operational clarity.
+                Send updates, review replies, and finish setup from the same workspace.
                 {% endif %}
             </p>
         </div>
         <div class="auth-diagram" aria-hidden="true">
             <div class="auth-diagram__rail auth-diagram__rail--accent">
-                <span class="auth-diagram__eyebrow">{{ 'Control surface' if is_platform else 'Workspace flow' }}</span>
+                <span class="auth-diagram__eyebrow">{{ 'Platform steps' if is_platform else 'Workflow' }}</span>
                 <div class="auth-diagram__track">
                     <span class="auth-diagram__node">{{ 'Access' if is_platform else 'Compose' }}</span>
                     <span class="auth-diagram__node">{{ 'Onboarding' if is_platform else 'Route' }}</span>

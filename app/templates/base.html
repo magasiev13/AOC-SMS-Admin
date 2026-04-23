@@ -8,6 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/app.css', v=app_version) }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/ui-system.css', v=app_version) }}" rel="stylesheet">
 </head>
 <body class="app-body">
     <a href="#main-content" class="visually-hidden-focusable position-absolute top-0 start-0 m-2 btn btn-primary">Skip to content</a>
@@ -23,8 +24,7 @@
         <aside class="app-sidebar d-none d-lg-flex flex-column">
             <a class="app-sidebar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                 <span class="brand-icon">
-                    <span class="brand-icon__pulse"></span>
-                    <i class="bi bi-send-fill" aria-hidden="true"></i>
+                    <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                 </span>
                 <span class="brand-lockup">
                     <span class="brand-text">{{ product_name }}</span>
@@ -32,10 +32,10 @@
                 </span>
             </a>
             {% if platform_user %}
-            <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform Control</div>
+            <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform</div>
             {% endif %}
+            {% if not platform_user %}
             <div class="app-sidebar-search">
-                {% if not platform_user %}
                 {% block app_search %}
                 <form class="app-search" role="search" action="{{ url_for('main.community_list') }}" method="get">
                     <i class="bi bi-search"></i>
@@ -44,12 +44,8 @@
                            value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                 </form>
                 {% endblock %}
-                {% else %}
-                <div class="small text-white-50 px-2">
-                    Manage organizations, onboarding, and platform access from a dedicated control plane.
-                </div>
-                {% endif %}
             </div>
+            {% endif %}
             <nav class="nav flex-column app-nav">
                 {% if platform_user %}
                 <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
@@ -119,8 +115,7 @@
                 <div class="container-fluid">
                     <a class="navbar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
                         <span class="brand-icon brand-icon--sm">
-                            <span class="brand-icon__pulse"></span>
-                            <i class="bi bi-send-fill" aria-hidden="true"></i>
+                            <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                         </span>
                         <span class="brand-lockup brand-lockup--inline">
                             <span class="brand-text">{{ product_name }}</span>
@@ -142,10 +137,8 @@
                                    value="{{ request.args.get('search', '') if request.endpoint == 'main.community_list' else '' }}">
                         </form>
                         {% endblock %}
-                        {% else %}
-                        <div class="small text-muted">Platform control plane</div>
                         {% endif %}
-                        <div class="nav flex-column mt-3">
+                        <div class="nav flex-column {% if not platform_user %}mt-3{% endif %}">
                             {% if platform_user %}
                             <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
                                 <i class="bi bi-grid-1x2 me-2"></i>Platform
@@ -422,9 +415,17 @@
                 return;
             }
 
+            const topbar = mobileNav.closest('.app-topbar');
             const collapseInstance = bootstrap.Collapse.getOrCreateInstance(mobileNav, { toggle: false });
+            const syncOffset = () => {
+                if (!topbar) {
+                    return;
+                }
+                mobileNav.style.setProperty('--app-mobile-nav-offset', `${Math.ceil(topbar.getBoundingClientRect().height)}px`);
+            };
             const syncBodyState = (isOpen) => {
                 document.body.classList.toggle('app-mobile-nav-open', isOpen);
+                syncOffset();
             };
 
             mobileNav.addEventListener('show.bs.collapse', () => syncBodyState(true));
@@ -439,6 +440,8 @@
                 linkEl.addEventListener('click', () => collapseInstance.hide());
             });
 
+            window.addEventListener('resize', syncOffset);
+            syncOffset();
             syncBodyState(mobileNav.classList.contains('show'));
         }
 

@@ -45,8 +45,9 @@ class TestSendBulkJob(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._original_env)
 
-    def _create_log(self, *, details: list | None = None) -> int:
+    def _create_log(self, *, details: list | None = None, organization_id: int | None = None) -> int:
         log = self.MessageLog(
+            organization_id=organization_id,
             message_body="Test message",
             target="community",
             status="processing",
@@ -112,6 +113,148 @@ class TestSendBulkJob(unittest.TestCase):
         self.assertEqual(len(details), 1)
         self.assertEqual(details[0].get("phone"), "+15550000003")
         self.assertTrue(details[0].get("success"))
+
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    @patch("app.tasks.create_app")
+    def test_send_bulk_job_fails_closed_when_saas_org_loses_billing_access(
+        self,
+        mock_create_app,
+        mock_get_twilio,
+        mock_process_failure_details,
+    ) -> None:
+        from app.models import Organization, OrganizationMessagingProfile, OrganizationSubscription
+
+        self.app.config["SAAS_MODE"] = True
+        mock_create_app.return_value = self.app
+
+        organization = Organization(name="Blocked Org", slug="blocked-org", status="active")
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="incomplete",
+        )
+        profile = OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            provider_status="active",
+            status="active",
+            sender_review_status="approved",
+            messaging_service_sid="MGblocked0001",
+            from_number="+15550001111",
+            phone_number_sid="PNblocked0001",
+        )
+        self.db.session.add_all([organization, subscription, profile])
+        self.db.session.commit()
+
+        log_id = self._create_log(organization_id=organization.id, details=[])
+        recipients = [{"phone": "+15550000007", "name": "Blocked Recipient"}]
+
+        self.send_bulk_job(log_id, organization.id, recipients, "Hello", delay=0)
+
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.status, "failed")
+        self.assertEqual(log.failure_count, 1)
+        details = json.loads(log.details or "[]")
+        self.assertTrue(any("billing is not active" in (detail.get("error") or "") for detail in details))
+        mock_get_twilio.assert_not_called()
+        mock_process_failure_details.assert_not_called()
+
+    @patch("app.tasks.record_usage_candidates")
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    @patch("app.tasks.create_app")
+    def test_send_bulk_job_allows_active_saas_org_with_active_provider(
+        self,
+        mock_create_app,
+        mock_get_twilio,
+        mock_process_failure_details,
+        mock_record_usage_candidates,
+    ) -> None:
+        from app.models import Organization, OrganizationMessagingProfile, OrganizationSubscription
+
+        self.app.config["SAAS_MODE"] = True
+        mock_create_app.return_value = self.app
+
+        organization = Organization(name="Active Org", slug="active-org", status="active")
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        profile = OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            provider_status="active",
+            status="active",
+            sender_review_status="approved",
+            messaging_service_sid="MGactive0001",
+            from_number="+15550001111",
+            phone_number_sid="PNactive0001",
+        )
+        self.db.session.add_all([organization, subscription, profile])
+        self.db.session.commit()
+
+        log_id = self._create_log(organization_id=organization.id, details=[])
+        recipients = [{"phone": "+15550000008", "name": "Active Recipient"}]
+        mock_service = MagicMock()
+        mock_service.send_bulk.return_value = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15550000008", "success": True, "error": None, "sid": "SMactive-1"}],
+        }
+        mock_get_twilio.return_value = mock_service
+        mock_process_failure_details.return_value = {}
+
+        self.send_bulk_job(log_id, organization.id, recipients, "Hello", delay=0)
+
+        mock_get_twilio.assert_called_once_with(organization.id)
+        mock_service.send_bulk.assert_called_once()
+        mock_record_usage_candidates.assert_called_once()
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.status, "sent")
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
+        details = json.loads(log.details or "[]")
+        self.assertFalse(
+            any("Messaging provider is not active" in (detail.get("error") or "") for detail in details)
+        )
+
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    def test_send_bulk_job_dedupes_normalized_duplicate_phones_before_send(
+        self,
+        mock_get_twilio,
+        mock_process_failure_details,
+    ) -> None:
+        log_id = self._create_log(details=[])
+        recipients = [
+            {"phone": "(555) 000-0007", "name": "First"},
+            {"phone": "+15550000007", "name": "Duplicate"},
+        ]
+
+        mock_service = MagicMock()
+        mock_service.send_bulk.return_value = {
+            "total": 1,
+            "success_count": 1,
+            "failure_count": 0,
+            "details": [{"phone": "+15550000007", "success": True, "error": None}],
+        }
+        mock_get_twilio.return_value = mock_service
+        mock_process_failure_details.return_value = {}
+
+        self.send_bulk_job(log_id, recipients, "Hello", delay=0)
+
+        send_args = mock_service.send_bulk.call_args.args[0]
+        self.assertEqual(send_args, [{"phone": "+15550000007", "name": "First"}])
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.total_recipients, 1)
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
 
     @patch("app.tasks.record_usage_candidates")
     @patch("app.tasks.process_failure_details")

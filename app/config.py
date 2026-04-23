@@ -27,6 +27,21 @@ def _env_csv(name: str, default: str = '') -> list[str]:
     return [part.strip() for part in raw_value.split(',') if part.strip()]
 
 
+def _env_cookie_samesite(name: str, default: str = 'Lax') -> str:
+    raw_value = str(os.environ.get(name, default)).strip()
+    normalized = raw_value.lower()
+    allowed_values = {
+        'lax': 'Lax',
+        'strict': 'Strict',
+        'none': 'None',
+    }
+    if normalized in allowed_values:
+        return allowed_values[normalized]
+    raise RuntimeError(
+        f"{name} must be one of Lax, Strict, or None, got {raw_value!r}."
+    )
+
+
 class Config:
     # Flask
     # This secret signs login cookies. Use a random value in production.
@@ -56,8 +71,8 @@ class Config:
     # Turning this off increases account takeover risk from injected scripts.
     SESSION_COOKIE_HTTPONLY = True
     # Recommended: Lax for admin apps. Strict is also valid if your UX allows it.
-    # A weaker setting can make cross-site request abuse easier.
-    SESSION_COOKIE_SAMESITE = os.environ.get('SESSION_COOKIE_SAMESITE', 'Lax')
+    # A weaker setting can make cross-site request abuse easier. Accepted input is case-insensitive.
+    SESSION_COOKIE_SAMESITE = _env_cookie_samesite('SESSION_COOKIE_SAMESITE', 'Lax')
     # Recommended in production: 1. This ensures cookies are sent only over HTTPS.
     # Setting this to 0 in production can leak session cookies over insecure transport.
     SESSION_COOKIE_SECURE = _env_bool('SESSION_COOKIE_SECURE', '1' if not DEBUG else '0')
@@ -167,6 +182,7 @@ class Config:
     TWILIO_BROWSER_FAKE_SENDS = _env_bool('TWILIO_BROWSER_FAKE_SENDS', '0')
     TWILIO_A2P_EVENT_STREAMS_ENABLED = _env_bool('TWILIO_A2P_EVENT_STREAMS_ENABLED', '0')
     TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN = os.environ.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN')
+    TWILIO_ALLOW_LIVE_SENDS_IN_TESTING = _env_bool('TWILIO_ALLOW_LIVE_SENDS_IN_TESTING', '0')
     INBOUND_AUTO_REPLY_ENABLED = _env_bool('INBOUND_AUTO_REPLY_ENABLED', '1')
     SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
     BILLING_TRIAL_DAYS = _env_int('BILLING_TRIAL_DAYS', '14')

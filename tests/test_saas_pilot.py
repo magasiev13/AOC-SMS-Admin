@@ -8,6 +8,34 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
+class FakeRedis:
+    def __init__(self) -> None:
+        self._values: dict[str, tuple[str, int | None]] = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self._values:
+            return False
+        normalized = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        self._values[key] = (normalized, ex)
+        return True
+
+    def get(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return None
+        return entry[0]
+
+    def ttl(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return -2
+        return entry[1] if entry[1] is not None else -1
+
+    def delete(self, key):
+        self._values.pop(key, None)
+        return 1
+
+
 class TestSaasPilotFoundation(unittest.TestCase):
     def setUp(self) -> None:
         self._original_env = {
@@ -36,6 +64,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             InboxThread,
             KeywordAutomationRule,
             MessageLog,
+            MessagingUsageRecord,
             Organization,
             OrganizationA2POnboarding,
             OrganizationInvitation,
@@ -57,6 +86,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
         self.MessageLog = MessageLog
+        self.MessagingUsageRecord = MessagingUsageRecord
         self.Organization = Organization
         self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationInvitation = OrganizationInvitation
@@ -667,6 +697,102 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"customer-managed Twilio connection", response.data)
         self.assertIn(b"External messaging:", response.data)
+        self.assertNotIn(b"Legal business name", response.data)
+        self.assertNotIn(b"Submit for Twilio review", response.data)
+
+    def test_setup_status_payload_for_platform_managed_owner_exposes_billing_step_contract(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "billing")
+        self.assertFalse(payload["setup_complete"])
+        self.assertEqual(payload["subscription"]["status"], "incomplete")
+        self.assertFalse(payload["subscription"]["can_send"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "platform_managed")
+        self.assertIn("heading", payload["launch_readiness"])
+        self.assertIn("summary", payload["onboarding"])
+
+    def test_setup_status_payload_for_customer_managed_workspace_exposes_provider_state(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-status",
+            username="customer-managed-status",
+            email="customer-managed-status@acme.test",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "provider")
+        self.assertFalse(payload["setup_complete"])
+        self.assertTrue(payload["onboarding"]["external_managed"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "customer_managed")
+        self.assertEqual(payload["messaging"]["provider_status"], "pending")
+
+    def test_setup_status_payload_is_available_to_platform_managed_staff_pending_setup(self) -> None:
+        staff_user = self.AppUser(
+            username="pending-staff",
+            email="pending-staff@acme.test",
+            full_name="Pending Staff",
+            phone="+15550000055",
+            role="social_manager",
+            must_change_password=False,
+        )
+        staff_user.set_password("PendingStaff-pass1!")
+        self.db.session.add(staff_user)
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=self.organization.id,
+                user_id=staff_user.id,
+                role="staff",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_with_credentials(staff_user.email, "PendingStaff-pass1!")
+        response = self.client.get("/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["current_step"], "billing")
+        self.assertFalse(payload["setup_complete"])
+        self.assertEqual(payload["messaging"]["provider_mode"], "platform_managed")
+
+    def test_platform_managed_invalid_setup_step_falls_back_to_current_step(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup?step=provider")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-current-step="billing"', response.data)
+        self.assertIn(b"Activate billing", response.data)
+
+    def test_customer_managed_invalid_setup_step_falls_back_to_provider(self) -> None:
+        _, _, _, user = self._create_customer_managed_workspace(
+            slug="customer-managed-invalid-step",
+            username="customer-managed-invalid-step",
+            email="customer-managed-invalid-step@acme.test",
+        )
+
+        self._login_with_credentials(user.email, "CustomerManaged-pass1!")
+        response = self.client.get("/setup?step=compliance")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'data-current-step="provider"', response.data)
+        self.assertIn(b"External Twilio activation", response.data)
+
+    def test_setup_pending_redirects_owner_back_to_setup(self) -> None:
+        self._login_owner()
+
+        response = self.client.get("/setup/pending", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup", response.headers.get("Location", ""))
 
     def test_suspended_organization_owner_cannot_log_in(self) -> None:
         self.organization.status = "suspended"
@@ -702,7 +828,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Platform Admin", response.data)
+        self.assertNotIn(b"Platform Admin", response.data)
         self.assertIn(b"/platform/organizations", response.data)
         self.assertIn(b"bi-buildings", response.data)
         self.assertNotIn(b'href="/community"', response.data)
@@ -716,8 +842,78 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Needs attention", response.data)
+        self.assertIn(b"System utilities", response.data)
+        self.assertNotIn(b"Platform Admin", response.data)
+        self.assertNotIn(b"Manage organizations, onboarding, and provider readiness.", response.data)
         self.assertIn(b"Restart SaaS Services", response.data)
         self.assertIn(b"/platform/operations/restart-services", response.data)
+
+    def test_platform_home_prioritizes_billing_blocker_headline(self) -> None:
+        blocked_org = self.Organization(name="Billing Blocked Co", slug="billing-blocked-co", status="active")
+        blocked_subscription = self.OrganizationSubscription(
+            organization=blocked_org,
+            stripe_customer_id="cus_blocked_test",
+            stripe_subscription_id="sub_blocked_test",
+            stripe_price_id="price_test_123",
+            status="past_due",
+        )
+        blocked_messaging = self.OrganizationMessagingProfile(
+            organization=blocked_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACblocked0001",
+            messaging_service_sid="MGblocked0001",
+            phone_number_sid="PNblocked0001",
+            from_number="+15550007777",
+            inbound_identity="+15550007777",
+            status="active",
+            provider_status="active",
+            sender_review_status="approved",
+        )
+        self.db.session.add_all([blocked_org, blocked_subscription, blocked_messaging])
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Billing Blocked Co", response.data)
+        self.assertGreaterEqual(
+            response.data.count(b"Open the billing portal and resolve the payment issue."),
+            2,
+        )
+
+    def test_platform_home_prioritizes_messaging_blocker_headline(self) -> None:
+        blocked_org = self.Organization(name="Messaging Blocked Co", slug="messaging-blocked-co", status="active")
+        blocked_subscription = self.OrganizationSubscription(
+            organization=blocked_org,
+            stripe_customer_id="cus_message_test",
+            stripe_subscription_id="sub_message_test",
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        blocked_messaging = self.OrganizationMessagingProfile(
+            organization=blocked_org,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACmessage0001",
+            messaging_service_sid="MGmessage0001",
+            status="error",
+            provider_status="error",
+            sender_review_status="pending",
+            last_provision_error="Twilio A2P onboarding could not be queued. Check Redis/RQ and retry.",
+        )
+        self.db.session.add_all([blocked_org, blocked_subscription, blocked_messaging])
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/platform")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Messaging Blocked Co", response.data)
+        self.assertGreaterEqual(
+            response.data.count(b"Twilio A2P onboarding could not be queued. Check Redis/RQ and retry."),
+            2,
+        )
 
     def test_owner_does_not_see_platform_organizations_nav_link(self) -> None:
         self._login_owner()
@@ -964,6 +1160,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
+        self.assertIn(b'data-current-step="billing"', response.data)
         self.assertEqual(self.organization.subscription.status, "trialing")
         self.assertIsNotNone(self.organization.subscription.current_period_end)
 
@@ -1426,8 +1623,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"core steps complete", response.data)
+        self.assertEqual(response.data.count(b"5/6 core steps complete"), 2)
         self.assertIn(b"Open invite", response.data)
-        self.assertIn(b"Manage Access", response.data)
+        self.assertIn(b"Access", response.data)
         self.assertIn(f"https://app.example.com/invites/{invitation.token}".encode(), response.data)
 
     def test_platform_organization_access_page_can_create_staff_invite(self) -> None:
@@ -1939,6 +2137,172 @@ class TestSaasPilotFoundation(unittest.TestCase):
             actor_user_id=self.platform_admin.id,
         )
 
+    @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_duplicate_test_send_is_suppressed(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            first_response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=False,
+            )
+            second_response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(first_response.status_code, 302)
+        self.assertEqual(second_response.status_code, 200)
+        mock_send_operational_test_message.assert_called_once_with(
+            self.organization.id,
+            to_number="+15550001234",
+            body="Operational test",
+            actor_user_id=self.platform_admin.id,
+        )
+        self.assertIn(
+            b"An identical platform test send was already submitted. The duplicate request was ignored.",
+            second_response.data,
+        )
+
+    def test_platform_organizations_messaging_edit_rejects_invalid_test_phone(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "not-a-phone",
+                    "platform_test_body": "Operational test",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Enter a valid E.164 phone number for the operational test send.",
+            response.data,
+        )
+
+    def test_platform_organizations_messaging_edit_rejects_blank_test_body(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "   ",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"Message body is required for the operational test send.",
+            response.data,
+        )
+
+    @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_rejects_test_send_when_org_not_ready(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "platform_test_send",
+                "platform_test_phone": "+15550001234",
+                "platform_test_body": "Operational test",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"This organization is not ready for a live operational test send yet.",
+            response.data,
+        )
+        mock_send_operational_test_message.assert_not_called()
+
+    def test_platform_organizations_messaging_edit_browser_fake_test_send_records_normalized_metadata(self) -> None:
+        self._login_platform_admin()
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+        self.app.config["TWILIO_BROWSER_FAKE_SENDS"] = True
+        self.app.config["TWILIO_ACCOUNT_SID"] = "ACplatformtest"
+        self.app.config["TWILIO_AUTH_TOKEN"] = "platform-token"
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            response = self.client.post(
+                f"/platform/organizations/{self.organization.id}/messaging",
+                data={
+                    "action": "platform_test_send",
+                    "platform_test_phone": "+15550001234",
+                    "platform_test_body": "—" * 71,
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Platform operational test send completed.", response.data)
+        record = self.MessagingUsageRecord.query.one()
+        self.assertEqual(record.organization_id, self.organization.id)
+        self.assertEqual(record.source, "operational_test")
+        self.assertEqual(record.twilio_message_status, "sent")
+        audit_log = (
+            self.OrganizationProviderAuditLog.query.filter_by(
+                organization_id=self.organization.id,
+                action="operational_test_send",
+                status="success",
+            )
+            .order_by(self.OrganizationProviderAuditLog.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(audit_log)
+        metadata = json.loads(audit_log.metadata_json or "{}")
+        self.assertEqual(metadata.get("segment_count"), 1)
+        self.assertEqual(metadata.get("encoding"), "gsm-7")
+        self.assertTrue(str(metadata.get("message_sid", "")).startswith("SM"))
+
     def test_sync_customer_managed_onboarding_state_keeps_external_identifiers_out_of_unique_columns(self) -> None:
         from app.routes import _sync_customer_managed_onboarding_state
 
@@ -2211,8 +2575,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Launch readiness", response.data)
-        self.assertIn(b"Await sender assignment", response.data)
-        self.assertIn(b"Next operator action", response.data)
+        self.assertNotIn(b"Await sender assignment", response.data)
+        self.assertNotIn(b"Next operator action", response.data)
         self.assertIn(b"Save the target PN SID from the org Twilio subaccount", response.data)
         self.assertIn(b"Service address", response.data)
         self.assertIn(b"Emergency address sync", response.data)
@@ -2736,6 +3100,53 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(recipients[0].phone, "+15550000003")
         self.assertEqual(recipients[0].label, "New Owner")
 
+    def test_invitation_accept_redirects_staff_to_pending_setup_when_workspace_is_not_live(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="new-staff@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        response = self.client.post(
+            f"/invites/{invitation.token}",
+            data={
+                "username": "new-staff",
+                "full_name": "New Staff",
+                "phone": "+15550000004",
+                "password": "Stronger-pass1!",
+                "confirm_password": "Stronger-pass1!",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/setup/pending", response.headers.get("Location", ""))
+        user = self.AppUser.query.filter_by(email="new-staff@acme.test").first()
+        self.assertIsNotNone(user)
+        membership = self.OrganizationMembership.query.filter_by(user_id=user.id).first()
+        self.assertIsNotNone(membership)
+        self.assertEqual(membership.organization_id, self.organization.id)
+        self.assertEqual(membership.role, "staff")
+
+    def test_staff_invitation_page_describes_automatic_workspace_routing(self) -> None:
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="pending-staff-copy@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add(invitation)
+        self.db.session.commit()
+
+        response = self.client.get(f"/invites/{invitation.token}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"route you to the right workspace page automatically", response.data)
+        self.assertNotIn(b"land in the workspace dashboard", response.data)
+
     def test_invitation_accept_rejects_platform_admin_email(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -2800,7 +3211,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertIn("/setup/pending", response.headers.get("Location", ""))
         user = self.AppUser.query.filter_by(email="phone-reuse@acme.test").first()
         self.assertIsNotNone(user)
         self.assertEqual(user.phone, "+15550000003")
@@ -3076,6 +3487,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Queued", response.data)
         self.assertIn(b"Restart queued. The SaaS services are restarting.", response.data)
 
@@ -3099,6 +3511,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Succeeded", response.data)
         self.assertIn(b"Restart completed successfully.", response.data)
 
@@ -3122,6 +3535,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/platform")
 
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Service restart", response.data)
         self.assertIn(b"Last request: Failed", response.data)
         self.assertIn(b"Restart failed.", response.data)
 

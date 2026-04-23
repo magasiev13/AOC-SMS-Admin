@@ -109,6 +109,8 @@ class TestSecurityEventsRoutes(unittest.TestCase):
         self.assertIn(b"match-row", filtered.data)
         self.assertNotIn(b"old-row", filtered.data)
         self.assertNotIn(b"viewer-row", filtered.data)
+        self.assertIn(b"workspace-summary", filtered.data)
+        self.assertIn(b"collection-panel--filters", filtered.data)
 
     def test_security_events_filters_by_date_range(self) -> None:
         self._login("admin", "Admin-pass1!")

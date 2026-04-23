@@ -5,6 +5,35 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self._values: dict[str, tuple[str, int | None]] = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self._values:
+            return False
+        normalized = value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        self._values[key] = (normalized, ex)
+        return True
+
+    def get(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return None
+        return entry[0]
+
+    def ttl(self, key):
+        entry = self._values.get(key)
+        if entry is None:
+            return -2
+        return entry[1] if entry[1] is not None else -1
+
+    def delete(self, key):
+        self._values.pop(key, None)
+        return 1
 
 
 class TestInboxRoutes(unittest.TestCase):
@@ -679,19 +708,106 @@ class TestInboxRoutes(unittest.TestCase):
         )
         self.db.session.commit()
 
-        response = self.client.post(
-            f"/inbox/{thread.id}/reply",
-            data={"body": "Hello there"},
-            follow_redirects=True,
-        )
+        with patch("app.routes.claim_outbound_idempotency") as mock_claim, patch(
+            "app.routes.send_thread_reply"
+        ) as mock_send_thread_reply:
+            response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": "Hello there"},
+                follow_redirects=True,
+            )
         self.assertEqual(response.status_code, 200)
         self.assertIn(
             b"Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.",
             response.data,
         )
+        mock_claim.assert_not_called()
+        mock_send_thread_reply.assert_not_called()
 
         outbound_count = self.InboxMessage.query.filter_by(thread_id=thread.id, direction="outbound").count()
         self.assertEqual(outbound_count, 0)
+
+    def test_inbox_reply_post_rejects_blank_body(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550015")
+        self.db.session.commit()
+
+        with patch("app.routes.send_thread_reply") as mock_send_thread_reply:
+            response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": "   "},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Reply message cannot be empty.", response.data)
+        mock_send_thread_reply.assert_not_called()
+
+    def test_inbox_reply_duplicate_post_does_not_send_twice(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550017")
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.routes.send_thread_reply",
+            return_value={"success": True, "status": "sent", "sid": "SMreply-1"},
+        ) as mock_send_thread_reply, patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            first_response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": "Hello there"},
+                follow_redirects=True,
+            )
+            second_response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": "Hello there"},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        mock_send_thread_reply.assert_called_once_with(thread.id, "Hello there", actor="admin")
+        self.assertIn(b"Reply sent.", first_response.data)
+        self.assertIn(
+            b"An identical reply was already submitted. The duplicate request was ignored.",
+            second_response.data,
+        )
+
+    def test_inbox_reply_duplicate_post_uses_normalized_equivalent_body_fingerprint(self) -> None:
+        self._login()
+        thread = self._create_thread(phone="+17205550018")
+        self.db.session.commit()
+
+        fake_redis = FakeRedis()
+        with patch(
+            "app.routes.send_thread_reply",
+            return_value={"success": True, "status": "sent", "sid": "SMreply-2"},
+        ) as mock_send_thread_reply, patch(
+            "app.services.outbound_idempotency_service.get_redis_connection",
+            return_value=fake_redis,
+        ):
+            first_response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": "“Hello” — team…"},
+                follow_redirects=True,
+            )
+            second_response = self.client.post(
+                f"/inbox/{thread.id}/reply",
+                data={"body": '"Hello" - team...'},
+                follow_redirects=True,
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        mock_send_thread_reply.assert_called_once_with(thread.id, "“Hello” — team…", actor="admin")
+        self.assertIn(b"Reply sent.", first_response.data)
+        self.assertIn(
+            b"An identical reply was already submitted. The duplicate request was ignored.",
+            second_response.data,
+        )
 
     def test_unsubscribed_list_shows_community_name_when_entry_name_blank(self) -> None:
         self._login()
@@ -728,6 +844,8 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn("Cindi Berberian", html)
+        self.assertIn("workspace-summary", html)
+        self.assertIn("collection-shell", html)
 
     def test_survey_submissions_requires_login(self) -> None:
         survey = self._create_survey_flow(
@@ -824,9 +942,12 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertNotIn("Cancelled Jordan", html)
         self.assertEqual(html.count('id="surveySubmission17205550100"'), 1)
         self.assertEqual(html.count('id="surveySubmission'), 2)
-        self.assertIn("2 attendee(s)", html)
-        self.assertIn("3 completed submission(s)", html)
-        self.assertIn("1 repeat submitter(s)", html)
+        self.assertIn("Attendees", html)
+        self.assertIn("Unique phones", html)
+        self.assertIn("Completed", html)
+        self.assertIn("Repeat", html)
+        self.assertIn("collection-panel--filters", html)
+        self.assertIn("workspace-summary", html)
 
     def test_survey_submissions_display_name_fallback_order(self) -> None:
         self._login()

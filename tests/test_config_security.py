@@ -75,6 +75,23 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         self.assertIn("INBOUND_AUTO_REPLY_ENABLED must be a boolean value", str(ctx.exception))
 
+    def test_cookie_samesite_is_normalized_case_insensitively(self) -> None:
+        os.environ["SESSION_COOKIE_SAMESITE"] = "strict"
+
+        config_module = self._reload_config_module()
+        Config = config_module.Config
+
+        self.assertEqual(Config.SESSION_COOKIE_SAMESITE, "Strict")
+        self.assertEqual(Config.REMEMBER_COOKIE_SAMESITE, "Strict")
+
+    def test_invalid_cookie_samesite_raises_clear_error(self) -> None:
+        os.environ["SESSION_COOKIE_SAMESITE"] = "sideways"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self._reload_config_module()
+
+        self.assertIn("SESSION_COOKIE_SAMESITE must be one of Lax, Strict, or None", str(ctx.exception))
+
     def test_production_requires_trusted_hosts(self) -> None:
         os.environ["FLASK_ENV"] = "production"
         os.environ["SECRET_KEY"] = "test-production-secret-key"
@@ -88,6 +105,20 @@ class TestConfigSecurityHardening(unittest.TestCase):
             create_app(run_startup_tasks=False, start_scheduler=False)
 
         self.assertIn("TRUSTED_HOSTS must include your production hostnames", str(ctx.exception))
+
+    def test_production_accepts_lowercase_cookie_samesite(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["TRUSTED_HOSTS"] = "sms.example.org"
+        os.environ["SESSION_COOKIE_SAMESITE"] = "lax"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        self.assertEqual(app.config["SESSION_COOKIE_SAMESITE"], "Lax")
+        self.assertEqual(app.config["REMEMBER_COOKIE_SAMESITE"], "Lax")
 
     def test_explicit_production_rejects_debug_flag(self) -> None:
         self._configure_minimal_saas_production_env()
@@ -180,6 +211,39 @@ class TestConfigSecurityHardening(unittest.TestCase):
 
         trusted_response = client.get("/", headers={"Host": "sms.example.org"})
         self.assertNotEqual(trusted_response.status_code, 400)
+
+    def test_trusted_hosts_redirect_to_saas_base_url_host(self) -> None:
+        os.environ["FLASK_ENV"] = "production"
+        os.environ["SECRET_KEY"] = "test-production-secret-key"
+        os.environ["TRUSTED_HOSTS"] = "twinevia.com,www.twinevia.com"
+        os.environ["SAAS_BASE_URL"] = "https://www.twinevia.com"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        app.testing = True
+        client = app.test_client()
+
+        response = client.get(
+            "/login?next=%2Fplatform",
+            headers={"Host": "twinevia.com"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 308)
+        self.assertEqual(
+            response.headers["Location"],
+            "https://www.twinevia.com/login?next=%2Fplatform",
+        )
+
+        canonical_response = client.get(
+            "/login",
+            headers={"Host": "www.twinevia.com"},
+            follow_redirects=False,
+        )
+        self.assertNotEqual(canonical_response.status_code, 308)
 
     def test_env_example_is_marked_as_local_bootstrap_only(self) -> None:
         env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Security Events - {{ product_name }}{% endblock %}
 {% block page_title %}Security Events{% endblock %}
@@ -12,14 +13,20 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card mb-3">
-    <div class="card-body">
-        <form method="GET" class="row g-3 align-items-end">
-            <div class="col-md-3">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="collection-shell">
+        {% call ui.collection_filters_panel(
+            url_for('main.security_events'),
+            title='Filters',
+            meta='Narrow recent authentication events by user, event type, outcome, or date range.'
+        ) %}
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4 col-xl-3">
                 <label for="username" class="form-label">Username</label>
                 <input type="text" class="form-control" id="username" name="username" value="{{ filters.username }}">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-xl-2">
                 <label for="event_type" class="form-label">Event type</label>
                 <select class="form-select" id="event_type" name="event_type">
                     <option value="">All</option>
@@ -28,7 +35,7 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-xl-2">
                 <label for="outcome" class="form-label">Outcome</label>
                 <select class="form-select" id="outcome" name="outcome">
                     <option value="">All</option>
@@ -37,59 +44,101 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-md-3 col-xl-2">
                 <label for="date_from" class="form-label">From</label>
                 <input type="date" class="form-control" id="date_from" name="date_from" value="{{ filters.date_from }}">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-3 col-xl-2">
                 <label for="date_to" class="form-label">To</label>
                 <input type="date" class="form-control" id="date_to" name="date_to" value="{{ filters.date_to }}">
             </div>
-            <div class="col-md-1 d-grid">
-                <button type="submit" class="btn btn-primary">Filter</button>
+            <div class="col-md-3 col-xl-1 d-grid">
+                <button type="submit" class="btn btn-primary">Apply</button>
             </div>
-        </form>
-    </div>
-</div>
+            {% if filters.username or filters.event_type or filters.outcome or filters.date_from or filters.date_to %}
+            <div class="col-md-3 col-xl-12 d-flex justify-content-end">
+                <a href="{{ url_for('main.security_events') }}" class="btn btn-outline-secondary">Reset filters</a>
+            </div>
+            {% endif %}
+        </div>
+        {% endcall %}
 
-<div class="card app-card">
-    <div class="table-responsive">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Time (UTC)</th>
-                    <th>Event</th>
-                    <th>Outcome</th>
-                    <th>User</th>
-                    <th>IP</th>
-                    <th>Metadata</th>
-                </tr>
-            </thead>
-            <tbody>
+        <section class="collection-panel collection-panel--results">
+            <div class="collection-panel__header">
+                <div>
+                    <h2 class="collection-panel__title">Recent events</h2>
+                    <p class="collection-panel__meta">Latest matching sign-in, password, and lockout activity.</p>
+                </div>
+            </div>
+            <div class="table-responsive d-none d-lg-block">
+                <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time (UTC)</th>
+                            <th>Event</th>
+                            <th>Outcome</th>
+                            <th>User</th>
+                            <th>IP</th>
+                            <th>Metadata</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if events %}
+                            {% for event in events %}
+                            <tr>
+                                <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }}</td>
+                                <td>{{ event.event_type }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if event.outcome == 'success' else ('warning text-dark' if event.outcome == 'blocked' else 'danger') }}">
+                                        {{ event.outcome }}
+                                    </span>
+                                </td>
+                                <td>{{ event.username or '-' }}</td>
+                                <td>{{ event.client_ip or '-' }}</td>
+                                <td><code class="small">{{ event.metadata_json or '-' }}</code></td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="py-5">
+                                {{ ui.empty_state(
+                                    'bi-shield-lock',
+                                    'No security events found',
+                                    'Try widening the filters or check back after the next sign-in event.'
+                                ) }}
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-list d-lg-none">
                 {% if events %}
                     {% for event in events %}
-                    <tr>
-                        <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }}</td>
-                        <td>{{ event.event_type }}</td>
-                        <td>
+                    <div class="card-list-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                                <h6 class="mb-1">{{ event.event_type }}</h6>
+                                <div class="text-muted small">{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }} UTC</div>
+                                <div class="text-muted small mt-1">{{ event.username or '-' }} · {{ event.client_ip or '-' }}</div>
+                            </div>
                             <span class="badge bg-{{ 'success' if event.outcome == 'success' else ('warning text-dark' if event.outcome == 'blocked' else 'danger') }}">
                                 {{ event.outcome }}
                             </span>
-                        </td>
-                        <td>{{ event.username or '-' }}</td>
-                        <td>{{ event.client_ip or '-' }}</td>
-                        <td>
-                            <code class="small">{{ event.metadata_json or '-' }}</code>
-                        </td>
-                    </tr>
+                        </div>
+                        <div class="small mt-2"><code>{{ event.metadata_json or '-' }}</code></div>
+                    </div>
                     {% endfor %}
                 {% else %}
-                    <tr>
-                        <td colspan="6" class="text-center text-muted py-4">No security events found.</td>
-                    </tr>
+                {{ ui.empty_state(
+                    'bi-shield-lock',
+                    'No security events found',
+                    'Try widening the filters or check back after the next sign-in event.'
+                ) }}
                 {% endif %}
-            </tbody>
-        </table>
+            </div>
+            {{ ui.collection_footer(events|length, 'event') }}
+        </section>
     </div>
 </div>
 {% endblock %}

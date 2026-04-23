@@ -5,7 +5,7 @@
 {% block page_title %}Platform{% endblock %}
 
 {% block breadcrumbs %}
-<span>Platform Control</span>
+<span>Platform</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -16,151 +16,161 @@
 
 {% block content %}
 <div class="platform-home-shell">
-    <section class="platform-home-hero" aria-labelledby="platform-home-title">
-        <div class="platform-home-kicker">Platform Admin</div>
-        <h2 id="platform-home-title" class="platform-home-title">Manage organizations, onboarding, and provider readiness.</h2>
-        <p class="platform-home-copy mb-0">
-            Use this workspace to create business accounts, review onboarding blockers, manage platform access, and finish provider setup. Day-to-day messaging, inbox, billing, and team operations stay inside each organization account.
-        </p>
-    </section>
-
-    <section class="row g-3 platform-home-stats">
-        <div class="col-sm-6 col-xl-3">
-            <div class="platform-stat-card card app-card h-100">
-                <div class="card-body">
-                    <div class="platform-stat-label">Organizations</div>
-                    <div class="platform-stat-value">{{ platform_home.summary.total_organizations }}</div>
-                    <div class="platform-stat-meta">{{ platform_home.summary.active_organizations }} active · {{ platform_home.summary.suspended_organizations }} suspended</div>
-                </div>
-            </div>
+    <section class="platform-home-summary-strip" aria-label="Platform summary">
+        <div class="platform-home-summary-strip__item">
+            <div class="platform-home-summary-strip__label">Organizations</div>
+            <div class="platform-home-summary-strip__value">{{ platform_home.summary.total_organizations }}</div>
+            <div class="platform-home-summary-strip__meta">{{ platform_home.summary.active_organizations }} active · {{ platform_home.summary.suspended_organizations }} suspended</div>
         </div>
-        <div class="col-sm-6 col-xl-3">
-            <div class="platform-stat-card card app-card h-100">
-                <div class="card-body">
-                    <div class="platform-stat-label">Billing Ready</div>
-                    <div class="platform-stat-value">{{ platform_home.summary.billing_ready }}</div>
-                    <div class="platform-stat-meta">Organizations with sending unlocked</div>
-                </div>
-            </div>
+        <div class="platform-home-summary-strip__item">
+            <div class="platform-home-summary-strip__label">Billing ready</div>
+            <div class="platform-home-summary-strip__value">{{ platform_home.summary.billing_ready }}</div>
+            <div class="platform-home-summary-strip__meta">Organizations with sending unlocked</div>
         </div>
-        <div class="col-sm-6 col-xl-3">
-            <div class="platform-stat-card card app-card h-100">
-                <div class="card-body">
-                    <div class="platform-stat-label">Onboarding Queue</div>
-                    <div class="platform-stat-value">{{ platform_home.summary.onboarding_incomplete }}</div>
-                    <div class="platform-stat-meta">Organizations missing required setup</div>
-                </div>
-            </div>
+        <div class="platform-home-summary-strip__item">
+            <div class="platform-home-summary-strip__label">Onboarding queue</div>
+            <div class="platform-home-summary-strip__value">{{ platform_home.summary.onboarding_incomplete }}</div>
+            <div class="platform-home-summary-strip__meta">Organizations still missing required setup</div>
         </div>
-        <div class="col-sm-6 col-xl-3">
-            <div class="platform-stat-card card app-card h-100">
-                <div class="card-body">
-                    <div class="platform-stat-label">Provider Gaps</div>
-                    <div class="platform-stat-value">{{ platform_home.summary.missing_live_messaging }}</div>
-                    <div class="platform-stat-meta">Organizations still pending provider readiness</div>
-                </div>
-            </div>
+        <div class="platform-home-summary-strip__item">
+            <div class="platform-home-summary-strip__label">Provider gaps</div>
+            <div class="platform-home-summary-strip__value">{{ platform_home.summary.missing_live_messaging }}</div>
+            <div class="platform-home-summary-strip__meta">Organizations still pending messaging readiness</div>
         </div>
     </section>
 
-    <section class="row g-4 platform-home-panels">
-        <div class="col-lg-7">
-            <div class="card app-card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span>Needs Attention</span>
-                    <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-sm btn-outline-secondary">View all organizations</a>
-                </div>
-                <div class="card-body">
-                    {% if platform_home.attention_rows %}
-                    <div class="platform-attention-list">
-                        {% for row in platform_home.attention_rows %}
-                        {% set organization = row.organization %}
-                        <article class="platform-attention-item">
-                            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                                <div>
-                                    <div class="fw-semibold">{{ organization.name }}</div>
-                                    <div class="small text-muted">{{ row.onboarding.headline }}</div>
-                                </div>
-                                <div class="d-flex gap-2 flex-wrap">
-                                    <span class="badge bg-{{ row.billing.badge }}">{{ row.billing.title }}</span>
-                                    <span class="badge bg-{{ 'success' if organization.status == 'active' else 'warning text-dark' }}">{{ organization.status }}</span>
-                                </div>
-                            </div>
-                            <div class="small text-muted mt-2">
-                                Messaging:
-                                <strong>{{ row.messaging.summary }}</strong>
-                            </div>
-                            <div class="small text-muted mt-1">{{ row.messaging.detail }}</div>
-                            <div class="row-actions mt-3" data-row-actions data-row-actions-primary="1">
-                                <a href="{{ url_for('main.platform_organizations_messaging_edit', organization_id=organization.id) }}" class="btn btn-sm btn-outline-primary">Manage Provider</a>
-                                <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-sm btn-outline-secondary">Review Organization</a>
-                            </div>
-                        </article>
-                        {% endfor %}
+    <div class="platform-home-layout">
+        <div class="platform-home-main">
+            <section class="platform-home-panel" aria-labelledby="platform-home-needs-attention">
+                <div class="platform-home-panel__header">
+                    <div>
+                        <h2 id="platform-home-needs-attention" class="platform-home-panel__title">Needs attention</h2>
+                        <p class="platform-home-panel__meta">Priority org worklist for onboarding, billing, and provider follow-up.</p>
                     </div>
-                    {% else %}
-                    <div class="text-muted">No organizations need immediate attention.</div>
-                    {% endif %}
                 </div>
-            </div>
-            <div class="card app-card">
-                <div class="card-header">Recent Organizations</div>
-                <div class="card-body">
-                    {% if platform_home.recent_rows %}
-                    <div class="platform-recent-list">
-                        {% for row in platform_home.recent_rows %}
-                        {% set organization = row.organization %}
-                        <div class="platform-recent-item">
-                            <div class="fw-semibold">{{ organization.name }}</div>
-                            <div class="small text-muted">{{ row.billing.title }} · {{ row.onboarding.headline }}</div>
+
+                {% if platform_home.attention_rows %}
+                <div class="platform-home-worklist">
+                    {% for row in platform_home.attention_rows %}
+                    {% set organization = row.organization %}
+                    <article class="platform-home-worklist__item">
+                        <div class="platform-home-worklist__top">
+                            <div class="platform-home-worklist__identity">
+                                <div class="platform-directory__name-row">
+                                    <h3 class="platform-home-worklist__name">{{ organization.name }}</h3>
+                                    {% if organization.status != 'active' %}
+                                    <span class="badge rounded-pill text-bg-light platform-status-pill">
+                                        {{ organization.status.replace('_', ' ')|title }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                                <div class="platform-directory__slug"><code>{{ organization.slug }}</code></div>
+                            </div>
+                            <div class="platform-home-worklist__badges">
+                                <span class="badge bg-{{ row.billing.badge }}">{{ row.billing.title }}</span>
+                                <span class="badge bg-{{ row.messaging.badge }}">{{ row.messaging.title }}</span>
+                            </div>
                         </div>
-                        {% endfor %}
+                        <p class="platform-home-worklist__headline">{{ row.headline }}</p>
+                        <p class="platform-home-worklist__support">{{ row.status_line }}</p>
+                        <div class="row-actions platform-home-worklist__actions" data-row-actions data-row-actions-primary="2">
+                            <a href="{{ row.primary_action.url }}" class="btn btn-sm btn-outline-primary">{{ row.primary_action.label }}</a>
+                            <a href="{{ row.secondary_action.url }}" class="btn btn-sm btn-outline-secondary">{{ row.secondary_action.label }}</a>
+                        </div>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="platform-home-empty">No organizations need immediate attention.</div>
+                {% endif %}
+            </section>
+
+            <section class="platform-home-panel" aria-labelledby="platform-home-recent-organizations">
+                <div class="platform-home-panel__header">
+                    <div>
+                        <h2 id="platform-home-recent-organizations" class="platform-home-panel__title">Recent organizations</h2>
+                        <p class="platform-home-panel__meta">Newest workspaces, kept visible without competing with the queue.</p>
                     </div>
-                    {% else %}
-                    <div class="text-muted">No organizations created yet.</div>
-                    {% endif %}
                 </div>
-            </div>
+
+                {% if platform_home.recent_rows %}
+                <div class="platform-home-recent-list">
+                    {% for row in platform_home.recent_rows %}
+                    {% set organization = row.organization %}
+                    <article class="platform-home-recent-item">
+                        <div class="platform-home-recent-item__body">
+                            <div class="platform-home-recent-item__name">{{ organization.name }}</div>
+                            <div class="platform-home-recent-item__meta">{{ row.status_line }}</div>
+                        </div>
+                        <a href="{{ row.access_url }}" class="btn btn-sm btn-outline-secondary">Access</a>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="platform-home-empty">No organizations created yet.</div>
+                {% endif %}
+            </section>
         </div>
-        <div class="col-lg-5">
-            <div class="card app-card mb-4">
-                <div class="card-header">Quick Actions</div>
-                <div class="card-body d-grid gap-2">
-                    <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Open Organization Directory</a>
-                    <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review Users</a>
-                    <a href="{{ url_for('main.security_events') }}" class="btn btn-outline-secondary">Review Security Events</a>
-                    {% if platform_home.service_restart.enabled %}
-                    <form method="POST" action="{{ url_for('main.platform_restart_services') }}">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-danger w-100">Restart SaaS Services</button>
-                    </form>
-                    {% endif %}
+
+        <aside class="platform-home-utilities">
+            <section class="platform-home-panel" aria-labelledby="platform-home-system-utilities">
+                <div class="platform-home-panel__header">
+                    <div>
+                        <h2 id="platform-home-system-utilities" class="platform-home-panel__title">System utilities</h2>
+                        <p class="platform-home-panel__meta">Low-emphasis shortcuts for platform administration and service operations.</p>
+                    </div>
                 </div>
-            </div>
-            {% if platform_home.service_restart.enabled %}
-            <div class="card app-card">
-                <div class="card-header">Service Restart</div>
-                <div class="card-body">
+
+                <div class="platform-home-utility-links">
+                    <a href="{{ url_for('main.platform_organizations_list') }}" class="platform-home-utility-link">
+                        <span>Organizations</span>
+                        <i class="bi bi-arrow-right-short" aria-hidden="true"></i>
+                    </a>
+                    <a href="{{ url_for('main.users_list') }}" class="platform-home-utility-link">
+                        <span>Users</span>
+                        <i class="bi bi-arrow-right-short" aria-hidden="true"></i>
+                    </a>
+                    <a href="{{ url_for('main.security_events') }}" class="platform-home-utility-link">
+                        <span>Security Events</span>
+                        <i class="bi bi-arrow-right-short" aria-hidden="true"></i>
+                    </a>
+                </div>
+
+                {% if platform_home.service_restart.enabled %}
+                <div class="platform-home-status">
+                    <div class="platform-home-status__header">
+                        <div>
+                            <h3 class="platform-home-status__title">Service restart</h3>
+                            <p class="platform-home-status__meta">Restart the SaaS units without displacing organization work from the top of the page.</p>
+                        </div>
+                        <form method="POST" action="{{ url_for('main.platform_restart_services') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-outline-danger">Restart SaaS Services</button>
+                        </form>
+                    </div>
+
                     {% if platform_home.service_restart.last_result %}
                     {% set last_restart = platform_home.service_restart.last_result %}
-                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-                        <div>
-                            <div class="fw-semibold">Last request: {{ last_restart.title }}</div>
-                            <div class="small text-muted">{{ last_restart.created_at_display }}</div>
+                    <div class="platform-home-status__body">
+                        <div class="platform-home-status__stamp">
+                            <div>
+                                <div class="fw-semibold">Last request: {{ last_restart.title }}</div>
+                                <div class="small text-muted">{{ last_restart.created_at_display }}</div>
+                            </div>
+                            <span class="badge bg-{{ last_restart.badge }}">{{ last_restart.title }}</span>
                         </div>
-                        <span class="badge bg-{{ last_restart.badge }}">{{ last_restart.title }}</span>
+                        <div class="platform-home-status__detail">{{ last_restart.summary }}</div>
+                        {% if last_restart.detail and last_restart.detail != last_restart.summary %}
+                        <div class="platform-home-status__detail platform-home-status__detail--muted">{{ last_restart.detail }}</div>
+                        {% endif %}
                     </div>
-                    <div class="small mt-3">{{ last_restart.summary }}</div>
-                    {% if last_restart.detail and last_restart.detail != last_restart.summary %}
-                    <div class="small text-muted mt-2">{{ last_restart.detail }}</div>
-                    {% endif %}
                     {% else %}
-                    <div class="text-muted small">No restart requests have been recorded yet.</div>
+                    <div class="platform-home-status__detail platform-home-status__detail--muted">No restart requests have been recorded yet.</div>
                     {% endif %}
                 </div>
-            </div>
-            {% endif %}
-        </div>
-    </section>
+                {% endif %}
+            </section>
+        </aside>
+    </div>
 </div>
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% set is_edit = survey is not none %}
 {% if form_data %}
@@ -45,142 +46,195 @@
 {% endblock %}
 
 {% block content %}
-<div class="card app-card automation-form-card automation-form-card--survey">
-    <div class="card-body">
-        <form method="POST" class="automation-form automation-form--survey">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-            <div class="mb-3">
-                <label for="name" class="form-label">Survey Name</label>
-                <input type="text" class="form-control" id="name" name="name" value="{{ name_value }}"
-                       maxlength="120" required>
-            </div>
-
-            <div class="mb-3">
-                <label for="trigger_keyword" class="form-label">Trigger Keyword</label>
-                <input type="text" class="form-control" id="trigger_keyword" name="trigger_keyword" value="{{ trigger_value }}"
-                       maxlength="40" placeholder="e.g. RSVP" required>
-                <div class="form-text">When a contact sends this keyword, the survey starts.</div>
-            </div>
-
-            <div class="mb-3">
-                <label for="intro_message" class="form-label">Intro Message (Optional)</label>
-                <textarea class="form-control" id="intro_message" name="intro_message" rows="2" maxlength="1600">{{ intro_value }}</textarea>
-            </div>
-
-            <div class="mb-3">
-                <label for="questions" class="form-label">Questions (one per line)</label>
-                <textarea class="form-control" id="questions" name="questions" rows="6" required>{{ questions_value }}</textarea>
-                <div class="form-text">Up to 10 questions. Each line is sent as one SMS prompt.</div>
-            </div>
-
-            <div class="mb-3">
-                <label for="completion_message" class="form-label">Completion Message (Optional)</label>
-                <textarea class="form-control" id="completion_message" name="completion_message" rows="2" maxlength="1600">{{ completion_value }}</textarea>
-            </div>
-
-            <div class="mb-3">
-                <label class="form-label survey-event-sync__label">Event Registration Sync</label>
-                <fieldset class="survey-event-sync mb-0">
-                    <legend class="visually-hidden">Event registration sync mode</legend>
-
-                    <div class="survey-event-sync__option-group">
-                        <div class="survey-event-sync__option">
-                            <div class="form-check mb-0">
-                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
-                                       id="event_link_none" value="none"
-                                       {% if event_link_mode_value == 'none' %}checked{% endif %}>
-                                <label class="form-check-label" for="event_link_none">
-                                    Do not link to an event
-                                </label>
-                            </div>
-                            <p class="survey-event-sync__hint mb-0">
-                                Keep completions in survey submissions only.
-                            </p>
-                        </div>
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-form-layout workspace-form-layout--with-side">
+        <div class="workspace-form-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} survey flow</h2>
+                        <p class="workspace-panel__meta">Set the trigger keyword, prompts, completion message, and optional event registration sync.</p>
                     </div>
-
-                    <div class="survey-event-sync__option-group">
-                        <div class="survey-event-sync__option">
-                            <div class="form-check mb-0">
-                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
-                                       id="event_link_existing" value="existing"
-                                       {% if event_link_mode_value == 'existing' %}checked{% endif %}>
-                                <label class="form-check-label" for="event_link_existing">
-                                    Link to an existing event
-                                </label>
-                            </div>
-                            <p class="survey-event-sync__hint mb-0">
-                                Auto-upsert each completion into event registrations.
-                            </p>
-                        </div>
-                        <div id="existingEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'existing' %}d-none{% endif %}">
-                            <label for="existing_event_id" class="form-label">Select Event</label>
-                            <select class="form-select" id="existing_event_id" name="existing_event_id">
-                                <option value="">Select an event</option>
-                                {% for event in events %}
-                                <option value="{{ event.id }}"
-                                        {% if (existing_event_id_value|string) == (event.id|string) %}selected{% endif %}>
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="survey-event-sync__option-group">
-                        <div class="survey-event-sync__option">
-                            <div class="form-check mb-0">
-                                <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
-                                       id="event_link_new" value="new"
-                                       {% if event_link_mode_value == 'new' %}checked{% endif %}>
-                                <label class="form-check-label" for="event_link_new">
-                                    Create and link a new event
-                                </label>
-                            </div>
-                            <p class="survey-event-sync__hint mb-0">
-                                Create an event now and register completions automatically.
-                            </p>
-                        </div>
-                        <div id="newEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'new' %}d-none{% endif %}">
-                            <div class="row g-2">
-                                <div class="col-12">
-                                    <label for="new_event_title" class="form-label">New Event Title</label>
-                                    <input type="text" class="form-control" id="new_event_title" name="new_event_title"
-                                           maxlength="200" value="{{ new_event_title_value }}" placeholder="Community Meeting">
-                                </div>
-                                <div class="col-12 col-md-6">
-                                    <label for="new_event_date" class="form-label">New Event Date (Optional)</label>
-                                    <input type="date" class="form-control" id="new_event_date" name="new_event_date"
-                                           value="{{ new_event_date_value }}">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </fieldset>
-                <div class="form-text survey-event-sync__footnote">
-                    Linked surveys automatically upsert completed responses into event registrations by phone.
                 </div>
-            </div>
+                <form method="POST" class="automation-form automation-form--survey">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <div class="form-check mb-3">
-                <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
-                <label class="form-check-label" for="is_active">Active</label>
-            </div>
+                    <div class="workspace-panel__body">
+                        <div class="mb-3">
+                            <label for="name" class="form-label">Survey name</label>
+                            <input type="text" class="form-control" id="name" name="name" value="{{ name_value }}"
+                                   maxlength="120" required>
+                        </div>
 
-            <div class="d-flex gap-2 automation-form__actions">
-                <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-save me-1"></i>Save
-                </button>
-                <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        <div class="mb-3">
+                            <label for="trigger_keyword" class="form-label">Trigger keyword</label>
+                            <input type="text" class="form-control" id="trigger_keyword" name="trigger_keyword" value="{{ trigger_value }}"
+                                   maxlength="40" placeholder="RSVP" required>
+                            <div class="form-text">The survey starts when a contact texts this keyword.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="intro_message" class="form-label">Intro message (optional)</label>
+                            <textarea class="form-control" id="intro_message" name="intro_message" rows="2" maxlength="1600">{{ intro_value }}</textarea>
+                            <div class="form-text" id="introMessageStats" aria-live="polite"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="questions" class="form-label">Questions (one per line)</label>
+                            <textarea class="form-control" id="questions" name="questions" rows="6" required>{{ questions_value }}</textarea>
+                            <div class="form-text">Up to 10 questions. Each line is sent as one prompt.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="completion_message" class="form-label">Completion message (optional)</label>
+                            <textarea class="form-control" id="completion_message" name="completion_message" rows="2" maxlength="1600">{{ completion_value }}</textarea>
+                            <div class="form-text" id="completionMessageStats" aria-live="polite"></div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label survey-event-sync__label">Event registration sync</label>
+                            <fieldset class="survey-event-sync mb-0">
+                                <legend class="visually-hidden">Event registration sync mode</legend>
+
+                                <div class="survey-event-sync__option-group">
+                                    <div class="survey-event-sync__option">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                                   id="event_link_none" value="none"
+                                                   {% if event_link_mode_value == 'none' %}checked{% endif %}>
+                                            <label class="form-check-label" for="event_link_none">
+                                                Do not link to an event
+                                            </label>
+                                        </div>
+                                        <p class="survey-event-sync__hint mb-0">
+                                            Keep completions in survey submissions only.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="survey-event-sync__option-group">
+                                    <div class="survey-event-sync__option">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                                   id="event_link_existing" value="existing"
+                                                   {% if event_link_mode_value == 'existing' %}checked{% endif %}>
+                                            <label class="form-check-label" for="event_link_existing">
+                                                Link to an existing event
+                                            </label>
+                                        </div>
+                                        <p class="survey-event-sync__hint mb-0">
+                                            Auto-upsert each completion into event registrations.
+                                        </p>
+                                    </div>
+                                    <div id="existingEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'existing' %}d-none{% endif %}">
+                                        <label for="existing_event_id" class="form-label">Select event</label>
+                                        <select class="form-select" id="existing_event_id" name="existing_event_id">
+                                            <option value="">Select an event</option>
+                                            {% for event in events %}
+                                            <option value="{{ event.id }}"
+                                                    {% if (existing_event_id_value|string) == (event.id|string) %}selected{% endif %}>
+                                                {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="survey-event-sync__option-group">
+                                    <div class="survey-event-sync__option">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input js-event-link-mode" type="radio" name="event_link_mode"
+                                                   id="event_link_new" value="new"
+                                                   {% if event_link_mode_value == 'new' %}checked{% endif %}>
+                                            <label class="form-check-label" for="event_link_new">
+                                                Create and link a new event
+                                            </label>
+                                        </div>
+                                        <p class="survey-event-sync__hint mb-0">
+                                            Create an event now and register completions automatically.
+                                        </p>
+                                    </div>
+                                    <div id="newEventFields" class="survey-event-sync__fields {% if event_link_mode_value != 'new' %}d-none{% endif %}">
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <label for="new_event_title" class="form-label">New event title</label>
+                                                <input type="text" class="form-control" id="new_event_title" name="new_event_title"
+                                                       maxlength="200" value="{{ new_event_title_value }}" placeholder="Community Meeting">
+                                            </div>
+                                            <div class="col-12 col-md-6">
+                                                <label for="new_event_date" class="form-label">New event date (optional)</label>
+                                                <input type="date" class="form-control" id="new_event_date" name="new_event_date"
+                                                       value="{{ new_event_date_value }}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <div class="form-text survey-event-sync__footnote">
+                                Linked surveys automatically upsert completed responses into event registrations by phone.
+                            </div>
+                        </div>
+
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
+                            <label class="form-check-label" for="is_active">Active</label>
+                        </div>
+                    </div>
+
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Edits take effect immediately for new inbound matches on this keyword.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-save me-1"></i>Save survey flow
+                            </button>
+                            <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </div>
+                </form>
+            </section>
+        </div>
+
+        <aside class="workspace-form-side">
+            <div class="workspace-callout-stack">
+                <section class="workspace-callout">
+                    <h3 class="workspace-callout__title">Trigger behavior</h3>
+                    <p class="workspace-callout__copy">The trigger keyword must stay unique across keyword automations and survey flows so inbound replies start the right workflow.</p>
+                </section>
+                <section class="workspace-callout">
+                    <h3 class="workspace-callout__title">Event sync</h3>
+                    <p class="workspace-callout__copy">Use event sync when completed responses should also create or update registrations on an event page.</p>
+                </section>
             </div>
-        </form>
+        </aside>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
+    function bindSmsStats(textareaId, statsId) {
+        const textarea = document.getElementById(textareaId);
+        const stats = document.getElementById(statsId);
+        if (!textarea || !stats || !window.TwineviaSmsAnalysis) {
+            return;
+        }
+
+        const updateStats = () => {
+            const analysis = window.TwineviaSmsAnalysis.analyzeBody(textarea.value || '');
+            const normalizationNote = analysis.normalizationApplied
+                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before save/send.`
+                : '';
+            stats.textContent = analysis.segmentCount > 0
+                ? `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`
+                : 'Optional message. Leave blank to skip sending this step.';
+        };
+
+        textarea.addEventListener('input', updateStats);
+        updateStats();
+    }
+
     const eventModeInputs = document.querySelectorAll('.js-event-link-mode');
     const eventModeOptions = document.querySelectorAll('.survey-event-sync__option');
     const existingEventFields = document.getElementById('existingEventFields');
@@ -212,5 +266,7 @@
         input.addEventListener('change', syncEventLinkMode);
     });
     syncEventLinkMode();
+    bindSmsStats('intro_message', 'introMessageStats');
+    bindSmsStats('completion_message', 'completionMessageStats');
 </script>
 {% endblock %}

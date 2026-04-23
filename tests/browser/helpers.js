@@ -90,14 +90,10 @@ async function expectOrganizationRowState(
     await expect(row.getByText(headlinePattern).first()).toBeVisible();
   }
   if (billingTitle) {
-    await expect(
-      row.locator('.platform-readiness-item').filter({ hasText: 'Billing' }).getByText(billingTitle).first()
-    ).toBeVisible();
+    await expect(row.locator('.platform-directory__cell--status').nth(1).getByText(billingTitle).first()).toBeVisible();
   }
   if (messagingTitle) {
-    await expect(
-      row.locator('.platform-readiness-item').filter({ hasText: 'Messaging' }).getByText(messagingTitle).first()
-    ).toBeVisible();
+    await expect(row.locator('.platform-directory__cell--status').nth(2).getByText(messagingTitle).first()).toBeVisible();
   }
   if (ownerInviteVisible) {
     const ownerInviteLink = row.getByRole('link', { name: 'Open invite' });

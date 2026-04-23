@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Inbox - {{ product_name }}{% endblock %}
 
@@ -23,21 +24,20 @@
      data-status-url="{{ url_for('main.inbox_status') }}"></div>
 <div class="row g-3 inbox-layout">
     <div class="col-lg-4 {% if selected_thread and not show_thread_list_only %}d-none d-lg-block{% endif %}" id="inboxThreadsPanel">
-        <div class="card app-card mb-3">
-            <div class="card-body">
-                <form method="GET" class="filter-bar">
-                    <div class="input-group">
-                        <span class="input-group-text"><i class="bi bi-search"></i></span>
-                        <input type="text" class="form-control" name="search" value="{{ search }}" placeholder="Search phone or name">
-                        {% if selected_thread and not show_thread_list_only %}
-                        <input type="hidden" name="thread" value="{{ selected_thread.id }}">
-                        {% endif %}
-                    </div>
-                </form>
-            </div>
-        </div>
+        {% call ui.collection_search_panel(
+            url_for('main.inbox_list'),
+            'Search phone or name',
+            search,
+            'Search inbox threads',
+            'Search inbox',
+            'Find the right conversation quickly.'
+        ) %}
+        {% if selected_thread and not show_thread_list_only %}
+        <input type="hidden" name="thread" value="{{ selected_thread.id }}">
+        {% endif %}
+        {% endcall %}
 
-        <div class="card app-card inbox-threads-card">
+        <div class="card app-card collection-panel collection-panel--results inbox-threads-card">
             <div id="inboxThreadList" class="list-group list-group-flush inbox-thread-list" role="list" aria-label="Inbox threads">
                 {% if threads %}
                     {% for thread in threads %}
@@ -69,11 +69,11 @@
                     </div>
                     {% endfor %}
                 {% else %}
-                <div class="empty-state">
-                    <i class="bi bi-chat-left-text empty-state__icon" aria-hidden="true"></i>
-                    <p class="empty-state__title">No conversations yet</p>
-                    <p class="empty-state__text">Inbound messages will appear here when contacts reply.</p>
-                </div>
+                {{ ui.empty_state(
+                    'bi-chat-left-text',
+                    'No conversations yet',
+                    'Inbound messages appear here when contacts reply.'
+                ) }}
                 {% endif %}
             </div>
             <div id="inboxThreadListSkeleton" class="inbox-thread-list-skeleton d-none p-3" aria-hidden="true">
@@ -88,7 +88,7 @@
     </div>
 
     <div class="col-lg-8 {% if not selected_thread %}d-none d-lg-block{% endif %}">
-        <div class="card app-card h-100">
+        <div class="card app-card workspace-panel h-100">
             {% if selected_thread %}
             {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
             <div class="d-lg-none px-3 pt-3">
@@ -225,10 +225,12 @@
                         </div>
                         {% endfor %}
                     {% else %}
-                    <div class="empty-state py-4">
-                        <i class="bi bi-chat-square-text empty-state__icon" aria-hidden="true"></i>
-                        <p class="empty-state__title">No messages in this thread</p>
-                        <p class="empty-state__text">Messages and replies for this contact will appear here.</p>
+                    <div class="py-4">
+                        {{ ui.empty_state(
+                            'bi-chat-square-text',
+                            'No messages in this thread',
+                            'Messages and replies for this contact appear here.'
+                        ) }}
                     </div>
                     {% endif %}
                 </div>
@@ -252,15 +254,16 @@
                             <i class="bi bi-send me-1"></i>Send
                         </button>
                     </div>
+                    <div class="form-text" id="replyBodyStats" aria-live="polite"></div>
                 </form>
             </div>
             {% else %}
             <div class="card-body">
-                <div class="empty-state">
-                    <i class="bi bi-chat-left-text empty-state__icon" aria-hidden="true"></i>
-                    <p class="empty-state__title">Select a thread to view messages</p>
-                    <p class="empty-state__text">Choose a conversation from the inbox list to see details and send a reply.</p>
-                </div>
+                {{ ui.empty_state(
+                    'bi-chat-left-text',
+                    'Select a thread to view messages',
+                    'Choose a conversation from the inbox list to see details and send a reply.'
+                ) }}
             </div>
             {% endif %}
         </div>
@@ -269,6 +272,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     const pane = document.getElementById('inboxMessagePane');
     if (pane) {
@@ -299,6 +303,20 @@
     document.querySelectorAll('[data-inbox-loading-trigger]').forEach((trigger) => {
         trigger.addEventListener('click', showInboxLoadingState);
     });
+
+    const replyBody = document.getElementById('replyBody');
+    const replyBodyStats = document.getElementById('replyBodyStats');
+    if (replyBody && replyBodyStats && window.TwineviaSmsAnalysis) {
+        const updateReplyStats = () => {
+            const analysis = window.TwineviaSmsAnalysis.analyzeBody(replyBody.value || '');
+            const normalizationNote = analysis.normalizationApplied
+                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before send.`
+                : '';
+            replyBodyStats.textContent = `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`;
+        };
+        replyBody.addEventListener('input', updateReplyStats);
+        updateReplyStats();
+    }
 
     function bindSelectAll(selectAllId, itemSelector, onSelectAllChange) {
         const selectAll = document.getElementById(selectAllId);

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Import Suppression Contacts - {{ product_name }}{% endblock %}
 
@@ -17,20 +18,35 @@
 {% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-lg-6">
-        <div class="card app-card">
-            <div class="card-body">
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <div class="workspace-form-layout workspace-form-layout--centered">
+        <div class="workspace-form-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Import suppression contacts</h2>
+                        <p class="workspace-panel__meta">Upload a CSV and add blocked contacts in bulk.</p>
+                    </div>
+                </div>
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="mb-3">
-                        <label for="file" class="form-label">Upload CSV</label>
-                        <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                    <div class="workspace-panel__body">
+                        <div class="mb-0">
+                            <label for="file" class="form-label">Upload CSV</label>
+                            <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                            <div class="form-text mt-2">Supports phone only, name plus phone, or first, last, and phone.</div>
+                        </div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">Import CSV</button>
-                    <div class="form-text mt-2">Supports: phone only, name+phone, or first+last+phone.</div>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Duplicate phone numbers are skipped during import.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">Import CSV</button>
+                            <a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">Cancel</a>
+                        </div>
+                    </div>
                 </form>
-            </div>
+            </section>
         </div>
     </div>
 </div>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Message Logs - {{ product_name }}{% endblock %}
 
@@ -19,20 +20,18 @@
 {% block content %}
 <div id="logListStatusMeta" class="d-none"
      data-processing-logs='{{ processing_logs|tojson }}'></div>
-<div class="card app-card mb-4">
-    <div class="card-body">
-        <form class="filter-bar" method="GET" data-table-loading-target="logsTable">
-            <div class="flex-grow-1">
-                <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                    <input type="text" class="form-control" name="search" placeholder="Search logs" aria-label="Search logs" value="{{ search }}">
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
+<div class="collection-shell">
+    {{ ui.collection_search_panel(
+        url_for('main.logs_list'),
+        'Search logs',
+        search,
+        'Search logs',
+        'Search message logs',
+        'Track delivery history and recent sends in one place.',
+        'logsTable'
+    ) }}
 
-<div class="card app-card">
+<div class="card app-card collection-panel collection-panel--results">
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover table-sticky-header mb-0 table-loading" id="logsTable" data-sortable="client">
             <thead class="table-light">
@@ -116,14 +115,13 @@
                 {% else %}
                 <tr>
                     <td colspan="5" class="py-5">
-                        <div class="empty-state">
-                            <i class="bi bi-journal-x empty-state__icon"></i>
-                            <div class="empty-state__title">No message logs yet</div>
-                            <div class="empty-state__text">Send your first message to see delivery history.</div>
-                            <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-sm">
-                                <i class="bi bi-send me-1"></i>Send Message
-                            </a>
-                        </div>
+                        {{ ui.empty_state(
+                            'bi-journal-x',
+                            'No message logs yet',
+                            'Send your first message to see delivery history.',
+                            url_for('main.dashboard'),
+                            'Send Message'
+                        ) }}
                     </td>
                 </tr>
                 {% endif %}
@@ -175,21 +173,21 @@
             </div>
             {% endfor %}
         {% else %}
-            <div class="empty-state py-5">
-                <i class="bi bi-journal-x empty-state__icon"></i>
-                <div class="empty-state__title">No message logs yet</div>
-                <div class="empty-state__text">Send your first message to see delivery history.</div>
-                <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-sm">
-                    <i class="bi bi-send me-1"></i>Send Message
-                </a>
+            <div class="py-5">
+                {{ ui.empty_state(
+                    'bi-journal-x',
+                    'No message logs yet',
+                    'Send your first message to see delivery history.',
+                    url_for('main.dashboard'),
+                    'Send Message'
+                ) }}
             </div>
         {% endif %}
     </div>
     {% if logs %}
-    <div class="card-footer text-muted">
-        Showing {{ logs|length }} log(s)
-    </div>
+    {{ ui.collection_footer(logs|length, 'log') }}
     {% endif %}
+</div>
 </div>
 
 {% if logs %}

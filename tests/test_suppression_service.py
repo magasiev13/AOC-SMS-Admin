@@ -13,7 +13,7 @@ from app.services.recipient_service import (
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
 )
-from app.services.suppression_service import classify_failure, process_failure_details
+from app.services.suppression_service import apply_failure_suppression, classify_failure, process_failure_details
 
 
 class TestSuppressionService(unittest.TestCase):
@@ -55,9 +55,32 @@ class TestSuppressionService(unittest.TestCase):
     def test_classify_failure_patterns(self) -> None:
         self.assertEqual(classify_failure("Reply STOP to opt out"), "opt_out")
         self.assertEqual(classify_failure("Carrier violation: 30005"), "hard_fail")
+        self.assertEqual(classify_failure("", error_code=30006, status="undelivered"), "hard_fail")
         self.assertEqual(classify_failure("Service unavailable: 503"), "soft_fail")
         self.assertEqual(classify_failure("Message blocked by carrier (30007)"), "hard_fail")
         self.assertEqual(classify_failure("Temporarily blocked due rate limit 429"), "soft_fail")
+
+    def test_apply_failure_suppression_removes_hard_fail_contact_from_future_blast_lists(self) -> None:
+        from app import db
+        from app.models import CommunityMember, SuppressedContact
+
+        db.session.add(CommunityMember(name="Dead Number", phone="+17205550109"))
+        db.session.commit()
+
+        result = apply_failure_suppression(
+            organization_id=None,
+            phone="+17205550109",
+            error_text="Unknown subscriber",
+            error_code="30003",
+            status="undelivered",
+            source="usage_reconciliation",
+            commit=True,
+        )
+
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["category"], "hard_fail")
+        self.assertIsNotNone(SuppressedContact.query.filter_by(phone="+17205550109").first())
+        self.assertIsNone(CommunityMember.query.filter_by(phone="+17205550109").first())
 
     def test_unsubscribed_contact_upsert_is_idempotent(self) -> None:
         details = [

@@ -1,6 +1,6 @@
 const { defineConfig } = require('@playwright/test');
 
-const baseURL = process.env.TWINEVIA_LIVE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'https://twinevia.com';
+const baseURL = process.env.TWINEVIA_LIVE_BASE_URL || process.env.PLAYWRIGHT_BASE_URL || 'https://www.twinevia.com';
 const artifactRoot = process.env.PLAYWRIGHT_ARTIFACT_DIR || 'output/playwright-live';
 
 module.exports = defineConfig({
