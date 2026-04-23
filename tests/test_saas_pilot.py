@@ -2111,6 +2111,41 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Platform Test Send", response.data)
 
     @patch("app.routes.send_operational_test_message")
+    def test_platform_organizations_messaging_edit_blocks_test_send_for_suspended_org(
+        self,
+        mock_send_operational_test_message,
+    ) -> None:
+        self._login_platform_admin()
+        self.organization.status = "suspended"
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+
+        get_response = self.client.get(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(get_response.status_code, 200)
+        self.assertNotIn(b"Platform Test Send", get_response.data)
+
+        post_response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "platform_test_send",
+                "platform_test_phone": "+15550001234",
+                "platform_test_body": "Operational test",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(post_response.status_code, 200)
+        self.assertIn(
+            b"This organization is not ready for a live operational test send yet.",
+            post_response.data,
+        )
+        mock_send_operational_test_message.assert_not_called()
+
+    @patch("app.routes.send_operational_test_message")
     def test_platform_organizations_messaging_edit_can_send_operational_test(
         self,
         mock_send_operational_test_message,

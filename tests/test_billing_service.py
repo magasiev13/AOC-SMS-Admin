@@ -25,6 +25,7 @@ class TestBillingSendReadiness(unittest.TestCase):
         from app import create_app, db
         from app.models import Organization, OrganizationMessagingProfile, OrganizationSubscription
         from app.services.billing_service import (
+            organization_can_send,
             organization_can_transmit_messages,
             organization_transmit_block_reason,
         )
@@ -33,8 +34,10 @@ class TestBillingSendReadiness(unittest.TestCase):
         self.Organization = Organization
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
         self.OrganizationSubscription = OrganizationSubscription
+        self.organization_can_send = organization_can_send
         self.organization_can_transmit_messages = organization_can_transmit_messages
         self.organization_transmit_block_reason = organization_transmit_block_reason
+        self._organization_counter = 0
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config["TESTING"] = True
         self._ctx = self.app.app_context()
@@ -52,11 +55,17 @@ class TestBillingSendReadiness(unittest.TestCase):
     def _create_organization(
         self,
         *,
+        organization_status: str = "active",
         subscription_status: str = "active",
         provider_status: str = "active",
         with_sender: bool = True,
     ):
-        organization = self.Organization(name="Acme", slug="acme", status="active")
+        self._organization_counter += 1
+        organization = self.Organization(
+            name=f"Acme {self._organization_counter}",
+            slug=f"acme-{self._organization_counter}",
+            status=organization_status,
+        )
         subscription = self.OrganizationSubscription(
             organization=organization,
             stripe_price_id="price_test_123",
@@ -68,9 +77,9 @@ class TestBillingSendReadiness(unittest.TestCase):
             provider_status=provider_status,
             status=provider_status,
             sender_review_status="approved",
-            messaging_service_sid="MGactive0001" if with_sender else None,
-            from_number="+15550001111" if with_sender else None,
-            phone_number_sid="PNactive0001" if with_sender else None,
+            messaging_service_sid=f"MGactive{self._organization_counter:04d}" if with_sender else None,
+            from_number=f"+15550001{self._organization_counter:03d}" if with_sender else None,
+            phone_number_sid=f"PNactive{self._organization_counter:04d}" if with_sender else None,
         )
         self.db.session.add_all([organization, subscription, profile])
         self.db.session.commit()
@@ -82,10 +91,67 @@ class TestBillingSendReadiness(unittest.TestCase):
         self.assertTrue(self.organization_can_transmit_messages(organization))
         self.assertIsNone(self.organization_transmit_block_reason(organization))
 
+    def test_transmit_readiness_matrix_matches_block_reason(self) -> None:
+        cases = [
+            (
+                "active org ready to send",
+                {},
+                True,
+                None,
+            ),
+            (
+                "suspended org",
+                {"organization_status": "suspended"},
+                False,
+                "Organization is not active for message sending.",
+            ),
+            (
+                "inactive billing",
+                {"subscription_status": "incomplete"},
+                False,
+                "Organization billing is not active for message sending.",
+            ),
+            (
+                "inactive provider",
+                {"provider_status": "pending"},
+                False,
+                "Messaging provider is not active for this organization.",
+            ),
+        ]
+
+        for label, kwargs, expected_can_transmit, expected_reason in cases:
+            with self.subTest(label=label):
+                organization = self._create_organization(**kwargs)
+
+                self.assertEqual(
+                    self.organization_can_transmit_messages(organization),
+                    expected_can_transmit,
+                )
+                self.assertEqual(
+                    self.organization_transmit_block_reason(organization),
+                    expected_reason,
+                )
+
+    def test_organization_can_send_remains_billing_only(self) -> None:
+        organization = self._create_organization(organization_status="suspended")
+
+        self.assertTrue(self.organization_can_send(organization))
+        self.assertFalse(self.organization_can_transmit_messages(organization))
+
     def test_missing_organization_blocks_sending(self) -> None:
+        self.assertFalse(self.organization_can_transmit_messages(None))
         self.assertEqual(
             self.organization_transmit_block_reason(None),
             "Organization context is missing for message sending.",
+        )
+
+    def test_suspended_organization_blocks_before_billing_and_provider_state(self) -> None:
+        organization = self._create_organization(organization_status="suspended")
+
+        self.assertFalse(self.organization_can_transmit_messages(organization))
+        self.assertEqual(
+            self.organization_transmit_block_reason(organization),
+            "Organization is not active for message sending.",
         )
 
     def test_inactive_billing_blocks_before_provider_state(self) -> None:

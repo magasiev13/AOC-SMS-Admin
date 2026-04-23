@@ -214,6 +214,54 @@ class TestScheduledMessageProcessing(unittest.TestCase):
         self.assertIn("billing is not active", updated.error_message or "")
         self.assertIsNone(updated.message_log_id)
 
+    def test_scheduled_message_fails_closed_when_saas_org_is_suspended(self):
+        from app.models import Organization, OrganizationMessagingProfile, OrganizationSubscription
+
+        self.app.config["SAAS_MODE"] = True
+
+        organization = Organization(name="Suspended Org", slug="suspended-org", status="suspended")
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        profile = OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            provider_status="active",
+            status="active",
+            sender_review_status="approved",
+            messaging_service_sid="MGsuspended0001",
+            from_number="+15550001111",
+            phone_number_sid="PNsuspended0001",
+        )
+        member = CommunityMember(
+            organization=organization,
+            name="Suspended User",
+            phone="+15551234570",
+        )
+        scheduled = ScheduledMessage(
+            organization=organization,
+            message_body="Suspended scheduled message",
+            target="community",
+            scheduled_at=utc_now_naive() - timedelta(minutes=1),
+            status="pending",
+            test_mode=False,
+        )
+        db.session.add_all([organization, subscription, profile, member, scheduled])
+        db.session.commit()
+        msg_id = scheduled.id
+
+        with patch("app.services.scheduler_service.get_twilio_service") as mock_twilio:
+            send_scheduled_messages(self.app)
+            mock_twilio.assert_not_called()
+
+        db.session.expire_all()
+        updated = db.session.get(ScheduledMessage, msg_id)
+        self.assertEqual(updated.status, "failed")
+        self.assertIn("not active for message sending", updated.error_message or "")
+        self.assertIsNone(updated.message_log_id)
+
     def test_future_message_not_picked_up(self):
         """A scheduled message with scheduled_at > now should remain pending."""
         member = CommunityMember(name="Test User", phone="+15551234567")

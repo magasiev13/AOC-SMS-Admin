@@ -58,6 +58,12 @@ def organization_can_send(organization: Organization | None) -> bool:
     return subscription_status_allows_sending(subscription.status if subscription else None)
 
 
+def organization_is_active(organization: Organization | None) -> bool:
+    if organization is None:
+        return False
+    return (organization.status or "").strip().lower() == "active"
+
+
 def organization_has_active_messaging(organization: Organization | None) -> bool:
     if organization is None:
         return False
@@ -66,12 +72,18 @@ def organization_has_active_messaging(organization: Organization | None) -> bool
 
 
 def organization_can_transmit_messages(organization: Organization | None) -> bool:
-    return organization_can_send(organization) and organization_has_active_messaging(organization)
+    return (
+        organization_is_active(organization)
+        and organization_can_send(organization)
+        and organization_has_active_messaging(organization)
+    )
 
 
 def organization_transmit_block_reason(organization: Organization | None) -> str | None:
     if organization is None:
         return "Organization context is missing for message sending."
+    if not organization_is_active(organization):
+        return "Organization is not active for message sending."
     if not organization_can_send(organization):
         return "Organization billing is not active for message sending."
     if organization_has_active_messaging(organization):
