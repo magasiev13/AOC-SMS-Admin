@@ -161,6 +161,53 @@ class TestSendBulkJob(unittest.TestCase):
         mock_get_twilio.assert_not_called()
         mock_process_failure_details.assert_not_called()
 
+    @patch("app.tasks.process_failure_details")
+    @patch("app.tasks.get_twilio_service")
+    @patch("app.tasks.create_app")
+    def test_send_bulk_job_fails_closed_when_saas_org_is_suspended(
+        self,
+        mock_create_app,
+        mock_get_twilio,
+        mock_process_failure_details,
+    ) -> None:
+        from app.models import Organization, OrganizationMessagingProfile, OrganizationSubscription
+
+        self.app.config["SAAS_MODE"] = True
+        mock_create_app.return_value = self.app
+
+        organization = Organization(name="Suspended Org", slug="suspended-org", status="suspended")
+        subscription = OrganizationSubscription(
+            organization=organization,
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        profile = OrganizationMessagingProfile(
+            organization=organization,
+            provider_mode="platform_managed",
+            provider_status="active",
+            status="active",
+            sender_review_status="approved",
+            messaging_service_sid="MGsuspended0001",
+            from_number="+15550001111",
+            phone_number_sid="PNsuspended0001",
+        )
+        self.db.session.add_all([organization, subscription, profile])
+        self.db.session.commit()
+
+        log_id = self._create_log(organization_id=organization.id, details=[])
+        recipients = [{"phone": "+15550000009", "name": "Suspended Recipient"}]
+
+        self.send_bulk_job(log_id, organization.id, recipients, "Hello", delay=0)
+
+        self.db.session.expire_all()
+        log = self.db.session.get(self.MessageLog, log_id)
+        self.assertEqual(log.status, "failed")
+        self.assertEqual(log.failure_count, 1)
+        details = json.loads(log.details or "[]")
+        self.assertTrue(any("not active for message sending" in (detail.get("error") or "") for detail in details))
+        mock_get_twilio.assert_not_called()
+        mock_process_failure_details.assert_not_called()
+
     @patch("app.tasks.record_usage_candidates")
     @patch("app.tasks.process_failure_details")
     @patch("app.tasks.get_twilio_service")
