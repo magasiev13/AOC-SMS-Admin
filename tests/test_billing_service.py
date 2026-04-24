@@ -2,6 +2,8 @@ import importlib
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 class TestBillingSendReadiness(unittest.TestCase):
@@ -171,3 +173,170 @@ class TestBillingSendReadiness(unittest.TestCase):
             self.organization_transmit_block_reason(organization),
             "Messaging provider is not active for this organization.",
         )
+
+
+class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_env = os.environ.copy()
+        self._temp_dir = tempfile.TemporaryDirectory()
+        db_path = os.path.join(self._temp_dir.name, "billing-catalog.db")
+        os.environ.update(
+            {
+                "DATABASE_URL": f"sqlite:///{db_path}",
+                "FLASK_DEBUG": "1",
+                "SECRET_KEY": "test-secret-key",
+                "SAAS_MODE": "1",
+                "SCHEDULER_ENABLED": "0",
+            }
+        )
+
+        import app.config
+
+        importlib.reload(app.config)
+        from app import create_app, db
+        from app.models import Organization, OrganizationSubscription
+        from app.services.billing_plans import (
+            billing_plan_catalog,
+            included_segments_for_subscription,
+        )
+        from app.services.billing_service import create_checkout_session
+
+        self.db = db
+        self.Organization = Organization
+        self.OrganizationSubscription = OrganizationSubscription
+        self.billing_plan_catalog = billing_plan_catalog
+        self.included_segments_for_subscription = included_segments_for_subscription
+        self.create_checkout_session = create_checkout_session
+        self._organization_counter = 0
+        self.app = create_app(run_startup_tasks=False, start_scheduler=False)
+        self.app.config.update(
+            TESTING=True,
+            STRIPE_SECRET_KEY="sk_test_123",
+            STRIPE_PRICE_ID="price_starter",
+            STRIPE_ACTIVATION_PRICE_ID="price_activation",
+            STRIPE_GROWTH_PRICE_ID="price_growth",
+            STRIPE_SCALE_PRICE_ID="price_scale",
+            BILLING_TRIAL_DAYS=0,
+            BILLING_INCLUDED_OUTBOUND_SEGMENTS=42,
+            BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS=1000,
+            BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS=3000,
+            BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS=10000,
+        )
+        self._ctx = self.app.app_context()
+        self._ctx.push()
+        self.db.create_all()
+
+    def tearDown(self) -> None:
+        self.db.session.remove()
+        self.db.drop_all()
+        self._ctx.pop()
+        self._temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self._original_env)
+
+    def _create_subscription(
+        self,
+        *,
+        price_id: str = "price_starter",
+        status: str = "incomplete",
+        customer_id: str | None = None,
+        subscription_id: str | None = None,
+    ):
+        self._organization_counter += 1
+        organization = self.Organization(
+            name=f"Plan Org {self._organization_counter}",
+            slug=f"plan-org-{self._organization_counter}",
+            status="active",
+        )
+        subscription = self.OrganizationSubscription(
+            organization=organization,
+            stripe_customer_id=customer_id,
+            stripe_subscription_id=subscription_id,
+            stripe_price_id=price_id,
+            status=status,
+        )
+        self.db.session.add_all([organization, subscription])
+        self.db.session.commit()
+        return organization, subscription
+
+    def test_plan_catalog_maps_price_ids_to_segment_allowances_with_legacy_fallback(self) -> None:
+        _, growth_subscription = self._create_subscription(price_id="price_growth")
+        _, unknown_subscription = self._create_subscription(price_id="price_unknown")
+
+        plans = {plan.code: plan for plan in self.billing_plan_catalog()}
+
+        self.assertEqual(plans["starter"].price_id, "price_starter")
+        self.assertEqual(plans["starter"].included_segments, 1000)
+        self.assertEqual(plans["growth"].included_segments, 3000)
+        self.assertEqual(plans["scale"].included_segments, 10000)
+        self.assertEqual(self.included_segments_for_subscription(growth_subscription), 3000)
+        self.assertEqual(self.included_segments_for_subscription(unknown_subscription), 42)
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_checkout_charges_activation_and_recurring_plan_without_default_trial(self, mock_stripe_module) -> None:
+        organization, _subscription = self._create_subscription()
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_123",
+            url="https://checkout.stripe.test/session",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        session = self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        self.assertEqual(session.id, "cs_test_123")
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(
+            params["line_items"],
+            [
+                {"price": "price_activation", "quantity": 1},
+                {"price": "price_starter", "quantity": 1},
+            ],
+        )
+        self.assertNotIn("trial_period_days", params["subscription_data"])
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_checkout_omits_activation_for_resubscribing_stripe_customer(self, mock_stripe_module) -> None:
+        organization, _subscription = self._create_subscription(
+            status="canceled",
+            customer_id="cus_test_123",
+            subscription_id="sub_old_123",
+        )
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_resubscribe",
+            url="https://checkout.stripe.test/resubscribe",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(params["line_items"], [{"price": "price_starter", "quantity": 1}])
+        self.assertEqual(params["customer"], "cus_test_123")
+        self.assertNotIn("customer_email", params)
+
+    def test_fake_checkout_remains_available_without_stripe_activation_call(self) -> None:
+        organization, _subscription = self._create_subscription()
+        self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+
+        with self.app.test_request_context("/"):
+            session = self.create_checkout_session(
+                organization,
+                "owner@example.com",
+                "https://app.example.com/success?session_id={CHECKOUT_SESSION_ID}",
+                "https://app.example.com/cancel",
+            )
+
+        self.assertEqual(session.id, f"cs_fake_org_{organization.id}")
+        self.assertIn(f"/_test/stripe/checkout/cs_fake_org_{organization.id}", session.url)

@@ -109,6 +109,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             TWILIO_PRIMARY_CUSTOMER_PROFILE_SID="BUprimary123",
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
         )
@@ -1004,6 +1005,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
         self.assertIn(b"Sending enabled", response.data)
+        self.assertIn(b"Starter", response.data)
+        self.assertIn(b"1,000 SMS segments", response.data)
+        self.assertIn(b"$0.03 per segment", response.data)
+        self.assertIn(b"Paid", response.data)
         self.assertIn(b"Ready for owner testing", response.data)
         self.assertIn(b"Live SMS approved", response.data)
 
@@ -1145,6 +1150,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     def test_fake_checkout_completion_marks_subscription_trialing(self) -> None:
         self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+        self.app.config["BILLING_TRIAL_DAYS"] = 14
         self._login_owner()
 
         response = self.client.post(

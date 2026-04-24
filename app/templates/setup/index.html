@@ -93,6 +93,7 @@
                 <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
                 <div class="setup-callout">
                     <div>{{ subscription_view.next_step }}</div>
+                    {% include "includes/billing_plan_facts.html" %}
                     {% if subscription_view.period_value %}
                     <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
                     {% endif %}
@@ -249,6 +250,7 @@
                 <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
                 <div class="setup-callout">
                     <div>{{ subscription_view.next_step }}</div>
+                    {% include "includes/billing_plan_facts.html" %}
                     {% if subscription_view.period_value %}
                     <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
                     {% endif %}

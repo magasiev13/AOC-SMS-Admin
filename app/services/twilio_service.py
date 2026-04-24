@@ -31,6 +31,7 @@ from app.services.provider_secret_service import (
     decrypt_provider_secret,
     encrypt_provider_secret,
 )
+from app.services.billing_plans import included_segments_for_subscription
 from app.services.test_recipient_service import mask_phone_for_audit
 from app.utils import analyze_sms_body, normalize_phone, normalize_sms_body, render_message_template
 
@@ -263,17 +264,12 @@ def _usage_currency() -> str:
     return (current_app.config.get("BILLING_USAGE_CURRENCY") or "usd").strip().lower() or "usd"
 
 
-def _included_outbound_segments() -> int:
-    try:
-        return max(0, int(current_app.config.get("BILLING_INCLUDED_OUTBOUND_SEGMENTS") or 0))
-    except (TypeError, ValueError):
-        return 0
+def _included_outbound_segments(organization: Organization | None = None) -> int:
+    subscription = organization.subscription if organization is not None else None
+    return included_segments_for_subscription(subscription)
 
 
-def _organization_has_complimentary_billing(organization_id: int | None) -> bool:
-    if not organization_id:
-        return False
-    organization = db.session.get(Organization, organization_id)
+def _organization_has_complimentary_billing(organization: Organization | None) -> bool:
     if organization is None or organization.subscription is None:
         return False
     return (organization.subscription.status or "").strip().lower() == "complimentary"
@@ -2538,7 +2534,8 @@ def reconcile_messaging_usage() -> dict[str, int]:
             if billable_units == 0 and provider_cost > 0:
                 billable_units = 1
             billable = provider_cost > 0 or (status in {"sent", "delivered"} and billable_units > 0)
-            complimentary_billing = _organization_has_complimentary_billing(record.organization_id)
+            organization = db.session.get(Organization, record.organization_id)
+            complimentary_billing = _organization_has_complimentary_billing(organization)
 
             sell_rate = _currency_rate()
             sell_amount = Decimal("0")
@@ -2656,8 +2653,9 @@ def upsert_closed_usage_billing_periods() -> int:
             .filter(MessagingUsageRecord.billable.is_(True))
             .scalar()
         ) or 0
-        included_units = _included_outbound_segments()
-        complimentary_billing = _organization_has_complimentary_billing(organization_id)
+        organization = db.session.get(Organization, organization_id)
+        included_units = _included_outbound_segments(organization)
+        complimentary_billing = _organization_has_complimentary_billing(organization)
         overage_units = max(0, int(used_units) - included_units)
         sell_amount = Decimal(overage_units) * _currency_rate()
         if complimentary_billing:

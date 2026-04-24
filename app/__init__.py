@@ -78,6 +78,7 @@ def _validate_saas_billing_config(app: Flask) -> None:
         "STRIPE_SECRET_KEY": app.config.get("STRIPE_SECRET_KEY"),
         "STRIPE_WEBHOOK_SECRET": app.config.get("STRIPE_WEBHOOK_SECRET"),
         "STRIPE_PRICE_ID": app.config.get("STRIPE_PRICE_ID"),
+        "STRIPE_ACTIVATION_PRICE_ID": app.config.get("STRIPE_ACTIVATION_PRICE_ID"),
         "SAAS_BASE_URL": app.config.get("SAAS_BASE_URL"),
         "TWILIO_CREDENTIAL_ENCRYPTION_KEY": app.config.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
     }

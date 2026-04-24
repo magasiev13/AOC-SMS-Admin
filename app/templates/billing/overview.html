@@ -38,6 +38,7 @@
             </div>
             <div class="workspace-panel__body">
                 <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
+                {% include "includes/billing_plan_facts.html" %}
                 {% if subscription_view.is_complimentary %}
                 <div class="form-text mt-3">Stripe is not used for this workspace. Twilio charges stay on the customer-managed account.</div>
                 {% endif %}

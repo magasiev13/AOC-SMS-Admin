@@ -2854,6 +2854,50 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.billing-plan-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.billing-plan-facts > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.billing-plan-facts span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-1);
+  text-transform: uppercase;
+}
+
+.billing-plan-facts strong {
+  color: var(--color-text);
+  font-size: var(--font-size-2);
+  font-weight: 650;
+}
+
+.setup-callout .billing-plan-facts {
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .billing-plan-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-callout .billing-plan-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.75rem;
+  }
+
+  .setup-callout .billing-plan-facts > div:nth-child(n + 3) {
+    display: none;
+  }
+}
+
 .chart-container {
   position: relative;
   height: 250px;

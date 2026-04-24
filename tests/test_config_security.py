@@ -33,6 +33,7 @@ class TestConfigSecurityHardening(unittest.TestCase):
         os.environ["STRIPE_SECRET_KEY"] = "sk_test_123"
         os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test_123"
         os.environ["STRIPE_PRICE_ID"] = "price_test_123"
+        os.environ["STRIPE_ACTIVATION_PRICE_ID"] = "price_activation_123"
         os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="
 
     def test_recommended_hardening_defaults(self) -> None:

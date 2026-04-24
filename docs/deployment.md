@@ -75,6 +75,8 @@ ADMIN_PASSWORD=replace-me
 STRIPE_SECRET_KEY=sk_live_replace_me
 STRIPE_WEBHOOK_SECRET=whsec_replace_me
 STRIPE_PRICE_ID=price_replace_me
+STRIPE_ACTIVATION_PRICE_ID=price_activation_replace_me
+BILLING_TRIAL_DAYS=0
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=replace_me
@@ -88,6 +90,7 @@ Add these when applicable:
 - `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
 - `TWILIO_A2P_ONBOARDING_ENABLED=1`
 - `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
+- `STRIPE_GROWTH_PRICE_ID` and `STRIPE_SCALE_PRICE_ID`
 - `PLATFORM_SERVICE_RESTART_ENABLED=1`
 
 The SaaS install/deploy scripts now refuse to continue when the runtime still
@@ -101,6 +104,7 @@ looks like local development. In practice that means:
 - `SESSION_COOKIE_SECURE=1`
 - `REMEMBER_COOKIE_SECURE=1`
 - `SESSION_COOKIE_SAMESITE` must be `Lax` or `Strict`
+- `BILLING_TRIAL_DAYS=0`
 - fake/test flags must stay off: `STRIPE_FAKE_CHECKOUT_ENABLED=0`, `TWILIO_BROWSER_FAKE_SENDS=0`, `TWILIO_A2P_FAKE_QUEUE=0`
 
 File permissions should be:

@@ -76,6 +76,14 @@ from app.services.billing_service import (
     subscription_status_is_complimentary,
     sync_checkout_session_by_id,
 )
+from app.services.billing_plans import (
+    activation_fee_label,
+    billing_plan_for_subscription,
+    included_segments_for_subscription,
+    overage_rate_label,
+    segment_count_label,
+    subscription_activation_paid,
+)
 from app.services.provider_secret_service import decrypt_provider_secret
 from app.services.inbox_service import (
     delete_survey_flow_with_dependencies,
@@ -1585,12 +1593,23 @@ def _organization_owner_count(organization_id: int) -> int:
 def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
     status = (subscription.status if subscription else 'incomplete') or 'incomplete'
     normalized_status = status.strip().lower()
+    plan = billing_plan_for_subscription(subscription)
+    included_segments = included_segments_for_subscription(subscription)
+    activation_paid = subscription_activation_paid(subscription)
     view = {
         'status': status,
         'badge': 'secondary',
         'title': 'Billing setup needed',
         'summary': 'Finish checkout to unlock sending and team invites.',
         'next_step': 'Start your subscription to finish setting up the business account.',
+        'plan_code': plan.code if plan is not None else 'custom',
+        'plan_name': plan.name if plan is not None else 'Current plan',
+        'included_segments': included_segments,
+        'included_segments_label': segment_count_label(included_segments),
+        'overage_rate_label': overage_rate_label(),
+        'activation_fee_label': activation_fee_label(),
+        'activation_paid': activation_paid,
+        'activation_label': 'Paid' if activation_paid else f"{activation_fee_label()} due at checkout",
         'period_label': None,
         'period_value': None,
         'can_send': False,
@@ -1623,6 +1642,8 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             next_step='No Stripe checkout is needed. Messaging continues under the current Twilio setup.',
             can_send=True,
             is_complimentary=True,
+            plan_name='Complimentary',
+            activation_label='Covered',
             show_checkout=False,
             show_portal=False,
         )
@@ -2577,13 +2598,33 @@ def _billing_surface_view(
         )
 
     stats = []
-    period_label = subscription_view.get('period_label') or 'Plan'
-    period_value = subscription_view.get('period_value') or subscription_view['title']
     stats.append(
         {
-            'label': period_label,
-            'value': period_value,
-            'meta': 'Subscription state',
+            'label': 'Plan',
+            'value': subscription_view['plan_name'],
+            'meta': f"{subscription_view['included_segments_label']} SMS segments included",
+        }
+    )
+    if subscription_view.get('period_value'):
+        stats.append(
+            {
+                'label': subscription_view['period_label'],
+                'value': subscription_view['period_value'],
+                'meta': 'Subscription period',
+            }
+        )
+    stats.append(
+        {
+            'label': 'Overage',
+            'value': subscription_view['overage_rate_label'],
+            'meta': 'Per outbound SMS segment after included usage',
+        }
+    )
+    stats.append(
+        {
+            'label': 'Activation',
+            'value': subscription_view['activation_label'],
+            'meta': 'Required before provider provisioning',
         }
     )
     if onboarding_view:

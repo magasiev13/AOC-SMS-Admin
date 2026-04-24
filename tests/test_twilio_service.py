@@ -1380,6 +1380,48 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(period.status, "pending")
         self.assertEqual(period.sell_amount, Decimal("0.0300"))
 
+    def test_upsert_closed_usage_billing_periods_uses_subscription_plan_allowance(self) -> None:
+        from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods
+
+        self.app.config["STRIPE_GROWTH_PRICE_ID"] = "price_growth"
+        self.app.config["BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS"] = 3
+        organization, _ = self._create_org_with_profile()
+        organization.subscription.stripe_price_id = "price_growth"
+        period_start, period_end = previous_billing_period_window()
+        self.db.session.add_all(
+            [
+                self.MessagingUsageRecord(
+                    organization_id=organization.id,
+                    message_sid="SM-growth-1",
+                    billable_units=2,
+                    billable=True,
+                    reconciliation_status="finalized",
+                    billing_period_start=period_start,
+                    billing_period_end=period_end,
+                ),
+                self.MessagingUsageRecord(
+                    organization_id=organization.id,
+                    message_sid="SM-growth-2",
+                    billable_units=3,
+                    billable=True,
+                    reconciliation_status="finalized",
+                    billing_period_start=period_start,
+                    billing_period_end=period_end,
+                ),
+            ]
+        )
+        self.db.session.commit()
+
+        updated = upsert_closed_usage_billing_periods()
+
+        self.assertEqual(updated, 1)
+        period = self.OrganizationUsageBillingPeriod.query.filter_by(organization_id=organization.id).one()
+        self.assertEqual(period.used_units, 5)
+        self.assertEqual(period.included_units, 3)
+        self.assertEqual(period.overage_units, 2)
+        self.assertEqual(period.status, "pending")
+        self.assertEqual(period.sell_amount, Decimal("0.0600"))
+
     def test_upsert_closed_usage_billing_periods_marks_complimentary_org_as_included(self) -> None:
         from app.services.twilio_service import previous_billing_period_window, upsert_closed_usage_billing_periods
 

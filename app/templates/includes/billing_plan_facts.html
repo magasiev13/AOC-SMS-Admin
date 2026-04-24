@@ -1,0 +1,18 @@
+<div class="billing-plan-facts" aria-label="Billing plan details">
+    <div>
+        <span>Plan</span>
+        <strong>{{ subscription_view.plan_name }}</strong>
+    </div>
+    <div>
+        <span>Included usage</span>
+        <strong>{{ subscription_view.included_segments_label }} SMS segments</strong>
+    </div>
+    <div>
+        <span>Overage</span>
+        <strong>{{ subscription_view.overage_rate_label }} per segment</strong>
+    </div>
+    <div>
+        <span>Activation</span>
+        <strong>{{ subscription_view.activation_label }}</strong>
+    </div>
+</div>

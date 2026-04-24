@@ -167,12 +167,19 @@ Operational note:
 | `STRIPE_SECRET_KEY` | unset | Required for SaaS billing validation. |
 | `STRIPE_PUBLISHABLE_KEY` | unset | UI/client-side Stripe usage if needed. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Required for webhook verification and SaaS billing validation. |
-| `STRIPE_PRICE_ID` | unset | Required for SaaS billing validation. |
+| `STRIPE_PRICE_ID` | unset | Required Starter recurring price ID and default plan for legacy compatibility. |
+| `STRIPE_ACTIVATION_PRICE_ID` | unset | Required one-time activation price charged on first paid signup. |
+| `STRIPE_GROWTH_PRICE_ID` | unset | Optional Growth recurring price ID for plan allowance mapping. |
+| `STRIPE_SCALE_PRICE_ID` | unset | Optional Scale recurring price ID for plan allowance mapping. |
 | `STRIPE_FAKE_CHECKOUT_ENABLED` | `0` | Enables `/_test/stripe/checkout/<session_id>`. |
-| `BILLING_TRIAL_DAYS` | `14` | Trial length used by fake checkout and some billing flows. |
-| `BILLING_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Included outbound usage per billing period. |
+| `BILLING_TRIAL_DAYS` | `0` | Trial length for new checkout sessions. Production should stay at `0`. |
+| `BILLING_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Legacy fallback included outbound usage when a Stripe price ID is not in the plan catalog. |
+| `BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Starter plan included outbound SMS segments. |
+| `BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS` | `3000` | Growth plan included outbound SMS segments. |
+| `BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS` | `10000` | Scale plan included outbound SMS segments. |
 | `BILLING_USAGE_CURRENCY` | `usd` | Usage billing currency. |
 | `BILLING_OUTBOUND_SEGMENT_RATE_USD` | `0.0300` | Per-segment sell rate. |
+| `BILLING_ACTIVATION_FEE_USD` | `149.00` | Display amount for the one-time activation fee. Stripe price amount remains authoritative. |
 
 ## Admin And Local Tooling
 
@@ -199,6 +206,7 @@ Startup requires:
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_PRICE_ID`
+- `STRIPE_ACTIVATION_PRICE_ID`
 - `SAAS_BASE_URL`
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
 

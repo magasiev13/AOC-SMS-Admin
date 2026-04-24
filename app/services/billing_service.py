@@ -16,6 +16,11 @@ from app.models import (
     StripeWebhookEvent,
     utc_now,
 )
+from app.services.billing_plans import (
+    activation_price_id,
+    recurring_price_id_for_subscription,
+    subscription_activation_paid,
+)
 from app.services.twilio_service import previous_billing_period_window, reconcile_messaging_usage
 from app.utils import as_utc_datetime
 
@@ -169,7 +174,7 @@ def _fake_checkout_url(
 
 
 def _fake_checkout_period_end() -> datetime | None:
-    trial_days = int(current_app.config.get("BILLING_TRIAL_DAYS", 14) or 0)
+    trial_days = int(current_app.config.get("BILLING_TRIAL_DAYS", 0) or 0)
     if trial_days <= 0:
         return None
     return utc_now() + timedelta(days=trial_days)
@@ -189,8 +194,9 @@ def _apply_fake_checkout_session(
         raise RuntimeError("Fake checkout session does not belong to this organization.")
 
     subscription = ensure_subscription_record(target_organization)
-    subscription.status = "trialing"
-    subscription.current_period_end = _fake_checkout_period_end()
+    fake_period_end = _fake_checkout_period_end()
+    subscription.status = "trialing" if fake_period_end is not None else "active"
+    subscription.current_period_end = fake_period_end
     subscription.cancel_at_period_end = False
     if not subscription.stripe_price_id:
         subscription.stripe_price_id = current_app.config.get("STRIPE_PRICE_ID")
@@ -403,13 +409,20 @@ def create_checkout_session(organization: Organization, user_email: str, success
         )
 
     stripe = _stripe_module()
-    price_id = current_app.config.get("STRIPE_PRICE_ID")
+    price_id = recurring_price_id_for_subscription(subscription)
     if not price_id:
         raise RuntimeError("STRIPE_PRICE_ID is not configured.")
+    line_items = []
+    if not subscription_activation_paid(subscription):
+        activation_id = activation_price_id()
+        if not activation_id:
+            raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
+        line_items.append({"price": activation_id, "quantity": 1})
+    line_items.append({"price": price_id, "quantity": 1})
 
     params = {
         "mode": "subscription",
-        "line_items": [{"price": price_id, "quantity": 1}],
+        "line_items": line_items,
         "success_url": success_url,
         "cancel_url": cancel_url,
         "client_reference_id": str(organization.id),
@@ -425,7 +438,7 @@ def create_checkout_session(organization: Organization, user_email: str, success
         params["customer"] = subscription.stripe_customer_id
         params.pop("customer_email", None)
 
-    trial_days = int(current_app.config.get("BILLING_TRIAL_DAYS", 14) or 0)
+    trial_days = int(current_app.config.get("BILLING_TRIAL_DAYS", 0) or 0)
     if trial_days > 0 and not subscription.stripe_subscription_id:
         params["subscription_data"]["trial_period_days"] = trial_days
 
