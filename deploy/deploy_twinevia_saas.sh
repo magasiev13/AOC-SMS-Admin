@@ -9,6 +9,7 @@ VENV_BIN="${APP_ROOT}/venv/bin"
 VENV_STATE_FILE=""
 EXPECTED_GIT_BRANCH="${EXPECTED_GIT_BRANCH:-}"
 EXPECTED_GIT_TRACKING_BRANCH="${EXPECTED_GIT_TRACKING_BRANCH:-}"
+TWINEVIA_DEPLOY_REEXECED="${TWINEVIA_DEPLOY_REEXECED:-0}"
 TWINEVIA_SAAS_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN:-${SAAS_DBDOCTOR_BIN:-/usr/local/bin/twinevia-saas-dbdoctor}}"
 TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN:-${SAAS_DBDOCTOR_ALIAS_BIN:-/usr/local/bin/saas-dbdoctor}}"
 RESTART_HELPER_SRC="${APP_ROOT}/deploy/restart_twinevia_saas_services.sh"
@@ -362,6 +363,7 @@ echo "==> Deploying Twinevia SaaS"
 
 APP_USER="$(resolve_app_user)"
 APP_GROUP="$(resolve_app_group "${APP_USER}")"
+PRE_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   echo "==> Missing SaaS app user ${APP_USER}." >&2
@@ -371,6 +373,12 @@ fi
 assert_git_source
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
 assert_git_source
+POST_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/dev/null || true)"
+if [[ "${TWINEVIA_DEPLOY_REEXECED}" != "1" && -n "${PRE_PULL_HEAD}" && -n "${POST_PULL_HEAD}" && "${PRE_PULL_HEAD}" != "${POST_PULL_HEAD}" ]]; then
+  echo "==> Re-executing deploy script after checkout update"
+  export TWINEVIA_DEPLOY_REEXECED=1
+  exec bash "${APP_ROOT}/deploy/deploy_twinevia_saas.sh"
+fi
 ensure_env_key "FLASK_ENV" "production"
 ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"

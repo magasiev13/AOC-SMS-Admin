@@ -434,6 +434,10 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN", deploy_script)
         self.assertIn("EXPECTED_GIT_BRANCH", deploy_script)
         self.assertIn("EXPECTED_GIT_TRACKING_BRANCH", deploy_script)
+        self.assertIn("TWINEVIA_DEPLOY_REEXECED", deploy_script)
+        self.assertIn("PRE_PULL_HEAD", deploy_script)
+        self.assertIn("POST_PULL_HEAD", deploy_script)
+        self.assertIn("exec bash \"${APP_ROOT}/deploy/deploy_twinevia_saas.sh\"", deploy_script)
         self.assertIn("assert_git_source", deploy_script)
         self.assertIn("LEGACY_SAAS_RUNTIME_UNITS", deploy_script)
         self.assertIn("retire_legacy_saas_runtime", deploy_script)
@@ -476,7 +480,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
 
         self.assertIn("venv/bin/python -m gunicorn", service_unit)
         self.assertNotIn("venv/bin/gunicorn --workers", service_unit)
-        self.assertIn('"${APP_ROOT}/venv/bin/python" -m rq worker', worker_script)
+        self.assertIn('"${APP_ROOT}/venv/bin/python" -m rq.cli worker', worker_script)
+        self.assertNotIn('"${APP_ROOT}/venv/bin/python" -m rq worker', worker_script)
         self.assertNotIn('"${APP_ROOT}/venv/bin/rq" worker', worker_script)
 
     def test_python_runtime_checker_rejects_stale_saas_venv_references(self) -> None:
