@@ -8,6 +8,7 @@ APP_GROUP="${APP_GROUP:-}"
 ENV_FILE="${APP_ROOT}/.env"
 VENV_BIN="${APP_ROOT}/venv/bin"
 PYTHON_BIN="${VENV_BIN}/python"
+VENV_STATE_FILE=""
 TWINEVIA_SAAS_DBDOCTOR_SRC="${REPO_ROOT}/bin/twinevia-saas-dbdoctor"
 TWINEVIA_SAAS_DBDOCTOR_DEST="${TWINEVIA_SAAS_DBDOCTOR_DEST:-${SAAS_DBDOCTOR_DEST:-/usr/local/bin/twinevia-saas-dbdoctor}}"
 TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC="${REPO_ROOT}/bin/saas-dbdoctor"
@@ -151,6 +152,37 @@ retire_legacy_saas_runtime() {
   sudo systemctl disable --now "${legacy_units[@]}" || true
 }
 
+check_saas_health() {
+  local health_host="$1"
+  local attempts="${2:-20}"
+  local attempt
+
+  for attempt in $(seq 1 "${attempts}"); do
+    if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${health_host}" http://127.0.0.1:8100/health >/dev/null; then
+      return 0
+    fi
+    echo "Health check attempt ${attempt}/${attempts} failed for host ${health_host}; retrying..."
+    sleep 2
+  done
+  return 1
+}
+
+rollback_promoted_venv() {
+  local health_host="$1"
+
+  if [[ -z "${VENV_STATE_FILE}" || ! -f "${VENV_STATE_FILE}" ]]; then
+    return
+  fi
+
+  echo "==> Attempting virtualenv rollback after failed health check"
+  if APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" rollback "${VENV_STATE_FILE}"; then
+    sudo systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer || true
+    if check_saas_health "${health_host}" 10; then
+      echo "==> Health recovered after virtualenv rollback."
+    fi
+  fi
+}
+
 echo "============================================"
 echo "  Twinevia SaaS Install Script"
 echo "============================================"
@@ -189,19 +221,9 @@ if [[ ! -f "${RESTART_SUDOERS_SRC}" ]]; then
   exit 1
 fi
 
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  if ! command -v python3.11 >/dev/null 2>&1; then
-    echo "ERROR: ${PYTHON_BIN} not found and python3.11 is unavailable." >&2
-    exit 1
-  fi
-  sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && python3.11 -m venv venv"
-fi
-
-PYTHON_VERSION="$("${PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-if [[ "${PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
-  echo "ERROR: ${PYTHON_BIN} uses Python ${PYTHON_VERSION}; expected ${REQUIRED_PYTHON}." >&2
-  exit 1
-fi
+VENV_STATE_FILE="$(mktemp)"
+echo "==> Ensuring canonical Python virtualenv"
+APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" ensure "${VENV_STATE_FILE}"
 
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_DEST}"
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
@@ -410,7 +432,7 @@ fi
 validate_saas_runtime_env
 
 echo "==> Installing Python dependencies"
-sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
+sudo -u "${APP_USER}" "${VENV_BIN}/python" -m pip install -r "${APP_ROOT}/requirements.txt"
 
 echo "==> Applying SaaS schema"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --doctor"
@@ -440,6 +462,7 @@ render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.timer"
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.service" /etc/systemd/system/twinevia-saas-a2p-reconcile.service 0644
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.timer" /etc/systemd/system/twinevia-saas-a2p-reconcile.timer 0644
 install_repo_file "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh" 0755
+install_repo_file "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" "${APP_ROOT}/deploy/ensure_canonical_venv.sh" 0755
 install_repo_file "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh" 0755
 install_repo_file "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh" 0755
 install_repo_file "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh" 0755
@@ -458,18 +481,9 @@ fi
 
 echo "==> Verifying SaaS health"
 HEALTH_HOST="$(resolve_health_host)"
-health_ok=0
-for attempt in $(seq 1 20); do
-  if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
-    health_ok=1
-    break
-  fi
-  echo "Health check attempt ${attempt}/20 failed for host ${HEALTH_HOST}; retrying..."
-  sleep 2
-done
-
-if [[ "${health_ok}" -ne 1 ]]; then
+if ! check_saas_health "${HEALTH_HOST}" 20; then
   echo "ERROR: SaaS health check failed after install (Host=${HEALTH_HOST})." >&2
+  rollback_promoted_venv "${HEALTH_HOST}"
   dump_service_diagnostics
   exit 1
 fi

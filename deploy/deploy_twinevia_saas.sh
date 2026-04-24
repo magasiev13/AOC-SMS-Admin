@@ -6,8 +6,10 @@ APP_USER="${APP_USER:-}"
 APP_GROUP="${APP_GROUP:-}"
 ENV_FILE="${APP_ROOT}/.env"
 VENV_BIN="${APP_ROOT}/venv/bin"
+VENV_STATE_FILE=""
 EXPECTED_GIT_BRANCH="${EXPECTED_GIT_BRANCH:-}"
 EXPECTED_GIT_TRACKING_BRANCH="${EXPECTED_GIT_TRACKING_BRANCH:-}"
+TWINEVIA_DEPLOY_REEXECED="${TWINEVIA_DEPLOY_REEXECED:-0}"
 TWINEVIA_SAAS_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN:-${SAAS_DBDOCTOR_BIN:-/usr/local/bin/twinevia-saas-dbdoctor}}"
 TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN:-${SAAS_DBDOCTOR_ALIAS_BIN:-/usr/local/bin/saas-dbdoctor}}"
 RESTART_HELPER_SRC="${APP_ROOT}/deploy/restart_twinevia_saas_services.sh"
@@ -326,10 +328,42 @@ retire_legacy_saas_runtime() {
   sudo systemctl reset-failed "${legacy_units[@]}" || true
 }
 
+check_saas_health() {
+  local health_host="$1"
+  local attempts="${2:-20}"
+  local attempt
+
+  for attempt in $(seq 1 "${attempts}"); do
+    if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${health_host}" http://127.0.0.1:8100/health >/dev/null; then
+      return 0
+    fi
+    echo "Health check attempt ${attempt}/${attempts} failed for host ${health_host}; retrying..."
+    sleep 2
+  done
+  return 1
+}
+
+rollback_promoted_venv() {
+  local health_host="$1"
+
+  if [[ -z "${VENV_STATE_FILE}" || ! -f "${VENV_STATE_FILE}" ]]; then
+    return
+  fi
+
+  echo "==> Attempting virtualenv rollback after failed health check"
+  if APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${APP_ROOT}/deploy/ensure_canonical_venv.sh" rollback "${VENV_STATE_FILE}"; then
+    sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+    if check_saas_health "${health_host}" 10; then
+      echo "==> Health recovered after virtualenv rollback."
+    fi
+  fi
+}
+
 echo "==> Deploying Twinevia SaaS"
 
 APP_USER="$(resolve_app_user)"
 APP_GROUP="$(resolve_app_group "${APP_USER}")"
+PRE_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   echo "==> Missing SaaS app user ${APP_USER}." >&2
@@ -339,6 +373,12 @@ fi
 assert_git_source
 sudo -u "${APP_USER}" bash -c "cd \"${APP_ROOT}\" && git pull --ff-only"
 assert_git_source
+POST_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/dev/null || true)"
+if [[ "${TWINEVIA_DEPLOY_REEXECED}" != "1" && -n "${PRE_PULL_HEAD}" && -n "${POST_PULL_HEAD}" && "${PRE_PULL_HEAD}" != "${POST_PULL_HEAD}" ]]; then
+  echo "==> Re-executing deploy script after checkout update"
+  export TWINEVIA_DEPLOY_REEXECED=1
+  exec bash "${APP_ROOT}/deploy/deploy_twinevia_saas.sh"
+fi
 ensure_env_key "FLASK_ENV" "production"
 ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"
@@ -356,7 +396,10 @@ ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 validate_saas_runtime_env
 sync_deploy_artifacts
-sudo -u "${APP_USER}" "${VENV_BIN}/pip" install -r "${APP_ROOT}/requirements.txt"
+VENV_STATE_FILE="$(mktemp)"
+echo "==> Ensuring canonical Python virtualenv"
+APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${APP_ROOT}/deploy/ensure_canonical_venv.sh" ensure "${VENV_STATE_FILE}"
+sudo -u "${APP_USER}" "${VENV_BIN}/python" -m pip install -r "${APP_ROOT}/requirements.txt"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_BIN}\" --doctor"
 
 echo "==> Refreshing systemd units and helper scripts"
@@ -391,18 +434,9 @@ fi
 sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}"
 
 HEALTH_HOST="$(resolve_health_host)"
-HEALTH_OK=0
-for attempt in $(seq 1 20); do
-  if curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null; then
-    HEALTH_OK=1
-    break
-  fi
-  echo "Health check attempt ${attempt}/20 failed for host ${HEALTH_HOST}; retrying..."
-  sleep 2
-done
-
-if [[ "${HEALTH_OK}" -ne 1 ]]; then
+if ! check_saas_health "${HEALTH_HOST}" 20; then
   echo "==> SaaS health check failed after deploy (Host=${HEALTH_HOST})." >&2
+  rollback_promoted_venv "${HEALTH_HOST}"
   dump_service_diagnostics
   exit 1
 fi
