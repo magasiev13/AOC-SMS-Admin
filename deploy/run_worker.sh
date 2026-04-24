@@ -16,4 +16,4 @@ fi
 : "${REDIS_URL:=redis://localhost:6379/0}"
 : "${RQ_QUEUE_NAME:=sms}"
 
-exec "${APP_ROOT}/venv/bin/rq" worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"
+exec "${APP_ROOT}/venv/bin/python" -m rq worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"

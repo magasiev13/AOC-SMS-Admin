@@ -448,6 +448,71 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
         self.assertIn('"twinevia-saas-platform-restart-queue.timer"', runtime_units)
 
+    def test_saas_deploy_scripts_ensure_canonical_venv_before_restart(self) -> None:
+        install_script = self._read_repo_file("deploy", "install_saas.sh")
+        deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
+
+        for script in (install_script, deploy_script):
+            self.assertIn("ensure_canonical_venv.sh", script)
+            self.assertIn("VENV_STATE_FILE", script)
+            self.assertIn("rollback_promoted_venv", script)
+            self.assertIn('"${VENV_BIN}/python" -m pip install', script)
+            self.assertNotIn('"${VENV_BIN}/pip" install', script)
+
+    def test_canonical_venv_helper_builds_next_venv_and_preserves_backup(self) -> None:
+        helper = self._read_repo_file("deploy", "ensure_canonical_venv.sh")
+
+        self.assertIn("venv.next-", helper)
+        self.assertIn("VENV_BACKUP_PATH", helper)
+        self.assertIn("validate_canonical_venv", helper)
+        self.assertIn("promote_next_venv", helper)
+        self.assertIn("rollback_from_state", helper)
+        self.assertIn("-m pip install -r", helper)
+        self.assertNotIn("rm -rf \"${VENV_DIR}\"", helper)
+
+    def test_saas_runtime_entrypoints_use_python_module_execution(self) -> None:
+        service_unit = self._read_repo_file("deploy", "twinevia-saas.service")
+        worker_script = self._read_repo_file("deploy", "run_worker.sh")
+
+        self.assertIn("venv/bin/python -m gunicorn", service_unit)
+        self.assertNotIn("venv/bin/gunicorn --workers", service_unit)
+        self.assertIn('"${APP_ROOT}/venv/bin/python" -m rq worker', worker_script)
+        self.assertNotIn('"${APP_ROOT}/venv/bin/rq" worker', worker_script)
+
+    def test_python_runtime_checker_rejects_stale_saas_venv_references(self) -> None:
+        checker_path = self.repo_root / "deploy" / "check_python_runtime.sh"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            app_root = Path(temp_dir)
+            bin_dir = app_root / "venv" / "bin"
+            bin_dir.mkdir(parents=True)
+            python_bin = bin_dir / "python"
+            python_bin.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1\" == \"-c\" ]]; then echo 3.11; exit 0; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            python_bin.chmod(0o755)
+            (app_root / "venv" / "pyvenv.cfg").write_text(
+                "command = /usr/bin/python3.11 -m venv /opt/sms-saas/venv\n",
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                ["bash", str(checker_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+                env={
+                    "APP_ROOT": str(app_root),
+                    "PATH": os.environ.get("PATH", ""),
+                },
+            )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("stale venv path /opt/sms-saas/venv", completed.stderr)
+
     def test_deploy_workflow_asserts_restart_queue_timer_and_helper(self) -> None:
         workflow = self._read_repo_file(".github", "workflows", "deploy-twinevia-production.yml")
 
