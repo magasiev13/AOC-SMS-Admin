@@ -1004,6 +1004,92 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self._create_a2p_onboarding(organization.id, number_strategy="auto_buy")
 
         subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.return_value.fetch.return_value = SimpleNamespace(
+            sid="ADexisting0001",
+            customer_name="Acme",
+            friendly_name="Acme Service Address",
+            street="123 Main Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            iso_country="US",
+            validated=True,
+            verified=True,
+            emergency_enabled=True,
+        )
+        phone_context = subaccount_client.incoming_phone_numbers.return_value
+        phone_context.fetch.return_value = SimpleNamespace(
+            sid="PNexisting0001",
+            phone_number="+15550002222",
+            capabilities={"voice": True},
+        )
+        phone_context.update.side_effect = [
+            SimpleNamespace(sid="PNexisting0001", phone_number="+15550002222"),
+            SimpleNamespace(
+                sid="PNexisting0001",
+                phone_number="+15550002222",
+                emergency_address_sid="ADexisting0001",
+                emergency_status="active",
+                emergency_address_status="registered",
+            ),
+        ]
+        service_context = subaccount_client.messaging.v1.services.return_value
+        service_context.phone_numbers.list.return_value = [
+            SimpleNamespace(phone_number="+15550002222", delete=MagicMock())
+        ]
+
+        refreshed_profile = finalize_sender_setup(organization.id, actor_user_id=11)
+
+        self.assertEqual(refreshed_profile.provider_status, "active")
+        self.assertEqual(refreshed_profile.sender_finalization_status, "active")
+        subaccount_client.addresses.create.assert_not_called()
+        subaccount_client.addresses.return_value.update.assert_not_called()
+        subaccount_client.incoming_phone_numbers.create.assert_not_called()
+        service_context.phone_numbers.create.assert_not_called()
+
+    @patch("app.services.twilio_service._build_subaccount_client")
+    def test_finalize_sender_setup_updates_existing_address_without_iso_country_when_address_changes(
+        self,
+        mock_build_subaccount_client,
+    ) -> None:
+        from app.models import utc_now
+        from app.services.twilio_service import finalize_sender_setup
+
+        organization, _ = self._create_org_with_profile(
+            twilio_subaccount_sid="ACsub0001",
+            messaging_service_sid="MGsub0001",
+            phone_number_sid="PNexisting0001",
+            from_number="+15550002222",
+            provider_status="pending",
+            status="pending",
+            twilio_address_sid="ADexisting0001",
+            service_address_country="US",
+            service_address_line1="123 Main Street",
+            service_address_city="Denver",
+            service_address_region="CO",
+            service_address_postal_code="80202",
+            sender_review_status="approved",
+            consent_acknowledged_at=utc_now(),
+            sender_finalization_status="awaiting_emergency_address_sync",
+        )
+        self._create_a2p_onboarding(organization.id, number_strategy="auto_buy")
+
+        subaccount_client = mock_build_subaccount_client.return_value
+        subaccount_client.addresses.return_value.fetch.return_value = SimpleNamespace(
+            sid="ADexisting0001",
+            customer_name="Acme",
+            friendly_name="Old Address",
+            street="999 Old Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            iso_country="US",
+            validated=True,
+            verified=True,
+            emergency_enabled=True,
+        )
         subaccount_client.addresses.return_value.update.return_value = SimpleNamespace(
             sid="ADexisting0001",
             customer_name="Acme",
@@ -1044,6 +1130,17 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(refreshed_profile.provider_status, "active")
         self.assertEqual(refreshed_profile.sender_finalization_status, "active")
         subaccount_client.addresses.create.assert_not_called()
+        subaccount_client.addresses.return_value.update.assert_called_once_with(
+            customer_name="Acme",
+            friendly_name="Acme Service Address",
+            street="123 Main Street",
+            street_secondary=None,
+            city="Denver",
+            region="CO",
+            postal_code="80202",
+            emergency_enabled=True,
+            auto_correct_address=True,
+        )
         subaccount_client.incoming_phone_numbers.create.assert_not_called()
         service_context.phone_numbers.create.assert_not_called()
 

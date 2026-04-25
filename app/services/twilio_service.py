@@ -718,6 +718,25 @@ def _serialize_twilio_address(address: object) -> str:
     )
 
 
+def _normalized_address_value(value: str | None) -> str | None:
+    normalized = _clean_text(value)
+    return normalized or None
+
+
+def _twilio_address_matches_service_snapshot(address: object, payload: dict[str, str | None]) -> bool:
+    return (
+        _normalized_address_value(getattr(address, "street", None)) == _normalized_address_value(payload["line1"])
+        and _normalized_address_value(getattr(address, "street_secondary", None))
+        == _normalized_address_value(payload["line2"])
+        and _normalized_address_value(getattr(address, "city", None)) == _normalized_address_value(payload["city"])
+        and _normalized_address_value(getattr(address, "region", None)) == _normalized_address_value(payload["region"])
+        and _normalized_address_value(getattr(address, "postal_code", None))
+        == _normalized_address_value(payload["postal_code"])
+        and _normalized_address_value(getattr(address, "iso_country", None))
+        == _normalized_address_value(payload["country"])
+    )
+
+
 def _service_address_friendly_name(organization: Organization) -> str:
     return f"{organization.name[:48]} Service Address"
 
@@ -805,9 +824,28 @@ def _ensure_twilio_service_address(
     }
     try:
         if profile.twilio_address_sid:
-            address = client.addresses(profile.twilio_address_sid).update(**update_kwargs)
-            action = "twilio_address_validated"
-            message = "Updated the Twilio sender service address."
+            address_context = client.addresses(profile.twilio_address_sid)
+            existing_address = None
+            try:
+                existing_address = address_context.fetch()
+            except TwilioRestException as exc:
+                if getattr(exc, "status", None) == 404:
+                    profile.twilio_address_sid = None
+                    profile.twilio_address_json = None
+                else:
+                    raise
+            if existing_address is not None and _twilio_address_matches_service_snapshot(existing_address, payload):
+                address = existing_address
+                action = "twilio_address_validated"
+                message = "Reused the existing Twilio sender service address."
+            elif profile.twilio_address_sid:
+                address = address_context.update(**update_kwargs)
+                action = "twilio_address_validated"
+                message = "Updated the Twilio sender service address."
+            else:
+                address = client.addresses.create(**create_kwargs)
+                action = "twilio_address_validated"
+                message = "Created the Twilio sender service address."
         else:
             address = client.addresses.create(**create_kwargs)
             action = "twilio_address_validated"
