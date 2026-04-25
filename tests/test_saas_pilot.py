@@ -2604,7 +2604,102 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertRegex(response.data, rb'<option value="existing_subaccount_number" selected>')
         self.assertIn(b"Reusable subaccount numbers found", response.data)
         self.assertIn(b"existing_subaccount_phone_number_sid", response.data)
+        self.assertIn(b'id="finalize_number_strategy"', response.data)
+        self.assertIn(b'id="finalize_existing_subaccount_phone_number_sid"', response.data)
         self.assertIn(b"+15550001111", response.data)
+
+    @patch("app.routes.finalize_sender_setup")
+    @patch("app.routes.list_reusable_subaccount_numbers")
+    def test_platform_admin_finalize_persists_selected_reusable_number_without_prior_save(
+        self,
+        mock_list_reusable_subaccount_numbers,
+        mock_finalize_sender_setup,
+    ) -> None:
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_finalization_status = "awaiting_sender_attach"
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            brand_status="approved",
+            campaign_status="verified",
+            number_strategy="existing_subaccount_number",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        mock_list_reusable_subaccount_numbers.return_value = [
+            SimpleNamespace(sid="PNowned0001", phone_number="+15550001111")
+        ]
+
+        def _finalize_side_effect(organization_id, actor_user_id=None):
+            current_onboarding = self.OrganizationA2POnboarding.query.filter_by(organization_id=organization_id).one()
+            self.assertEqual(current_onboarding.number_strategy, "existing_subaccount_number")
+            self.assertEqual(current_onboarding.desired_phone_number_sid, "PNowned0001")
+            profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).one()
+            profile.set_sender_finalization_status("awaiting_sender_attach")
+            self.db.session.commit()
+            return profile
+
+        mock_finalize_sender_setup.side_effect = _finalize_side_effect
+
+        self._login_platform_admin()
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={
+                "action": "finalize_sender",
+                "number_strategy": "existing_subaccount_number",
+                "existing_subaccount_phone_number_sid": "PNowned0001",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_finalize_sender_setup.assert_called_once_with(self.organization.id, actor_user_id=self.platform_admin.id)
+
+    @patch("app.routes.finalize_sender_setup")
+    @patch("app.routes.list_reusable_subaccount_numbers")
+    def test_platform_admin_finalize_uses_only_reusable_number_when_saved_strategy_has_no_sid(
+        self,
+        mock_list_reusable_subaccount_numbers,
+        mock_finalize_sender_setup,
+    ) -> None:
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_finalization_status = "awaiting_sender_attach"
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            brand_status="approved",
+            campaign_status="verified",
+            number_strategy="existing_subaccount_number",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        mock_list_reusable_subaccount_numbers.return_value = [
+            SimpleNamespace(sid="PNonly0001", phone_number="+15550002222")
+        ]
+
+        def _finalize_side_effect(organization_id, actor_user_id=None):
+            current_onboarding = self.OrganizationA2POnboarding.query.filter_by(organization_id=organization_id).one()
+            self.assertEqual(current_onboarding.desired_phone_number_sid, "PNonly0001")
+            profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization_id).one()
+            profile.set_sender_finalization_status("awaiting_sender_attach")
+            self.db.session.commit()
+            return profile
+
+        mock_finalize_sender_setup.side_effect = _finalize_side_effect
+
+        self._login_platform_admin()
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/messaging",
+            data={"action": "finalize_sender"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_finalize_sender_setup.assert_called_once_with(self.organization.id, actor_user_id=self.platform_admin.id)
 
     @patch("app.routes.list_reusable_subaccount_numbers")
     def test_platform_admin_messaging_page_surfaces_subaccount_number_discovery_errors(

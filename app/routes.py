@@ -5091,6 +5091,63 @@ def platform_organizations_messaging_edit(organization_id):
             platform_test_send_ready=_organization_can_transmit_messages(organization),
         )
 
+    def sync_sender_selection_from_finalize_form() -> bool:
+        onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+        strategy_values = {value for value, _label in a2p_number_strategy_choices()}
+        selected_number_strategy = (
+            request.form.get('number_strategy')
+            or resolve_number_strategy(onboarding)
+        ).strip().lower()
+        if selected_number_strategy not in strategy_values:
+            flash('Choose a valid number strategy before finalizing sender setup.', 'error')
+            return False
+
+        legacy_phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
+        existing_subaccount_phone_number_sid = (
+            request.form.get('existing_subaccount_phone_number_sid', '').strip() or None
+        )
+        manual_phone_number_sid = request.form.get('manual_phone_number_sid', '').strip() or legacy_phone_number_sid
+        target_phone_number_sid = (
+            existing_subaccount_phone_number_sid
+            if selected_number_strategy == 'existing_subaccount_number'
+            else manual_phone_number_sid
+        )
+
+        if selected_number_strategy == 'existing_subaccount_number':
+            try:
+                reusable_numbers = list_reusable_subaccount_numbers(organization.id)
+            except ProviderProvisioningError as exc:
+                flash(str(exc), 'error')
+                return False
+            if not target_phone_number_sid and len(reusable_numbers) == 1:
+                target_phone_number_sid = reusable_numbers[0].sid
+            if not target_phone_number_sid:
+                flash('Choose one of the discovered subaccount numbers before finalizing sender setup.', 'error')
+                return False
+            reusable_number_sids = {number.sid for number in reusable_numbers}
+            if target_phone_number_sid not in reusable_number_sids:
+                flash('Choose a reusable subaccount number owned by this organization before finalizing sender setup.', 'error')
+                return False
+            onboarding.number_strategy = selected_number_strategy
+            onboarding.desired_phone_number_sid = target_phone_number_sid
+            db.session.flush()
+            return True
+
+        if selected_number_strategy in {'transfer_parent_number', 'platform_assign'}:
+            if not target_phone_number_sid:
+                flash('Enter a phone number SID before finalizing this sender strategy.', 'error')
+                return False
+            onboarding.number_strategy = selected_number_strategy
+            onboarding.desired_phone_number_sid = target_phone_number_sid
+            db.session.flush()
+            return True
+
+        if selected_number_strategy == 'auto_buy' and onboarding.number_strategy == 'auto_buy':
+            onboarding.desired_phone_number_sid = None
+            db.session.flush()
+
+        return True
+
     if request.method == 'POST':
         action = (request.form.get('action') or 'save').strip().lower()
         try:
@@ -5123,6 +5180,8 @@ def platform_organizations_messaging_edit(organization_id):
                     raise ProviderProvisioningError(
                         'Customer-managed sender state is updated from the external Twilio account configuration.'
                     )
+                if not sync_sender_selection_from_finalize_form():
+                    return render_page()
                 finalized_profile = finalize_sender_setup(organization.id, actor_user_id=current_user.id)
                 if finalized_profile.effective_sender_finalization_status == 'active' and finalized_profile.can_send:
                     flash('Sender finalization completed and live sending is enabled.', 'success')
