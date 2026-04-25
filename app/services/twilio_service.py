@@ -88,6 +88,10 @@ class PlatformSubaccountAuthRequiredError(ProviderProvisioningError):
     """Raised when platform-managed Twilio reads require a stored subaccount auth token."""
 
 
+class ExistingSubaccountNumberSelectionRequiredError(ProviderProvisioningError):
+    """Raised when auto-buy should stop because reusable subaccount numbers already exist."""
+
+
 @dataclass(frozen=True)
 class InboundSignatureValidationResult:
     """Result payload for Twilio inbound signature validation."""
@@ -113,6 +117,14 @@ class CustomerManagedValidationResult:
     current_phone_sms_url: str | None = None
     current_phone_sms_method: str | None = None
     current_service_use_inbound_webhook_on_number: bool | None = None
+
+
+@dataclass(frozen=True)
+class ReusableSubaccountPhoneNumber:
+    """Reusable phone number already owned by a platform-managed subaccount."""
+
+    sid: str
+    phone_number: str
 
 
 def _json_dict(value: str | None) -> dict[str, Any]:
@@ -776,7 +788,7 @@ def _ensure_twilio_service_address(
         raise ProviderProvisioningError("A complete service address is required before sender finalization can continue.")
 
     payload = _service_address_snapshot(profile)
-    kwargs = {
+    update_kwargs = {
         "customer_name": _service_address_customer_name(organization),
         "friendly_name": _service_address_friendly_name(organization),
         "street": payload["line1"],
@@ -784,17 +796,20 @@ def _ensure_twilio_service_address(
         "city": payload["city"],
         "region": payload["region"],
         "postal_code": payload["postal_code"],
-        "iso_country": payload["country"],
         "emergency_enabled": True,
         "auto_correct_address": True,
     }
+    create_kwargs = {
+        **update_kwargs,
+        "iso_country": payload["country"],
+    }
     try:
         if profile.twilio_address_sid:
-            address = client.addresses(profile.twilio_address_sid).update(**kwargs)
+            address = client.addresses(profile.twilio_address_sid).update(**update_kwargs)
             action = "twilio_address_validated"
             message = "Updated the Twilio sender service address."
         else:
-            address = client.addresses.create(**kwargs)
+            address = client.addresses.create(**create_kwargs)
             action = "twilio_address_validated"
             message = "Created the Twilio sender service address."
     except TwilioRestException as exc:
@@ -822,6 +837,89 @@ def _ensure_twilio_service_address(
     return address
 
 
+def _list_reusable_subaccount_numbers(
+    organization: Organization,
+    profile: OrganizationMessagingProfile,
+    *,
+    client: Client,
+) -> list[ReusableSubaccountPhoneNumber]:
+    if not profile.twilio_subaccount_sid:
+        return []
+
+    candidates: list[ReusableSubaccountPhoneNumber] = []
+    candidate_sids: list[str] = []
+    candidate_numbers: list[str] = []
+    for resource in client.incoming_phone_numbers.list(limit=100):
+        phone_number_sid = _clean_text(getattr(resource, "sid", None))
+        phone_number = normalize_phone(getattr(resource, "phone_number", None))
+        capabilities = getattr(resource, "capabilities", None)
+        if isinstance(capabilities, dict) and capabilities and capabilities.get("sms") is False:
+            continue
+        if not phone_number_sid or not phone_number:
+            continue
+        candidates.append(ReusableSubaccountPhoneNumber(sid=phone_number_sid, phone_number=phone_number))
+        candidate_sids.append(phone_number_sid)
+        candidate_numbers.append(phone_number)
+
+    if not candidates:
+        return []
+
+    conflicting_profiles = OrganizationMessagingProfile.query.filter(
+        OrganizationMessagingProfile.organization_id != organization.id,
+        db.or_(
+            OrganizationMessagingProfile.phone_number_sid.in_(candidate_sids),
+            OrganizationMessagingProfile.from_number.in_(candidate_numbers),
+        ),
+    ).all()
+    conflicting_sids = {
+        existing_profile.phone_number_sid
+        for existing_profile in conflicting_profiles
+        if existing_profile.phone_number_sid
+    }
+    conflicting_numbers = {
+        existing_profile.from_number
+        for existing_profile in conflicting_profiles
+        if existing_profile.from_number
+    }
+    current_sender_sid = _clean_text(profile.phone_number_sid)
+    current_sender_number = normalize_phone(profile.from_number) if profile.from_number else None
+
+    reusable_numbers = [
+        candidate
+        for candidate in candidates
+        if (
+            candidate.sid == current_sender_sid
+            or candidate.phone_number == current_sender_number
+            or (
+                candidate.sid not in conflicting_sids
+                and candidate.phone_number not in conflicting_numbers
+            )
+        )
+    ]
+    reusable_numbers.sort(
+        key=lambda item: (
+            0 if item.sid == current_sender_sid else 1,
+            item.phone_number,
+        )
+    )
+    return reusable_numbers
+
+
+def list_reusable_subaccount_numbers(organization_id: int) -> list[ReusableSubaccountPhoneNumber]:
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+
+    profile = ensure_messaging_profile(organization)
+    if profile.provider_mode != "platform_managed":
+        return []
+    if not profile.twilio_subaccount_sid:
+        return []
+
+    client = _build_subaccount_client(profile, require_stored_auth_token=True)
+    return _list_reusable_subaccount_numbers(organization, profile, client=client)
+
+
 def _resolve_sender_assignment(
     organization: Organization,
     profile: OrganizationMessagingProfile,
@@ -835,6 +933,15 @@ def _resolve_sender_assignment(
         return profile.phone_number_sid, profile.from_number
 
     if strategy == "auto_buy":
+        reusable_numbers = _list_reusable_subaccount_numbers(organization, profile, client=client)
+        if reusable_numbers:
+            sample_numbers = ", ".join(number.phone_number for number in reusable_numbers[:3])
+            message = "This Twilio subaccount already has reusable sender numbers."
+            if sample_numbers:
+                message = f"{message} Available now: {sample_numbers}."
+            raise ExistingSubaccountNumberSelectionRequiredError(
+                f"{message} Choose one of the discovered subaccount numbers on Manage Messaging before running Finalize Sender Setup."
+            )
         country = current_app.config.get("TWILIO_A2P_NUMBER_COUNTRY") or "US"
         desired_number = _clean_text(onboarding.desired_phone_number if onboarding is not None else None)
         if desired_number:
@@ -2282,7 +2389,9 @@ def finalize_sender_setup(
         if target_status not in SENDER_FINALIZATION_WAITING_STATUSES and target_status != "address_validation_failed":
             target_status = "error"
         emergency_status = profile.emergency_address_status
-        if target_status == "address_validation_failed":
+        if isinstance(exc, ExistingSubaccountNumberSelectionRequiredError):
+            target_status = "awaiting_sender_attach"
+        elif target_status == "address_validation_failed":
             target_status = "address_validation_failed"
         elif target_status == "awaiting_emergency_address_sync":
             target_status = "awaiting_emergency_address_sync"
