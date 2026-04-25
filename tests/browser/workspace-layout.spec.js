@@ -9,6 +9,10 @@ async function elementHeight(locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
 }
 
+async function elementTop(locator) {
+  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+}
+
 test.beforeEach(async ({ page }) => {
   installFailureDiagnostics(page);
 });
@@ -36,6 +40,19 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.collection-panel--results')).toBeVisible();
   expect(await elementHeight(page.getByRole('link', { name: 'Add Member' }))).toBeGreaterThanOrEqual(44);
+  const firstCommunityRow = page.locator('#communityTable tbody.table-data tr').first();
+  await expect(firstCommunityRow).toBeVisible();
+  const firstCommunityPreview = firstCommunityRow.getByRole('button', { name: 'Preview member' });
+  const firstCommunityEdit = firstCommunityRow.getByRole('link', { name: 'Edit member' });
+  const firstCommunityMore = firstCommunityRow.getByRole('button', { name: 'More actions' });
+  await expect(firstCommunityPreview).toBeVisible();
+  await expect(firstCommunityEdit).toBeVisible();
+  await expect(firstCommunityMore).toBeVisible();
+  expect(await elementHeight(firstCommunityRow)).toBeLessThanOrEqual(96);
+  expect(Math.abs((await elementTop(firstCommunityPreview)) - (await elementTop(firstCommunityEdit)))).toBeLessThanOrEqual(1);
+  expect(Math.abs((await elementTop(firstCommunityPreview)) - (await elementTop(firstCommunityMore)))).toBeLessThanOrEqual(1);
+  await firstCommunityMore.click();
+  await expect(firstCommunityRow.getByRole('button', { name: 'Delete member' })).toBeVisible();
 
   await page.goto('/events');
   await expect(page.locator('.collection-shell')).toBeVisible();

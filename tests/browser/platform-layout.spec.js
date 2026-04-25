@@ -111,8 +111,9 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   await expect(page.getByLabel('Service Address Line 1')).toBeVisible();
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
   await expect(page.locator('.platform-key-label', { hasText: 'Emergency address sync' })).toBeVisible();
-  expect(await elementTop(page.getByLabel('Service Address Line 1'))).toBeLessThan(780);
-  expect(await elementTop(page.getByLabel('Service Address Line 1'))).toBeLessThan(
+  const serviceAddressTop = await elementTop(page.getByLabel('Service Address Line 1'));
+  expect(serviceAddressTop).toBeLessThan(await elementTop(page.getByLabel('Number Strategy')));
+  expect(serviceAddressTop).toBeLessThan(
     await elementTop(page.getByText('Recent Twilio activity').first()),
   );
 

@@ -94,7 +94,7 @@
                         </button>
                     </th>
                     {% if can_manage_community %}
-                    <th width="120">Actions</th>
+                    <th class="community-actions-heading">Actions</th>
                     {% endif %}
                 </tr>
             </thead>
@@ -121,8 +121,8 @@
                             {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}
                         </td>
                         {% if can_manage_community %}
-                        <td>
-                            <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions data-row-actions-primary="2">
+                        <td class="community-actions-cell">
+                            <div class="row-actions community-row-actions" data-row-actions data-row-actions-primary="2">
                                 <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview member" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview{{ member.id }}"
                                         aria-controls="memberPreview{{ member.id }}">

@@ -2041,6 +2041,40 @@ h6,
   padding: 0.45rem 0.75rem;
 }
 
+@media (min-width: 992px) {
+  .community-actions-heading {
+    width: 10.5rem;
+    min-width: 10.5rem;
+    text-align: right;
+  }
+
+  .community-actions-cell {
+    width: 10.5rem;
+    min-width: 10.5rem;
+  }
+
+  .community-row-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: var(--space-1);
+  }
+
+  .community-row-actions .row-actions__primary {
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+  }
+
+  .community-row-actions .btn-sm,
+  .community-row-actions .row-actions__overflow-toggle {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    padding: 0.45rem 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 @media (max-width: 991.98px) {
   .row-actions[data-row-actions] {
     width: 100%;
