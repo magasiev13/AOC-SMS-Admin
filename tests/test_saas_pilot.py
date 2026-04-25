@@ -2391,8 +2391,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     @patch("app.routes.release_sender")
     @patch("app.routes.finalize_sender_setup")
+    @patch("app.routes.list_reusable_subaccount_numbers")
     def test_platform_organizations_messaging_edit_can_release_save_service_address_and_finalize_sender(
         self,
+        mock_list_reusable_subaccount_numbers,
         mock_finalize_sender_setup,
         mock_release_sender,
     ) -> None:
@@ -2442,6 +2444,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         mock_release_sender.side_effect = _release_side_effect
         mock_finalize_sender_setup.side_effect = _finalize_side_effect
+        mock_list_reusable_subaccount_numbers.return_value = [
+            SimpleNamespace(sid="PN1234567890ABCDE", phone_number="+15550009999")
+        ]
 
         self._login_platform_admin()
 
@@ -2465,7 +2470,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             data={
                 "action": "save",
                 "number_strategy": "existing_subaccount_number",
-                "phone_number_sid": "PN1234567890ABCDE",
+                "existing_subaccount_phone_number_sid": "PN1234567890ABCDE",
                 "service_address_line1": "456 Other Street",
                 "service_address_city": "Denver",
                 "service_address_region": "CO",
@@ -2550,18 +2555,77 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Twilio 30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
 
-    def test_platform_admin_messaging_page_defaults_blank_org_to_auto_buy(self) -> None:
+    @patch("app.routes.list_reusable_subaccount_numbers")
+    def test_platform_admin_messaging_page_defaults_blank_org_to_auto_buy(self, mock_list_reusable_subaccount_numbers) -> None:
         organization, _ = self._create_support_organization(
             name="Blank Co",
             slug="blank-co",
             owner_email="blank@acme.test",
         )
+        blank_profile = self.OrganizationMessagingProfile.query.filter_by(organization_id=organization.id).first()
+        blank_profile.twilio_subaccount_sid = "ACblank0001"
+        blank_profile.messaging_service_sid = "MGblank0001"
+        self.db.session.commit()
+        mock_list_reusable_subaccount_numbers.return_value = []
         self._login_platform_admin()
 
         response = self.client.get(f"/platform/organizations/{organization.id}/messaging")
 
         self.assertEqual(response.status_code, 200)
         self.assertRegex(response.data, rb'<option value="auto_buy" selected>')
+        self.assertNotIn(b"Reusable subaccount numbers found", response.data)
+
+    @patch("app.routes.list_reusable_subaccount_numbers")
+    def test_platform_admin_messaging_page_recommends_existing_subaccount_number_when_inventory_exists(
+        self,
+        mock_list_reusable_subaccount_numbers,
+    ) -> None:
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_finalization_status = "awaiting_sender_attach"
+        onboarding = self.OrganizationA2POnboarding(
+            organization_id=self.organization.id,
+            onboarding_status="approved",
+            brand_status="approved",
+            campaign_status="verified",
+            number_strategy="auto_buy",
+        )
+        self.db.session.add(onboarding)
+        self.db.session.commit()
+        mock_list_reusable_subaccount_numbers.return_value = [
+            SimpleNamespace(sid="PNowned0001", phone_number="+15550001111")
+        ]
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response.data, rb'<option value="existing_subaccount_number" selected>')
+        self.assertIn(b"Reusable subaccount numbers found", response.data)
+        self.assertIn(b"existing_subaccount_phone_number_sid", response.data)
+        self.assertIn(b"+15550001111", response.data)
+
+    @patch("app.routes.list_reusable_subaccount_numbers")
+    def test_platform_admin_messaging_page_surfaces_subaccount_number_discovery_errors(
+        self,
+        mock_list_reusable_subaccount_numbers,
+    ) -> None:
+        from app.services.twilio_service import ProviderProvisioningError
+
+        self.messaging_profile.from_number = None
+        self.messaging_profile.phone_number_sid = None
+        self.messaging_profile.provider_status = "pending"
+        self.messaging_profile.sender_finalization_status = "awaiting_sender_attach"
+        self.db.session.commit()
+        mock_list_reusable_subaccount_numbers.side_effect = ProviderProvisioningError("Stored Twilio auth token is missing.")
+
+        self._login_platform_admin()
+        response = self.client.get(f"/platform/organizations/{self.organization.id}/messaging")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Subaccount number discovery", response.data)
+        self.assertIn(b"Stored Twilio auth token is missing.", response.data)
 
     def test_platform_admin_messaging_page_shows_launch_checklist_and_recent_twilio_activity(self) -> None:
         self.subscription.status = "active"

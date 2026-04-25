@@ -20,7 +20,9 @@
 ) %}
 {% set customer_service_sid = request.form.get('messaging_service_sid', messaging_profile.messaging_service_sid if messaging_profile else '') or '' %}
 {% set current_account_sid = request.form.get('twilio_account_sid', messaging_profile.twilio_account_sid if messaging_profile else '') or '' %}
-{% set selected_number_strategy = request.form.get('number_strategy', onboarding.number_strategy if onboarding else 'auto_buy') or 'auto_buy' %}
+{% set selected_number_strategy = request.form.get('number_strategy', recommended_number_strategy if recommended_number_strategy is defined else (onboarding.number_strategy if onboarding else 'auto_buy')) or 'auto_buy' %}
+{% set show_existing_subaccount_number_field = selected_number_strategy == 'existing_subaccount_number' %}
+{% set show_manual_phone_number_sid_field = selected_number_strategy in ('transfer_parent_number', 'platform_assign') %}
 {% set customer_activation_state_value = customer_managed_activation_state or 'unvalidated' %}
 {% set customer_activation_ready = provider_is_customer_managed and messaging_profile and messaging_profile.twilio_account_sid and messaging_profile.from_number and messaging_profile.sender_review_status == 'approved' %}
 <div class="platform-shell platform-shell--compact">
@@ -86,6 +88,20 @@
                             <strong>{{ messaging_profile.effective_sender_finalization_status.replace('_', ' ') }}</strong>
                             · {{ messaging_profile.sender_finalization_error }}
                         </div>
+                    </div>
+                    {% endif %}
+
+                    {% if not provider_is_customer_managed and available_subaccount_numbers %}
+                    <div class="platform-note mb-4" role="note">
+                        <div class="platform-note__title">Reusable subaccount numbers found</div>
+                        <div class="platform-note__copy">
+                            Twinevia found {{ available_subaccount_numbers|length }} SMS-capable number{% if available_subaccount_numbers|length != 1 %}s{% endif %} already owned by this organization’s Twilio subaccount. Choose one here before buying a new number.
+                        </div>
+                    </div>
+                    {% elif not provider_is_customer_managed and available_subaccount_numbers_error %}
+                    <div class="platform-note platform-note--warning mb-4" role="status">
+                        <div class="platform-note__title">Subaccount number discovery</div>
+                        <div class="platform-note__copy">{{ available_subaccount_numbers_error }}</div>
                     </div>
                     {% endif %}
 
@@ -219,23 +235,50 @@
                                     {% endfor %}
                                 </select>
                                 <div class="form-text">
-                                    `auto_buy` is the default SaaS path. Manual PN strategies stay available when you already know the number that should be attached.
+                                    `auto_buy` remains available, but when this subaccount already owns SMS numbers the app can guide you to reuse one first.
                                 </div>
                             </div>
-                            <div class="col-md-6">
-                                <label class="form-label" for="phone_number_sid">Target Phone Number SID</label>
+                            <div class="col-md-6" data-existing-subaccount-number-field {% if not show_existing_subaccount_number_field %}hidden{% endif %}>
+                                <label class="form-label" for="existing_subaccount_phone_number_sid">Existing Subaccount Number</label>
+                                <select
+                                    class="form-select"
+                                    id="existing_subaccount_phone_number_sid"
+                                    name="existing_subaccount_phone_number_sid"
+                                    {% if provider_is_customer_managed or not show_existing_subaccount_number_field %}disabled{% endif %}
+                                >
+                                    <option value="">Select a discovered number</option>
+                                    {% for number in available_subaccount_numbers %}
+                                    <option value="{{ number.sid }}" {% if number.selected %}selected{% endif %}>{{ number.label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">
+                                    Choose one of the SMS-capable numbers already owned by this organization’s Twilio subaccount.
+                                </div>
+                            </div>
+                            <div class="col-md-6" data-manual-phone-number-sid-field {% if not show_manual_phone_number_sid_field %}hidden{% endif %}>
+                                <label class="form-label" for="manual_phone_number_sid">Target Phone Number SID</label>
                                 <input
                                     class="form-control"
-                                    id="phone_number_sid"
-                                    name="phone_number_sid"
+                                    id="manual_phone_number_sid"
+                                    name="manual_phone_number_sid"
                                     placeholder="PNxxxxxxxx"
-                                    {% if provider_is_customer_managed %}disabled{% endif %}
-                                    value="{{ request.form.get('phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '') or '' }}"
+                                    {% if provider_is_customer_managed or not show_manual_phone_number_sid_field %}disabled{% endif %}
+                                    value="{{ request.form.get('manual_phone_number_sid', request.form.get('phone_number_sid', onboarding.desired_phone_number_sid if onboarding else '')) or '' }}"
                                 >
                                 <div class="form-text">
-                                    Required for `existing_subaccount_number`, `transfer_parent_number`, and manual `platform_assign`. Leave blank for `auto_buy`.
+                                    Required for `transfer_parent_number` and manual `platform_assign`. Leave blank for `auto_buy`.
                                 </div>
                             </div>
+                            {% if selected_number_strategy == 'existing_subaccount_number' and not available_subaccount_numbers and not available_subaccount_numbers_error %}
+                            <div class="col-12">
+                                <div class="platform-note platform-note--warning mb-0" role="status">
+                                    <div class="platform-note__title">No reusable numbers found</div>
+                                    <div class="platform-note__copy">
+                                        This subaccount does not currently expose any reusable SMS-capable numbers. Switch back to `auto_buy` if you want Twinevia to purchase one during finalization.
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
 
                         <div class="row g-3 mt-1" data-customer-managed-fields {% if not provider_is_customer_managed %}hidden{% endif %}>
@@ -588,11 +631,37 @@
 <script>
     (() => {
         const providerModeInput = document.getElementById('provider_mode');
+        const numberStrategyInput = document.getElementById('number_strategy');
         const platformFields = document.querySelector('[data-platform-managed-fields]');
         const customerFields = document.querySelector('[data-customer-managed-fields]');
         if (!providerModeInput || !platformFields || !customerFields) {
             return;
         }
+
+        const existingSubaccountNumberField = document.querySelector('[data-existing-subaccount-number-field]');
+        const manualPhoneNumberSidField = document.querySelector('[data-manual-phone-number-sid-field]');
+
+        const syncNumberStrategy = () => {
+            if (!numberStrategyInput) {
+                return;
+            }
+            const customerManaged = providerModeInput.value === 'customer_managed';
+            const selectedStrategy = numberStrategyInput.value;
+            const showExistingSubaccountNumberField = selectedStrategy === 'existing_subaccount_number';
+            const showManualPhoneNumberSidField = selectedStrategy === 'transfer_parent_number' || selectedStrategy === 'platform_assign';
+            if (existingSubaccountNumberField) {
+                existingSubaccountNumberField.hidden = !showExistingSubaccountNumberField;
+                existingSubaccountNumberField.querySelectorAll('input, select, textarea').forEach((field) => {
+                    field.disabled = customerManaged || !showExistingSubaccountNumberField;
+                });
+            }
+            if (manualPhoneNumberSidField) {
+                manualPhoneNumberSidField.hidden = !showManualPhoneNumberSidField;
+                manualPhoneNumberSidField.querySelectorAll('input, select, textarea').forEach((field) => {
+                    field.disabled = customerManaged || !showManualPhoneNumberSidField;
+                });
+            }
+        };
 
         const syncProviderMode = () => {
             const customerManaged = providerModeInput.value === 'customer_managed';
@@ -604,9 +673,13 @@
             customerFields.querySelectorAll('input, select, textarea').forEach((field) => {
                 field.disabled = !customerManaged;
             });
+            syncNumberStrategy();
         };
 
         providerModeInput.addEventListener('change', syncProviderMode);
+        if (numberStrategyInput) {
+            numberStrategyInput.addEventListener('change', syncNumberStrategy);
+        }
         syncProviderMode();
     })();
 

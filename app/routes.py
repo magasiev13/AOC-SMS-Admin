@@ -154,6 +154,7 @@ from app.services.twilio_service import (
     customer_managed_activation_state,
     ensure_messaging_profile,
     finalize_sender_setup,
+    list_reusable_subaccount_numbers,
     ProviderProvisioningError,
     provision_org,
     release_sender,
@@ -844,6 +845,8 @@ def _service_address_snapshot(profile: OrganizationMessagingProfile | None) -> t
 def _sender_assignment_action(
     onboarding: OrganizationA2POnboarding | None,
     messaging_profile: OrganizationMessagingProfile | None = None,
+    *,
+    available_subaccount_numbers: list[dict[str, object]] | None = None,
 ) -> str:
     finalization_status = (
         messaging_profile.effective_sender_finalization_status
@@ -861,10 +864,12 @@ def _sender_assignment_action(
     if strategy == "platform_assign":
         return "Save the target PN SID from the org Twilio subaccount, then run Finalize Sender Setup."
     if strategy == "auto_buy":
+        if available_subaccount_numbers:
+            return "Choose one of the discovered subaccount numbers on Manage Messaging, then run Finalize Sender Setup."
         return "Save the service address and run Finalize Sender Setup. Twinevia will buy and attach the number automatically after approval."
     if strategy == "transfer_parent_number":
         return "Confirm the parent-account PN SID, then run Finalize Sender Setup to transfer and attach it."
-    return "Confirm the existing subaccount PN SID, then run Finalize Sender Setup to attach it."
+    return "Choose one of the discovered subaccount numbers on Manage Messaging, then run Finalize Sender Setup to attach it."
 
 
 def _launch_readiness_view(
@@ -874,6 +879,7 @@ def _launch_readiness_view(
     *,
     subscription_view: dict | None = None,
     a2p_status: dict | None = None,
+    available_subaccount_numbers: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     subscription_view = subscription_view or _subscription_view(organization.subscription)
     a2p_status = a2p_status or _a2p_status_view(onboarding, messaging_profile)
@@ -945,7 +951,11 @@ def _launch_readiness_view(
                 messaging_profile.from_number
                 if sender_attached and messaging_profile is not None
                 else (
-                    _sender_assignment_action(onboarding, messaging_profile)
+                    _sender_assignment_action(
+                        onboarding,
+                        messaging_profile,
+                        available_subaccount_numbers=available_subaccount_numbers,
+                    )
                     if awaiting_sender_assignment
                     else "Sender attachment begins after A2P approval."
                 )
@@ -1030,7 +1040,15 @@ def _launch_readiness_view(
         "items": items,
         "awaiting_sender_assignment": awaiting_sender_assignment,
         "awaiting_provider_activation": awaiting_provider_activation,
-        "sender_action": _sender_assignment_action(onboarding, messaging_profile) if awaiting_sender_assignment else None,
+        "sender_action": (
+            _sender_assignment_action(
+                onboarding,
+                messaging_profile,
+                available_subaccount_numbers=available_subaccount_numbers,
+            )
+            if awaiting_sender_assignment
+            else None
+        ),
         "runbook_steps": [
             "Confirm the latest Twilio approval state has synced into the app.",
             "Save or verify the sender service address.",
@@ -4992,11 +5010,56 @@ def platform_organizations_messaging_edit(organization_id):
     if organization.messaging_profile is None:
         db.session.commit()
 
+    def build_subaccount_number_view():
+        current_profile = organization.messaging_profile or messaging_profile
+        current_onboarding = organization.a2p_onboarding
+        recommended_number_strategy = resolve_number_strategy(current_onboarding)
+        if current_profile.provider_mode != 'platform_managed' or not current_profile.twilio_subaccount_sid:
+            return [], None, recommended_number_strategy
+
+        selected_phone_number_sid = (
+            request.form.get("existing_subaccount_phone_number_sid", "").strip()
+            or request.form.get("manual_phone_number_sid", "").strip()
+            or request.form.get("phone_number_sid", "").strip()
+            or ((current_onboarding.desired_phone_number_sid or "").strip() if current_onboarding else "")
+            or ((current_profile.phone_number_sid or "").strip() if current_profile.phone_number_sid else "")
+        )
+        try:
+            reusable_numbers = list_reusable_subaccount_numbers(organization.id)
+        except ProviderProvisioningError as exc:
+            return [], str(exc), recommended_number_strategy
+
+        if reusable_numbers and not current_profile.from_number and recommended_number_strategy == "auto_buy":
+            recommended_number_strategy = "existing_subaccount_number"
+        if (
+            not selected_phone_number_sid
+            and reusable_numbers
+            and recommended_number_strategy == "existing_subaccount_number"
+        ):
+            selected_phone_number_sid = reusable_numbers[0].sid
+
+        available_subaccount_numbers: list[dict[str, object]] = []
+        for number in reusable_numbers:
+            available_subaccount_numbers.append(
+                {
+                    "sid": number.sid,
+                    "phone_number": number.phone_number,
+                    "label": f"{number.phone_number} ({number.sid})",
+                    "selected": number.sid == selected_phone_number_sid,
+                }
+            )
+        return available_subaccount_numbers, None, recommended_number_strategy
+
     def render_page():
         current_profile = organization.messaging_profile or messaging_profile
         current_onboarding = organization.a2p_onboarding
         a2p_status = _a2p_status_view(current_onboarding, current_profile)
         customer_managed_active = current_profile.provider_mode == 'customer_managed'
+        (
+            available_subaccount_numbers,
+            available_subaccount_numbers_error,
+            recommended_number_strategy,
+        ) = build_subaccount_number_view()
         return render_template(
             'platform/organization_messaging_form.html',
             organization=organization,
@@ -5008,9 +5071,13 @@ def platform_organizations_messaging_edit(organization_id):
                 current_onboarding,
                 current_profile,
                 a2p_status=a2p_status,
+                available_subaccount_numbers=available_subaccount_numbers,
             ),
+            available_subaccount_numbers=available_subaccount_numbers,
+            available_subaccount_numbers_error=available_subaccount_numbers_error,
             number_strategy_choices=a2p_number_strategy_choices(),
             provider_activity_entries=_provider_activity_timeline(organization.id),
+            recommended_number_strategy=recommended_number_strategy,
             customer_managed_activation_state=(
                 customer_managed_activation_state(current_onboarding, profile=current_profile)
                 if customer_managed_active
@@ -5276,8 +5343,33 @@ def platform_organizations_messaging_edit(organization_id):
         if selected_number_strategy not in strategy_values:
             flash('Choose a valid number strategy before saving sender setup.', 'error')
             return render_page()
-        target_phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
+        legacy_phone_number_sid = request.form.get('phone_number_sid', '').strip() or None
+        existing_subaccount_phone_number_sid = (
+            request.form.get('existing_subaccount_phone_number_sid', '').strip() or None
+        )
+        manual_phone_number_sid = request.form.get('manual_phone_number_sid', '').strip() or legacy_phone_number_sid
+        target_phone_number_sid = (
+            existing_subaccount_phone_number_sid
+            if selected_number_strategy == 'existing_subaccount_number'
+            else manual_phone_number_sid
+        )
         service_address_fields = _service_address_form_payload(request.form)
+
+        if selected_number_strategy == 'existing_subaccount_number':
+            if not target_phone_number_sid:
+                flash('Choose one of the discovered subaccount numbers before saving sender setup.', 'error')
+                return render_page()
+            try:
+                reusable_number_sids = {number.sid for number in list_reusable_subaccount_numbers(organization.id)}
+            except ProviderProvisioningError as exc:
+                flash(str(exc), 'error')
+                return render_page()
+            if target_phone_number_sid not in reusable_number_sids:
+                flash('Choose a reusable subaccount number owned by this organization before saving sender setup.', 'error')
+                return render_page()
+        elif selected_number_strategy in {'transfer_parent_number', 'platform_assign'} and not target_phone_number_sid:
+            flash('Enter a phone number SID before saving this sender strategy.', 'error')
+            return render_page()
 
         messaging_profile.provider_mode = 'platform_managed'
         messaging_profile.twilio_account_sid = None
