@@ -1539,6 +1539,67 @@ def _organization_scoped_user_get_or_404(user_id: int) -> AppUser:
     return user
 
 
+def _normalize_user_organization_filter(raw_value: str | None, organizations: list[Organization]) -> str:
+    normalized = (raw_value or 'all').strip().lower() or 'all'
+    if normalized in {'all', 'platform_admins', 'unassigned'}:
+        return normalized
+    if normalized.startswith('org:'):
+        try:
+            organization_id = int(normalized.split(':', 1)[1])
+        except (TypeError, ValueError):
+            return 'all'
+        organization_ids = {organization.id for organization in organizations}
+        if organization_id in organization_ids:
+            return f'org:{organization_id}'
+    return 'all'
+
+
+def _platform_user_organization_options(organizations: list[Organization]) -> list[dict[str, str]]:
+    options = [
+        {'value': 'all', 'label': 'All users'},
+        {'value': 'platform_admins', 'label': 'Platform admins'},
+        {'value': 'unassigned', 'label': 'Unassigned users'},
+    ]
+    options.extend(
+        {
+            'value': f'org:{organization.id}',
+            'label': organization.name,
+        }
+        for organization in organizations
+    )
+    return options
+
+
+def _platform_user_organization_view(user: AppUser) -> dict[str, str | None]:
+    if user.is_platform_admin:
+        return {
+            'label': 'Platform',
+            'slug': None,
+            'meta': 'Platform-wide access',
+            'url': None,
+            'sort_value': 'Platform',
+        }
+
+    membership = user.primary_membership
+    organization = membership.organization if membership is not None else None
+    if organization is None:
+        return {
+            'label': 'Unassigned',
+            'slug': None,
+            'meta': 'No organization membership',
+            'url': None,
+            'sort_value': 'Unassigned',
+        }
+
+    return {
+        'label': organization.name,
+        'slug': organization.slug,
+        'meta': None,
+        'url': url_for('main.platform_organizations_access', organization_id=organization.id),
+        'sort_value': organization.name,
+    }
+
+
 def _can_manage_platform() -> bool:
     return bool(getattr(current_user, 'is_platform_admin', False))
 
@@ -4119,7 +4180,43 @@ def dashboard():
 @login_required
 @require_roles('admin')
 def users_list():
-    users = _organization_scoped_user_query().order_by(AppUser.username).all()
+    organizations: list[Organization] = []
+    selected_organization_filter = 'all'
+    organization_filter_options: list[dict[str, str]] = []
+    query = _organization_scoped_user_query().options(
+        selectinload(AppUser.memberships).selectinload(OrganizationMembership.organization)
+    )
+
+    if saas_mode_enabled() and current_user.is_platform_admin:
+        organizations = Organization.query.order_by(func.lower(Organization.name), Organization.id).all()
+        selected_organization_filter = _normalize_user_organization_filter(
+            request.args.get('organization_filter'),
+            organizations,
+        )
+        organization_filter_options = _platform_user_organization_options(organizations)
+        if selected_organization_filter == 'platform_admins':
+            query = query.filter(AppUser.is_platform_admin.is_(True))
+        elif selected_organization_filter == 'unassigned':
+            query = (
+                query
+                .outerjoin(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
+                .filter(AppUser.is_platform_admin.is_(False))
+                .filter(OrganizationMembership.id.is_(None))
+            )
+        elif selected_organization_filter.startswith('org:'):
+            organization_id = int(selected_organization_filter.split(':', 1)[1])
+            query = (
+                query
+                .join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
+                .filter(OrganizationMembership.organization_id == organization_id)
+            )
+
+    users = query.order_by(AppUser.username).all()
+    user_organization_views = (
+        {user.id: _platform_user_organization_view(user) for user in users}
+        if saas_mode_enabled() and current_user.is_platform_admin
+        else {}
+    )
     users_missing_email = [user for user in users if not (user.email or '').strip()]
     pending_invitations = []
     if saas_mode_enabled() and not current_user.is_platform_admin:
@@ -4142,6 +4239,9 @@ def users_list():
         users=users,
         pending_invitations=pending_invitations,
         users_missing_email=users_missing_email,
+        user_organization_views=user_organization_views,
+        organization_filter_options=organization_filter_options,
+        selected_organization_filter=selected_organization_filter,
     )
 
 

@@ -1355,6 +1355,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"owner@acme.test", response.data)
         self.assertNotIn(b"other@org.test", response.data)
+        self.assertNotIn(b'name="organization_filter"', response.data)
+        self.assertNotIn(b"Organization</span>", response.data)
 
     def test_platform_users_list_offers_add_platform_admin_action(self) -> None:
         self._login_platform_admin()
@@ -1364,6 +1366,99 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Add Platform Admin", response.data)
         self.assertIn(b"Platform Admin", response.data)
+
+    def test_platform_users_list_shows_organization_context_and_filter_control(self) -> None:
+        other_org = self.Organization(name="Other Co", slug="other-co", status="active")
+        other_user = self.AppUser(
+            username="other-owner",
+            email="other@org.test",
+            phone="+15550000002",
+            role="admin",
+            must_change_password=False,
+        )
+        other_user.set_password("Other-pass1!")
+        self.db.session.add_all([other_org, other_user])
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=other_org.id,
+                user_id=other_user.id,
+                role="owner",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/users")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'name="organization_filter"', response.data)
+        self.assertIn(b"Filter users", response.data)
+        self.assertIn(b"Acme", response.data)
+        self.assertIn(b"acme", response.data)
+        self.assertIn(b"Other Co", response.data)
+        self.assertIn(b"other-co", response.data)
+        self.assertIn(b"Platform-wide access", response.data)
+
+    def test_platform_users_list_filters_by_organization(self) -> None:
+        other_org = self.Organization(name="Other Co", slug="other-co", status="active")
+        other_user = self.AppUser(
+            username="other-owner",
+            email="other@org.test",
+            phone="+15550000002",
+            role="admin",
+            must_change_password=False,
+        )
+        other_user.set_password("Other-pass1!")
+        self.db.session.add_all([other_org, other_user])
+        self.db.session.flush()
+        self.db.session.add(
+            self.OrganizationMembership(
+                organization_id=other_org.id,
+                user_id=other_user.id,
+                role="owner",
+            )
+        )
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get(f"/users?organization_filter=org:{other_org.id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"other@org.test", response.data)
+        self.assertIn(b"Other Co", response.data)
+        self.assertNotIn(b"owner@acme.test", response.data)
+        self.assertNotIn(b"platform@acme.test", response.data)
+
+    def test_platform_users_list_filters_platform_admins(self) -> None:
+        self._login_platform_admin()
+        response = self.client.get("/users?organization_filter=platform_admins")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"platform@acme.test", response.data)
+        self.assertIn(b"Platform-wide access", response.data)
+        self.assertNotIn(b"owner@acme.test", response.data)
+
+    def test_platform_users_list_filters_unassigned_users(self) -> None:
+        unassigned_user = self.AppUser(
+            username="orphan-user",
+            email="orphan@acme.test",
+            phone="+15550000003",
+            role="social_manager",
+            must_change_password=False,
+        )
+        unassigned_user.set_password("Orphan-pass1!")
+        self.db.session.add(unassigned_user)
+        self.db.session.commit()
+
+        self._login_platform_admin()
+        response = self.client.get("/users?organization_filter=unassigned")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"orphan@acme.test", response.data)
+        self.assertIn(b"Unassigned", response.data)
+        self.assertNotIn(b"owner@acme.test", response.data)
+        self.assertNotIn(b"platform@acme.test", response.data)
 
     def test_platform_admin_can_create_another_platform_admin(self) -> None:
         self._login_platform_admin()

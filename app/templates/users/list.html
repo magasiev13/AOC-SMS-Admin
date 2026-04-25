@@ -39,6 +39,34 @@
     </p>
 </div>
 {% endif %}
+{% if config.SAAS_MODE and current_user.is_platform_admin %}
+{% call ui.collection_filters_panel(
+    url_for('main.users_list'),
+    title='Filter users',
+    meta='Narrow platform access by organization membership or account scope.'
+) %}
+<div class="row g-3 align-items-end">
+    <div class="col-md-6 col-xl-4">
+        <label class="form-label" for="organization_filter">Organization</label>
+        <select class="form-select" id="organization_filter" name="organization_filter">
+            {% for option in organization_filter_options %}
+            <option value="{{ option.value }}" {% if selected_organization_filter == option.value %}selected{% endif %}>
+                {{ option.label }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-md-3 col-xl-2 d-grid">
+        <button type="submit" class="btn btn-primary">Apply</button>
+    </div>
+    {% if selected_organization_filter != 'all' %}
+    <div class="col-md-3 col-xl-2 d-grid">
+        <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Reset</a>
+    </div>
+    {% endif %}
+</div>
+{% endcall %}
+{% endif %}
 <div class="card app-card collection-panel collection-panel--results">
     <div class="table-responsive d-none d-lg-block">
         <table class="table table-hover mb-0" data-sortable="client">
@@ -56,6 +84,14 @@
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
+                    {% if config.SAAS_MODE and current_user.is_platform_admin %}
+                    <th data-sort-type="string">
+                        <button type="button" class="sort-button" data-sort-key="organization">
+                            <span>Organization</span>
+                            <span class="sort-indicator" aria-hidden="true"></span>
+                        </button>
+                    </th>
+                    {% endif %}
                     <th data-sort-type="string">
                         <button type="button" class="sort-button" data-sort-key="email">
                             <span>Email</span>
@@ -100,6 +136,25 @@
                                 {% endif %}
                             </span>
                         </td>
+                        {% if config.SAAS_MODE and current_user.is_platform_admin %}
+                        {% set organization_view = user_organization_views.get(user.id) %}
+                        <td data-sort-value="{{ organization_view.sort_value if organization_view else '' }}">
+                            {% if organization_view and organization_view.url %}
+                            <a href="{{ organization_view.url }}" class="fw-semibold text-decoration-none">
+                                {{ organization_view.label }}
+                            </a>
+                            {% elif organization_view %}
+                            <span class="fw-semibold">{{ organization_view.label }}</span>
+                            {% else %}
+                            <span class="fw-semibold">Unassigned</span>
+                            {% endif %}
+                            {% if organization_view and organization_view.slug %}
+                            <div class="small text-muted"><code>{{ organization_view.slug }}</code></div>
+                            {% elif organization_view and organization_view.meta %}
+                            <div class="small text-muted">{{ organization_view.meta }}</div>
+                            {% endif %}
+                        </td>
+                        {% endif %}
                         <td data-sort-value="{{ user.email or '' }}">
                             {{ user.email or '-' }}
                         </td>
@@ -131,7 +186,7 @@
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-4">
+                        <td colspan="{{ 7 if config.SAAS_MODE and current_user.is_platform_admin else 6 }}" class="text-center text-muted py-4">
                             {{ ui.empty_state(
                                 'bi-people',
                                 'No users found',
@@ -148,6 +203,7 @@
     <div class="card-list d-lg-none">
         {% if users %}
             {% for user in users %}
+            {% set organization_view = user_organization_views.get(user.id) if config.SAAS_MODE and current_user.is_platform_admin else none %}
             <div class="card-list-item">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
@@ -169,6 +225,23 @@
                             {% endif %}
                         </div>
                         <div class="text-muted small mt-2">Created {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</div>
+                        {% if config.SAAS_MODE and current_user.is_platform_admin %}
+                        <div class="text-muted small mt-1">
+                            Organization
+                            {% if organization_view and organization_view.url %}
+                            <a href="{{ organization_view.url }}" class="text-decoration-none">{{ organization_view.label }}</a>
+                            {% elif organization_view %}
+                            {{ organization_view.label }}
+                            {% else %}
+                            Unassigned
+                            {% endif %}
+                            {% if organization_view and organization_view.slug %}
+                            · <code>{{ organization_view.slug }}</code>
+                            {% elif organization_view and organization_view.meta %}
+                            · {{ organization_view.meta }}
+                            {% endif %}
+                        </div>
+                        {% endif %}
                         <div class="text-muted small mt-1">Email {{ user.email or '-' }}</div>
                         <div class="text-muted small mt-1">Phone {{ user.phone or '-' }}</div>
                     </div>
