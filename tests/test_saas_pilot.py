@@ -2082,7 +2082,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )
@@ -2145,7 +2145,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )
@@ -2459,7 +2459,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )

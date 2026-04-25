@@ -9,7 +9,6 @@ APP_GROUP="${APP_GROUP:-${APP_USER}}"
 REQUIRED_PYTHON="${REQUIRED_PYTHON:-3.11}"
 VENV_DIR="${APP_ROOT}/venv"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${APP_ROOT}/requirements.txt}"
-STALE_VENV_PATH="${STALE_VENV_PATH:-/opt/sms-saas/venv}"
 
 write_state() {
   local promoted="$1"
@@ -80,10 +79,6 @@ validate_canonical_venv() {
   validate_basic_venv "${root}"
 
   if [[ -f "${root}/pyvenv.cfg" ]]; then
-    if grep -qF "${STALE_VENV_PATH}" "${root}/pyvenv.cfg"; then
-      echo "[venv] ERROR: ${root}/pyvenv.cfg still references ${STALE_VENV_PATH}." >&2
-      return 1
-    fi
     if grep -qF "${APP_ROOT}/venv.next-" "${root}/pyvenv.cfg"; then
       echo "[venv] ERROR: ${root}/pyvenv.cfg still references a temporary venv path." >&2
       return 1
@@ -98,10 +93,6 @@ validate_canonical_venv() {
     if [[ ! -f "${root}/bin/${script}" ]]; then
       continue
     fi
-    if head -n 1 "${root}/bin/${script}" | grep -qF "${STALE_VENV_PATH}"; then
-      echo "[venv] ERROR: ${root}/bin/${script} shebang still references ${STALE_VENV_PATH}." >&2
-      return 1
-    fi
     if head -n 1 "${root}/bin/${script}" | grep -qF "${APP_ROOT}/venv.next-"; then
       echo "[venv] ERROR: ${root}/bin/${script} shebang still references a temporary venv path." >&2
       return 1
@@ -114,12 +105,6 @@ venv_needs_rebuild() {
     return 0
   fi
   if [[ "$(python_version_for "${VENV_DIR}/bin/python")" != "${REQUIRED_PYTHON}" ]]; then
-    return 0
-  fi
-  if [[ -f "${VENV_DIR}/pyvenv.cfg" ]] && grep -qF "${STALE_VENV_PATH}" "${VENV_DIR}/pyvenv.cfg"; then
-    return 0
-  fi
-  if [[ -d "${VENV_DIR}/bin" ]] && grep -RIlF "${STALE_VENV_PATH}" "${VENV_DIR}/bin" >/dev/null 2>&1; then
     return 0
   fi
   if [[ -f "${VENV_DIR}/pyvenv.cfg" ]] && grep -qF "${APP_ROOT}/venv.next-" "${VENV_DIR}/pyvenv.cfg"; then
@@ -159,10 +144,6 @@ build_next_venv() {
   run_as_app_user "${next_venv}/bin/python" -m pip install -r "${REQUIREMENTS_FILE}"
   validate_basic_venv "${next_venv}"
 
-  if [[ -f "${next_venv}/pyvenv.cfg" ]] && grep -qF "${STALE_VENV_PATH}" "${next_venv}/pyvenv.cfg"; then
-    echo "[venv] ERROR: new venv unexpectedly references ${STALE_VENV_PATH}." >&2
-    return 1
-  fi
 }
 
 promote_next_venv() {
@@ -182,7 +163,6 @@ promote_next_venv() {
     if [[ -n "${backup_path}" && -d "${backup_path}" ]]; then
       sudo mv "${VENV_DIR}" "${VENV_DIR}.failed-$(date -u +%Y%m%d%H%M%S)"
       sudo mv "${backup_path}" "${VENV_DIR}"
-      rewrite_text_reference "${VENV_DIR}" "${STALE_VENV_PATH}" "${VENV_DIR}"
       sudo chown -R "${APP_USER}:${APP_GROUP}" "${VENV_DIR}"
     fi
     return 1
@@ -235,7 +215,6 @@ rollback_from_state() {
     echo "[venv] Failed virtualenv preserved at ${failed_path}."
   fi
   sudo mv "${backup_path}" "${VENV_DIR}"
-  rewrite_text_reference "${VENV_DIR}" "${STALE_VENV_PATH}" "${VENV_DIR}"
   rewrite_text_reference "${VENV_DIR}" "${backup_path}" "${VENV_DIR}"
   sudo chown -R "${APP_USER}:${APP_GROUP}" "${VENV_DIR}"
   validate_canonical_venv "${VENV_DIR}"

@@ -445,7 +445,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
             sid="PNcust0001",
             phone_number="+15550001111",
-            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
         customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
@@ -491,7 +491,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.return_value.update.assert_not_called()
         self.assertEqual(
             validation.current_phone_sms_url,
-            "https://sms.theitwingman.com/webhooks/twilio/inbound",
+            "https://legacy.example.com/webhooks/twilio/inbound",
         )
         self.assertEqual(validation.current_phone_sms_method, "POST")
         self.assertEqual(validation.current_service_use_inbound_webhook_on_number, False)
@@ -508,7 +508,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
             sid="PNcust0001",
             phone_number="+15550001111",
-            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
         customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
@@ -606,7 +606,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         customer_client.incoming_phone_numbers.return_value.fetch.return_value = SimpleNamespace(
             sid="PNcust0001",
             phone_number="+15550001111",
-            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
         customer_client.messaging.v1.services.return_value.fetch.return_value = SimpleNamespace(
@@ -658,7 +658,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         )
         self._create_a2p_onboarding(
             organization.id,
-            raw_status_json='{"customer_managed_activation":{"activation_completed":true,"activation_state":"active","phone_number_sid":"PNcust0001","pre_activation_phone_sms_url":"https://sms.theitwingman.com/webhooks/twilio/inbound","pre_activation_phone_sms_method":"POST","pre_activation_service_use_inbound_webhook_on_number":false},"campaign_status":"verified","brand_status":"verified"}',
+            raw_status_json='{"customer_managed_activation":{"activation_completed":true,"activation_state":"active","phone_number_sid":"PNcust0001","pre_activation_phone_sms_url":"https://legacy.example.com/webhooks/twilio/inbound","pre_activation_phone_sms_method":"POST","pre_activation_service_use_inbound_webhook_on_number":false},"campaign_status":"verified","brand_status":"verified"}',
         )
 
         customer_client = mock_build_customer_client.return_value
@@ -671,7 +671,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             use_inbound_webhook_on_number=False
         )
         customer_client.incoming_phone_numbers.return_value.update.assert_called_once_with(
-            sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             sms_method="POST",
         )
         onboarding = self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).one()

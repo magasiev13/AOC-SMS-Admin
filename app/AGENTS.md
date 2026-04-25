@@ -63,4 +63,4 @@ Use `utc_now()` for stored timestamps and existing validators for phone/keyword 
 - **DO NOT** start the scheduler implicitly outside the explicit runtime paths.
 - **DO NOT** bypass account-security gates by adding unaudited special routes.
 - **DO NOT** assume SQLite-only behavior in new logic or docs.
-- **DO NOT** use legacy deploy assumptions (`/opt/sms-admin`, queue `sms`) for SaaS work.
+- **DO NOT** use legacy deploy assumptions or queue `sms` for SaaS work.

@@ -95,7 +95,7 @@ Each snapshot should include:
 
 ## Safe Production Cutover
 
-Canonical production is the Twinevia SaaS runtime rooted at `/opt/twinevia-saas`. Treat the live update as an in-place deploy against the existing PostgreSQL database, Redis instance, and the current production `.env`. If an upgraded host still runs from `/opt/sms-saas`, canonicalize it once during cutover with `--canonicalize-host`.
+Canonical production is the Twinevia SaaS runtime rooted at `/opt/twinevia-saas`. Treat the live update as an in-place deploy against the existing PostgreSQL database, Redis instance, and the current production `.env`.
 
 Do not:
 
@@ -118,7 +118,6 @@ Use:
 ```bash
 ./run/production_cutover.sh \
   --org-slug it-wingman-llc \
-  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
@@ -127,8 +126,7 @@ What the cutover script does:
 
 - runs `./run/public_readiness_local.sh` unless `--skip-local-gate` is set
 - captures the pre-deploy production snapshot
-- auto-detects the current live app root and unit family
-- migrates `/opt/sms-saas` to `/opt/twinevia-saas` when `--canonicalize-host` is supplied
+- verifies the current live app root and unit family
 - locks the remote checkout to the expected branch and tracking ref
 - backs up PostgreSQL with `pg_dump`
 - captures a Redis backup bundle

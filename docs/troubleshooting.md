@@ -290,10 +290,10 @@ Check:
 
 ### `attempt to write a readonly database`
 
-This is a legacy SQLite problem. Fix permissions on:
+This is a local SQLite compatibility problem. Fix permissions on:
 
-- `/opt/sms-admin/instance`
-- `/opt/sms-admin/instance/sms.db`
+- your local `instance/` directory
+- your local `instance/sms.db`
 - any `sms.db-wal` and `sms.db-shm` files
 
 ### `database is locked`
