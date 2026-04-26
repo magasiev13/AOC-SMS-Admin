@@ -132,11 +132,7 @@ cd /opt/twinevia-saas
 sudo -u twinevia bash -lc 'cd /opt/twinevia-saas && set -a && source .env && set +a && twinevia-saas-dbdoctor --ensure-platform-admin'
 ```
 
-For bootstrap-password cleanup on the SaaS runtime, `TWINEVIA_SAAS_ENV_FILE` is the canonical env-file override. `SMS_ADMIN_ENV_FILE` remains accepted as a legacy fallback.
-
-### Legacy compatibility admin bootstrap
-
-Legacy runtime still uses the `/opt/sms-admin` flow and `dbdoctor` family.
+For bootstrap-password cleanup on the SaaS runtime, `TWINEVIA_SAAS_ENV_FILE` is the canonical env-file override.
 
 ### Manual password reset
 

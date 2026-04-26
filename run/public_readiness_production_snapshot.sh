@@ -3,37 +3,18 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-resolve_compat_env() {
-  local primary_key="$1"
-  local legacy_key="$2"
-  local default_value="${3:-}"
-  local primary_value="${!primary_key:-}"
-  local legacy_value="${!legacy_key:-}"
-
-  if [[ -n "${primary_value}" ]]; then
-    printf '%s\n' "${primary_value}"
-    return
-  fi
-  if [[ -n "${legacy_value}" ]]; then
-    echo "[warn] ${legacy_key} is deprecated; use ${primary_key} instead." >&2
-    printf '%s\n' "${legacy_value}"
-    return
-  fi
-  printf '%s\n' "${default_value}"
-}
-
-HOST="$(resolve_compat_env "TWINEVIA_PUBLIC_HOST" "BETA_SIGNOFF_HOST" "www.twinevia.com")"
-SSH_TARGET="$(resolve_compat_env "TWINEVIA_SSH_TARGET" "BETA_SIGNOFF_SSH_TARGET" "")"
-SSH_KEY="$(resolve_compat_env "TWINEVIA_SSH_KEY" "BETA_SIGNOFF_SSH_KEY" "$HOME/.ssh/itlab.key")"
-SSH_PORT="$(resolve_compat_env "TWINEVIA_SSH_PORT" "BETA_SIGNOFF_SSH_PORT" "22")"
-APP_ROOT="$(resolve_compat_env "TWINEVIA_APP_ROOT" "BETA_SIGNOFF_APP_ROOT" "")"
-APP_USER="$(resolve_compat_env "TWINEVIA_APP_USER" "BETA_SIGNOFF_APP_USER" "")"
-UNIT_PREFIX="$(resolve_compat_env "TWINEVIA_UNIT_PREFIX" "BETA_SIGNOFF_UNIT_PREFIX" "")"
+HOST="${TWINEVIA_PUBLIC_HOST:-www.twinevia.com}"
+SSH_TARGET="${TWINEVIA_SSH_TARGET:-}"
+SSH_KEY="${TWINEVIA_SSH_KEY:-$HOME/.ssh/itlab.key}"
+SSH_PORT="${TWINEVIA_SSH_PORT:-22}"
+APP_ROOT="${TWINEVIA_APP_ROOT:-}"
+APP_USER="${TWINEVIA_APP_USER:-}"
+UNIT_PREFIX="${TWINEVIA_UNIT_PREFIX:-}"
 
 RUN_ID=""
 ORG_SLUG=""
 LABEL=""
-DAYS_BACK="$(resolve_compat_env "TWINEVIA_ACTIVITY_LOOKBACK_DAYS" "BETA_SIGNOFF_ACTIVITY_LOOKBACK_DAYS" "14")"
+DAYS_BACK="${TWINEVIA_ACTIVITY_LOOKBACK_DAYS:-14}"
 
 usage() {
   cat <<'EOF'
@@ -134,7 +115,7 @@ resolve_remote_app_user() {
       return
     fi
   fi
-  ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; elif id -u smsadmin >/dev/null 2>&1; then printf smsadmin; else printf twinevia; fi"
+  ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; else printf twinevia; fi"
 }
 
 resolve_remote_app_root() {
@@ -148,8 +129,6 @@ resolve_remote_app_root() {
       printf '%s' \"\${active_root}\"
     elif [ -d /opt/twinevia-saas/.git ]; then
       printf /opt/twinevia-saas
-    elif [ -d /opt/sms-saas/.git ]; then
-      printf /opt/sms-saas
     else
       printf /opt/twinevia-saas
     fi
@@ -161,7 +140,7 @@ resolve_remote_unit_prefix() {
     printf '%s\n' "${UNIT_PREFIX}"
     return
   fi
-  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; elif systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then printf sms-saas; else printf twinevia-saas; fi"
+  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; else printf twinevia-saas; fi"
 }
 
 capture_remote_file() {

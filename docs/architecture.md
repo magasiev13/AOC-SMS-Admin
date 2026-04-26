@@ -185,12 +185,9 @@ The in-process APScheduler path exists only for development and only starts when
 - service units: `twinevia-saas*`
 - deploy helpers: `deploy/install_saas.sh`, `deploy/deploy_twinevia_saas.sh`
 
-### Legacy family
+### Retired legacy family
 
-- root: `/opt/sms-admin`
-- gunicorn bind: `127.0.0.1:8000`
-- service units: `sms*`
-- deploy helpers: `deploy/install.sh`, `deploy/deploy_sms_admin.sh`
+The old single-tenant public host and `sms*` service family have been retired. Keep production architecture on the `twinevia-saas*` family.
 
 ## Key Constraints
 

@@ -223,14 +223,7 @@ Your reverse proxy must:
 - proxy the app to `127.0.0.1:8100`
 - allow `/health` through for monitoring
 
-If you reuse the legacy nginx sample, update:
-
-- server name
-- upstream port
-- auth requirements
-- static path assumptions
-
-Do not proxy SaaS traffic to the legacy `sms.service` port.
+Do not proxy SaaS traffic to any retired legacy runtime or non-SaaS port.
 
 ## 10. Stripe And Twilio Production Notes
 
@@ -257,26 +250,6 @@ At minimum, back up:
 
 See [saas-operations.md](saas-operations.md) for day-2 backup and restore guidance.
 
-## Legacy Compatibility Appendix
+## Retired Legacy Deployment
 
-Use the legacy line only when you intentionally need the older single-tenant deployment.
-
-### Legacy deploy roots
-
-- app root: `/opt/sms-admin`
-- direct health target: `127.0.0.1:8000`
-- units: `sms.service`, `sms-worker.service`, `sms-scheduler.timer`
-- CLI: `dbdoctor`
-
-### Legacy install/update commands
-
-```bash
-sudo ./deploy/install.sh
-sudo ./deploy/deploy_sms_admin.sh
-```
-
-### Legacy-specific notes
-
-- SQLite permissions on `/opt/sms-admin/instance` matter
-- `TWILIO_FROM_NUMBER` is a direct runtime dependency there
-- the repo ships a legacy nginx sample at `deploy/nginx.conf`
+The old single-tenant public deployment and its `sms*` host services are retired. Do not recreate that host path for production. `dbdoctor` remains only for local SQLite compatibility and migration-support workflows.

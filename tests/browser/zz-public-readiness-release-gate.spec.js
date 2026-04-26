@@ -91,7 +91,9 @@ test('golden owner journey covers signup billing onboarding staff invite and pla
   });
   await expect(page.locator('.setup-shell')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
-  await expect(page.locator('.setup-steps')).toBeVisible();
+  await expect(page.locator('.setup-steps')).toHaveCount(0);
+  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
+  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
 
   let response = await page.goto('/billing');
   expect(response).not.toBeNull();

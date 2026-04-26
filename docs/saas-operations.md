@@ -13,13 +13,11 @@ Canonical SaaS deployment:
 - queue name: `twinevia-saas`
 - service family: `twinevia-saas*`
 
-If an older host still runs `/opt/sms-saas` as `smsadmin`, treat that as a transitional layout. Canonicalize it once with `./run/production_cutover.sh --canonicalize-host`; do not keep documenting it as the default production shape.
+Keep this deployment isolated from retired legacy surfaces:
 
-Keep this deployment isolated from the legacy line:
-
-- do not share `/opt/sms-admin`
-- do not share the legacy SQLite DB
+- do not share a legacy SQLite DB
 - do not point the SaaS worker at queue `sms`
+- do not recreate the old public legacy host path
 
 ## Required Runtime State
 
@@ -186,12 +184,11 @@ For the live public host, use the repo wrapper from your operator machine instea
 ```bash
 ./run/production_cutover.sh \
   --org-slug it-wingman-llc \
-  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
 
-This wrapper preserves the current production `DATABASE_URL`, `REDIS_URL`, and live `.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy. When `--canonicalize-host` is supplied on a legacy `/opt/sms-saas` host, it first migrates the runtime to `/opt/twinevia-saas` and `twinevia`.
+This wrapper preserves the current production `DATABASE_URL`, `REDIS_URL`, and live `.env`, captures pre/post snapshots, writes a backup bundle, and only then performs the in-place deploy against the canonical `/opt/twinevia-saas` runtime.
 
 ### Live smoke wrapper
 
@@ -315,4 +312,4 @@ Example import:
 
 ## Legacy Compatibility Note
 
-Use `dbdoctor` and the `/opt/sms-admin` service family only for the legacy deployment. Do not mix legacy schema tools with the SaaS PostgreSQL database.
+Use `dbdoctor` only for local SQLite compatibility workflows. Do not mix legacy schema tools with the SaaS PostgreSQL database.

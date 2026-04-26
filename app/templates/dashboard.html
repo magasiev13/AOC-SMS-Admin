@@ -13,9 +13,11 @@
 <div class="workspace-shell">
     {% if config.SAAS_MODE and current_organization %}
     {% call ui.workspace_summary(workspace_summary) %}
+    {% if current_user_is_workspace_owner %}
     <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
+    {% endif %}
     <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
-    {% if not can_send_messages and current_subscription_view.show_checkout %}
+    {% if current_user_is_workspace_owner and not can_send_messages and current_subscription_view.show_checkout %}
     <form method="POST" action="{{ url_for('main.billing_checkout') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="btn btn-primary">
@@ -221,7 +223,7 @@
                                 <i class="bi bi-send-fill me-2"></i>{{ 'SMS Pending Approval' if config.SAAS_MODE and current_organization and not can_send_messages else 'Send Now' }}
                             </button>
                             {% if config.SAAS_MODE and current_organization and not can_send_messages %}
-                            <div class="form-text text-center">The compose form stays available so you can prepare the first blast, but sending unlocks only after billing and A2P approval are complete.</div>
+                            <div class="form-text text-center">The compose form stays available so you can prepare the first blast while workspace activation finishes.</div>
                             {% endif %}
                         </div>
                     </form>
@@ -244,53 +246,22 @@
             </div>
             {% endif %}
 
-            {% if config.SAAS_MODE and current_organization and a2p_status_view and a2p_status_view.show_wait_state %}
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">SMS approval</h2>
-                        <p class="workspace-panel__meta">{{ a2p_status_view.summary }}</p>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2">
-                        <span class="badge bg-{{ a2p_status_view.badge }}">{{ a2p_status_view.stage.replace('_', ' ') }}</span>
-                        <span class="badge bg-light text-dark">Brand {{ a2p_status_view.brand_status }}</span>
-                        <span class="badge bg-light text-dark">Campaign {{ a2p_status_view.campaign_status }}</span>
-                    </div>
+            {% if config.SAAS_MODE and current_organization and not can_send_messages %}
+            <div class="workspace-callout workspace-callout--warning" role="status">
+                <div class="workspace-callout__title">Workspace activation in progress</div>
+                <p class="workspace-callout__copy">
+                    {% if current_user_is_workspace_owner %}
+                    {{ send_disabled_reason or 'Finish setup to unlock live SMS sending.' }}
+                    {% else %}
+                    An owner or platform admin is finishing activation. You can keep preparing contacts, replies, and campaigns; live sending unlocks automatically when setup is complete.
+                    {% endif %}
+                </p>
+                {% if current_user_is_workspace_owner %}
+                <div class="workspace-callout__actions">
+                    <a href="{{ url_for('main.setup') }}" class="btn btn-outline-primary">Review setup</a>
                 </div>
-                <div class="workspace-panel__body workspace-panel__body--dense">
-                    <div class="small text-muted mb-3">
-                        {{ a2p_status_view.next_step }}
-                        {% if a2p_status_view.last_checked_display %}
-                        · Last checked {{ a2p_status_view.last_checked_display }}
-                        {% endif %}
-                    </div>
-                    <div class="list-group list-group-flush mb-3">
-                        {% for task in workspace_activation_tasks %}
-                        <div class="list-group-item px-0">
-                            <div class="fw-semibold">
-                                {% if task.complete %}
-                                <i class="bi bi-check-circle-fill text-success me-2"></i>
-                                {% else %}
-                                <i class="bi bi-circle text-muted me-2"></i>
-                                {% endif %}
-                                {{ task.label }}
-                            </div>
-                            <div class="small text-muted mt-1">{{ task.detail }}</div>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    <div class="workspace-callout__actions">
-                        <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
-                        <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-primary">Community</a>
-                        <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary">Keywords</a>
-                        <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Surveys</a>
-                        <a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">Events</a>
-                        {% if current_user.is_admin and not current_user.is_platform_admin %}
-                        <a href="{{ url_for('main.team_invite') }}" class="btn btn-outline-secondary">Invite Team</a>
-                        {% endif %}
-                    </div>
-                </div>
-            </section>
+                {% endif %}
+            </div>
             {% endif %}
         </aside>
     </div>

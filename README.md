@@ -32,7 +32,7 @@ This repository still contains the original single-tenant `Twinevia Legacy` runt
 - Redis queue name `sms`
 - Legacy schema tooling via `./venv/bin/python -m app.dbdoctor` locally or `dbdoctor` in production
 - Legacy deploy units under `deploy/sms*`
-- Canonical legacy root: `/opt/sms-admin`
+- Retired legacy deployment: the old single-tenant public host is no longer supported.
 
 The docs in `docs/` are SaaS-first. Legacy details remain documented only where needed for compatibility, migration, or support of the existing deploy line.
 
@@ -146,16 +146,9 @@ Artifacts are written under `output/`.
 - timers: `twinevia-saas-scheduler.timer`, `twinevia-saas-billing-reconcile.timer`, `twinevia-saas-platform-restart-queue.timer`, `twinevia-saas-a2p-reconcile.timer`
 - direct health target: `http://127.0.0.1:8100/health`
 
-### Legacy Compatibility Deployment
+The old single-tenant public deployment has been retired. Keep production deploy work on the SaaS path above.
 
-- install: `sudo ./deploy/install.sh`
-- update: `sudo ./deploy/deploy_sms_admin.sh`
-- web service: `sms.service`
-- worker: `sms-worker.service`
-- timer: `sms-scheduler.timer`
-- direct health target: `http://127.0.0.1:8000/health`
-
-See [docs/deployment.md](docs/deployment.md) for the SaaS production guide and legacy appendix.
+See [docs/deployment.md](docs/deployment.md) for the SaaS production guide.
 
 ## Documentation Index
 
@@ -173,4 +166,4 @@ See [docs/deployment.md](docs/deployment.md) for the SaaS production guide and l
 
 ## Naming Note
 
-User-facing docs refer to the product as `Twinevia`. The primary SaaS runtime now uses the `twinevia-saas` family for service units, deploy roots, logs, queue names, restart helpers, Unix account defaults, and the canonical `twinevia-saas-dbdoctor` wrapper. The retained `saas-dbdoctor` alias and the legacy `/opt/sms-admin` runtime remain intentional compatibility surfaces. External repo/worktree naming is out of repo scope.
+User-facing docs refer to the product as `Twinevia`. The primary SaaS runtime now uses the `twinevia-saas` family for service units, deploy roots, logs, queue names, restart helpers, Unix account defaults, and the canonical `twinevia-saas-dbdoctor` wrapper. The retained `saas-dbdoctor` alias remains an intentional compatibility surface. External repo/worktree naming is out of repo scope.

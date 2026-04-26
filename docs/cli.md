@@ -225,7 +225,6 @@ Orchestrates the safe production cutover flow for the live Twinevia SaaS host:
 ```bash
 ./run/production_cutover.sh \
   --org-slug it-wingman-llc \
-  --canonicalize-host \
   --freeze-note "Pause org edits, invites, billing mutations, sender changes, and outbound sends." \
   --deploy
 ```
@@ -235,7 +234,6 @@ What it does:
 - optional local signoff via `./run/public_readiness_local.sh`
 - pre-deploy production snapshot
 - remote PostgreSQL/Redis/config backup bundle
-- optional one-time canonical migration from `/opt/sms-saas` to `/opt/twinevia-saas`
 - branch/tracking guard against deploying the wrong checkout
 - optional in-place `deploy/deploy_twinevia_saas.sh`
 - pre/post runtime root and user evidence
@@ -282,9 +280,4 @@ sudo ./deploy/install_saas.sh
 sudo ./deploy/deploy_twinevia_saas.sh
 ```
 
-### Legacy compatibility
-
-```bash
-sudo ./deploy/install.sh
-sudo ./deploy/deploy_sms_admin.sh
-```
+The old single-tenant deploy helper path has been retired.

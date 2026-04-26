@@ -2,7 +2,7 @@
 
 Twinevia is a Flask-based multi-tenant messaging workspace with a SaaS control plane, tenant-scoped workspaces, Stripe billing, Twilio provider management, and inbox/survey automation.
 
-The repo still contains the original single-tenant legacy runtime, but the SaaS/PostgreSQL path is now the primary production target.
+The SaaS/PostgreSQL path is the only supported production target. The original single-tenant legacy runtime remains only as internal compatibility code for imports, tests, and local SQLite workflows.
 
 ## OVERVIEW
 
@@ -13,12 +13,10 @@ The repo still contains the original single-tenant legacy runtime, but the SaaS/
 - primary systemd family: `twinevia-saas*`
 - supported/tested Python: `3.11`
 
-Legacy compatibility remains for:
+Legacy compatibility remains for local/schema-only workflows:
 
 - `SAAS_MODE=0`
 - SQLite
-- `/opt/sms-admin`
-- `sms*` units
 - `dbdoctor`
 
 ## STRUCTURE
@@ -57,13 +55,13 @@ Legacy compatibility remains for:
 | Twilio A2P | `app/services/twilio_a2p_service.py` | Draft/save/submit/refresh/reconcile. |
 | Legacy import | `app/services/legacy_import_service.py` | SQLite snapshot import into SaaS. |
 | SaaS schema CLI | `app/saas_db.py`, `bin/twinevia-saas-dbdoctor` | Primary schema workflow (`saas-dbdoctor` remains a compatibility alias). |
-| Legacy schema CLI | `app/dbdoctor.py`, `bin/dbdoctor` | SQLite-only compatibility workflow. |
+| Legacy schema CLI | `app/dbdoctor.py`, `bin/dbdoctor` | SQLite-only local compatibility workflow. |
 | SaaS deploy path | `deploy/install_saas.sh`, `deploy/deploy_twinevia_saas.sh` | Primary production path. |
 | Local SaaS stack | `run/local_saas_stack.sh`, `run/seed_demo_saas.sh` | Preferred local acceptance loop. |
 
 ## CONVENTIONS
 
-- **Product naming**: use `Twinevia` in docs and UI discussion; keep literal operational exceptions such as `saas-dbdoctor` and `/opt/sms-admin` only where they are still intentionally required for compatibility.
+- **Product naming**: use `Twinevia` in docs and UI discussion; keep literal operational exceptions such as `saas-dbdoctor` only where still intentionally required for compatibility.
 - **Schema tooling**: use `app.saas_db` / `twinevia-saas-dbdoctor` for SaaS; `saas-dbdoctor` is a compatibility alias. Use `app.dbdoctor` / `dbdoctor` only for the legacy SQLite line.
 - **Tenant safety**: prefer scoped queries and helpers over hand-rolled `organization_id` filters when existing patterns already cover it.
 - **Auth safety**: session invalidation depends on `session_nonce`; password/contact gates are enforced in `app/auth.py`.
@@ -74,7 +72,7 @@ Legacy compatibility remains for:
 
 - **DO NOT** use `dbdoctor` against a SaaS PostgreSQL database.
 - **DO NOT** point SaaS services at queue `sms`.
-- **DO NOT** mix `/opt/sms-admin` and `/opt/twinevia-saas` deploy assets.
+- **DO NOT** reintroduce the retired legacy host/deploy path for production.
 - **DO NOT** bypass tenant scoping for workspace data unless you intentionally need cross-tenant admin behavior.
 - **DO NOT** document or assume `/health` returns JSON; it returns plain `OK`.
 - **DO NOT** add new dependencies without approval.

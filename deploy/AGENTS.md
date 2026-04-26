@@ -1,9 +1,6 @@
 # deploy/ — Deployment Infrastructure
 
-This directory contains both deployment families:
-
-- primary SaaS deployment (`twinevia-saas*`, `/opt/twinevia-saas`)
-- secondary legacy deployment (`sms*`, `/opt/sms-admin`)
+This directory contains the primary SaaS deployment family (`twinevia-saas*`, `/opt/twinevia-saas`).
 
 ## PRIMARY SaaS FILES
 
@@ -20,23 +17,12 @@ This directory contains both deployment families:
 | `restart_twinevia_saas_services.sh` | Host restart helper |
 | `twinevia-saas-restart.sudoers` | `sudo -n` rule for the restart helper |
 
-## SECONDARY LEGACY FILES
-
-| File | Purpose |
-|---|---|
-| `install.sh` | Legacy SQLite install flow |
-| `deploy_sms_admin.sh` | Legacy update flow |
-| `sms.service` | Legacy gunicorn web app on `127.0.0.1:8000` |
-| `sms-worker.service` | Legacy RQ worker |
-| `sms-scheduler.*` | Legacy scheduled send timer/service |
-| `nginx.conf` | Legacy nginx sample |
-
 ## CONVENTIONS
 
 - SaaS deploys should use `twinevia-saas-dbdoctor`, not `dbdoctor`.
 - SaaS timers are the production scheduler/reconciliation mechanism; do not rely on in-process scheduling there.
 - Health checks must use an allowed `Host` header when `TRUSTED_HOSTS` is enforced.
-- Keep `/opt/sms-admin` and `/opt/twinevia-saas` assets separate.
+- Do not reintroduce the retired legacy host/deploy path.
 
 ## ANTI-PATTERNS
 

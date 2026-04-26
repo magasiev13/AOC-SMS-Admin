@@ -3,33 +3,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-resolve_compat_env() {
-  local primary_key="$1"
-  local legacy_key="$2"
-  local default_value="${3:-}"
-  local primary_value="${!primary_key:-}"
-  local legacy_value="${!legacy_key:-}"
-
-  if [[ -n "${primary_value}" ]]; then
-    printf '%s\n' "${primary_value}"
-    return
-  fi
-  if [[ -n "${legacy_value}" ]]; then
-    echo "[warn] ${legacy_key} is deprecated; use ${primary_key} instead." >&2
-    printf '%s\n' "${legacy_value}"
-    return
-  fi
-  printf '%s\n' "${default_value}"
-}
-
-HOST="$(resolve_compat_env "TWINEVIA_PUBLIC_HOST" "BETA_SIGNOFF_HOST" "www.twinevia.com")"
-SSH_TARGET="$(resolve_compat_env "TWINEVIA_SSH_TARGET" "BETA_SIGNOFF_SSH_TARGET" "")"
-SSH_KEY="$(resolve_compat_env "TWINEVIA_SSH_KEY" "BETA_SIGNOFF_SSH_KEY" "$HOME/.ssh/itlab.key")"
-SSH_PORT="$(resolve_compat_env "TWINEVIA_SSH_PORT" "BETA_SIGNOFF_SSH_PORT" "22")"
-APP_ROOT="$(resolve_compat_env "TWINEVIA_APP_ROOT" "BETA_SIGNOFF_APP_ROOT" "")"
-APP_USER="$(resolve_compat_env "TWINEVIA_APP_USER" "BETA_SIGNOFF_APP_USER" "")"
-UNIT_PREFIX="$(resolve_compat_env "TWINEVIA_UNIT_PREFIX" "BETA_SIGNOFF_UNIT_PREFIX" "")"
-PROXY_CONFIG_PATH="$(resolve_compat_env "TWINEVIA_PROXY_CONFIG_PATH" "BETA_CUTOVER_PROXY_CONFIG" "")"
+HOST="${TWINEVIA_PUBLIC_HOST:-www.twinevia.com}"
+SSH_TARGET="${TWINEVIA_SSH_TARGET:-}"
+SSH_KEY="${TWINEVIA_SSH_KEY:-$HOME/.ssh/itlab.key}"
+SSH_PORT="${TWINEVIA_SSH_PORT:-22}"
+APP_ROOT="${TWINEVIA_APP_ROOT:-}"
+APP_USER="${TWINEVIA_APP_USER:-}"
+UNIT_PREFIX="${TWINEVIA_UNIT_PREFIX:-}"
+PROXY_CONFIG_PATH="${TWINEVIA_PROXY_CONFIG_PATH:-}"
 resolve_default_deploy_branch() {
   local symbolic_branch
   local head_sha
@@ -73,14 +54,13 @@ resolve_default_deploy_branch() {
 }
 
 DEFAULT_BRANCH="$(resolve_default_deploy_branch)"
-DEPLOY_BRANCH="$(resolve_compat_env "TWINEVIA_DEPLOY_BRANCH" "BETA_DEPLOY_BRANCH" "${DEFAULT_BRANCH}")"
-DEPLOY_TRACKING="$(resolve_compat_env "TWINEVIA_DEPLOY_TRACKING" "BETA_DEPLOY_TRACKING" "")"
+DEPLOY_BRANCH="${TWINEVIA_DEPLOY_BRANCH:-${DEFAULT_BRANCH}}"
+DEPLOY_TRACKING="${TWINEVIA_DEPLOY_TRACKING:-}"
 RUN_ID=""
 ORG_SLUG=""
 FREEZE_NOTE=""
 RUN_LOCAL_GATE=1
 RUN_DEPLOY=0
-CANONICALIZE_HOST=0
 EMPTY_ARG_PLACEHOLDER="__TWINEVIA_EMPTY__"
 
 usage() {
@@ -99,7 +79,6 @@ Options:
   --run-id RUN_ID         Artifact run id. Defaults to timestamp.
   --deploy-branch BRANCH  Expected live checkout branch. Defaults to the current local branch when resolvable.
   --deploy-tracking REF   Expected live tracking ref. Defaults to origin/<deploy-branch>.
-  --canonicalize-host     Migrate a legacy /opt/sms-saas runtime to /opt/twinevia-saas once before deploy.
   --freeze-note TEXT      Operator note saved with the cutover artifacts.
   --skip-local-gate       Skip ./run/public_readiness_local.sh.
   --deploy                Perform the live in-place deploy after backups.
@@ -110,9 +89,9 @@ Environment:
   TWINEVIA_SSH_TARGET       Required SSH target for remote cutover work.
   TWINEVIA_SSH_KEY          SSH identity file. Default: $HOME/.ssh/itlab.key
   TWINEVIA_SSH_PORT         SSH port. Default: 22
-  TWINEVIA_APP_ROOT         Optional remote app root override. Auto-detects /opt/twinevia-saas then /opt/sms-saas.
+  TWINEVIA_APP_ROOT         Optional remote app root override. Defaults to /opt/twinevia-saas.
   TWINEVIA_APP_USER         Optional remote app user override.
-  TWINEVIA_UNIT_PREFIX      Optional remote unit prefix override. Auto-detects twinevia-saas then sms-saas.
+  TWINEVIA_UNIT_PREFIX      Optional remote unit prefix override. Defaults to twinevia-saas.
   TWINEVIA_PROXY_CONFIG_PATH Optional reverse-proxy config path to copy in addition to nginx -T output.
 EOF
 }
@@ -134,10 +113,6 @@ while [[ $# -gt 0 ]]; do
     --deploy-tracking)
       DEPLOY_TRACKING="${2:-}"
       shift 2
-      ;;
-    --canonicalize-host)
-      CANONICALIZE_HOST=1
-      shift
       ;;
     --freeze-note)
       FREEZE_NOTE="${2:-}"
@@ -238,8 +213,6 @@ resolve_remote_app_root() {
       printf '%s' \"\${active_root}\"
     elif [ -d /opt/twinevia-saas/.git ]; then
       printf /opt/twinevia-saas
-    elif [ -d /opt/sms-saas/.git ]; then
-      printf /opt/sms-saas
     else
       printf /opt/twinevia-saas
     fi
@@ -259,7 +232,7 @@ resolve_remote_app_user() {
       return
     fi
   fi
-  ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; elif id -u smsadmin >/dev/null 2>&1; then printf smsadmin; else printf twinevia; fi"
+  ssh_run "if id -u twinevia >/dev/null 2>&1; then printf twinevia; else printf twinevia; fi"
 }
 
 resolve_remote_unit_prefix() {
@@ -267,7 +240,7 @@ resolve_remote_unit_prefix() {
     printf '%s\n' "${UNIT_PREFIX}"
     return
   fi
-  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; elif systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then printf sms-saas; else printf twinevia-saas; fi"
+  ssh_run "if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then printf twinevia-saas; else printf twinevia-saas; fi"
 }
 
 APP_ROOT="$(resolve_remote_app_root)"
@@ -343,10 +316,6 @@ resolve_app_user() {
   fi
   if id -u twinevia >/dev/null 2>&1; then
     printf 'twinevia\n'
-    return
-  fi
-  if id -u smsadmin >/dev/null 2>&1; then
-    printf 'smsadmin\n'
     return
   fi
   printf 'twinevia\n'
@@ -434,7 +403,6 @@ printf '%s\n' "${UNIT_PREFIX}" > "${RUN_DIR}/unit_prefix.txt"
 printf '%s\n' "${DEPLOY_BRANCH}" > "${RUN_DIR}/deploy_branch.txt"
 printf '%s\n' "${DEPLOY_TRACKING}" > "${RUN_DIR}/deploy_tracking.txt"
 printf '%s\n' "${FREEZE_NOTE}" > "${RUN_DIR}/freeze_note.txt"
-printf '%s\n' "0" > "${RUN_DIR}/canonicalized.txt"
 ssh_run "sudo systemctl show twinevia-saas.service -p User -p Group -p WorkingDirectory" > "${RUN_DIR}/runtime_layout.pre.txt"
 
 capture_remote_text_file "${REMOTE_BACKUP_DIR}/app.env" "${RUN_DIR}/app.env"
@@ -454,102 +422,12 @@ if ssh_run "sudo test -f \"${REMOTE_BACKUP_DIR}/redis.note.txt\""; then
   capture_remote_text_file "${REMOTE_BACKUP_DIR}/redis.note.txt" "${RUN_DIR}/redis.note.txt"
 fi
 
-if [[ "${CANONICALIZE_HOST}" -eq 1 ]]; then
-  CANONICALIZATION_RESULT="$(ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- \
-    "${APP_ROOT}" \
-    "${APP_USER_ARG}" <<'REMOTE'
-set -euo pipefail
-
-APP_ROOT="$1"
-APP_USER_OVERRIDE="$2"
-TARGET_ROOT="/opt/twinevia-saas"
-
-if [[ "${APP_USER_OVERRIDE}" == "__TWINEVIA_EMPTY__" ]]; then
-  APP_USER_OVERRIDE=""
-fi
-
-resolve_app_user() {
-  if [[ -n "${APP_USER_OVERRIDE}" ]]; then
-    printf '%s\n' "${APP_USER_OVERRIDE}"
-    return
-  fi
-  if [[ -d "${APP_ROOT}" ]]; then
-    owner="$(stat -c '%U' "${APP_ROOT}" 2>/dev/null || true)"
-    if [[ -n "${owner}" && "${owner}" != "root" ]]; then
-      printf '%s\n' "${owner}"
-      return
-    fi
-  fi
-  if id -u twinevia >/dev/null 2>&1; then
-    printf 'twinevia\n'
-    return
-  fi
-  if id -u smsadmin >/dev/null 2>&1; then
-    printf 'smsadmin\n'
-    return
-  fi
-  printf 'twinevia\n'
-}
-
-CURRENT_APP_USER="$(resolve_app_user)"
-
-if [[ "${APP_ROOT}" != "/opt/sms-saas" ]]; then
-  printf 'canonicalized=0\n'
-  printf 'app_root=%s\n' "${APP_ROOT}"
-  printf 'app_user=%s\n' "${CURRENT_APP_USER}"
-  exit 0
-fi
-
-if ! getent group twinevia >/dev/null 2>&1; then
-  sudo addgroup --system twinevia
-fi
-if ! id -u twinevia >/dev/null 2>&1; then
-  sudo adduser --system --ingroup twinevia --home "${TARGET_ROOT}" --shell /bin/bash twinevia
-fi
-
-sudo install -d -o twinevia -g twinevia "${TARGET_ROOT}"
-if command -v rsync >/dev/null 2>&1; then
-  sudo rsync -a --delete "${APP_ROOT}/" "${TARGET_ROOT}/"
-else
-  sudo bash -lc "shopt -s dotglob nullglob; cp -a \"${APP_ROOT}\"/* \"${TARGET_ROOT}\"/"
-fi
-sudo chown -R twinevia:twinevia "${TARGET_ROOT}"
-sudo chown root:twinevia "${TARGET_ROOT}/.env"
-sudo chmod 660 "${TARGET_ROOT}/.env"
-
-sudo APP_ROOT="${TARGET_ROOT}" APP_USER="twinevia" APP_GROUP="twinevia" "${TARGET_ROOT}/deploy/install_saas.sh"
-
-printf 'canonicalized=1\n'
-printf 'app_root=%s\n' "${TARGET_ROOT}"
-printf 'app_user=twinevia\n'
-REMOTE
-)"
-
-  CANONICALIZED_VALUE="$(printf '%s\n' "${CANONICALIZATION_RESULT}" | awk -F= '/^canonicalized=/{print $2}' | tail -n1)"
-  POST_CANONICAL_APP_ROOT="$(printf '%s\n' "${CANONICALIZATION_RESULT}" | awk -F= '/^app_root=/{print $2}' | tail -n1)"
-  POST_CANONICAL_APP_USER="$(printf '%s\n' "${CANONICALIZATION_RESULT}" | awk -F= '/^app_user=/{print $2}' | tail -n1)"
-
-  if [[ -z "${CANONICALIZED_VALUE}" || -z "${POST_CANONICAL_APP_ROOT}" || -z "${POST_CANONICAL_APP_USER}" ]]; then
-    echo "ERROR: canonical host migration did not return the expected metadata." >&2
-    exit 1
-  fi
-
-  printf '%s\n' "${CANONICALIZED_VALUE}" > "${RUN_DIR}/canonicalized.txt"
-  APP_ROOT="${POST_CANONICAL_APP_ROOT}"
-  APP_USER="${POST_CANONICAL_APP_USER}"
-  APP_USER_ARG="${APP_USER}"
-  UNIT_PREFIX="$(resolve_remote_unit_prefix)"
-fi
-
 printf '%s\n' "${APP_ROOT}" > "${RUN_DIR}/post_app_root.txt"
 printf '%s\n' "${APP_USER}" > "${RUN_DIR}/post_app_user.txt"
 printf '%s\n' "${APP_ROOT}" > "${RUN_DIR}/app_root.txt"
 printf '%s\n' "${APP_USER}" > "${RUN_DIR}/app_user.txt"
 printf '%s\n' "${UNIT_PREFIX}" > "${RUN_DIR}/unit_prefix.txt"
 ssh_run "sudo systemctl show twinevia-saas.service -p User -p Group -p WorkingDirectory" > "${RUN_DIR}/runtime_layout.post.txt"
-if [[ "${CANONICALIZE_HOST}" -eq 1 ]]; then
-  assert_runtime_layout "${RUN_DIR}/runtime_layout.post.txt" "twinevia" "/opt/twinevia-saas" "Canonical host migration"
-fi
 
 if [[ "${RUN_DEPLOY}" -eq 1 ]]; then
   ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" bash -s -- \
@@ -584,10 +462,6 @@ resolve_app_user() {
     printf 'twinevia\n'
     return
   fi
-  if id -u smsadmin >/dev/null 2>&1; then
-    printf 'smsadmin\n'
-    return
-  fi
   printf 'twinevia\n'
 }
 
@@ -603,7 +477,7 @@ REMOTE
 
 fi
 
-if [[ "${RUN_DEPLOY}" -eq 1 || "${CANONICALIZE_HOST}" -eq 1 ]]; then
+if [[ "${RUN_DEPLOY}" -eq 1 ]]; then
   run_and_capture post_snapshot "${REPO_ROOT}/run/public_readiness_production_snapshot.sh" \
     --run-id "${RUN_ID}" \
     --org-slug "${ORG_SLUG}" \
@@ -627,8 +501,6 @@ Expected tracking: ${DEPLOY_TRACKING}
 Remote backup dir: ${REMOTE_BACKUP_DIR}
 Local gate run: ${RUN_LOCAL_GATE}
 Deploy run: ${RUN_DEPLOY}
-Canonicalize host requested: ${CANONICALIZE_HOST}
-Canonicalize host ran: $(cat "${RUN_DIR}/canonicalized.txt")
 Freeze note: ${FREEZE_NOTE}
 EOF
 

@@ -203,10 +203,12 @@ test('platform-managed staff pending setup stays read-only and points to owner s
   });
 
   await expect(page.locator('.setup-shell')).toBeVisible();
-  await expect(page.locator('.setup-steps')).toBeVisible();
-  await expect(page.locator('.setup-step.is-current')).toHaveCount(1);
+  await expect(page.locator('.setup-steps')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
-  await expect(page.getByText('The owner is still finishing billing or compliance.')).toBeVisible();
+  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
+  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('The owner is still finishing billing or compliance.');
+  await expect(page.locator('body')).not.toContainText('Billing status:');
   await expect(page.locator('.setup-panel form')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Legal business name');
   await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
@@ -224,11 +226,13 @@ test('customer-managed staff pending setup stays read-only and points to externa
   });
 
   await expect(page.locator('.setup-shell')).toBeVisible();
-  await expect(page.locator('.setup-steps')).toBeVisible();
-  await expect(page.locator('.setup-step.is-current')).toHaveCount(1);
+  await expect(page.locator('.setup-steps')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
-  await expect(page.getByText('customer-managed Twilio connection')).toBeVisible();
-  await expect(page.getByText('External messaging:')).toBeVisible();
+  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
+  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('customer-managed Twilio connection');
+  await expect(page.locator('body')).not.toContainText('External messaging:');
+  await expect(page.locator('body')).not.toContainText('Billing status:');
   await expect(page.locator('.setup-panel form')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Legal business name');
   await expect(page.locator('body')).not.toContainText('Submit for Twilio review');

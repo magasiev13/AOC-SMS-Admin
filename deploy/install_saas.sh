@@ -20,15 +20,6 @@ RESTART_SUDOERS_DEST="${RESTART_SUDOERS_DEST:-/etc/sudoers.d/twinevia-saas-resta
 VISUDO_BIN="${VISUDO_BIN:-/usr/sbin/visudo}"
 LOG_DIR="${LOG_DIR:-/var/log/twinevia-saas}"
 REQUIRED_PYTHON="3.11"
-LEGACY_SAAS_RUNTIME_UNITS=(
-  "sms-saas"
-  "sms-saas-worker"
-  "sms-saas-scheduler.timer"
-  "sms-saas-billing-reconcile.timer"
-  "sms-saas-platform-restart-queue.timer"
-  "sms-saas-a2p-reconcile.timer"
-)
-
 resolve_app_user() {
   if [[ -n "${APP_USER}" ]]; then
     printf '%s\n' "${APP_USER}"
@@ -36,10 +27,6 @@ resolve_app_user() {
   fi
   if id -u twinevia >/dev/null 2>&1; then
     printf 'twinevia\n'
-    return
-  fi
-  if id -u smsadmin >/dev/null 2>&1; then
-    printf 'smsadmin\n'
     return
   fi
   printf 'twinevia\n'
@@ -57,10 +44,6 @@ resolve_app_group() {
   fi
   if getent group twinevia >/dev/null 2>&1; then
     printf 'twinevia\n'
-    return
-  fi
-  if getent group smsadmin >/dev/null 2>&1; then
-    printf 'smsadmin\n'
     return
   fi
   printf '%s\n' "${resolved_user}"
@@ -132,24 +115,6 @@ resolve_health_host() {
     return
   fi
   printf '127.0.0.1\n'
-}
-
-retire_legacy_saas_runtime() {
-  local legacy_units=()
-  local unit
-
-  for unit in "${LEGACY_SAAS_RUNTIME_UNITS[@]}"; do
-    if systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]"; then
-      legacy_units+=("${unit}")
-    fi
-  done
-
-  if [[ ${#legacy_units[@]} -eq 0 ]]; then
-    return
-  fi
-
-  echo "==> Retiring legacy sms-saas runtime units"
-  sudo systemctl disable --now "${legacy_units[@]}" || true
 }
 
 check_saas_health() {
@@ -472,7 +437,6 @@ install_repo_file "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${AP
 install_repo_file "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh" 0755
 
 sudo systemctl daemon-reload
-retire_legacy_saas_runtime
 sudo systemctl enable --now twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
 
 echo "==> Verifying SaaS restart helper"

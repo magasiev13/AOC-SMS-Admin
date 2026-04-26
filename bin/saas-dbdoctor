@@ -21,10 +21,6 @@ resolve_saas_app_root() {
     printf '/opt/twinevia-saas\n'
     return
   fi
-  if [[ -x "/opt/sms-saas/venv/bin/python" ]]; then
-    printf '/opt/sms-saas\n'
-    return
-  fi
   printf '/opt/twinevia-saas\n'
 }
 

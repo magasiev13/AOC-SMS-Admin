@@ -93,20 +93,6 @@
                     </div>
                     {% endif %}
 
-                    {% if not provider_is_customer_managed and available_subaccount_numbers %}
-                    <div class="platform-note mb-4" role="note">
-                        <div class="platform-note__title">Reusable subaccount numbers found</div>
-                        <div class="platform-note__copy">
-                            Twinevia found {{ available_subaccount_numbers|length }} SMS-capable number{% if available_subaccount_numbers|length != 1 %}s{% endif %} already owned by this organization’s Twilio subaccount. Choose one here before buying a new number.
-                        </div>
-                    </div>
-                    {% elif not provider_is_customer_managed and available_subaccount_numbers_error %}
-                    <div class="platform-note platform-note--warning mb-4" role="status">
-                        <div class="platform-note__title">Subaccount number discovery</div>
-                        <div class="platform-note__copy">{{ available_subaccount_numbers_error }}</div>
-                    </div>
-                    {% endif %}
-
                     <div class="platform-section-header mb-4">
                         <div>
                             <div class="platform-shell__eyebrow mb-2">{{ 'Customer-managed Twilio' if provider_is_customer_managed else 'Platform-managed Twilio' }}</div>
@@ -240,6 +226,23 @@
                                     `auto_buy` remains available, but when this subaccount already owns SMS numbers the app can guide you to reuse one first.
                                 </div>
                             </div>
+                            {% if available_subaccount_numbers %}
+                            <div class="col-12">
+                                <div class="platform-note mb-0" role="note">
+                                    <div class="platform-note__title">Reusable subaccount numbers found</div>
+                                    <div class="platform-note__copy">
+                                        Twinevia found {{ available_subaccount_numbers|length }} SMS-capable number{% if available_subaccount_numbers|length != 1 %}s{% endif %} already owned by this organization’s Twilio subaccount. Choose one here before buying a new number.
+                                    </div>
+                                </div>
+                            </div>
+                            {% elif available_subaccount_numbers_error %}
+                            <div class="col-12">
+                                <div class="platform-note platform-note--warning mb-0" role="status">
+                                    <div class="platform-note__title">Subaccount number discovery</div>
+                                    <div class="platform-note__copy">{{ available_subaccount_numbers_error }}</div>
+                                </div>
+                            </div>
+                            {% endif %}
                             <div class="col-md-6" data-existing-subaccount-number-field {% if not show_existing_subaccount_number_field %}hidden{% endif %}>
                                 <label class="form-label" for="existing_subaccount_phone_number_sid">Existing Subaccount Number</label>
                                 <select

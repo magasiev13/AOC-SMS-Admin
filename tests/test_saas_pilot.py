@@ -684,7 +684,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
         )
 
-    def test_customer_managed_staff_pending_setup_mentions_external_activation(self) -> None:
+    def test_customer_managed_staff_pending_setup_stays_simple(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(
             slug="customer-managed-pending-copy",
             username="customer-managed-pending-copy",
@@ -696,8 +696,11 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup/pending")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"customer-managed Twilio connection", response.data)
-        self.assertIn(b"External messaging:", response.data)
+        self.assertIn(b"This workspace is still being activated.", response.data)
+        self.assertIn(b"No action is needed from this account right now.", response.data)
+        self.assertNotIn(b"customer-managed Twilio connection", response.data)
+        self.assertNotIn(b"External messaging:", response.data)
+        self.assertNotIn(b"Billing status:", response.data)
         self.assertNotIn(b"Legal business name", response.data)
         self.assertNotIn(b"Submit for Twilio review", response.data)
 
@@ -1025,6 +1028,21 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertNotIn(b"Start Subscription", response.data)
         self.assertNotIn(b"Open Billing Portal", response.data)
 
+    def test_owner_dashboard_hides_billing_status_and_org_slug_metadata(self) -> None:
+        self.subscription.status = "trialing"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'href="/billing"', response.data)
+        self.assertNotIn(b"Trial active", response.data)
+        self.assertNotIn(b"Subscription active", response.data)
+        self.assertNotIn(b"Complimentary billing", response.data)
+        self.assertNotIn(b"Sending enabled", response.data)
+        self.assertNotIn(b"workspace-summary__meta", response.data)
+
     def test_owner_dashboard_shows_pending_a2p_launchpad_when_messaging_is_not_live(self) -> None:
         self.subscription.status = "trialing"
         self.messaging_profile.provider_status = "pending"
@@ -1057,7 +1075,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Carrier review in progress", response.data)
         self.assertIn(b"Live SMS is paused.", response.data)
-        self.assertIn(b"Configure keyword automation", response.data)
+        self.assertIn(b"Workspace activation in progress", response.data)
+        self.assertNotIn(b"Configure keyword automation", response.data)
+        self.assertNotIn(b"Billing active", response.data)
+        self.assertNotIn(b"Brand pending-review", response.data)
         self.assertIn(b"SMS Pending Approval", response.data)
 
     def test_staff_cannot_access_billing_routes(self) -> None:
@@ -1250,6 +1271,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         dashboard_response = self.client.get("/dashboard")
         self.assertEqual(dashboard_response.status_code, 200)
         self.assertNotIn(b"Restart SaaS Services", dashboard_response.data)
+        self.assertNotIn(b'href="/billing"', dashboard_response.data)
+        self.assertNotIn(b"Activate Subscription", dashboard_response.data)
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_uses_subscription_status(self, mock_stripe_module) -> None:
@@ -2082,7 +2105,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )
@@ -2145,7 +2168,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )
@@ -2459,7 +2482,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             campaign_failure_code=None,
             brand_registration_sid="BNcust0001",
             brand_status="verified",
-            current_phone_sms_url="https://sms.theitwingman.com/webhooks/twilio/inbound",
+            current_phone_sms_url="https://legacy.example.com/webhooks/twilio/inbound",
             current_phone_sms_method="POST",
             current_service_use_inbound_webhook_on_number=False,
         )

@@ -95,8 +95,7 @@ If platform restart control is enabled:
 
 ### Legacy compatibility path
 
-- the older `/opt/sms-admin` runtime still uses `ADMIN_PASSWORD` for first-admin bootstrap
-- the legacy password-cleanup behavior remains tied to that runtime family
+The old public legacy runtime is retired. `ADMIN_PASSWORD` cleanup guidance applies to SaaS bootstrap and local compatibility workflows only.
 
 ## Operational Checklist
 
