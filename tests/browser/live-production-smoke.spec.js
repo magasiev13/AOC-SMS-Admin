@@ -14,6 +14,44 @@ const platformPassword = process.env.TWINEVIA_PLATFORM_PASSWORD;
 
 test.describe.configure({ mode: 'serial' });
 
+async function waitForCurrentNavigation(page) {
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForLoadState('load');
+}
+
+function expectSuccessfulDocumentResponse(response) {
+  expect(response).not.toBeNull();
+  expect(response.status()).toBe(200);
+}
+
+async function gotoAndExpectOk(page, path) {
+  await waitForCurrentNavigation(page);
+  const response = await page.goto(path, { waitUntil: 'load' });
+  expectSuccessfulDocumentResponse(response);
+  return response;
+}
+
+async function clickWorkspaceLinkAndExpectOk(page, linkName, pathname) {
+  await waitForCurrentNavigation(page);
+  const origin = new URL(page.url()).origin;
+  const responsePromise = page.waitForResponse((response) => {
+    const responseUrl = new URL(response.url());
+    return (
+      responseUrl.origin === origin
+      && responseUrl.pathname === pathname
+      && response.request().method() === 'GET'
+      && response.request().resourceType() === 'document'
+    );
+  });
+
+  await page.getByRole('link', { name: linkName }).click();
+  const response = await responsePromise;
+  expectSuccessfulDocumentResponse(response);
+  await expect(page).toHaveURL(new RegExp(`${pathname.replace('/', '\\/')}($|\\?)`));
+  await waitForCurrentNavigation(page);
+  return response;
+}
+
 test.beforeEach(async ({ page }) => {
   installFailureDiagnostics(page);
 });
@@ -50,30 +88,32 @@ test('public auth surfaces and health respond on the live host', async ({ page }
 test('control owner account reaches the live readiness surfaces without mutating state', async ({ page }) => {
   await login(page, ownerUsername, ownerPassword);
   await expect(page).toHaveURL(/\/(setup|dashboard)(\?|$)/);
+  await waitForCurrentNavigation(page);
 
-  let response = await page.goto('/billing');
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  if (/\/dashboard(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search)) {
+    await clickWorkspaceLinkAndExpectOk(page, 'Billing', '/billing');
+  } else {
+    await gotoAndExpectOk(page, '/billing');
+  }
   await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
 
-  response = await page.goto('/dashboard');
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  await gotoAndExpectOk(page, '/dashboard');
   await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
-  await expect(page.getByText('Live SMS is paused.')).toBeVisible();
-  await expect(page.getByText(/Submitted to Twilio|Carrier review in progress|Await Twilio review/).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Send SMS Blast' })).toBeVisible();
+  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(page.locator('.setup-steps')).toHaveCount(0);
+  await expect(page.locator('.workspace-summary__meta')).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('Sending enabled');
+  await expect(page.locator('body')).not.toContainText('Trial active');
+  await expect(page.locator('body')).not.toContainText('Subscription active');
 });
 
 test('platform admin can inspect the control org without changing live state', async ({ page }) => {
   await login(page, platformUsername, platformPassword, '/platform/login');
 
-  let response = await page.goto('/platform');
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  let response = await gotoAndExpectOk(page, '/platform');
 
-  response = await page.goto('/platform/organizations');
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  response = await gotoAndExpectOk(page, '/platform/organizations');
 
   const organization = organizationRow(page, controlOrganizationName);
   await expect(organization).toBeVisible();
@@ -81,16 +121,12 @@ test('platform admin can inspect the control org without changing live state', a
   const messagingHref = await organization.locator('a[href*="/messaging"]').filter({ hasText: /Manage provider/i }).first().getAttribute('href');
   expect(messagingHref).toBeTruthy();
 
-  response = await page.goto(messagingHref);
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  response = await gotoAndExpectOk(page, messagingHref);
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.getByText(/Platform-managed Twilio|Customer-managed Twilio/).first()).toBeVisible();
   await expect(page.getByLabel('Service Address Line 1')).toBeVisible();
 
-  response = await page.goto(`${messagingHref}/onboarding`);
-  expect(response).not.toBeNull();
-  expect(response.status()).toBe(200);
+  response = await gotoAndExpectOk(page, `${messagingHref}/onboarding`);
   await expect(page.locator('.platform-shell__summary')).toBeVisible();
   await expect(page.getByText('Registration settings')).toBeVisible();
   await expect(page.getByText('Recent Twilio activity')).toBeVisible();
