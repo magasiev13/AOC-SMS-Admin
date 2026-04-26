@@ -27,6 +27,9 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
 
   await page.goto('/dashboard');
   await expect(page.locator('.workspace-summary')).toBeVisible();
+  await expect(page.locator('.workspace-summary__meta')).toHaveCount(0);
+  await expect(page.locator('body')).not.toContainText('Sending enabled');
+  await expect(page.locator('body')).not.toContainText('Trial active');
   await expect(page.locator('.workspace-command-layout')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Send messages and review replies in one workspace.' })).toHaveCount(0);
 

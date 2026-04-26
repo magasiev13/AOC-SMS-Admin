@@ -1098,58 +1098,6 @@ def _organization_uses_customer_managed_messaging(organization: Organization | N
     return _organization_provider_mode(organization) == "customer_managed"
 
 
-def _workspace_activation_tasks(
-    *,
-    subscription_view: dict,
-    team_ready: bool,
-    total_recipients: int,
-    keyword_rule_count: int,
-    survey_flow_count: int,
-    event_count: int,
-) -> list[dict]:
-    intake_ready = survey_flow_count > 0 or event_count > 0
-    intake_detail = (
-        f'{survey_flow_count} survey flow(s) and {event_count} event(s) ready.'
-        if intake_ready
-        else 'Create a survey flow or event intake before live SMS approval lands.'
-    )
-    return [
-        {
-            'label': 'Billing active',
-            'detail': subscription_view['title'],
-            'complete': subscription_view['can_send'],
-        },
-        {
-            'label': 'Invite the first staff member',
-            'detail': 'Optional for owner-only testing. Add staff before team launch.' if not team_ready else 'Team access is already in place.',
-            'complete': team_ready,
-        },
-        {
-            'label': 'Prepare the audience',
-            'detail': (
-                f'{total_recipients} recipient(s) already loaded.'
-                if total_recipients > 0
-                else 'Import already-consented contacts or collect event registrations now.'
-            ),
-            'complete': total_recipients > 0,
-        },
-        {
-            'label': 'Configure keyword automation',
-            'detail': (
-                f'{keyword_rule_count} keyword rule(s) ready.'
-                if keyword_rule_count > 0
-                else 'Add keyword replies so inbound opt-in and help traffic is ready on day one.'
-            ),
-            'complete': keyword_rule_count > 0,
-        },
-        {
-            'label': 'Set up survey or event intake',
-            'detail': intake_detail,
-            'complete': intake_ready,
-        },
-    ]
-
-
 def _current_organization_id() -> int | None:
     return getattr(current_user, 'organization_id', None)
 
@@ -2304,7 +2252,7 @@ def _surface_view(
 def _organization_meta_items(organization: Organization | None) -> list[str]:
     if organization is None:
         return []
-    return [organization.slug]
+    return []
 
 
 def _community_form_surface_view(member: CommunityMember | None) -> dict:
@@ -2522,7 +2470,7 @@ def _test_recipients_surface_view(
         eyebrow='Workspace testing',
         title='Internal test recipients',
         copy='Save the numbers owners use for dashboard test sends and keep the list current.',
-        meta=[organization.slug],
+        meta=[],
         stats=[
             _surface_stat('Saved', saved_recipient_count, f'Up to {max_test_recipients} recipients'),
             _surface_stat('Recent changes', recent_change_count, 'Latest audit entries shown'),
@@ -2559,8 +2507,6 @@ def _team_invite_surface_view() -> dict:
 def _workspace_summary_view(
     *,
     organization: Organization | None,
-    subscription_view: dict,
-    a2p_status_view: dict | None = None,
     can_send_messages: bool = False,
     send_disabled_reason: str | None = None,
     total_recipients: int | None = None,
@@ -2578,17 +2524,11 @@ def _workspace_summary_view(
         if send_disabled_reason
         else 'Send updates, review replies, and handle setup from the same workspace.'
     )
-    badges = [
-        _badge_view(subscription_view['title'], f"bg-{subscription_view['badge']}"),
-        _badge_view(
-            'Sending enabled' if can_send_messages else 'Sending paused',
-            'bg-light text-dark',
-        ),
-    ]
-    if a2p_status_view and a2p_status_view.get('show_wait_state'):
+    badges = []
+    if not can_send_messages:
         badges.append(
             _badge_view(
-                f"A2P {a2p_status_view['stage'].replace('_', ' ')}",
+                'Sending paused',
                 'bg-light text-dark',
             )
         )
@@ -2597,7 +2537,7 @@ def _workspace_summary_view(
         'eyebrow': 'Workspace',
         'title': organization_name,
         'copy': readiness_summary,
-        'meta': [organization.slug] if organization is not None else [],
+        'meta': [],
         'badges': badges,
         'stats': [],
     }
@@ -3779,21 +3719,9 @@ def dashboard():
             failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
 
         chart_data = build_chart_data()
-        staff_membership_count = 0
-        pending_staff_invitation_count = 0
         users_missing_email = []
         saved_test_recipients = []
         if organization is not None:
-            staff_membership_count = (
-                OrganizationMembership.query
-                .filter_by(organization_id=organization.id, role='staff')
-                .count()
-            )
-            pending_staff_invitation_count = (
-                OrganizationInvitation.query
-                .filter_by(organization_id=organization.id, role='staff', status='pending')
-                .count()
-            )
             users_missing_email = (
                 AppUser.query
                 .join(OrganizationMembership, OrganizationMembership.user_id == AppUser.id)
@@ -3804,15 +3732,6 @@ def dashboard():
             )
             if saas_mode_enabled():
                 saved_test_recipients = test_recipient_view_rows(organization.id)
-        team_ready = staff_membership_count > 0 or pending_staff_invitation_count > 0
-        workspace_activation_tasks = _workspace_activation_tasks(
-            subscription_view=subscription_view,
-            team_ready=team_ready,
-            total_recipients=total_recipients,
-            keyword_rule_count=keyword_rule_count,
-            survey_flow_count=survey_flow_count,
-            event_count=event_count,
-        )
         can_send_messages = _organization_can_transmit_messages(organization) if saas_mode_enabled() else True
         send_disabled_reason = None
         if saas_mode_enabled() and organization is not None and not can_send_messages:
@@ -3840,13 +3759,10 @@ def dashboard():
             'current_subscription': subscription,
             'current_subscription_view': subscription_view,
             'a2p_status_view': a2p_status_view,
-            'workspace_activation_tasks': workspace_activation_tasks,
             'can_send_messages': can_send_messages,
             'send_disabled_reason': send_disabled_reason,
             'workspace_summary': _workspace_summary_view(
                 organization=organization,
-                subscription_view=subscription_view,
-                a2p_status_view=a2p_status_view,
                 can_send_messages=can_send_messages,
                 send_disabled_reason=send_disabled_reason,
                 total_recipients=total_recipients,
@@ -6022,18 +5938,10 @@ def setup_pending():
         abort(404)
     if getattr(current_user, 'organization_role', None) == 'owner':
         return redirect(url_for('main.setup'))
-    messaging_profile = organization.messaging_profile
-    onboarding = organization.a2p_onboarding
-    a2p_status = _a2p_status_view(onboarding, messaging_profile)
 
     return render_template(
         'setup/pending.html',
         organization=organization,
-        messaging_profile=messaging_profile,
-        a2p_status=a2p_status,
-        setup_is_customer_managed=_organization_uses_customer_managed_messaging(organization),
-        setup_steps=_setup_steps_view(organization),
-        setup_status=_setup_status_payload(organization),
     )
 
 
