@@ -18,8 +18,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TWINEVIA_DEPLOY_BRANCH: ${{ vars.TWINEVIA_DEPLOY_BRANCH }}
   TWINEVIA_DEPLOY_TRACKING: ${{ vars.TWINEVIA_DEPLOY_TRACKING }}
-  LEGACY_BETA_DEPLOY_BRANCH: ${{ vars.BETA_DEPLOY_BRANCH }}
-  LEGACY_BETA_DEPLOY_TRACKING: ${{ vars.BETA_DEPLOY_TRACKING }}
 
 concurrency:
   group: deploy-twinevia-production
@@ -62,20 +60,12 @@ jobs:
         env:
           TWINEVIA_SSH_KEY: ${{ secrets.TWINEVIA_SSH_KEY }}
           TWINEVIA_SSH_KNOWN_HOSTS: ${{ secrets.TWINEVIA_SSH_KNOWN_HOSTS }}
-          PILOT_VPS_HOST: ${{ secrets.PILOT_VPS_HOST }}
-          PILOT_VPS_KNOWN_HOSTS: ${{ secrets.PILOT_VPS_KNOWN_HOSTS }}
-          PILOT_VPS_SSH_KEY: ${{ secrets.PILOT_VPS_SSH_KEY }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           set -euo pipefail
 
           SSH_KEY_VALUE="${TWINEVIA_SSH_KEY:-}"
-          if [ -z "${SSH_KEY_VALUE}" ] && [ -n "${PILOT_VPS_SSH_KEY:-${VPS_SSH_KEY:-}}" ]; then
-            echo "::warning::Legacy SSH key secret in use; set TWINEVIA_SSH_KEY."
-            SSH_KEY_VALUE="${PILOT_VPS_SSH_KEY:-${VPS_SSH_KEY:-}}"
-          fi
           if [ -z "${SSH_KEY_VALUE}" ]; then
-            echo "❌ missing TWINEVIA_SSH_KEY (or legacy fallback secret)"
+            echo "❌ missing TWINEVIA_SSH_KEY"
             exit 1
           fi
 
@@ -84,12 +74,8 @@ jobs:
           chmod 600 ~/.ssh/vps_key
 
           KNOWN_HOSTS_VALUE="${TWINEVIA_SSH_KNOWN_HOSTS:-}"
-          if [ -z "${KNOWN_HOSTS_VALUE}" ] && [ -n "${PILOT_VPS_KNOWN_HOSTS:-}" ]; then
-            echo "::warning::Legacy known-hosts secret in use; set TWINEVIA_SSH_KNOWN_HOSTS."
-            KNOWN_HOSTS_VALUE="${PILOT_VPS_KNOWN_HOSTS:-}"
-          fi
           if [ -z "${KNOWN_HOSTS_VALUE}" ]; then
-            echo "❌ missing TWINEVIA_SSH_KNOWN_HOSTS (or legacy fallback secret)"
+            echo "❌ missing TWINEVIA_SSH_KNOWN_HOSTS"
             exit 1
           fi
           printf '%s\n' "${KNOWN_HOSTS_VALUE}" > ~/.ssh/known_hosts
@@ -101,35 +87,17 @@ jobs:
           WORKFLOW_DEPLOY_TRACKING: ${{ github.event.inputs.deploy_tracking }}
           TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
           TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
-          PILOT_VPS_HOST: ${{ secrets.PILOT_VPS_HOST }}
-          PILOT_VPS_USER: ${{ secrets.PILOT_VPS_USER }}
-          PILOT_VPS_PORT: ${{ secrets.PILOT_VPS_SSH_PORT }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_PORT: ${{ secrets.VPS_SSH_PORT }}
         run: |
           set -euo pipefail
 
-          VPS_USER_VALUE="${PILOT_VPS_USER:-${VPS_USER:-}}"
-          VPS_PORT_VALUE="${TWINEVIA_SSH_PORT:-${PILOT_VPS_PORT:-${VPS_PORT:-22}}}"
-          REQUIRED_BRANCH="${WORKFLOW_DEPLOY_BRANCH:-${TWINEVIA_DEPLOY_BRANCH:-${LEGACY_BETA_DEPLOY_BRANCH:-main}}}"
-          REQUIRED_TRACKING="${WORKFLOW_DEPLOY_TRACKING:-${TWINEVIA_DEPLOY_TRACKING:-${LEGACY_BETA_DEPLOY_TRACKING:-origin/${REQUIRED_BRANCH}}}}"
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          REQUIRED_BRANCH="${WORKFLOW_DEPLOY_BRANCH:-${TWINEVIA_DEPLOY_BRANCH:-main}}"
+          REQUIRED_TRACKING="${WORKFLOW_DEPLOY_TRACKING:-${TWINEVIA_DEPLOY_TRACKING:-origin/${REQUIRED_BRANCH}}}"
           SSH_TARGET_VALUE="${TWINEVIA_SSH_TARGET:-}"
 
-          if [ -z "${WORKFLOW_DEPLOY_BRANCH:-}" ] && [ -z "${TWINEVIA_DEPLOY_BRANCH:-}" ] && [ -n "${LEGACY_BETA_DEPLOY_BRANCH:-}" ]; then
-            echo "::warning::BETA_DEPLOY_BRANCH is deprecated; use TWINEVIA_DEPLOY_BRANCH."
-          fi
-          if [ -z "${WORKFLOW_DEPLOY_TRACKING:-}" ] && [ -z "${TWINEVIA_DEPLOY_TRACKING:-}" ] && [ -n "${LEGACY_BETA_DEPLOY_TRACKING:-}" ]; then
-            echo "::warning::BETA_DEPLOY_TRACKING is deprecated; use TWINEVIA_DEPLOY_TRACKING."
-          fi
-
           if [ -z "${SSH_TARGET_VALUE}" ]; then
-            if [ -n "${PILOT_VPS_HOST:-}" ] && [ -n "${VPS_USER_VALUE}" ]; then
-              echo "::warning::PILOT_VPS_HOST/PILOT_VPS_USER are deprecated; use TWINEVIA_SSH_TARGET."
-              SSH_TARGET_VALUE="${VPS_USER_VALUE}@${PILOT_VPS_HOST}"
-            else
-              echo "❌ missing TWINEVIA_SSH_TARGET (or legacy fallback host/user secrets)"
-              exit 1
-            fi
+            echo "❌ missing TWINEVIA_SSH_TARGET"
+            exit 1
           fi
 
           echo "==> Production deploy source"
@@ -137,7 +105,7 @@ jobs:
           echo "Tracking: ${REQUIRED_TRACKING}"
           echo "SSH target: ${SSH_TARGET_VALUE}"
 
-          ssh -p "${VPS_PORT_VALUE}" \
+          ssh -p "${SSH_PORT_VALUE}" \
             -i ~/.ssh/vps_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
@@ -146,9 +114,8 @@ jobs:
 
           REQUIRED_BRANCH="$1"
           REQUIRED_TRACKING="$2"
-          APP_ROOT="${APP_ROOT:-}"
-          APP_USER="${APP_USER:-}"
-          CURRENT_UNIT_PREFIX=""
+          APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
+          APP_USER="${APP_USER:-twinevia}"
           TWINEVIA_SAAS_DBDOCTOR_BIN="/usr/local/bin/twinevia-saas-dbdoctor"
           TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="/usr/local/bin/saas-dbdoctor"
 
@@ -166,10 +133,6 @@ jobs:
               printf 'twinevia\n'
               return
             fi
-            if id -u smsadmin >/dev/null 2>&1; then
-              printf 'smsadmin\n'
-              return
-            fi
             printf 'twinevia\n'
           }
 
@@ -184,32 +147,11 @@ jobs:
               printf '%s\n' "${active_root}"
               return
             fi
-            active_root="$(systemctl show sms-saas.service -p WorkingDirectory --value 2>/dev/null || true)"
-            if [ -n "${active_root}" ] && [ -d "${active_root}/.git" ]; then
-              printf '%s\n' "${active_root}"
-              return
-            fi
             if [ -d /opt/twinevia-saas/.git ]; then
               printf '/opt/twinevia-saas\n'
               return
             fi
-            if [ -d /opt/sms-saas/.git ]; then
-              printf '/opt/sms-saas\n'
-              return
-            fi
             printf '/opt/twinevia-saas\n'
-          }
-
-          resolve_runtime_prefix() {
-            if systemctl list-unit-files twinevia-saas.service --no-legend | grep -q '^twinevia-saas.service[[:space:]]'; then
-              printf 'twinevia-saas\n'
-              return
-            fi
-            if systemctl list-unit-files sms-saas.service --no-legend | grep -q '^sms-saas.service[[:space:]]'; then
-              printf 'sms-saas\n'
-              return
-            fi
-            printf 'twinevia-saas\n'
           }
 
           resolve_health_host() {
@@ -228,7 +170,6 @@ jobs:
           echo "==> Production preflight"
           APP_ROOT="$(resolve_app_root)"
           APP_USER="$(resolve_app_user)"
-          CURRENT_UNIT_PREFIX="$(resolve_runtime_prefix)"
           [ -d "${APP_ROOT}" ] || fail "${APP_ROOT} does not exist. Run deploy/install_saas.sh manually first."
           [ -f "${APP_ROOT}/.env" ] || fail "${APP_ROOT}/.env is missing."
           sudo -u "${APP_USER}" test -d "${APP_ROOT}/.git" || fail "${APP_ROOT} is not a git checkout."
@@ -250,12 +191,12 @@ jobs:
           fi
 
           for unit in \
-            "${CURRENT_UNIT_PREFIX}.service" \
-            "${CURRENT_UNIT_PREFIX}-worker.service" \
-            "${CURRENT_UNIT_PREFIX}-scheduler.timer" \
-            "${CURRENT_UNIT_PREFIX}-billing-reconcile.timer" \
-            "${CURRENT_UNIT_PREFIX}-platform-restart-queue.timer" \
-            "${CURRENT_UNIT_PREFIX}-a2p-reconcile.timer"; do
+            twinevia-saas.service \
+            twinevia-saas-worker.service \
+            twinevia-saas-scheduler.timer \
+            twinevia-saas-billing-reconcile.timer \
+            twinevia-saas-platform-restart-queue.timer \
+            twinevia-saas-a2p-reconcile.timer; do
             systemctl list-unit-files "${unit}" --no-legend | grep -q "^${unit}[[:space:]]" || fail "Missing systemd unit ${unit}. Run deploy/install_saas.sh manually first."
           done
 

@@ -17,7 +17,7 @@ Completed outcomes:
 
 Intentional exceptions that remain:
 - the retained SaaS compatibility alias `saas-dbdoctor`
-- the legacy compatibility runtime rooted at `/opt/sms-admin`
+- local SQLite compatibility tooling such as `dbdoctor`
 - external repo/worktree naming remains out of repo scope
 
 ## Completed Work

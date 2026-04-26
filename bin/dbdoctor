@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SMS_ADMIN_PYTHON="${SMS_ADMIN_PYTHON:-/opt/sms-admin/venv/bin/python}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SMS_ADMIN_PYTHON="${SMS_ADMIN_PYTHON:-${REPO_ROOT}/venv/bin/python}"
 
 if [[ ! -x "${SMS_ADMIN_PYTHON}" ]]; then
   echo "ERROR: Python interpreter not found at ${SMS_ADMIN_PYTHON}." >&2
-  echo "Set SMS_ADMIN_PYTHON to the venv python path, e.g. /opt/sms-admin/venv/bin/python." >&2
+  echo "Set SMS_ADMIN_PYTHON to the local venv python path." >&2
   exit 1
 fi
 
