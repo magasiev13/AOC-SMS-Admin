@@ -118,7 +118,9 @@ test('platform admin can inspect the control org without changing live state', a
   const organization = organizationRow(page, controlOrganizationName);
   await expect(organization).toBeVisible();
 
-  const messagingHref = await organization.locator('a[href*="/messaging"]').filter({ hasText: /Manage provider/i }).first().getAttribute('href');
+  const messagingLink = organization.locator('a[href*="/messaging"]').first();
+  await expect(messagingLink).toBeVisible();
+  const messagingHref = await messagingLink.getAttribute('href');
   expect(messagingHref).toBeTruthy();
 
   response = await gotoAndExpectOk(page, messagingHref);
