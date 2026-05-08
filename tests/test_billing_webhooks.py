@@ -145,6 +145,62 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
 
+    @patch("app.services.billing_service._stripe_module")
+    def test_invoice_webhook_uses_nested_subscription_details(self, mock_stripe_module) -> None:
+        mock_stripe = MagicMock()
+        mock_stripe.Subscription.retrieve.return_value = {
+            "id": "sub_test_nested",
+            "customer": "cus_test_nested",
+            "status": "active",
+            "metadata": {"organization_id": str(self.organization.id)},
+            "current_period_end": 1775107599,
+            "items": {"data": [{"price": {"id": "price_test_123"}}]},
+        }
+        mock_stripe_module.return_value = mock_stripe
+        event = {
+            "id": "evt_test_invoice_nested",
+            "type": "invoice.payment_succeeded",
+            "created": 1773898071,
+            "data": {
+                "object": {
+                    "id": "in_test_nested",
+                    "customer": "cus_test_nested",
+                    "parent": {
+                        "type": "subscription_details",
+                        "subscription_details": {
+                            "subscription": "sub_test_nested",
+                            "metadata": {"organization_id": str(self.organization.id)},
+                        },
+                    },
+                    "lines": {
+                        "data": [
+                            {
+                                "metadata": {"organization_id": str(self.organization.id)},
+                                "parent": {
+                                    "type": "subscription_item_details",
+                                    "subscription_item_details": {
+                                        "subscription": "sub_test_nested",
+                                    },
+                                },
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+
+        self.process_stripe_webhook_event(event)
+
+        record = self.StripeWebhookEvent.query.filter_by(stripe_event_id="evt_test_invoice_nested").first()
+        self.assertIsNotNone(record)
+        self.assertEqual(record.status, "processed")
+        self.assertEqual(record.organization_id, self.organization.id)
+        self.assertEqual(record.stripe_subscription_id, "sub_test_nested")
+        self.assertEqual(self.subscription.status, "active")
+        self.assertEqual(self.subscription.stripe_customer_id, "cus_test_nested")
+        self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_nested")
+        mock_stripe.Subscription.retrieve.assert_called_once_with("sub_test_nested")
+
     @patch("app.services.billing_service._apply_stripe_event_to_billing_state")
     def test_failed_webhook_event_retries_on_redelivery(self, mock_apply) -> None:
         state = {"calls": 0}

@@ -236,8 +236,29 @@ def _event_timestamp_to_utc_datetime(value) -> datetime | None:
 
 def _extract_organization_id(data_object: dict) -> int | None:
     metadata = data_object.get("metadata") or {}
+    parent_subscription_metadata = (
+        data_object.get("parent", {})
+        .get("subscription_details", {})
+        .get("metadata", {})
+    )
+    line_metadata_candidates = []
+    for line_item in data_object.get("lines", {}).get("data", []) or []:
+        if isinstance(line_item, dict):
+            line_metadata_candidates.append(line_item.get("metadata") or {})
     client_reference_id = data_object.get("client_reference_id")
-    raw_value = metadata.get("organization_id") or client_reference_id
+    raw_value = (
+        metadata.get("organization_id")
+        or parent_subscription_metadata.get("organization_id")
+        or next(
+            (
+                line_metadata.get("organization_id")
+                for line_metadata in line_metadata_candidates
+                if line_metadata.get("organization_id")
+            ),
+            None,
+        )
+        or client_reference_id
+    )
     if not raw_value:
         return None
     try:
@@ -249,7 +270,26 @@ def _extract_organization_id(data_object: dict) -> int | None:
 def _stripe_subscription_id_from_data_object(event_type: str, data_object: dict) -> str | None:
     if event_type.startswith("customer.subscription."):
         return data_object.get("id")
-    return data_object.get("subscription")
+    subscription_id = (
+        data_object.get("subscription")
+        or data_object.get("parent", {})
+        .get("subscription_details", {})
+        .get("subscription")
+    )
+    if subscription_id:
+        return subscription_id
+
+    for line_item in data_object.get("lines", {}).get("data", []) or []:
+        if not isinstance(line_item, dict):
+            continue
+        subscription_id = (
+            line_item.get("parent", {})
+            .get("subscription_item_details", {})
+            .get("subscription")
+        )
+        if subscription_id:
+            return subscription_id
+    return None
 
 
 def _owner_email_for_organization(organization: Organization) -> str:
