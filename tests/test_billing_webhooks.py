@@ -201,6 +201,47 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_nested")
         mock_stripe.Subscription.retrieve.assert_called_once_with("sub_test_nested")
 
+    @patch("app.services.billing_service._stripe_module")
+    def test_orphaned_invoice_webhook_is_ignored_without_retry(self, mock_stripe_module) -> None:
+        mock_stripe = MagicMock()
+        mock_stripe.Subscription.retrieve.return_value = {
+            "id": "sub_test_orphaned",
+            "customer": "cus_test_orphaned",
+            "status": "active",
+            "metadata": {"organization_id": "9999"},
+            "current_period_end": 1775107599,
+            "items": {"data": [{"price": {"id": "price_test_123"}}]},
+        }
+        mock_stripe_module.return_value = mock_stripe
+        event = {
+            "id": "evt_test_invoice_orphaned",
+            "type": "invoice.payment_succeeded",
+            "created": 1773898071,
+            "data": {
+                "object": {
+                    "id": "in_test_orphaned",
+                    "customer": "cus_test_orphaned",
+                    "parent": {
+                        "type": "subscription_details",
+                        "subscription_details": {
+                            "subscription": "sub_test_orphaned",
+                            "metadata": {"organization_id": "9999"},
+                        },
+                    },
+                }
+            },
+        }
+
+        self.process_stripe_webhook_event(event)
+
+        record = self.StripeWebhookEvent.query.filter_by(stripe_event_id="evt_test_invoice_orphaned").first()
+        self.assertIsNotNone(record)
+        self.assertEqual(record.status, "ignored")
+        self.assertIsNone(record.organization_id)
+        self.assertEqual(record.stripe_subscription_id, "sub_test_orphaned")
+        self.assertIn("No local subscription matched", record.last_error)
+        mock_stripe.Subscription.retrieve.assert_called_once_with("sub_test_orphaned")
+
     @patch("app.services.billing_service._apply_stripe_event_to_billing_state")
     def test_failed_webhook_event_retries_on_redelivery(self, mock_apply) -> None:
         state = {"calls": 0}

@@ -267,6 +267,14 @@ def _extract_organization_id(data_object: dict) -> int | None:
         return None
 
 
+def _existing_organization_id(organization_id: int | None) -> int | None:
+    if organization_id is None:
+        return None
+    if db.session.get(Organization, organization_id) is None:
+        return None
+    return organization_id
+
+
 def _stripe_subscription_id_from_data_object(event_type: str, data_object: dict) -> str | None:
     if event_type.startswith("customer.subscription."):
         return data_object.get("id")
@@ -506,9 +514,8 @@ def sync_subscription_from_event(event_type: str, data_object: dict) -> Organiza
     subscription = None
     if organization_id:
         organization = db.session.get(Organization, organization_id)
-        if organization is None:
-            return None
-        subscription = ensure_subscription_record(organization)
+        if organization is not None:
+            subscription = ensure_subscription_record(organization)
 
     if subscription is None:
         stripe_customer_id = data_object.get("customer")
@@ -598,8 +605,9 @@ def _populate_webhook_record(
     record.stripe_object_id = data_object.get("id")
     record.stripe_customer_id = data_object.get("customer")
     record.stripe_subscription_id = _stripe_subscription_id_from_data_object(event_type, data_object)
-    if organization_id is not None:
-        record.organization_id = organization_id
+    existing_organization_id = _existing_organization_id(organization_id)
+    if existing_organization_id is not None:
+        record.organization_id = existing_organization_id
     record.signature_verified = True
     if event_created_at is not None:
         record.event_created_at = event_created_at
@@ -703,7 +711,22 @@ def process_stripe_webhook_event(event: dict) -> StripeWebhookEvent:
     try:
         subscription = _apply_stripe_event_to_billing_state(event_type, data_object)
         if subscription is None:
-            raise RuntimeError(f"No local subscription matched Stripe event {event_id}.")
+            ignored = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+            if ignored is None:
+                raise RuntimeError("Stripe webhook ledger record disappeared during unmatched flow.")
+            ignored.status = "ignored"
+            ignored.processed_at = utc_now()
+            ignored.last_error = f"No local subscription matched Stripe event {event_id}."
+            ignored.last_seen_at = utc_now()
+            db.session.commit()
+            current_app.logger.warning(
+                "Stripe webhook ignored unmatched event_id=%s event_type=%s organization_id=%s subscription_id=%s",
+                event_id,
+                event_type,
+                ignored.organization_id,
+                ignored.stripe_subscription_id,
+            )
+            return ignored
     except Exception as exc:
         db.session.rollback()
         failed = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
