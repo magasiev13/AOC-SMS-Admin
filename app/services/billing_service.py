@@ -18,6 +18,8 @@ from app.models import (
 )
 from app.services.billing_plans import (
     activation_price_id,
+    billing_plan_for_code,
+    billing_plan_options_for_organization,
     recurring_price_id_for_subscription,
     subscription_activation_paid,
 )
@@ -103,7 +105,7 @@ def ensure_subscription_record(organization: Organization) -> OrganizationSubscr
 
     subscription = OrganizationSubscription(
         organization=organization,
-        stripe_price_id=current_app.config.get("STRIPE_PRICE_ID"),
+        stripe_price_id=current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID"),
         status="incomplete",
     )
     db.session.add(subscription)
@@ -117,7 +119,7 @@ def mark_subscription_complimentary(organization: Organization) -> OrganizationS
     subscription.current_period_end = None
     subscription.cancel_at_period_end = False
     if not subscription.stripe_price_id:
-        subscription.stripe_price_id = current_app.config.get("STRIPE_PRICE_ID")
+        subscription.stripe_price_id = current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID")
     db.session.commit()
     return subscription
 
@@ -199,7 +201,7 @@ def _apply_fake_checkout_session(
     subscription.current_period_end = fake_period_end
     subscription.cancel_at_period_end = False
     if not subscription.stripe_price_id:
-        subscription.stripe_price_id = current_app.config.get("STRIPE_PRICE_ID")
+        subscription.stripe_price_id = current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID")
     db.session.commit()
     return subscription
 
@@ -439,10 +441,31 @@ def _find_matching_checkout_session(
             return None
 
 
-def create_checkout_session(organization: Organization, user_email: str, success_url: str, cancel_url: str):
+def create_checkout_session(
+    organization: Organization,
+    user_email: str,
+    success_url: str,
+    cancel_url: str,
+    *,
+    plan_code: str | None = None,
+):
     subscription = ensure_subscription_record(organization)
     if subscription_status_is_complimentary(subscription.status):
         raise RuntimeError("Complimentary billing is already active for this organization.")
+
+    eligible_plans = billing_plan_options_for_organization(organization)
+    eligible_plan_codes = {plan.code for plan in eligible_plans}
+    selected_plan = billing_plan_for_code(plan_code) if plan_code else None
+    if plan_code and (selected_plan is None or selected_plan.code not in eligible_plan_codes):
+        raise RuntimeError("Choose a valid billing option.")
+    if selected_plan is None and len(eligible_plans) == 1:
+        selected_plan = eligible_plans[0]
+    price_id = selected_plan.price_id if selected_plan is not None else recurring_price_id_for_subscription(subscription)
+    if not price_id:
+        raise RuntimeError("STRIPE_MONTHLY_PRICE_ID or STRIPE_PRICE_ID is not configured.")
+    if selected_plan is not None and subscription.stripe_price_id != price_id:
+        subscription.stripe_price_id = price_id
+        db.session.commit()
 
     if fake_checkout_enabled():
         session_id = _fake_checkout_session_id(organization)
@@ -457,9 +480,6 @@ def create_checkout_session(organization: Organization, user_email: str, success
         )
 
     stripe = _stripe_module()
-    price_id = recurring_price_id_for_subscription(subscription)
-    if not price_id:
-        raise RuntimeError("STRIPE_PRICE_ID is not configured.")
     line_items = []
     if not subscription_activation_paid(subscription):
         activation_id = activation_price_id()
@@ -467,6 +487,9 @@ def create_checkout_session(organization: Organization, user_email: str, success
             raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
         line_items.append({"price": activation_id, "quantity": 1})
     line_items.append({"price": price_id, "quantity": 1})
+    checkout_metadata = {"organization_id": str(organization.id)}
+    if selected_plan is not None:
+        checkout_metadata["billing_plan_code"] = selected_plan.code
 
     params = {
         "mode": "subscription",
@@ -474,9 +497,9 @@ def create_checkout_session(organization: Organization, user_email: str, success
         "success_url": success_url,
         "cancel_url": cancel_url,
         "client_reference_id": str(organization.id),
-        "metadata": {"organization_id": str(organization.id)},
+        "metadata": checkout_metadata,
         "subscription_data": {
-            "metadata": {"organization_id": str(organization.id)},
+            "metadata": checkout_metadata,
         },
     }
 

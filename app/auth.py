@@ -455,7 +455,7 @@ def signup():
         membership = OrganizationMembership(organization=organization, user=user, role="owner")
         subscription = OrganizationSubscription(
             organization=organization,
-            stripe_price_id=current_app.config.get("STRIPE_PRICE_ID"),
+            stripe_price_id=current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID"),
             status="incomplete",
         )
         messaging_profile = OrganizationMessagingProfile(

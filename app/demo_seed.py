@@ -53,6 +53,8 @@ def _seed_env_defaults(*, database_url: str | None, base_url: str | None) -> Non
     os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_demo")
     os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_demo")
     os.environ.setdefault("STRIPE_PRICE_ID", "price_demo")
+    os.environ.setdefault("STRIPE_MONTHLY_PRICE_ID", "price_demo")
+    os.environ.setdefault("STRIPE_ANNUAL_PRICE_ID", "price_demo_annual")
     os.environ.setdefault("STRIPE_ACTIVATION_PRICE_ID", "price_demo_activation")
     os.environ.setdefault("TWILIO_CREDENTIAL_ENCRYPTION_KEY", "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=")
 
@@ -166,7 +168,7 @@ def seed_demo_database(
 
         now = utc_now()
         today = now.date()
-        stripe_price_id = app.config.get("STRIPE_PRICE_ID") or "price_demo"
+        stripe_price_id = app.config.get("STRIPE_MONTHLY_PRICE_ID") or app.config.get("STRIPE_PRICE_ID") or "price_demo"
 
         def make_user(
             *,

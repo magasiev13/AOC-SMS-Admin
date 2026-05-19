@@ -22,6 +22,7 @@ class TestLegacyImportService(unittest.TestCase):
                 "SAAS_MODE": "1",
                 "SCHEDULER_ENABLED": "0",
                 "STRIPE_PRICE_ID": "price_test_123",
+                "STRIPE_ANNUAL_PRICE_ID": "price_annual_123",
             }
         )
 

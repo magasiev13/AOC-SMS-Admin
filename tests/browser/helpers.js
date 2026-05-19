@@ -169,9 +169,9 @@ async function fillOwnerSetupCompliance(page, { organizationName, businessEmail,
   await page.getByLabel('Message samples').fill(
     'Golden Path Bakery update 1\nGolden Path Bakery update 2'
   );
-  await page.getByRole('button', { name: 'Save business profile' }).click();
+  await page.getByRole('button', { name: 'Validate and save business profile' }).click();
 
-  await expect(page.getByText('Business profile saved.')).toBeVisible();
+  await expect(page.getByText('Business profile validated and saved.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Review and submit' })).toBeVisible();
   await expect(page.getByText('Submission source')).toBeVisible();
   await expect(page.getByText('hosted_fallback')).toBeVisible();

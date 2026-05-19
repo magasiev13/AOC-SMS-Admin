@@ -66,6 +66,7 @@ from app.services.billing_service import (
     clear_complimentary_subscription,
     create_billing_portal_session,
     create_checkout_session,
+    ensure_subscription_record,
     is_fake_checkout_session_id,
     organization_can_transmit_messages,
     mark_subscription_complimentary,
@@ -78,6 +79,10 @@ from app.services.billing_service import (
 )
 from app.services.billing_plans import (
     activation_fee_label,
+    annual_only_offer_enabled_for_organization,
+    billing_plan_catalog,
+    billing_plan_for_code,
+    billing_plan_options_for_organization,
     billing_plan_for_subscription,
     included_segments_for_subscription,
     overage_rate_label,
@@ -1621,8 +1626,32 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
     status = (subscription.status if subscription else 'incomplete') or 'incomplete'
     normalized_status = status.strip().lower()
     plan = billing_plan_for_subscription(subscription)
-    included_segments = included_segments_for_subscription(subscription)
+    organization = subscription.organization if subscription is not None else None
+    eligible_plan_models = (
+        billing_plan_options_for_organization(organization)
+        if organization is not None
+        else [option for option in billing_plan_catalog() if option.code in {'monthly', 'annual'}]
+    )
     activation_paid = subscription_activation_paid(subscription)
+    if (
+        not activation_paid
+        and len(eligible_plan_models) == 1
+        and (plan is None or plan.code != eligible_plan_models[0].code)
+    ):
+        plan = eligible_plan_models[0]
+    plan_options = [
+        {
+            'code': option.code,
+            'name': option.name,
+            'price_label': option.price_label,
+            'checkout_label': option.checkout_label,
+            'included_segments_label': segment_count_label(option.included_segments),
+            'billing_interval': option.billing_interval,
+            'selected': plan is not None and option.code == plan.code,
+        }
+        for option in eligible_plan_models
+    ]
+    included_segments = plan.included_segments if plan is not None else included_segments_for_subscription(subscription)
     view = {
         'status': status,
         'badge': 'secondary',
@@ -1631,12 +1660,14 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         'next_step': 'Start your subscription to finish setting up the business account.',
         'plan_code': plan.code if plan is not None else 'custom',
         'plan_name': plan.name if plan is not None else 'Current plan',
+        'plan_price_label': plan.price_label if plan is not None else None,
+        'plan_options': plan_options,
         'included_segments': included_segments,
         'included_segments_label': segment_count_label(included_segments),
         'overage_rate_label': overage_rate_label(),
         'activation_fee_label': activation_fee_label(),
         'activation_paid': activation_paid,
-        'activation_label': 'Paid' if activation_paid else f"{activation_fee_label()} due at checkout",
+        'activation_label': 'Paid' if activation_paid else f"{activation_fee_label()} setup fee due at checkout",
         'period_label': None,
         'period_value': None,
         'can_send': False,
@@ -2007,6 +2038,10 @@ def _platform_organization_access_context(
         (row['invitation'] for row in pending_invitation_rows if row['invitation'].role == 'owner'),
         None,
     )
+    billing_offer_code = (organization.billing_offer or 'standard').strip().lower()
+    persisted_annual_only_billing_offer = billing_offer_code == 'annual_only'
+    annual_only_billing_offer = annual_only_offer_enabled_for_organization(organization)
+    config_annual_only_billing_offer = annual_only_billing_offer and not persisted_annual_only_billing_offer
     return {
         'organization': organization,
         'joined_memberships': joined_memberships,
@@ -2024,6 +2059,37 @@ def _platform_organization_access_context(
         'members_missing_email': members_missing_email,
         'onboarding': _organization_onboarding_view(organization),
         'billing': _subscription_view(organization.subscription),
+        'billing_offer': {
+            'code': billing_offer_code,
+            'annual_only': annual_only_billing_offer,
+            'title': (
+                'Annual upfront only via config'
+                if config_annual_only_billing_offer
+                else 'Annual upfront only'
+                if annual_only_billing_offer
+                else 'Standard monthly or annual'
+            ),
+            'summary': (
+                'This organization is annual-only because of a server config override. Save the offer here to move it into admin-managed settings.'
+                if config_annual_only_billing_offer
+                else 'This organization will only see the $600/year upfront plan plus the $150 setup fee at checkout.'
+                if annual_only_billing_offer
+                else 'This organization can choose either $59.99/month or $600/year upfront, plus the $150 setup fee.'
+            ),
+            'next_code': 'standard' if persisted_annual_only_billing_offer else 'annual_only',
+            'toggle_label': (
+                'Disable annual-only checkout'
+                if persisted_annual_only_billing_offer
+                else 'Save annual-only offer'
+                if config_annual_only_billing_offer
+                else 'Enable annual-only checkout'
+            ),
+            'toggle_button_style': (
+                'btn-outline-secondary'
+                if persisted_annual_only_billing_offer
+                else 'btn-outline-primary'
+            ),
+        },
     }
 
 
@@ -4008,10 +4074,25 @@ def dashboard():
                 idempotency_claim.existing_log_id,
             )
             if idempotency_claim.existing_log_id:
-                flash('Blast already queued. Reusing the existing log.', 'warning')
-                return redirect(url_for('main.log_detail', log_id=idempotency_claim.existing_log_id))
-            flash('An identical blast is already being queued. Refresh the logs in a moment.', 'warning')
-            return redirect(url_for('main.logs_list'))
+                existing_log_query = MessageLog.query.filter(MessageLog.id == idempotency_claim.existing_log_id)
+                if saas_mode_enabled():
+                    existing_log_query = existing_log_query.filter(
+                        MessageLog.organization_id == _current_organization_id()
+                    )
+                existing_log = existing_log_query.first()
+                if existing_log is not None:
+                    flash('Blast already queued. Reusing the existing log.', 'warning')
+                    return redirect(url_for('main.log_detail', log_id=existing_log.id))
+                current_app.logger.warning(
+                    'Stale blast idempotency log reference ignored organization_id=%s fingerprint=%s existing_log_id=%s.',
+                    _current_organization_id() if saas_mode_enabled() else None,
+                    send_fingerprint,
+                    idempotency_claim.existing_log_id,
+                )
+                release_outbound_idempotency(idempotency_claim.redis_key)
+            else:
+                flash('An identical blast is already being queued. Refresh the logs in a moment.', 'warning')
+                return redirect(url_for('main.logs_list'))
 
         try:
             from rq import Retry
@@ -4748,7 +4829,7 @@ def platform_organizations_add():
         organization = Organization(name=name, slug=slug, status='active')
         subscription = OrganizationSubscription(
             organization=organization,
-            stripe_price_id=current_app.config.get('STRIPE_PRICE_ID'),
+            stripe_price_id=current_app.config.get('STRIPE_MONTHLY_PRICE_ID') or current_app.config.get('STRIPE_PRICE_ID'),
             status='incomplete',
         )
         invitation = OrganizationInvitation(
@@ -4895,6 +4976,40 @@ def platform_organizations_update_billing(organization_id):
             reason='clear_complimentary',
         )
         flash('Complimentary billing cleared. Stripe-managed billing is required again.', 'success')
+    elif action == 'set_billing_offer':
+        billing_offer = (request.form.get('billing_offer') or '').strip().lower()
+        if billing_offer not in {'standard', 'annual_only'}:
+            _record_platform_organization_access_event(
+                'platform_organization_billing_update',
+                organization=organization,
+                target_email=None,
+                outcome='failed',
+                reason='invalid_billing_offer',
+            )
+            flash('Choose a valid checkout offer.', 'error')
+            return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
+
+        organization.billing_offer = billing_offer
+        subscription = ensure_subscription_record(organization)
+        if not subscription_activation_paid(subscription):
+            plan_code = 'annual' if billing_offer == 'annual_only' else 'monthly'
+            plan = billing_plan_for_code(plan_code)
+            if plan is not None:
+                subscription.stripe_price_id = plan.price_id
+        db.session.commit()
+
+        reason = f"set_billing_offer_{billing_offer}"
+        _record_platform_organization_access_event(
+            'platform_organization_billing_update',
+            organization=organization,
+            target_email=None,
+            outcome='success',
+            reason=reason,
+        )
+        if billing_offer == 'annual_only':
+            flash('Annual upfront-only checkout enabled for this organization.', 'success')
+        else:
+            flash('Standard monthly and annual checkout options enabled for this organization.', 'success')
     else:
         _record_platform_organization_access_event(
             'platform_organization_billing_update',
@@ -5857,7 +5972,7 @@ def setup():
                     payload,
                     actor_user_id=current_user.id,
                 )
-                flash('Business profile saved.', 'success')
+                flash('Business profile validated and saved.', 'success')
                 return redirect(url_for('main.setup', step='review'))
             if action == 'submit_onboarding':
                 if request.form.get("declaration_accepted") != "on":
@@ -5978,6 +6093,7 @@ def setup_billing_checkout():
             current_user.email or '',
             success_url,
             cancel_url,
+            plan_code=request.form.get('billing_plan_code'),
         )
     except Exception as exc:
         current_app.logger.exception('Failed to create setup Stripe checkout session.')
@@ -6033,6 +6149,7 @@ def billing_checkout():
             current_user.email or '',
             success_url,
             cancel_url,
+            plan_code=request.form.get('billing_plan_code'),
         )
     except Exception as exc:
         current_app.logger.exception('Failed to create Stripe checkout session.')

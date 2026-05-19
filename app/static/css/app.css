@@ -2921,6 +2921,68 @@ a:focus-visible {
   font-weight: 650;
 }
 
+.billing-plan-options {
+  display: grid;
+  gap: 0.75rem;
+  margin: var(--space-3) 0;
+  padding: 0;
+  border: 0;
+}
+
+.billing-plan-options legend {
+  margin-bottom: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-1);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.billing-plan-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.billing-plan-option input {
+  margin-top: 0.2rem;
+}
+
+.billing-plan-option--locked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.billing-plan-option__body,
+.billing-plan-option__heading,
+.billing-plan-option__meta {
+  display: block;
+  min-width: 0;
+}
+
+.billing-plan-option__heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  justify-content: space-between;
+  color: var(--color-text);
+}
+
+.billing-plan-option__heading span {
+  font-weight: 700;
+}
+
+.billing-plan-option__meta {
+  margin-top: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-1);
+  line-height: 1.45;
+}
+
 .setup-callout .billing-plan-facts {
   gap: var(--space-2);
   margin-top: var(--space-2);
@@ -2938,6 +3000,45 @@ a:focus-visible {
 
   .setup-callout .billing-plan-facts > div:nth-child(n + 3) {
     display: none;
+  }
+
+  .setup-panel .setup-callout .billing-plan-facts {
+    display: none;
+  }
+
+  .setup-panel .billing-plan-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin: 0.5rem 0 0.75rem;
+  }
+
+  .setup-panel .billing-plan-option {
+    gap: 0.45rem;
+    align-items: center;
+    min-height: 4.2rem;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .setup-panel .billing-plan-option__meta {
+    display: none;
+  }
+
+  .setup-panel .billing-plan-options legend {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .setup-panel .billing-plan-option__heading {
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  .setup-panel .billing-plan-option__heading span {
+    font-size: var(--font-size-2);
   }
 }
 

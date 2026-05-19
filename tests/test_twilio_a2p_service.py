@@ -23,6 +23,7 @@ class TestTwilioA2PService(unittest.TestCase):
                 "STRIPE_SECRET_KEY": "sk_test_123",
                 "STRIPE_WEBHOOK_SECRET": "whsec_test_123",
                 "STRIPE_PRICE_ID": "price_test_123",
+                "STRIPE_ANNUAL_PRICE_ID": "price_annual_123",
                 "SAAS_BASE_URL": "https://app.example.com",
                 "TWILIO_CREDENTIAL_ENCRYPTION_KEY": "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
                 "TWILIO_ACCOUNT_SID": "ACmaster123",

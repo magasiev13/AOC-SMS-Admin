@@ -105,6 +105,7 @@
                     {% if subscription_view.show_checkout %}
                     <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        {% include "includes/billing_plan_options.html" %}
                         <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
                     </form>
                     {% endif %}
@@ -262,6 +263,7 @@
                     {% if subscription_view.show_checkout %}
                     <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        {% include "includes/billing_plan_options.html" %}
                         <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
                     </form>
                     {% endif %}
@@ -281,7 +283,7 @@
                         <h2>Business profile and compliance</h2>
                     </div>
                 </div>
-                <p class="setup-panel__copy">Enter the legal business details Twilio requires. This information is stored, reused, and never exposed as raw provider SIDs.</p>
+                <p class="setup-panel__copy">Enter the legal business details Twilio requires. The profile must pass validation before it saves so the review packet is ready for Twilio submission.</p>
                 {% if setup_status.onboarding.last_error %}
                 <div class="platform-note platform-note--danger" role="alert">
                     <div class="platform-note__title">Latest provider issue</div>
@@ -557,7 +559,7 @@
                     </div>
 
                     <div class="setup-field setup-field--full">
-                        <button type="submit" class="btn btn-primary">Save business profile</button>
+                        <button type="submit" class="btn btn-primary">Validate and save business profile</button>
                     </div>
                 </form>
             </section>

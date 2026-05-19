@@ -167,19 +167,26 @@ Operational note:
 | `STRIPE_SECRET_KEY` | unset | Required for SaaS billing validation. |
 | `STRIPE_PUBLISHABLE_KEY` | unset | UI/client-side Stripe usage if needed. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Required for webhook verification and SaaS billing validation. |
-| `STRIPE_PRICE_ID` | unset | Required Starter recurring price ID and default plan for legacy compatibility. |
+| `STRIPE_PRICE_ID` | unset | Legacy alias for the monthly recurring price ID. Keep set until all deploy scripts use `STRIPE_MONTHLY_PRICE_ID`. |
+| `STRIPE_MONTHLY_PRICE_ID` | `STRIPE_PRICE_ID` | Monthly recurring price ID for the `$59.99/mo` option. Required unless `STRIPE_PRICE_ID` is set. |
+| `STRIPE_ANNUAL_PRICE_ID` | unset | Annual recurring price ID for the `$600/year upfront` option. Required for SaaS billing validation. |
 | `STRIPE_ACTIVATION_PRICE_ID` | unset | Required one-time activation price charged on first paid signup. |
 | `STRIPE_GROWTH_PRICE_ID` | unset | Optional Growth recurring price ID for plan allowance mapping. |
 | `STRIPE_SCALE_PRICE_ID` | unset | Optional Scale recurring price ID for plan allowance mapping. |
 | `STRIPE_FAKE_CHECKOUT_ENABLED` | `0` | Enables `/_test/stripe/checkout/<session_id>`. |
 | `BILLING_TRIAL_DAYS` | `0` | Trial length for new checkout sessions. Production should stay at `0`. |
 | `BILLING_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Legacy fallback included outbound usage when a Stripe price ID is not in the plan catalog. |
-| `BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Starter plan included outbound SMS segments. |
+| `BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Included outbound SMS segments per month for the monthly option. |
+| `BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS` | `1000` | Included outbound SMS segments per month for the annual option. |
 | `BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS` | `3000` | Growth plan included outbound SMS segments. |
 | `BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS` | `10000` | Scale plan included outbound SMS segments. |
 | `BILLING_USAGE_CURRENCY` | `usd` | Usage billing currency. |
 | `BILLING_OUTBOUND_SEGMENT_RATE_USD` | `0.0300` | Per-segment sell rate. |
-| `BILLING_ACTIVATION_FEE_USD` | `149.00` | Display amount for the one-time activation fee. Stripe price amount remains authoritative. |
+| `BILLING_MONTHLY_PRICE_USD` | `59.99` | Display amount for the monthly option. Stripe price amount remains authoritative. |
+| `BILLING_ANNUAL_PRICE_USD` | `600.00` | Display amount for the annual upfront option. Stripe price amount remains authoritative. |
+| `BILLING_ACTIVATION_FEE_USD` | `150.00` | Display amount for the one-time setup fee. Stripe price amount remains authoritative. |
+| `BILLING_ANNUAL_ONLY_ORG_SLUGS` | unset | Break-glass comma-separated organization slugs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
+| `BILLING_ANNUAL_ONLY_ORG_IDS` | unset | Break-glass comma-separated organization IDs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
 
 ## Admin And Local Tooling
 
@@ -205,7 +212,8 @@ Startup requires:
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PRICE_ID`
+- `STRIPE_MONTHLY_PRICE_ID` or legacy `STRIPE_PRICE_ID`
+- `STRIPE_ANNUAL_PRICE_ID`
 - `STRIPE_ACTIVATION_PRICE_ID`
 - `SAAS_BASE_URL`
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`

@@ -123,7 +123,7 @@ test('platform-managed owner setup preserves compliance and review structure on 
   await page.goto('/setup?step=compliance');
   await expectSetupShell(page, { step: 'compliance', heading: 'Business profile and compliance' });
   await expect(page.locator('form.setup-form-grid')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save business profile' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Validate and save business profile' })).toBeVisible();
   await expect(page.getByText('Current submission source')).toBeVisible();
 
   await page.goto('/setup?step=review');

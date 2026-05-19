@@ -212,13 +212,16 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
         self.app.config.update(
             TESTING=True,
             STRIPE_SECRET_KEY="sk_test_123",
-            STRIPE_PRICE_ID="price_starter",
+            STRIPE_PRICE_ID="price_monthly",
+            STRIPE_MONTHLY_PRICE_ID="price_monthly",
+            STRIPE_ANNUAL_PRICE_ID="price_annual",
             STRIPE_ACTIVATION_PRICE_ID="price_activation",
             STRIPE_GROWTH_PRICE_ID="price_growth",
             STRIPE_SCALE_PRICE_ID="price_scale",
             BILLING_TRIAL_DAYS=0,
             BILLING_INCLUDED_OUTBOUND_SEGMENTS=42,
-            BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS=1000,
+            BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS=1000,
+            BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS=1000,
             BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS=3000,
             BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS=10000,
         )
@@ -237,7 +240,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
     def _create_subscription(
         self,
         *,
-        price_id: str = "price_starter",
+        price_id: str = "price_monthly",
         status: str = "incomplete",
         customer_id: str | None = None,
         subscription_id: str | None = None,
@@ -260,13 +263,18 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
         return organization, subscription
 
     def test_plan_catalog_maps_price_ids_to_segment_allowances_with_legacy_fallback(self) -> None:
+        _, annual_subscription = self._create_subscription(price_id="price_annual")
         _, growth_subscription = self._create_subscription(price_id="price_growth")
         _, unknown_subscription = self._create_subscription(price_id="price_unknown")
 
         plans = {plan.code: plan for plan in self.billing_plan_catalog()}
 
-        self.assertEqual(plans["starter"].price_id, "price_starter")
-        self.assertEqual(plans["starter"].included_segments, 1000)
+        self.assertEqual(plans["monthly"].price_id, "price_monthly")
+        self.assertEqual(plans["monthly"].price_label, "$59.99/mo")
+        self.assertEqual(plans["monthly"].included_segments, 1000)
+        self.assertEqual(plans["annual"].price_id, "price_annual")
+        self.assertEqual(plans["annual"].price_label, "$600/yr")
+        self.assertEqual(self.included_segments_for_subscription(annual_subscription), 1000)
         self.assertEqual(plans["growth"].included_segments, 3000)
         self.assertEqual(plans["scale"].included_segments, 10000)
         self.assertEqual(self.included_segments_for_subscription(growth_subscription), 3000)
@@ -295,10 +303,127 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
             params["line_items"],
             [
                 {"price": "price_activation", "quantity": 1},
-                {"price": "price_starter", "quantity": 1},
+                {"price": "price_monthly", "quantity": 1},
             ],
         )
         self.assertNotIn("trial_period_days", params["subscription_data"])
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_checkout_can_select_annual_upfront_plan_with_setup_fee(self, mock_stripe_module) -> None:
+        organization, _subscription = self._create_subscription()
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_annual",
+            url="https://checkout.stripe.test/annual",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+            plan_code="annual",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(
+            params["line_items"],
+            [
+                {"price": "price_activation", "quantity": 1},
+                {"price": "price_annual", "quantity": 1},
+            ],
+        )
+        self.assertEqual(organization.subscription.stripe_price_id, "price_annual")
+        self.assertEqual(params["metadata"]["billing_plan_code"], "annual")
+        self.assertEqual(params["subscription_data"]["metadata"]["billing_plan_code"], "annual")
+
+    def test_checkout_rejects_unknown_plan_code(self) -> None:
+        organization, _subscription = self._create_subscription()
+
+        with self.assertRaisesRegex(RuntimeError, "valid billing option"):
+            self.create_checkout_session(
+                organization,
+                "owner@example.com",
+                "https://app.example.com/success",
+                "https://app.example.com/cancel",
+                plan_code="enterprise",
+            )
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_annual_only_organization_defaults_to_annual_and_blocks_monthly(self, mock_stripe_module) -> None:
+        organization, _subscription = self._create_subscription()
+        organization.billing_offer = "annual_only"
+        self.db.session.commit()
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_first_client",
+            url="https://checkout.stripe.test/first-client",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(
+            params["line_items"],
+            [
+                {"price": "price_activation", "quantity": 1},
+                {"price": "price_annual", "quantity": 1},
+            ],
+        )
+        self.assertEqual(organization.subscription.stripe_price_id, "price_annual")
+
+        with self.assertRaisesRegex(RuntimeError, "valid billing option"):
+            self.create_checkout_session(
+                organization,
+                "owner@example.com",
+                "https://app.example.com/success",
+                "https://app.example.com/cancel",
+                plan_code="monthly",
+            )
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_annual_only_config_override_still_defaults_to_annual(self, mock_stripe_module) -> None:
+        organization, _subscription = self._create_subscription()
+        self.app.config["BILLING_ANNUAL_ONLY_ORG_SLUGS"] = organization.slug
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_first_client_env",
+            url="https://checkout.stripe.test/first-client-env",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(
+            params["line_items"],
+            [
+                {"price": "price_activation", "quantity": 1},
+                {"price": "price_annual", "quantity": 1},
+            ],
+        )
+        self.assertEqual(organization.subscription.stripe_price_id, "price_annual")
+
+        with self.assertRaisesRegex(RuntimeError, "valid billing option"):
+            self.create_checkout_session(
+                organization,
+                "owner@example.com",
+                "https://app.example.com/success",
+                "https://app.example.com/cancel",
+                plan_code="monthly",
+            )
 
     @patch("app.services.billing_service._stripe_module")
     def test_checkout_omits_activation_for_resubscribing_stripe_customer(self, mock_stripe_module) -> None:
@@ -322,7 +447,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
         )
 
         params = mock_stripe.checkout.Session.create.call_args.kwargs
-        self.assertEqual(params["line_items"], [{"price": "price_starter", "quantity": 1}])
+        self.assertEqual(params["line_items"], [{"price": "price_monthly", "quantity": 1}])
         self.assertEqual(params["customer"], "cus_test_123")
         self.assertNotIn("customer_email", params)
 

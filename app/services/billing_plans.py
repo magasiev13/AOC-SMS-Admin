@@ -14,12 +14,56 @@ class BillingPlan:
     name: str
     price_id: str
     included_segments: int
+    billing_interval: str
+    price_label: str
+    checkout_label: str
 
 
 PLAN_DEFINITIONS = (
-    ("starter", "Starter", "STRIPE_PRICE_ID", "BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS", 1000),
-    ("growth", "Growth", "STRIPE_GROWTH_PRICE_ID", "BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS", 3000),
-    ("scale", "Scale", "STRIPE_SCALE_PRICE_ID", "BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS", 10000),
+    (
+        "monthly",
+        "Monthly",
+        ("STRIPE_MONTHLY_PRICE_ID", "STRIPE_PRICE_ID"),
+        "BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS",
+        1000,
+        "month",
+        "BILLING_MONTHLY_PRICE_USD",
+        "59.99",
+        "Pay monthly",
+    ),
+    (
+        "annual",
+        "Annual upfront",
+        ("STRIPE_ANNUAL_PRICE_ID",),
+        "BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS",
+        1000,
+        "year",
+        "BILLING_ANNUAL_PRICE_USD",
+        "600.00",
+        "Pay $600 upfront",
+    ),
+    (
+        "growth",
+        "Growth",
+        ("STRIPE_GROWTH_PRICE_ID",),
+        "BILLING_GROWTH_INCLUDED_OUTBOUND_SEGMENTS",
+        3000,
+        "month",
+        "BILLING_GROWTH_PRICE_USD",
+        "99.00",
+        "Pay monthly",
+    ),
+    (
+        "scale",
+        "Scale",
+        ("STRIPE_SCALE_PRICE_ID",),
+        "BILLING_SCALE_INCLUDED_OUTBOUND_SEGMENTS",
+        10000,
+        "month",
+        "BILLING_SCALE_PRICE_USD",
+        "199.00",
+        "Pay monthly",
+    ),
 )
 
 
@@ -49,20 +93,86 @@ def _money_label(value, *, minimum_places: int = 0, maximum_places: int = 4) -> 
 
 def billing_plan_catalog() -> list[BillingPlan]:
     plans: list[BillingPlan] = []
-    for code, name, price_key, included_key, default_included in PLAN_DEFINITIONS:
-        price_id = str(current_app.config.get(price_key) or "").strip()
+    for (
+        code,
+        name,
+        price_keys,
+        included_key,
+        default_included,
+        billing_interval,
+        display_price_key,
+        default_display_price,
+        checkout_label,
+    ) in PLAN_DEFINITIONS:
+        price_id = ""
+        for price_key in price_keys:
+            price_id = str(current_app.config.get(price_key) or "").strip()
+            if price_id:
+                break
         if not price_id:
             continue
         included_segments = _positive_int(current_app.config.get(included_key), default_included)
+        price_label = _money_label(
+            current_app.config.get(display_price_key) or default_display_price,
+            minimum_places=2 if code == "monthly" else 0,
+        )
+        interval_label = "mo" if billing_interval == "month" else "yr"
         plans.append(
             BillingPlan(
                 code=code,
                 name=name,
                 price_id=price_id,
                 included_segments=included_segments,
+                billing_interval=billing_interval,
+                price_label=f"{price_label}/{interval_label}",
+                checkout_label=checkout_label,
             )
         )
     return plans
+
+
+def _configured_csv_values(config_key: str) -> set[str]:
+    raw_value = str(current_app.config.get(config_key) or "")
+    return {
+        item.strip().lower()
+        for item in raw_value.split(",")
+        if item.strip()
+    }
+
+
+def annual_only_offer_enabled_for_organization(organization) -> bool:
+    if organization is None:
+        return False
+    billing_offer = str(getattr(organization, "billing_offer", "") or "").strip().lower()
+    if billing_offer == "annual_only":
+        return True
+
+    slug = str(getattr(organization, "slug", "") or "").strip().lower()
+    org_id = str(getattr(organization, "id", "") or "").strip().lower()
+    annual_only_slugs = _configured_csv_values("BILLING_ANNUAL_ONLY_ORG_SLUGS")
+    annual_only_ids = _configured_csv_values("BILLING_ANNUAL_ONLY_ORG_IDS")
+    return bool((slug and slug in annual_only_slugs) or (org_id and org_id in annual_only_ids))
+
+
+def eligible_billing_plan_codes_for_organization(organization) -> tuple[str, ...]:
+    if annual_only_offer_enabled_for_organization(organization):
+        return ("annual",)
+    return ("monthly", "annual")
+
+
+def billing_plan_options_for_organization(organization) -> list[BillingPlan]:
+    eligible_codes = set(eligible_billing_plan_codes_for_organization(organization))
+    return [plan for plan in billing_plan_catalog() if plan.code in eligible_codes]
+
+
+def billing_plan_for_code(code: str | None) -> BillingPlan | None:
+    normalized = str(code or "").strip().lower()
+    if not normalized:
+        return None
+    for plan in billing_plan_catalog():
+        if plan.code == normalized:
+            return plan
+    return None
 
 
 def billing_plan_for_price_id(price_id: str | None) -> BillingPlan | None:
@@ -90,7 +200,11 @@ def recurring_price_id_for_subscription(subscription: OrganizationSubscription |
     plan = billing_plan_for_subscription(subscription)
     if plan is not None:
         return plan.price_id
-    return str(current_app.config.get("STRIPE_PRICE_ID") or "").strip()
+    return str(
+        current_app.config.get("STRIPE_MONTHLY_PRICE_ID")
+        or current_app.config.get("STRIPE_PRICE_ID")
+        or ""
+    ).strip()
 
 
 def included_segments_for_subscription(subscription: OrganizationSubscription | None) -> int:

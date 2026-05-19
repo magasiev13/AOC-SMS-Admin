@@ -1,0 +1,40 @@
+{% set selected_plan_codes = subscription_view.plan_options | selectattr('selected') | list %}
+{% if subscription_view.plan_options and not subscription_view.can_send %}
+{% if subscription_view.plan_options | length == 1 %}
+{% set option = subscription_view.plan_options[0] %}
+<div class="billing-plan-options billing-plan-options--single" aria-label="Payment schedule">
+    <input type="hidden" name="billing_plan_code" value="{{ option.code }}">
+    <div class="billing-plan-option billing-plan-option--locked">
+        <span class="billing-plan-option__body">
+            <span class="billing-plan-option__heading">
+                <strong>{{ option.name }}</strong>
+                <span>{{ option.price_label }}</span>
+            </span>
+            <span class="billing-plan-option__meta">
+                First-client upfront pricing. {{ option.included_segments_label }} included SMS segments per month. {{ subscription_view.activation_fee_label }} setup fee is charged once at checkout.
+            </span>
+        </span>
+    </div>
+</div>
+{% else %}
+<fieldset class="billing-plan-options" aria-label="Payment schedule">
+    <legend>Choose payment schedule</legend>
+    {% for option in subscription_view.plan_options %}
+    <label class="billing-plan-option">
+        <input type="radio" name="billing_plan_code" value="{{ option.code }}" {% if option.selected or (not selected_plan_codes and loop.first) %}checked{% endif %}>
+        <span class="billing-plan-option__body">
+            <span class="billing-plan-option__heading">
+                <strong>{{ option.name }}</strong>
+                <span>{{ option.price_label }}</span>
+            </span>
+            <span class="billing-plan-option__meta">
+                {{ option.included_segments_label }} included SMS segments per month. {{ subscription_view.activation_fee_label }} setup fee is charged once at checkout.
+            </span>
+        </span>
+    </label>
+    {% endfor %}
+</fieldset>
+{% endif %}
+{% elif subscription_view.plan_code %}
+<input type="hidden" name="billing_plan_code" value="{{ subscription_view.plan_code }}">
+{% endif %}

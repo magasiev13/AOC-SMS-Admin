@@ -77,12 +77,14 @@ def _validate_saas_billing_config(app: Flask) -> None:
     required_values = {
         "STRIPE_SECRET_KEY": app.config.get("STRIPE_SECRET_KEY"),
         "STRIPE_WEBHOOK_SECRET": app.config.get("STRIPE_WEBHOOK_SECRET"),
-        "STRIPE_PRICE_ID": app.config.get("STRIPE_PRICE_ID"),
+        "STRIPE_ANNUAL_PRICE_ID": app.config.get("STRIPE_ANNUAL_PRICE_ID"),
         "STRIPE_ACTIVATION_PRICE_ID": app.config.get("STRIPE_ACTIVATION_PRICE_ID"),
         "SAAS_BASE_URL": app.config.get("SAAS_BASE_URL"),
         "TWILIO_CREDENTIAL_ENCRYPTION_KEY": app.config.get("TWILIO_CREDENTIAL_ENCRYPTION_KEY"),
     }
     missing = [name for name, value in required_values.items() if not str(value or "").strip()]
+    if not str(app.config.get("STRIPE_MONTHLY_PRICE_ID") or app.config.get("STRIPE_PRICE_ID") or "").strip():
+        missing.append("STRIPE_MONTHLY_PRICE_ID or STRIPE_PRICE_ID")
     if missing:
         details = "\n - ".join(f"{name} must be configured for SaaS billing." for name in missing)
         raise RuntimeError(f"SaaS billing configuration is invalid:\n - {details}")

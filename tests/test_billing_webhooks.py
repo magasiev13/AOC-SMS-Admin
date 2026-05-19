@@ -63,6 +63,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             WTF_CSRF_ENABLED=False,
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
@@ -534,6 +535,7 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_SECRET_KEY="",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
             SAAS_BASE_URL="https://app.example.com",
             TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
@@ -551,6 +553,7 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
             SAAS_BASE_URL="https://app.example.com",
             TWILIO_CREDENTIAL_ENCRYPTION_KEY="",
@@ -568,6 +571,7 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="",
             SAAS_BASE_URL="https://app.example.com",
             TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
@@ -575,6 +579,26 @@ class TestSaasBillingConfigValidation(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             _validate_saas_billing_config(app)
+
+    def test_missing_annual_price_fails_validation(self) -> None:
+        from app.__init__ import _validate_saas_billing_config
+
+        app = Flask(__name__)
+        app.config.update(
+            SAAS_MODE=True,
+            STRIPE_SECRET_KEY="sk_test_123",
+            STRIPE_WEBHOOK_SECRET="whsec_test_123",
+            STRIPE_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="",
+            STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
+            SAAS_BASE_URL="https://app.example.com",
+            TWILIO_CREDENTIAL_ENCRYPTION_KEY="4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o=",
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _validate_saas_billing_config(app)
+
+        self.assertIn("STRIPE_ANNUAL_PRICE_ID", str(ctx.exception))
 
 
 if __name__ == "__main__":

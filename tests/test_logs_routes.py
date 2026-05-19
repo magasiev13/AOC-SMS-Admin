@@ -331,6 +331,71 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertTrue(first_response.location.endswith(f"/logs/{logs[0].id}"))
         self.assertTrue(second_response.location.endswith(f"/logs/{logs[0].id}"))
 
+    def test_dashboard_stale_cross_tenant_idempotency_log_reference_queues_new_log(self) -> None:
+        self._login()
+        self.db.session.add(
+            self.CommunityMember(
+                organization_id=self.organization.id,
+                name="Member",
+                phone="+15551234568",
+            )
+        )
+        foreign_org = self.Organization(name="Foreign", slug="foreign", status="active")
+        foreign_log = self.MessageLog(
+            organization=foreign_org,
+            message_body="Hello everyone",
+            target="community",
+            status="processing",
+            total_recipients=1,
+            details="[]",
+        )
+        self.db.session.add_all([foreign_org, foreign_log])
+        self.db.session.commit()
+
+        from app.services.outbound_idempotency_service import (
+            BLAST_IDEMPOTENCY_TTL_SECONDS,
+            bind_idempotency_log_id,
+            claim_outbound_idempotency,
+        )
+
+        mock_queue = MagicMock()
+        fake_redis = FakeRedis()
+        with (
+            patch("app.queue.get_queue", return_value=mock_queue),
+            patch("app.services.outbound_idempotency_service.get_redis_connection", return_value=fake_redis),
+        ):
+            claim = claim_outbound_idempotency(
+                "dashboard-blast",
+                {
+                    "organization_id": self.organization.id,
+                    "target": "community",
+                    "event_id": None,
+                    "test_mode": False,
+                    "message_body": "Hello everyone",
+                    "phones": ["+15551234568"],
+                },
+                ttl_seconds=BLAST_IDEMPOTENCY_TTL_SECONDS,
+            )
+            bind_idempotency_log_id(
+                claim.redis_key,
+                foreign_log.id,
+                ttl_seconds=BLAST_IDEMPOTENCY_TTL_SECONDS,
+            )
+            response = self.client.post(
+                "/dashboard",
+                data={
+                    "message_body": "Hello everyone",
+                    "target": "community",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        self.assertEqual(mock_queue.enqueue.call_count, 1)
+        current_org_logs = self.MessageLog.query.filter_by(organization_id=self.organization.id).all()
+        self.assertEqual(len(current_org_logs), 1)
+
     def test_dashboard_send_redirects_to_log_detail_for_test_mode(self) -> None:
         self._login()
         self.db.session.add(

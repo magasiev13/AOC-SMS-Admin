@@ -109,6 +109,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
             TWILIO_PRIMARY_CUSTOMER_PROFILE_SID="BUprimary123",
             STRIPE_SECRET_KEY="sk_test_123",
             STRIPE_PRICE_ID="price_test_123",
+            STRIPE_MONTHLY_PRICE_ID="price_test_123",
+            STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
@@ -775,6 +777,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'data-current-step="billing"', response.data)
         self.assertIn(b"Activate billing", response.data)
+        self.assertIn(b"$59.99/mo", response.data)
+        self.assertIn(b"Annual upfront", response.data)
+        self.assertIn(b"$150 setup fee", response.data)
 
     def test_customer_managed_invalid_setup_step_falls_back_to_provider(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(
@@ -1008,12 +1013,28 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
         self.assertIn(b"Sending enabled", response.data)
-        self.assertIn(b"Starter", response.data)
+        self.assertIn(b"Monthly", response.data)
+        self.assertIn(b"$59.99/mo", response.data)
         self.assertIn(b"1,000 SMS segments", response.data)
         self.assertIn(b"$0.03 per segment", response.data)
         self.assertIn(b"Paid", response.data)
         self.assertIn(b"Ready for owner testing", response.data)
         self.assertIn(b"Live SMS approved", response.data)
+
+    def test_annual_only_first_client_offer_hides_monthly_checkout_choice(self) -> None:
+        self.organization.billing_offer = "annual_only"
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.get("/setup?step=billing")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Annual upfront", response.data)
+        self.assertIn(b"$600/yr", response.data)
+        self.assertIn(b"First-client upfront pricing", response.data)
+        self.assertIn(b'name="billing_plan_code" value="annual"', response.data)
+        self.assertNotIn(b"Choose payment schedule", response.data)
+        self.assertNotIn(b"$59.99/mo", response.data)
 
     def test_billing_overview_hides_stripe_actions_for_complimentary_workspace(self) -> None:
         self.subscription.status = "complimentary"
@@ -1138,6 +1159,22 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(args[1], "owner@acme.test")
         self.assertIn("session_id={CHECKOUT_SESSION_ID}", args[2])
         self.assertTrue(args[3].endswith("/setup?step=billing"))
+        self.assertIsNone(mock_create_checkout.call_args.kwargs["plan_code"])
+
+    @patch("app.routes.create_checkout_session")
+    def test_billing_checkout_post_uses_selected_annual_plan(self, mock_create_checkout) -> None:
+        mock_create_checkout.return_value = SimpleNamespace(url="https://checkout.stripe.test/annual")
+
+        self._login_owner()
+        response = self.client.post(
+            "/billing/checkout",
+            data={"billing_plan_code": "annual"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers.get("Location"), "https://checkout.stripe.test/annual")
+        self.assertEqual(mock_create_checkout.call_args.kwargs["plan_code"], "annual")
 
     def test_billing_checkout_post_redirects_complimentary_workspace_to_dashboard(self) -> None:
         self.subscription.status = "complimentary"
@@ -2074,6 +2111,64 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.db.session.refresh(self.subscription)
         self.assertEqual(self.subscription.status, "complimentary")
+
+    def test_platform_admin_can_enable_annual_only_checkout_offer(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/billing",
+            data={"action": "set_billing_offer", "billing_offer": "annual_only"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Annual upfront-only checkout enabled", response.data)
+        self.assertIn(b"Checkout offer: Annual upfront only", response.data)
+        self.assertIn(b"$600/year upfront plan plus the $150 setup fee", response.data)
+        self.db.session.refresh(self.organization)
+        self.db.session.refresh(self.subscription)
+        self.assertEqual(self.organization.billing_offer, "annual_only")
+        self.assertEqual(self.subscription.stripe_price_id, "price_annual_123")
+
+        self._logout()
+        self._login_owner()
+        setup_response = self.client.get("/setup?step=billing")
+        self.assertEqual(setup_response.status_code, 200)
+        self.assertIn(b"First-client upfront pricing", setup_response.data)
+        self.assertNotIn(b"$59.99/mo", setup_response.data)
+
+    def test_platform_admin_can_restore_standard_checkout_offer(self) -> None:
+        self.organization.billing_offer = "annual_only"
+        self.subscription.stripe_price_id = "price_annual_123"
+        self.db.session.commit()
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/billing",
+            data={"action": "set_billing_offer", "billing_offer": "standard"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Standard monthly and annual checkout options enabled", response.data)
+        self.assertIn(b"Checkout offer: Standard monthly or annual", response.data)
+        self.db.session.refresh(self.organization)
+        self.db.session.refresh(self.subscription)
+        self.assertEqual(self.organization.billing_offer, "standard")
+        self.assertEqual(self.subscription.stripe_price_id, "price_test_123")
+
+    def test_owner_cannot_change_platform_billing_offer(self) -> None:
+        self._login_owner()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/billing",
+            data={"action": "set_billing_offer", "billing_offer": "annual_only"},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.db.session.refresh(self.organization)
+        self.assertEqual(self.organization.billing_offer, "standard")
 
     @patch("app.routes.ensure_a2p_event_stream_subscription")
     @patch("app.routes._sync_customer_managed_onboarding_state")

@@ -14,6 +14,8 @@ class TestDemoSeed(unittest.TestCase):
             "STRIPE_SECRET_KEY": os.environ.get("STRIPE_SECRET_KEY"),
             "STRIPE_WEBHOOK_SECRET": os.environ.get("STRIPE_WEBHOOK_SECRET"),
             "STRIPE_PRICE_ID": os.environ.get("STRIPE_PRICE_ID"),
+            "STRIPE_MONTHLY_PRICE_ID": os.environ.get("STRIPE_MONTHLY_PRICE_ID"),
+            "STRIPE_ANNUAL_PRICE_ID": os.environ.get("STRIPE_ANNUAL_PRICE_ID"),
             "STRIPE_ACTIVATION_PRICE_ID": os.environ.get("STRIPE_ACTIVATION_PRICE_ID"),
             "SECRET_KEY": os.environ.get("SECRET_KEY"),
         }

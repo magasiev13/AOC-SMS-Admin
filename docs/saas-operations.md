@@ -31,7 +31,8 @@ Minimum expected env:
 - `SECRET_KEY=...`
 - `STRIPE_SECRET_KEY=...`
 - `STRIPE_WEBHOOK_SECRET=...`
-- `STRIPE_PRICE_ID=...`
+- `STRIPE_PRICE_ID=...` or `STRIPE_MONTHLY_PRICE_ID=...`
+- `STRIPE_ANNUAL_PRICE_ID=...`
 - `STRIPE_ACTIVATION_PRICE_ID=...`
 - `BILLING_TRIAL_DAYS=0`
 - `TWILIO_ACCOUNT_SID=...`
@@ -44,6 +45,7 @@ Conditional env:
 - `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
 - `TWILIO_A2P_ONBOARDING_ENABLED=1`
 - `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
+- `BILLING_ANNUAL_ONLY_ORG_SLUGS` / `BILLING_ANNUAL_ONLY_ORG_IDS` only as break-glass checkout-offer overrides
 - `PLATFORM_SERVICE_RESTART_ENABLED=1`
 
 Bootstrap-only values:
@@ -53,6 +55,17 @@ Bootstrap-only values:
 - `ADMIN_EMAIL`
 
 Once the first platform admin exists, `ADMIN_PASSWORD` is no longer required for routine deploys.
+
+## First-Client Checkout Offer
+
+For a client who should only see the `$600/year` upfront offer, use the platform admin organization Access page:
+
+1. Open `/platform/organizations/<id>/access`.
+2. In Billing State, enable annual-only checkout.
+3. Confirm the card says `Checkout offer: Annual upfront only`.
+4. Send the client through checkout after the toggle is enabled.
+
+This preserves monthly checkout for future customers while keeping the first client's checkout self-serve and Stripe-backed.
 
 ## Core Operational Commands
 

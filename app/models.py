@@ -138,6 +138,7 @@ class Organization(db.Model):
     name = db.Column(db.String(120), nullable=False)
     slug = db.Column(db.String(64), nullable=False, unique=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='active')
+    billing_offer = db.Column(db.String(30), nullable=False, default='standard')
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -194,6 +195,13 @@ class Organization(db.Model):
         normalized = slugify_organization_name(value)
         if not normalized:
             raise ValueError("Organization slug is required.")
+        return normalized
+
+    @validates("billing_offer")
+    def _normalize_billing_offer(self, key, value):
+        normalized = (value or "standard").strip().lower()
+        if normalized not in {"standard", "annual_only"}:
+            raise ValueError("Organization billing offer must be standard or annual_only.")
         return normalized
 
     def __repr__(self):

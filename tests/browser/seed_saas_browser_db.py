@@ -35,6 +35,8 @@ def main() -> None:
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_browser"
     os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_browser"
     os.environ["STRIPE_PRICE_ID"] = "price_browser"
+    os.environ["STRIPE_MONTHLY_PRICE_ID"] = "price_browser"
+    os.environ["STRIPE_ANNUAL_PRICE_ID"] = "price_browser_annual"
     os.environ["STRIPE_ACTIVATION_PRICE_ID"] = "price_browser_activation"
     os.environ["BILLING_TRIAL_DAYS"] = "14"
     os.environ["TWILIO_CREDENTIAL_ENCRYPTION_KEY"] = "4jHh8g7UFD3rjpWrW0zLPRenSn7bmG5qd73PRoSaD0o="

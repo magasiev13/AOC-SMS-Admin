@@ -1,7 +1,7 @@
 <div class="billing-plan-facts" aria-label="Billing plan details">
     <div>
         <span>Plan</span>
-        <strong>{{ subscription_view.plan_name }}</strong>
+        <strong>{{ subscription_view.plan_name }}{% if subscription_view.plan_price_label %} · {{ subscription_view.plan_price_label }}{% endif %}</strong>
     </div>
     <div>
         <span>Included usage</span>
@@ -12,7 +12,7 @@
         <strong>{{ subscription_view.overage_rate_label }} per segment</strong>
     </div>
     <div>
-        <span>Activation</span>
+        <span>Setup fee</span>
         <strong>{{ subscription_view.activation_label }}</strong>
     </div>
 </div>

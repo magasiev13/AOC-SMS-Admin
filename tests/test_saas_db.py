@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 
@@ -51,7 +51,7 @@ class TestSaasSchemaMigrations(unittest.TestCase):
     def test_saas_migrations_upgrade_from_prior_version(self) -> None:
         from app.saas_migrations.runner import inspect_saas_migrations, run_pending_saas_migrations
 
-        all_versions = [f"{version:03d}" for version in range(1, 14)]
+        all_versions = [f"{version:03d}" for version in range(1, 15)]
         run_pending_saas_migrations(self.engine, self.logger, target_version="001")
         partial_report = inspect_saas_migrations(self.engine)
         self.assertEqual(partial_report["applied"], ["001"])
@@ -63,6 +63,13 @@ class TestSaasSchemaMigrations(unittest.TestCase):
         self.assertEqual(final_report["applied"], all_versions)
         self.assertEqual(final_report["pending"], [])
         self.assertEqual(final_report["missing_tables"], [])
+
+        with self.engine.connect() as connection:
+            organization_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("organizations")
+            }
+        self.assertIn("billing_offer", organization_columns)
 
     def test_ensure_platform_admin_creates_first_platform_admin(self) -> None:
         from app.saas_migrations.runner import run_pending_saas_migrations

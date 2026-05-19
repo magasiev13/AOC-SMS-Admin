@@ -25,7 +25,8 @@ Minimum runtime values:
 - `SAAS_BASE_URL=https://app.example.com`
 - `STRIPE_SECRET_KEY=...`
 - `STRIPE_WEBHOOK_SECRET=...`
-- `STRIPE_PRICE_ID=...`
+- `STRIPE_PRICE_ID=...` or `STRIPE_MONTHLY_PRICE_ID=...`
+- `STRIPE_ANNUAL_PRICE_ID=...`
 - `STRIPE_ACTIVATION_PRICE_ID=...`
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
@@ -37,11 +38,23 @@ Conditional:
 - `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
 - `TWILIO_A2P_ONBOARDING_ENABLED=1`
 - `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID=BU...`
+- `BILLING_ANNUAL_ONLY_ORG_SLUGS` / `BILLING_ANNUAL_ONLY_ORG_IDS` only as break-glass checkout-offer overrides
 
 Bootstrap-only:
 
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
+
+## First-Client Annual Upfront Offer
+
+Use the platform admin UI before inviting or sending the first client to checkout:
+
+1. Create or open the organization in Platform admin.
+2. Open Access.
+3. In Billing State, enable annual-only checkout.
+4. Confirm the owner checkout page shows `First-client upfront pricing` and no `$59.99/mo` option.
+
+Do not use manual payment tracking for this path. Stripe Checkout should charge the `$150` setup fee plus the `$600/year` subscription.
 
 ## Platform-Managed Messaging Strategy
 

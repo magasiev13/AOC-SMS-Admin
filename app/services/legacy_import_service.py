@@ -699,7 +699,7 @@ def import_legacy_sqlite_snapshot(
             db.session.add(
                 OrganizationSubscription(
                     organization_id=organization.id,
-                    stripe_price_id=current_app.config.get("STRIPE_PRICE_ID"),
+                    stripe_price_id=current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID"),
                     status="incomplete",
                 )
             )
@@ -786,7 +786,7 @@ def import_legacy_sqlite_snapshot_into_new_org(
             db.session.add(
                 OrganizationSubscription(
                     organization_id=organization.id,
-                    stripe_price_id=current_app.config.get("STRIPE_PRICE_ID"),
+                    stripe_price_id=current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID"),
                     status=(subscription_status or "incomplete").strip().lower() or "incomplete",
                 )
             )
