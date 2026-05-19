@@ -50,6 +50,11 @@ class TestConfigSecurityHardening(unittest.TestCase):
         self.assertEqual(Config.REMEMBER_COOKIE_DURATION_DAYS, 7)
         self.assertEqual(Config.AUTH_PASSWORD_MIN_LENGTH, 12)
         self.assertTrue(Config.AUTH_PASSWORD_POLICY_ENFORCE)
+        self.assertTrue(Config.TWILIO_VALIDATE_INBOUND_SIGNATURE)
+        self.assertTrue(Config.SECURITY_HEADERS_ENABLED)
+        self.assertFalse(Config.SECURITY_HSTS_ENABLED)
+        self.assertEqual(Config.SECURITY_HSTS_MAX_AGE, 31536000)
+        self.assertIn("frame-ancestors 'none'", Config.SECURITY_CONTENT_SECURITY_POLICY)
 
     def test_invalid_integer_config_raises_clear_error(self) -> None:
         os.environ["AUTH_LOCKOUT_SECONDS"] = "not-a-number"
@@ -165,6 +170,54 @@ class TestConfigSecurityHardening(unittest.TestCase):
         self.assertIn("TWILIO_BROWSER_FAKE_SENDS must be disabled", str(ctx.exception))
         self.assertIn("TWILIO_A2P_FAKE_QUEUE must be disabled", str(ctx.exception))
 
+    def test_explicit_production_rejects_disabled_twilio_signature_validation(self) -> None:
+        self._configure_minimal_saas_production_env()
+        os.environ["DATABASE_URL"] = "postgresql+psycopg://user:pass@127.0.0.1:5432/twinevia"
+        os.environ["TWILIO_VALIDATE_INBOUND_SIGNATURE"] = "0"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        with self.assertRaises(RuntimeError) as ctx:
+            create_app(run_startup_tasks=False, start_scheduler=False)
+
+        self.assertIn("TWILIO_VALIDATE_INBOUND_SIGNATURE must be enabled", str(ctx.exception))
+
+    def test_explicit_production_rejects_disabled_security_headers(self) -> None:
+        self._configure_minimal_saas_production_env()
+        os.environ["DATABASE_URL"] = "postgresql+psycopg://user:pass@127.0.0.1:5432/twinevia"
+        os.environ["SECURITY_HEADERS_ENABLED"] = "0"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        with self.assertRaises(RuntimeError) as ctx:
+            create_app(run_startup_tasks=False, start_scheduler=False)
+
+        self.assertIn("SECURITY_HEADERS_ENABLED must be enabled", str(ctx.exception))
+
+    def test_security_headers_are_applied_to_responses(self) -> None:
+        os.environ["SECRET_KEY"] = "test-secret-key"
+        os.environ["SECURITY_HSTS_ENABLED"] = "1"
+
+        self._reload_config_module()
+
+        from app import create_app
+
+        app = create_app(run_startup_tasks=False, start_scheduler=False)
+        app.testing = True
+        response = app.test_client().get("/health", base_url="https://app.example.com")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+        self.assertIn("camera=()", response.headers["Permissions-Policy"])
+        self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+        self.assertEqual(response.headers["Strict-Transport-Security"], "max-age=31536000")
+
     def test_security_variables_have_non_technical_comments(self) -> None:
         config_path = os.path.join(os.path.dirname(__file__), "..", "app", "config.py")
         with open(config_path, "r", encoding="utf-8") as config_file:
@@ -185,6 +238,12 @@ class TestConfigSecurityHardening(unittest.TestCase):
             "AUTH_PASSWORD_MIN_LENGTH =",
             "AUTH_PASSWORD_POLICY_ENFORCE =",
             "TRUSTED_HOSTS =",
+            "SECURITY_HEADERS_ENABLED =",
+            "SECURITY_HSTS_ENABLED =",
+            "SECURITY_HSTS_MAX_AGE =",
+            "SECURITY_REFERRER_POLICY =",
+            "SECURITY_PERMISSIONS_POLICY =",
+            "SECURITY_CONTENT_SECURITY_POLICY =",
         ]
 
         for index, line in enumerate(lines):

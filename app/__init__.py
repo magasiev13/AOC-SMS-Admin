@@ -45,9 +45,18 @@ def _validate_production_security_config(app: Flask) -> None:
     expect_int_range("SESSION_IDLE_TIMEOUT_MINUTES", 5, 1440)
     expect_int_range("REMEMBER_COOKIE_DURATION_DAYS", 1, 30)
     expect_int_range("AUTH_PASSWORD_MIN_LENGTH", 12, 128)
+    expect_int_range("SECURITY_HSTS_MAX_AGE", 300, 63072000)
 
     if app.config.get("AUTH_PASSWORD_POLICY_ENFORCE") is not True:
         errors.append("AUTH_PASSWORD_POLICY_ENFORCE must be enabled (1) in production.")
+    if app.config.get("TWILIO_VALIDATE_INBOUND_SIGNATURE") is not True:
+        errors.append("TWILIO_VALIDATE_INBOUND_SIGNATURE must be enabled (1) in production.")
+    if app.config.get("SECURITY_HEADERS_ENABLED") is not True:
+        errors.append("SECURITY_HEADERS_ENABLED must be enabled (1) in production.")
+    if app.config.get("SECURITY_HSTS_ENABLED") is not True:
+        errors.append("SECURITY_HSTS_ENABLED must be enabled (1) in production.")
+    if not str(app.config.get("SECURITY_CONTENT_SECURITY_POLICY") or "").strip():
+        errors.append("SECURITY_CONTENT_SECURITY_POLICY must not be empty in production.")
 
     ip_account_limit = app.config.get("AUTH_MAX_ATTEMPTS_IP_ACCOUNT")
     account_limit = app.config.get("AUTH_MAX_ATTEMPTS_ACCOUNT")
@@ -264,6 +273,37 @@ def _canonical_public_host(app: Flask, trusted_hosts: set[str]) -> tuple[str, st
     return canonical_host, configured_base_url
 
 
+def _configure_security_headers(app: Flask) -> None:
+    @app.after_request
+    def apply_security_headers(response):
+        if not app.config.get("SECURITY_HEADERS_ENABLED", True):
+            return response
+
+        if "X-Content-Type-Options" not in response.headers:
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        if "X-Frame-Options" not in response.headers:
+            response.headers["X-Frame-Options"] = "DENY"
+
+        referrer_policy = str(app.config.get("SECURITY_REFERRER_POLICY") or "").strip()
+        if referrer_policy and "Referrer-Policy" not in response.headers:
+            response.headers["Referrer-Policy"] = referrer_policy
+
+        permissions_policy = str(app.config.get("SECURITY_PERMISSIONS_POLICY") or "").strip()
+        if permissions_policy and "Permissions-Policy" not in response.headers:
+            response.headers["Permissions-Policy"] = permissions_policy
+
+        content_security_policy = str(app.config.get("SECURITY_CONTENT_SECURITY_POLICY") or "").strip()
+        if content_security_policy and "Content-Security-Policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = content_security_policy
+
+        if request.is_secure and app.config.get("SECURITY_HSTS_ENABLED"):
+            max_age = int(app.config.get("SECURITY_HSTS_MAX_AGE", 31536000) or 31536000)
+            if "Strict-Transport-Security" not in response.headers:
+                response.headers["Strict-Transport-Security"] = f"max-age={max_age}"
+
+        return response
+
+
 def _build_app() -> Flask:
     app = Flask(__name__)
 
@@ -340,6 +380,8 @@ def _build_app() -> Flask:
             x_port=1,
             x_prefix=1,
         )
+
+    _configure_security_headers(app)
 
     instance_path = Path(app.instance_path)
     instance_path.mkdir(exist_ok=True)

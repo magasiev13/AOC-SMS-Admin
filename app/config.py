@@ -27,6 +27,20 @@ def _env_csv(name: str, default: str = '') -> list[str]:
     return [part.strip() for part in raw_value.split(',') if part.strip()]
 
 
+DEFAULT_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'none'; "
+    "img-src 'self' data:; "
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "form-action 'self'"
+)
+
+
 def _env_cookie_samesite(name: str, default: str = 'Lax') -> str:
     raw_value = str(os.environ.get(name, default)).strip()
     normalized = raw_value.lower()
@@ -132,6 +146,30 @@ class Config:
     # Set your allowed production hostnames (comma-separated), e.g. sms.example.com.
     # Leaving this empty in production can allow unsafe Host header usage.
     TRUSTED_HOSTS = _env_csv('TRUSTED_HOSTS', '')
+
+    # Keep browser security headers centralized and enabled for every response.
+    # Turning this off removes the app-level clickjacking, MIME sniffing, and CSP controls.
+    SECURITY_HEADERS_ENABLED = _env_bool('SECURITY_HEADERS_ENABLED', '1')
+    # Recommended in production over HTTPS. HSTS tells browsers to keep using HTTPS.
+    SECURITY_HSTS_ENABLED = _env_bool(
+        'SECURITY_HSTS_ENABLED',
+        '1' if os.environ.get('FLASK_ENV', '').lower() == 'production' else '0',
+    )
+    # Recommended: one year. This is only emitted on secure requests.
+    SECURITY_HSTS_MAX_AGE = _env_int('SECURITY_HSTS_MAX_AGE', '31536000')
+    # Keep cross-site referrers from leaking full workspace URLs.
+    SECURITY_REFERRER_POLICY = (
+        os.environ.get('SECURITY_REFERRER_POLICY', 'strict-origin-when-cross-origin').strip()
+        or 'strict-origin-when-cross-origin'
+    )
+    # Disable high-risk browser features Twinevia does not use.
+    SECURITY_PERMISSIONS_POLICY = (
+        os.environ.get('SECURITY_PERMISSIONS_POLICY', 'camera=(), microphone=(), geolocation=(), payment=()').strip()
+    )
+    # The default policy allows the existing Bootstrap/Chart.js CDN and current inline scripts.
+    SECURITY_CONTENT_SECURITY_POLICY = (
+        os.environ.get('SECURITY_CONTENT_SECURITY_POLICY', DEFAULT_CONTENT_SECURITY_POLICY).strip()
+    )
 
     # Scheduler (disable by default in production; run as a separate service)
     SCHEDULER_ENABLED = _env_bool('SCHEDULER_ENABLED', '1' if DEBUG else '0')

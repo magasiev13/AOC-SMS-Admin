@@ -13,6 +13,10 @@ Environment="APP_ROOT=__APP_ROOT__"
 Environment="SAAS_MODE=1"
 Environment="FLASK_ENV=production"
 Environment="FLASK_DEBUG=0"
+PrivateTmp=true
+ProtectHome=true
+SystemCallArchitectures=native
+UMask=0077
 ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
 ExecStart=/bin/bash __APP_ROOT__/deploy/run_platform_restart_queue_once.sh

@@ -15,6 +15,10 @@ When `FLASK_ENV=production`:
 - `REMEMBER_COOKIE_SECURE` must be enabled
 - `SESSION_COOKIE_HTTPONLY` and `REMEMBER_COOKIE_HTTPONLY` must remain enabled
 - `SESSION_COOKIE_SAMESITE` must be `Lax` or `Strict`
+- `TWILIO_VALIDATE_INBOUND_SIGNATURE` must be enabled
+- `SECURITY_HEADERS_ENABLED` must be enabled
+- `SECURITY_HSTS_ENABLED` must be enabled
+- `SECURITY_CONTENT_SECURITY_POLICY` must not be empty
 - login hardening values must fall within sane ranges
 - `AUTH_PASSWORD_POLICY_ENFORCE` must be enabled
 - `TRUSTED_HOSTS` must be non-empty
@@ -26,6 +30,8 @@ When `FLASK_ENV=production`:
 - `SAAS_MODE=1` for the primary runtime
 - `SCHEDULER_ENABLED=0` in production; use systemd timers
 - `RQ_QUEUE_NAME=twinevia-saas` for the SaaS runtime
+- browser security headers are emitted from Flask, including CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and HSTS on HTTPS requests
+- SaaS web, worker, scheduler, billing reconcile, and A2P reconcile units run with systemd sandboxing such as `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=full`, and an empty capability bounding set
 
 ## Auth And Session Controls
 
@@ -75,7 +81,7 @@ And conditionally:
 ## Webhook Safety
 
 - Stripe webhook verification depends on `STRIPE_WEBHOOK_SECRET`
-- inbound Twilio signature verification depends on `TWILIO_VALIDATE_INBOUND_SIGNATURE`
+- inbound Twilio signature verification is required in production with `TWILIO_VALIDATE_INBOUND_SIGNATURE=1`
 - optional Twilio A2P Event Streams should use `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN`
 
 ## Platform Restart Safety

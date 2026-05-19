@@ -13,6 +13,19 @@ Environment="SAAS_MODE=1"
 Environment="SCHEDULER_ENABLED=0"
 Environment="FLASK_ENV=production"
 Environment="FLASK_DEBUG=0"
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
 ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
 ExecStart=__APP_ROOT__/venv/bin/python -m gunicorn --workers 2 --bind 127.0.0.1:8100 --access-logfile /var/log/twinevia-saas/access.log --error-logfile /var/log/twinevia-saas/error.log wsgi:app

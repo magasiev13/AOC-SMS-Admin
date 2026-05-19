@@ -683,6 +683,53 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("Group=__APP_GROUP__", service_unit)
         self.assertIn("ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply", service_unit)
 
+    def test_saas_runtime_units_include_systemd_sandbox_hardening(self) -> None:
+        hardened_units = [
+            "twinevia-saas.service",
+            "twinevia-saas-worker.service",
+            "twinevia-saas-scheduler.service",
+            "twinevia-saas-billing-reconcile.service",
+            "twinevia-saas-a2p-reconcile.service",
+        ]
+        expected_directives = [
+            "NoNewPrivileges=true",
+            "PrivateTmp=true",
+            "ProtectSystem=full",
+            "ProtectHome=true",
+            "ProtectKernelTunables=true",
+            "ProtectKernelModules=true",
+            "ProtectControlGroups=true",
+            "RestrictSUIDSGID=true",
+            "LockPersonality=true",
+            "SystemCallArchitectures=native",
+            "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+            "CapabilityBoundingSet=",
+            "UMask=0077",
+        ]
+
+        for unit_name in hardened_units:
+            unit = self._read_repo_file("deploy", unit_name)
+            for directive in expected_directives:
+                self.assertIn(directive, unit, f"{directive} missing from {unit_name}")
+
+        restart_queue_unit = self._read_repo_file("deploy", "twinevia-saas-platform-restart-queue.service")
+        self.assertIn("PrivateTmp=true", restart_queue_unit)
+        self.assertIn("UMask=0077", restart_queue_unit)
+        self.assertNotIn("NoNewPrivileges=true", restart_queue_unit)
+        self.assertNotIn("CapabilityBoundingSet=", restart_queue_unit)
+
+    def test_saas_deploy_scripts_force_webhook_and_header_hardening(self) -> None:
+        install_script = self._read_repo_file("deploy", "install_saas.sh")
+        deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
+
+        for script in (install_script, deploy_script):
+            self.assertIn('ensure_env_key "TWILIO_VALIDATE_INBOUND_SIGNATURE" "1"', script)
+            self.assertIn('ensure_env_key "SECURITY_HEADERS_ENABLED" "1"', script)
+            self.assertIn('ensure_env_key "SECURITY_HSTS_ENABLED" "1"', script)
+            self.assertIn("TWILIO_VALIDATE_INBOUND_SIGNATURE must be 1", script)
+            self.assertIn("SECURITY_HEADERS_ENABLED must be 1", script)
+            self.assertIn("SECURITY_HSTS_ENABLED must be 1", script)
+
     def test_saas_dbdoctor_wrappers_default_to_canonical_root(self) -> None:
         canonical_wrapper = self._read_repo_file("bin", "twinevia-saas-dbdoctor")
         compatibility_wrapper = self._read_repo_file("bin", "saas-dbdoctor")

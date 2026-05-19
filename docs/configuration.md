@@ -87,6 +87,17 @@ Important production rule:
 
 - host-header enforcement runs only when `FLASK_ENV=production` and `TRUSTED_HOSTS` is non-empty
 
+## Browser Security Headers
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SECURITY_HEADERS_ENABLED` | `1` | Enables app-level browser security headers. Production must keep this enabled. |
+| `SECURITY_HSTS_ENABLED` | `1` when `FLASK_ENV=production`, else `0` | Emits HSTS on HTTPS requests. Production must keep this enabled. |
+| `SECURITY_HSTS_MAX_AGE` | `31536000` | HSTS lifetime in seconds. Production validation accepts 300 to 63072000. |
+| `SECURITY_REFERRER_POLICY` | `strict-origin-when-cross-origin` | Referrer policy header value. |
+| `SECURITY_PERMISSIONS_POLICY` | `camera=(), microphone=(), geolocation=(), payment=()` | Permissions policy header value. |
+| `SECURITY_CONTENT_SECURITY_POLICY` | built-in Bootstrap/Chart.js-compatible policy | CSP header value. Production must not be empty. |
+
 ## Scheduler And Time
 
 | Variable | Default | Notes |
@@ -139,7 +150,7 @@ Important runtime distinction:
 | `TWILIO_FROM_NUMBER` | unset | Mainly used by the legacy single-tenant runtime. |
 | `TWILIO_PLATFORM_FRIENDLY_NAME` | `Twinevia` | Default naming seed for platform-managed resources. |
 | `TWILIO_CREDENTIAL_ENCRYPTION_KEY` | unset | Required for SaaS billing/provider validation. |
-| `TWILIO_VALIDATE_INBOUND_SIGNATURE` | `1` | Signature validation for inbound Twilio requests. |
+| `TWILIO_VALIDATE_INBOUND_SIGNATURE` | `1` | Signature validation for inbound Twilio requests. Production must keep this enabled. |
 | `INBOUND_AUTO_REPLY_ENABLED` | `1` | Global inbound automation toggle. |
 | `SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS` | `3` | Duplicate-answer safety window for surveys. |
 

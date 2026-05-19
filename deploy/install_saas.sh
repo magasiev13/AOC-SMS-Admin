@@ -270,6 +270,9 @@ validate_saas_runtime_env() {
   local session_cookie_secure
   local remember_cookie_secure
   local session_cookie_samesite
+  local twilio_validate_inbound_signature
+  local security_headers_enabled
+  local security_hsts_enabled
   local errors=()
 
   flask_env="$(current_env_value "FLASK_ENV")"
@@ -280,6 +283,9 @@ validate_saas_runtime_env() {
   session_cookie_secure="$(current_env_value "SESSION_COOKIE_SECURE")"
   remember_cookie_secure="$(current_env_value "REMEMBER_COOKIE_SECURE")"
   session_cookie_samesite="$(current_env_value "SESSION_COOKIE_SAMESITE")"
+  twilio_validate_inbound_signature="$(current_env_value "TWILIO_VALIDATE_INBOUND_SIGNATURE")"
+  security_headers_enabled="$(current_env_value "SECURITY_HEADERS_ENABLED")"
+  security_hsts_enabled="$(current_env_value "SECURITY_HSTS_ENABLED")"
 
   if [[ "${flask_env}" != "production" ]]; then
     errors+=("FLASK_ENV must be set to production for live SaaS deploys.")
@@ -308,6 +314,15 @@ validate_saas_runtime_env() {
   fi
   if [[ "${session_cookie_samesite}" != "Lax" && "${session_cookie_samesite}" != "Strict" ]]; then
     errors+=("SESSION_COOKIE_SAMESITE must be Lax or Strict for live SaaS deploys.")
+  fi
+  if [[ "${twilio_validate_inbound_signature}" != "1" ]]; then
+    errors+=("TWILIO_VALIDATE_INBOUND_SIGNATURE must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${security_headers_enabled}" != "1" ]]; then
+    errors+=("SECURITY_HEADERS_ENABLED must be 1 for live SaaS deploys.")
+  fi
+  if [[ "${security_hsts_enabled}" != "1" ]]; then
+    errors+=("SECURITY_HSTS_ENABLED must be 1 for live SaaS deploys.")
   fi
 
   for flag_name in STRIPE_FAKE_CHECKOUT_ENABLED TWILIO_BROWSER_FAKE_SENDS TWILIO_A2P_FAKE_QUEUE; do
@@ -344,10 +359,14 @@ ensure_env_key "TRUST_PROXY" "1"
 ensure_env_key "SESSION_COOKIE_SECURE" "1"
 ensure_env_key "REMEMBER_COOKIE_SECURE" "1"
 ensure_env_key "SESSION_COOKIE_SAMESITE" "Lax"
+ensure_env_key "SECURITY_HEADERS_ENABLED" "1"
+ensure_env_key "SECURITY_HSTS_ENABLED" "1"
+ensure_env_key "SECURITY_HSTS_MAX_AGE" "31536000"
 ensure_env_key "STRIPE_FAKE_CHECKOUT_ENABLED" "0"
 ensure_env_key "BILLING_TRIAL_DAYS" "0"
 ensure_env_key "TWILIO_BROWSER_FAKE_SENDS" "0"
 ensure_env_key "TWILIO_A2P_FAKE_QUEUE" "0"
+ensure_env_key "TWILIO_VALIDATE_INBOUND_SIGNATURE" "1"
 ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
