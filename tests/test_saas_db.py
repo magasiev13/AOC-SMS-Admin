@@ -51,7 +51,8 @@ class TestSaasSchemaMigrations(unittest.TestCase):
     def test_saas_migrations_upgrade_from_prior_version(self) -> None:
         from app.saas_migrations.runner import inspect_saas_migrations, run_pending_saas_migrations
 
-        all_versions = [f"{version:03d}" for version in range(1, 15)]
+        initial_report = inspect_saas_migrations(self.engine)
+        all_versions = initial_report["migrations"]
         run_pending_saas_migrations(self.engine, self.logger, target_version="001")
         partial_report = inspect_saas_migrations(self.engine)
         self.assertEqual(partial_report["applied"], ["001"])
@@ -69,7 +70,22 @@ class TestSaasSchemaMigrations(unittest.TestCase):
                 column["name"]
                 for column in inspect(connection).get_columns("organizations")
             }
+            event_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("events")
+            }
+            registration_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("event_registrations")
+            }
+            scheduled_columns = {
+                column["name"]
+                for column in inspect(connection).get_columns("scheduled_messages")
+            }
         self.assertIn("billing_offer", organization_columns)
+        self.assertIn("external_event_id", event_columns)
+        self.assertIn("external_booking_id", registration_columns)
+        self.assertIn("automation_key", scheduled_columns)
 
     def test_ensure_platform_admin_creates_first_platform_admin(self) -> None:
         from app.saas_migrations.runner import run_pending_saas_migrations

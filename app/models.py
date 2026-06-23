@@ -958,10 +958,33 @@ class Event(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     title = db.Column(db.String(200), nullable=False)
     date = db.Column(db.Date, nullable=True)
+    external_source = db.Column(db.String(50), nullable=True, index=True)
+    external_event_id = db.Column(db.String(80), nullable=True, index=True)
+    external_post_id = db.Column(db.String(80), nullable=True, index=True)
+    external_slug = db.Column(db.String(200), nullable=True)
+    external_url = db.Column(db.Text, nullable=True)
+    external_status = db.Column(db.String(30), nullable=True, index=True)
+    external_start_at = db.Column(db.DateTime, nullable=True, index=True)
+    external_end_at = db.Column(db.DateTime, nullable=True)
+    external_timezone = db.Column(db.String(80), nullable=True)
+    external_modified_at = db.Column(db.DateTime, nullable=True)
+    location_name = db.Column(db.String(200), nullable=True)
+    location_address = db.Column(db.String(200), nullable=True)
+    location_town = db.Column(db.String(120), nullable=True)
+    location_state = db.Column(db.String(80), nullable=True)
+    location_postcode = db.Column(db.String(20), nullable=True)
+    location_country = db.Column(db.String(2), nullable=True)
+    rsvp_enabled = db.Column(db.Boolean, nullable=True)
+    capacity = db.Column(db.Integer, nullable=True)
+    synced_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
 
     organization = db.relationship('Organization')
     registrations = db.relationship('EventRegistration', back_populates='event', cascade='all, delete-orphan')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'external_source', 'external_event_id', name='ux_events_org_external_source_event'),
+    )
 
     def __repr__(self):
         return f'<Event {self.title}>'
@@ -976,6 +999,13 @@ class EventRegistration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
+    external_source = db.Column(db.String(50), nullable=True, index=True)
+    external_booking_id = db.Column(db.String(80), nullable=True, index=True)
+    external_person_id = db.Column(db.String(80), nullable=True, index=True)
+    external_booking_status = db.Column(db.String(30), nullable=True, index=True)
+    booking_spaces = db.Column(db.Integer, nullable=True)
+    external_updated_at = db.Column(db.DateTime, nullable=True)
+    synced_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
 
     event = db.relationship('Event', back_populates='registrations')
@@ -983,6 +1013,7 @@ class EventRegistration(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('organization_id', 'event_id', 'phone', name='unique_org_event_phone'),
+        db.UniqueConstraint('organization_id', 'external_source', 'external_booking_id', name='ux_event_registrations_org_external_booking'),
     )
 
     @validates("phone")
@@ -1232,10 +1263,17 @@ class ScheduledMessage(db.Model):
     sent_at = db.Column(db.DateTime, nullable=True)
     error_message = db.Column(db.Text, nullable=True)
     message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id'), nullable=True)
+    automation_source = db.Column(db.String(50), nullable=True, index=True)
+    automation_key = db.Column(db.String(160), nullable=True, index=True)
+    automation_kind = db.Column(db.String(40), nullable=True, index=True)
 
     event = db.relationship('Event')
     message_log = db.relationship('MessageLog')
     organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'automation_source', 'automation_key', name='ux_scheduled_messages_org_automation_key'),
+    )
 
     @validates("test_recipient_selection_mode")
     def _normalize_test_recipient_selection_mode(self, key, value):

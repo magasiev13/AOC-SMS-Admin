@@ -113,6 +113,24 @@ def _validate_saas_billing_config(app: Flask) -> None:
             )
 
 
+def _validate_aoc_event_sync_config(app: Flask) -> None:
+    if not app.config.get("AOC_EVENTS_WEBHOOK_ENABLED"):
+        return
+
+    errors: list[str] = []
+    if not str(app.config.get("AOC_EVENTS_WEBHOOK_SECRET") or "").strip():
+        errors.append("AOC_EVENTS_WEBHOOK_SECRET must be configured when AOC_EVENTS_WEBHOOK_ENABLED=1.")
+    if not str(app.config.get("AOC_EVENTS_ORGANIZATION_SLUG") or "").strip():
+        errors.append("AOC_EVENTS_ORGANIZATION_SLUG must be configured when AOC_EVENTS_WEBHOOK_ENABLED=1.")
+    tolerance_seconds = app.config.get("AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS")
+    if not isinstance(tolerance_seconds, int) or tolerance_seconds < 60 or tolerance_seconds > 3600:
+        errors.append("AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS must be between 60 and 3600.")
+
+    if errors:
+        details = "\n - ".join(errors)
+        raise RuntimeError(f"AOC event sync configuration is invalid:\n - {details}")
+
+
 def _validate_explicit_production_runtime(app: Flask) -> None:
     if os.environ.get("FLASK_ENV", "").lower() != "production":
         return
@@ -350,6 +368,7 @@ def _build_app() -> Flask:
         if app.config.get("SECRET_KEY") == "dev-secret-key-change-in-production":
             raise RuntimeError("SECRET_KEY must be set in production")
         _validate_saas_billing_config(app)
+        _validate_aoc_event_sync_config(app)
         if is_explicit_production:
             _validate_production_security_config(app)
 

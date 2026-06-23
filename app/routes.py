@@ -77,6 +77,14 @@ from app.services.billing_service import (
     subscription_status_is_complimentary,
     sync_checkout_session_by_id,
 )
+from app.services.aoc_event_sync_service import (
+    AocEventSyncPayloadError,
+    AocWebhookAuthError,
+    parse_aoc_webhook_json,
+    process_aoc_event_sync_payload,
+    utc_now_for_aoc_sync,
+    verify_aoc_webhook_signature,
+)
 from app.services.billing_plans import (
     activation_fee_label,
     annual_only_offer_enabled_for_organization,
@@ -6209,6 +6217,55 @@ def stripe_webhook():
         return 'Webhook processing failed', 500
 
     return '', 200
+
+
+@bp.route('/webhooks/aoc/events', methods=['POST'])
+@csrf.exempt
+def aoc_events_webhook():
+    if not current_app.config.get('AOC_EVENTS_WEBHOOK_ENABLED'):
+        abort(404)
+
+    body = request.get_data(cache=True)
+    delivery_id = request.headers.get('X-AOC-Delivery-ID')
+    try:
+        verify_aoc_webhook_signature(
+            body=body,
+            timestamp_header=request.headers.get('X-AOC-Timestamp'),
+            signature_header=request.headers.get('X-AOC-Signature'),
+            secret=current_app.config.get('AOC_EVENTS_WEBHOOK_SECRET') or '',
+            tolerance_seconds=int(current_app.config.get('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS') or 300),
+            now_timestamp=int(utc_now().timestamp()),
+        )
+        payload = parse_aoc_webhook_json(body)
+        summary = process_aoc_event_sync_payload(
+            payload=payload,
+            organization_slug=current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG') or '',
+            received_at=utc_now_for_aoc_sync(),
+        )
+        db.session.commit()
+    except AocWebhookAuthError as exc:
+        db.session.rollback()
+        current_app.logger.warning(
+            'Rejected AOC event webhook authentication.',
+            extra={'delivery_id': delivery_id, 'reason': str(exc)},
+        )
+        return 'Forbidden', 403
+    except AocEventSyncPayloadError as exc:
+        db.session.rollback()
+        current_app.logger.warning(
+            'Rejected AOC event webhook payload.',
+            extra={'delivery_id': delivery_id, 'reason': str(exc)},
+        )
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            'Failed to process AOC event webhook.',
+            extra={'delivery_id': delivery_id},
+        )
+        return 'Webhook processing failed', 500
+
+    return jsonify(summary), 200
 
 
 @bp.route('/webhooks/twilio/trusthub-status', methods=['POST'])

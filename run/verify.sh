@@ -16,7 +16,7 @@ else
   exit 1
 fi
 
-PYTHON_VERSION="$(${PYTHON_BIN} -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PYTHON_VERSION="$("${PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 if [[ "${PYTHON_VERSION}" != "${REQUIRED_PYTHON}" ]]; then
   echo "ERROR: verification must run on Python ${REQUIRED_PYTHON}; found ${PYTHON_VERSION}." >&2
   echo "Use ./run/setup.sh to create the project venv, then rerun ./run/verify.sh" >&2
