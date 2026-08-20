@@ -339,8 +339,16 @@ jobs:
           HEALTH_HOST="$(resolve_health_host)"
           curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null
           READINESS_TOKEN_VALUE="$(sudo awk -F= '$1 == "READINESS_TOKEN" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
-          READY_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 10 -H "Host: ${HEALTH_HOST}" -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" http://127.0.0.1:8100/ready)"
-          [ "${READY_RESPONSE}" = "READY" ] || fail "Readiness endpoint did not return READY."
+          READY_RESPONSE=""
+          for attempt in $(seq 1 15); do
+            READY_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 10 -H "Host: ${HEALTH_HOST}" -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" http://127.0.0.1:8100/ready 2>/dev/null || true)"
+            if [ "${READY_RESPONSE}" = "READY" ]; then
+              break
+            fi
+            echo "Readiness attempt ${attempt}/15 did not return READY; retrying."
+            sleep 2
+          done
+          [ "${READY_RESPONSE}" = "READY" ] || fail "Readiness endpoint did not return READY after 15 attempts."
           CURRENT_RELEASE="$(readlink -f "${APP_ROOT}/current")"
           RELEASE_SHA="$(sudo awk -F= '$1 == "APP_RELEASE_SHA" { print substr($0, index($0, "=") + 1) }' "${CURRENT_RELEASE}/.release.env")"
           [ "${RELEASE_SHA}" = "${EXPECTED_SHA}" ] || fail "Active release ${RELEASE_SHA} does not match workflow commit ${EXPECTED_SHA}."
@@ -348,8 +356,16 @@ jobs:
           echo "==> External host and product identity checks"
           EXTERNAL_HEALTH="$(curl -fsS --connect-timeout 3 --max-time 15 https://app.twinevia.com/health)"
           [ "${EXTERNAL_HEALTH}" = "OK" ] || fail "External health endpoint did not return OK."
-          EXTERNAL_READY="$(curl -fsS --connect-timeout 3 --max-time 20 -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" https://app.twinevia.com/ready)"
-          [ "${EXTERNAL_READY}" = "READY" ] || fail "External readiness endpoint did not return READY."
+          EXTERNAL_READY=""
+          for attempt in $(seq 1 15); do
+            EXTERNAL_READY="$(curl -fsS --connect-timeout 3 --max-time 20 -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" https://app.twinevia.com/ready 2>/dev/null || true)"
+            if [ "${EXTERNAL_READY}" = "READY" ]; then
+              break
+            fi
+            echo "External readiness attempt ${attempt}/15 did not return READY; retrying."
+            sleep 2
+          done
+          [ "${EXTERNAL_READY}" = "READY" ] || fail "External readiness endpoint did not return READY after 15 attempts."
           PUBLIC_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://twinevia.com/)"
           [[ "${PUBLIC_PAGE}" == *"Automated survey flows"* ]] || fail "Public site is missing the automated survey flow feature."
           LOGIN_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://app.twinevia.com/login)"

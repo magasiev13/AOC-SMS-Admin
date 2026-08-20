@@ -72,12 +72,13 @@ test('public auth surfaces and health respond on the live host', async ({ page }
   expect(response).not.toBeNull();
   expect(response.status()).toBe(200);
   await expect(page.getByText('Workspace access')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Create a workspace' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Request pilot access' })).toBeVisible();
 
   response = await page.goto('/signup');
   expect(response).not.toBeNull();
   expect(response.status()).toBe(200);
-  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
+  await expect(page).toHaveURL(/\/request-a-pilot$/);
+  await expect(page.getByRole('button', { name: 'Submit pilot request' })).toBeVisible();
 
   response = await page.goto('/platform/login');
   expect(response).not.toBeNull();
