@@ -6,21 +6,41 @@ cd "${REPO_ROOT}"
 
 status=0
 
+if command -v rg >/dev/null 2>&1; then
+  SEARCH_BACKEND="rg"
+elif command -v grep >/dev/null 2>&1; then
+  SEARCH_BACKEND="grep"
+else
+  echo "ERROR: naming audit requires rg or grep." >&2
+  exit 1
+fi
+
 check_clean() {
   local label="$1"
   local pattern="$2"
   shift 2
   local output=""
 
-  output="$(
-    rg -n \
-      --hidden \
-      --glob '!venv/**' \
-      --glob '!output/**' \
-      --glob '!node_modules/**' \
-      --glob '!run/naming_audit.sh' \
-      "${pattern}" "$@" || true
-  )"
+  if [[ "${SEARCH_BACKEND}" == "rg" ]]; then
+    output="$(
+      rg -n \
+        --hidden \
+        --glob '!venv/**' \
+        --glob '!output/**' \
+        --glob '!node_modules/**' \
+        --glob '!run/naming_audit.sh' \
+        "${pattern}" "$@" || true
+    )"
+  else
+    output="$(
+      grep -RInE -I \
+        --exclude-dir=venv \
+        --exclude-dir=output \
+        --exclude-dir=node_modules \
+        --exclude=naming_audit.sh \
+        -- "${pattern}" "$@" || true
+    )"
+  fi
   if [[ -n "${output}" ]]; then
     echo "ERROR: ${label}" >&2
     echo "${output}" >&2
