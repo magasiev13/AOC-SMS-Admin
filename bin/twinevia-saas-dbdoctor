@@ -10,11 +10,11 @@ resolve_saas_app_root() {
     printf '%s\n' "${APP_ROOT}"
     return
   fi
-  if [[ -x "/opt/twinevia-saas/venv/bin/python" ]]; then
-    printf '/opt/twinevia-saas\n'
+  if [[ -x "/opt/twinevia-saas/current/venv/bin/python" ]]; then
+    printf '/opt/twinevia-saas/current\n'
     return
   fi
-  printf '/opt/twinevia-saas\n'
+  printf '/opt/twinevia-saas/current\n'
 }
 
 DEFAULT_SAAS_APP_ROOT="$(resolve_saas_app_root)"
@@ -22,7 +22,7 @@ TWINEVIA_SAAS_PYTHON="${TWINEVIA_SAAS_PYTHON:-${DEFAULT_SAAS_APP_ROOT}/venv/bin/
 
 if [[ ! -x "${TWINEVIA_SAAS_PYTHON}" ]]; then
   echo "ERROR: Python interpreter not found at ${TWINEVIA_SAAS_PYTHON}." >&2
-  echo "Set TWINEVIA_SAAS_PYTHON or TWINEVIA_SAAS_APP_ROOT to the SaaS runtime path, e.g. /opt/twinevia-saas/venv/bin/python." >&2
+  echo "Set TWINEVIA_SAAS_PYTHON or TWINEVIA_SAAS_APP_ROOT to the SaaS release path, e.g. /opt/twinevia-saas/current/venv/bin/python." >&2
   exit 1
 fi
 

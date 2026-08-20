@@ -1,0 +1,69 @@
+name: Monitor Twinevia Production
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monitor-twinevia-production
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify public health, readiness, and product identity
+        env:
+          TWINEVIA_READINESS_TOKEN: ${{ secrets.TWINEVIA_READINESS_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ ${#TWINEVIA_READINESS_TOKEN} -lt 32 ]; then
+            echo "TWINEVIA_READINESS_TOKEN is missing or too short." >&2
+            exit 1
+          fi
+
+          HEALTH_RESPONSE="$(curl --fail --silent --show-error --retry 2 --max-time 15 https://app.twinevia.com/health)"
+          [ "${HEALTH_RESPONSE}" = "OK" ]
+          READY_RESPONSE="$(curl --fail --silent --show-error --retry 2 --max-time 20 -H "X-Twinevia-Readiness-Token: ${TWINEVIA_READINESS_TOKEN}" https://app.twinevia.com/ready)"
+          [ "${READY_RESPONSE}" = "READY" ]
+
+          curl --fail --silent --show-error --retry 2 --max-time 20 https://twinevia.com/ \
+            | grep -Fq "Automated survey flows"
+          curl --fail --silent --show-error --retry 2 --max-time 20 https://app.twinevia.com/login \
+            | grep -Fq "Twinevia"
+
+          HEADER_FILE="$(mktemp)"
+          trap 'rm -f "${HEADER_FILE}"' EXIT
+          curl --fail --silent --show-error --max-time 15 --dump-header "${HEADER_FILE}" --output /dev/null https://app.twinevia.com/login
+          grep -Eiq '^strict-transport-security:' "${HEADER_FILE}"
+          grep -Eiq '^content-security-policy:' "${HEADER_FILE}"
+          grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${HEADER_FILE}"
+
+      - name: Update uptime incident
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Twinevia production monitor failed"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          EXISTING_NUMBER="$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1)"
+          if [ "${JOB_STATUS}" = "success" ]; then
+            if [ -n "${EXISTING_NUMBER}" ]; then
+              gh issue comment "${EXISTING_NUMBER}" --body "Production monitoring recovered: ${RUN_URL}"
+              gh issue close "${EXISTING_NUMBER}" --reason completed
+            fi
+          elif [ -n "${EXISTING_NUMBER}" ]; then
+            gh issue comment "${EXISTING_NUMBER}" --body "Monitoring failed again: ${RUN_URL}"
+          else
+            gh issue create --title "${TITLE}" --body "Twinevia production health or readiness failed. Review ${RUN_URL}."
+          fi

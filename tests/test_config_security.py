@@ -273,11 +273,13 @@ class TestConfigSecurityHardening(unittest.TestCase):
         trusted_response = client.get("/", headers={"Host": "sms.example.org"})
         self.assertNotEqual(trusted_response.status_code, 400)
 
-    def test_trusted_hosts_redirect_to_saas_base_url_host(self) -> None:
+    def test_application_paths_redirect_to_app_base_url_host(self) -> None:
         os.environ["FLASK_ENV"] = "production"
         os.environ["SECRET_KEY"] = "test-production-secret-key"
-        os.environ["TRUSTED_HOSTS"] = "twinevia.com,www.twinevia.com"
-        os.environ["SAAS_BASE_URL"] = "https://www.twinevia.com"
+        os.environ["TRUSTED_HOSTS"] = "twinevia.com,www.twinevia.com,app.twinevia.com"
+        os.environ["SAAS_BASE_URL"] = "https://app.twinevia.com"
+        os.environ["PUBLIC_BASE_URL"] = "https://twinevia.com"
+        os.environ["APP_BASE_URL"] = "https://app.twinevia.com"
 
         self._reload_config_module()
 
@@ -296,15 +298,22 @@ class TestConfigSecurityHardening(unittest.TestCase):
         self.assertEqual(response.status_code, 308)
         self.assertEqual(
             response.headers["Location"],
-            "https://www.twinevia.com/login?next=%2Fplatform",
+            "https://app.twinevia.com/login?next=%2Fplatform",
         )
 
         canonical_response = client.get(
             "/login",
-            headers={"Host": "www.twinevia.com"},
+            headers={"Host": "app.twinevia.com"},
             follow_redirects=False,
         )
         self.assertNotEqual(canonical_response.status_code, 308)
+
+        preserved_webhook_response = client.post(
+            "/webhooks/stripe",
+            headers={"Host": "www.twinevia.com"},
+            follow_redirects=False,
+        )
+        self.assertNotEqual(preserved_webhook_response.status_code, 308)
 
     def test_env_example_is_marked_as_local_bootstrap_only(self) -> None:
         env_example_path = os.path.join(os.path.dirname(__file__), "..", ".env.example")

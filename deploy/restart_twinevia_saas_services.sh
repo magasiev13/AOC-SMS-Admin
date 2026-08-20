@@ -6,6 +6,8 @@ readonly UNITS=(
   "twinevia-saas-worker"
   "twinevia-saas-scheduler.timer"
   "twinevia-saas-billing-reconcile.timer"
+  "twinevia-saas-platform-restart-queue.timer"
+  "twinevia-saas-a2p-reconcile.timer"
 )
 readonly TRANSIENT_UNIT_PATTERN='^twinevia-saas-manual-restart-[A-Za-z0-9_.:@-]+(\.service)?$'
 
@@ -43,11 +45,13 @@ queue_restart() {
   restart_unit="twinevia-saas-manual-restart-$(date +%s)-$$"
   read -r -d '' restart_command <<'EOF' || true
 sleep 2
-systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer
+systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
 systemctl is-active --quiet twinevia-saas
 systemctl is-active --quiet twinevia-saas-worker
 systemctl is-active --quiet twinevia-saas-scheduler.timer
 systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
+systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer
+systemctl is-active --quiet twinevia-saas-a2p-reconcile.timer
 EOF
 
   if ! run_output="$(systemd-run \

@@ -13,12 +13,6 @@
 
 {% block page_actions %}
 {% if can_manage_unsubscribed %}
-<form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="d-inline page-action-secondary" data-backfill-form>
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button type="submit" class="btn btn-outline-warning" data-backfill-button>
-        <i class="bi bi-arrow-repeat me-1"></i>Backfill from Logs
-    </button>
-</form>
 <a href="{{ url_for('main.unsubscribed_import') }}" class="btn btn-outline-primary page-action-secondary">
     <i class="bi bi-upload me-1"></i>Import CSV
 </a>
@@ -50,12 +44,13 @@
         <input type="hidden" name="dir" value="{{ sort_dir }}">
         {% endcall %}
 
-        <section class="collection-panel collection-panel--results">
-            <div class="collection-panel__header">
+        <div class="card app-card collection-panel collection-panel--results suppression-results-card">
+            <div class="card-header suppression-results-header d-flex flex-wrap justify-content-between align-items-center gap-3">
                 <div>
                     <h2 class="collection-panel__title">Suppression entries</h2>
                     <p class="collection-panel__meta">Review unsubscribed contacts, manual suppressions, and backfill results before the next send.</p>
                 </div>
+                {% if can_manage_unsubscribed %}
                 <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
                     <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
                         <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
@@ -74,17 +69,20 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     </form>
                 </div>
+                {% endif %}
             </div>
 
-            <div class="table-responsive d-none d-lg-block">
+            <div class="table-responsive d-none d-lg-block suppression-table-wrapper">
                 <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable" data-sortable="server" data-sort-default="created_at" data-sort-default-dir="desc">
                     <thead class="table-light">
                         <tr>
+                            {% if can_manage_unsubscribed %}
                             <th width="40">
                                 {% if entries %}
                                 <input class="form-check-input" type="checkbox" id="selectAllEntries" aria-label="Select all entries">
                                 {% endif %}
                             </th>
+                            {% endif %}
                             <th data-sort-type="string">
                                 <button type="button" class="sort-button" data-sort-key="name">
                                     <span>Name</span>
@@ -122,7 +120,7 @@
                                 </button>
                             </th>
                             {% if can_manage_unsubscribed %}
-                            <th width="120">Actions</th>
+                            <th class="suppression-actions-heading">Actions</th>
                             {% endif %}
                         </tr>
                     </thead>
@@ -130,6 +128,7 @@
                         {% if entries %}
                             {% for entry in entries %}
                             <tr>
+                                {% if can_manage_unsubscribed %}
                                 <td>
                                     {% if entry.entry_type == 'unsubscribed' %}
                                     <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
@@ -137,6 +136,7 @@
                                     <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
                                     {% endif %}
                                 </td>
+                                {% endif %}
                                 <td data-sort-value="{{ entry.name or '' }}">{{ entry.name or '-' }}</td>
                                 <td data-sort-value="{{ entry.phone }}"><code>{{ entry.phone }}</code></td>
                                 <td data-sort-value="{{ entry.reason or '' }}">{{ entry.reason or '-' }}</td>
@@ -146,16 +146,16 @@
                                 <td data-sort-value="{{ entry.source or '' }}"><span class="badge bg-light text-dark">{{ entry.source or '-' }}</span></td>
                                 <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
                                 {% if can_manage_unsubscribed %}
-                                <td>
+                                <td class="suppression-actions-cell">
                                     {% if entry.entry_type == 'unsubscribed' %}
-                                    <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="d-inline">
+                                    <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="row-actions suppression-row-actions" data-row-actions>
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove entry">
-                                            <i class="bi bi-trash me-1"></i>Remove
+                                            <i class="bi bi-trash"></i>
                                         </button>
                                     </form>
                                     {% else %}
-                                    <span class="text-muted small">Managed via suppression</span>
+                                    <span class="badge bg-light text-muted">Suppressed</span>
                                     {% endif %}
                                 </td>
                                 {% endif %}
@@ -182,7 +182,9 @@
                     <tbody class="table-skeleton-body" aria-hidden="true">
                         {% for _ in range(5) %}
                         <tr>
+                            {% if can_manage_unsubscribed %}
                             <td><span class="skeleton-block w-25"></span></td>
+                            {% endif %}
                             <td><span class="skeleton-block w-75"></span></td>
                             <td><span class="skeleton-block w-50"></span></td>
                             <td><span class="skeleton-block w-75"></span></td>
@@ -213,6 +215,7 @@
                                 </div>
                                 <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
                             </div>
+                            {% if can_manage_unsubscribed %}
                             <div class="d-flex flex-column align-items-end gap-2">
                                 {% if entry.entry_type == 'unsubscribed' %}
                                 <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
@@ -220,6 +223,7 @@
                                 <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
                                 {% endif %}
                             </div>
+                            {% endif %}
                         </div>
                         {% if can_manage_unsubscribed and entry.entry_type == 'unsubscribed' %}
                         <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
@@ -248,10 +252,14 @@
                 {% endif %}
             </div>
 
-            {% if entries %}
-            <div class="collection-panel__footer d-flex flex-wrap justify-content-between align-items-center gap-3">
+            {% if entries or can_manage_unsubscribed %}
+            <div class="card-footer suppression-card-footer d-flex flex-wrap justify-content-between align-items-center gap-3">
+                {% if entries %}
                 <span>Showing {{ entries|length }} of {{ total_count }} contact(s)</span>
-                {% if total_pages > 1 %}
+                {% else %}
+                <span>No entries to show</span>
+                {% endif %}
+                {% if entries and total_pages > 1 %}
                 <nav aria-label="Suppression list pagination">
                     <ul class="pagination pagination-sm mb-0">
                         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
@@ -276,9 +284,17 @@
                     </ul>
                 </nav>
                 {% endif %}
+                {% if can_manage_unsubscribed %}
+                <form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="suppression-maintenance-action" data-backfill-form>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" data-backfill-button>
+                        <i class="bi bi-arrow-repeat me-1"></i>Backfill from logs
+                    </button>
+                </form>
+                {% endif %}
             </div>
             {% endif %}
-        </section>
+        </div>
     </div>
 </div>
 
@@ -363,7 +379,7 @@
                 if (backfillButton) {
                     backfillButton.disabled = false;
                     backfillButton.classList.remove('disabled');
-                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Backfill from Logs';
+                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Backfill from logs';
                 }
             }
         });

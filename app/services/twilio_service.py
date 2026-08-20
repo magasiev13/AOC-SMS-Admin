@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from typing import Any, Optional
+from uuid import uuid4
 
 from flask import current_app
 from twilio.base.exceptions import TwilioRestException
@@ -17,6 +18,7 @@ from twilio.rest import Client
 from app import db
 from app.models import (
     InboxMessage,
+    MessageDispatchAttempt,
     MessageLog,
     MessagingUsageRecord,
     Organization,
@@ -24,6 +26,8 @@ from app.models import (
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationUsageBillingPeriod,
+    SuppressedContact,
+    UnsubscribedContact,
     utc_now,
 )
 from app.services.suppression_service import apply_failure_suppression, classify_failure
@@ -33,7 +37,14 @@ from app.services.provider_secret_service import (
 )
 from app.services.billing_plans import included_segments_for_subscription
 from app.services.test_recipient_service import mask_phone_for_audit
-from app.utils import analyze_sms_body, normalize_phone, normalize_sms_body, render_message_template
+from app.utils import (
+    analyze_personalized_sms_blast,
+    analyze_sms_body,
+    as_utc_datetime,
+    normalize_phone,
+    normalize_sms_body,
+    render_message_template,
+)
 
 
 TERMINAL_MESSAGE_STATUSES = {"delivered", "sent", "undelivered", "failed"}
@@ -69,6 +80,7 @@ TWILIO_MAGIC_TEST_WARNING_NUMBERS = {
     "+15550000005",
     "+15550004001",
 }
+PROVIDER_OPERATION_LEASE = timedelta(minutes=15)
 
 
 class TwilioTransientError(Exception):
@@ -358,9 +370,13 @@ def _master_client() -> Client:
 
 
 def _twilio_inbound_webhook_url() -> str:
-    base_url = (current_app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    base_url = (
+        current_app.config.get("APP_BASE_URL")
+        or current_app.config.get("SAAS_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
     if not base_url:
-        raise ProviderProvisioningError("SAAS_BASE_URL must be configured to bind Twilio inbound webhooks.")
+        raise ProviderProvisioningError("APP_BASE_URL must be configured to bind Twilio inbound webhooks.")
     return f"{base_url}/webhooks/twilio/inbound"
 
 
@@ -372,6 +388,55 @@ def _messaging_profile_for_org(organization_id: int | None) -> OrganizationMessa
 
 def _provider_ready(profile: OrganizationMessagingProfile | None) -> bool:
     return profile is not None and profile.can_send
+
+
+def require_chargeable_provider_entitlement(organization: Organization, action: str) -> None:
+    from app.services.billing_service import organization_can_send, organization_is_active
+
+    if organization_is_active(organization) and organization_can_send(organization):
+        return
+    _record_provider_audit(
+        organization.id,
+        "provider_entitlement_blocked",
+        status="blocked",
+        message="Chargeable provider work was blocked because billing or organization access is inactive.",
+        metadata={"action": action},
+    )
+    db.session.commit()
+    raise ProviderProvisioningError(
+        "Active billing is required before Twinevia can perform chargeable provider work."
+    )
+
+
+def _organization_send_block_reason(organization_id: int | None, send_kind: str) -> str | None:
+    if organization_id is None:
+        return None
+    organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        return "organization_not_found"
+    if send_kind != "auth_alert":
+        from app.services.billing_service import organization_transmit_block_reason
+
+        block_reason = organization_transmit_block_reason(organization)
+        if block_reason:
+            return "billing_or_provider_inactive"
+    return None
+
+
+def _consent_send_block_reason(organization_id: int | None, phone: str | None) -> str | None:
+    if organization_id is None or not phone:
+        return None
+    if UnsubscribedContact.query.filter_by(
+        organization_id=organization_id,
+        phone=phone,
+    ).first() is not None:
+        return "unsubscribed"
+    if SuppressedContact.query.filter_by(
+        organization_id=organization_id,
+        phone=phone,
+    ).first() is not None:
+        return "suppressed"
+    return None
 
 
 def _build_subaccount_client_context(
@@ -1491,7 +1556,7 @@ class TwilioService:
 
     def _browser_fake_send_result(self, *, to_number: str, body: str, send_kind: str) -> dict:
         fingerprint = f"{self.account_sid}|{to_number}|{body}|{self.messaging_service_sid or self.from_number or ''}"
-        fake_sid = f"SM{hashlib.sha1(fingerprint.encode('utf-8')).hexdigest()[:32]}"
+        fake_sid = f"SM{hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:32]}"
         analysis = analyze_sms_body(body, apply_normalization=False)
         return {
             "success": True,
@@ -1515,6 +1580,28 @@ class TwilioService:
     ) -> dict:
         normalized_send_kind = _normalize_send_kind(send_kind)
         normalized_phone = normalize_phone(to_number)
+        organization_block_reason = _organization_send_block_reason(
+            self.organization_id,
+            normalized_send_kind,
+        )
+        if organization_block_reason:
+            return self._skipped_send_result(
+                to_number=normalized_phone or to_number,
+                body=body,
+                reason=organization_block_reason,
+                send_kind=normalized_send_kind,
+            )
+        consent_block_reason = _consent_send_block_reason(
+            self.organization_id,
+            normalized_phone,
+        )
+        if consent_block_reason:
+            return self._skipped_send_result(
+                to_number=normalized_phone or to_number,
+                body=body,
+                reason=consent_block_reason,
+                send_kind=normalized_send_kind,
+            )
         if _should_block_live_send_in_testing(normalized_send_kind):
             current_app.logger.info(
                 "Blocked live Twilio send in TESTING organization_id=%s send_kind=%s to=%s.",
@@ -1645,6 +1732,225 @@ class TwilioService:
 
         return results
 
+    def send_message_with_attempt(
+        self,
+        to_number: str,
+        body: str,
+        logical_send_key: str,
+        message_log_id: int | None,
+        scheduled_message_id: int | None,
+        send_kind: str,
+    ) -> dict[str, object]:
+        if self.organization_id is None:
+            raise ValueError("Durable message attempts require an organization id.")
+        normalized_phone = normalize_phone(to_number)
+        if not normalized_phone:
+            raise ValueError("Durable message attempts require a valid recipient phone.")
+        normalized_send_kind = _normalize_send_kind(send_kind)
+        body_digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        raw_key = str(logical_send_key or "").strip()
+        if not raw_key:
+            raise ValueError("Durable message attempts require a logical send key.")
+        normalized_key = (
+            raw_key
+            if len(raw_key) <= 128
+            else f"dispatch:{hashlib.sha256(raw_key.encode('utf-8')).hexdigest()}"
+        )
+
+        attempt = MessageDispatchAttempt.query.filter_by(logical_send_key=normalized_key).first()
+        if attempt is None:
+            attempt = MessageDispatchAttempt(
+                organization_id=self.organization_id,
+                message_log_id=message_log_id,
+                scheduled_message_id=scheduled_message_id,
+                logical_send_key=normalized_key,
+                recipient_phone=normalized_phone,
+                message_body_digest=body_digest,
+                send_kind=normalized_send_kind,
+                status="queued",
+            )
+            db.session.add(attempt)
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                attempt = MessageDispatchAttempt.query.filter_by(logical_send_key=normalized_key).first()
+                if attempt is None:
+                    raise
+
+        attempt = (
+            MessageDispatchAttempt.query
+            .filter_by(logical_send_key=normalized_key)
+            .with_for_update()
+            .first()
+        )
+        if attempt is None:
+            raise RuntimeError(f"Dispatch attempt {normalized_key} disappeared before it could be claimed.")
+
+        if attempt.organization_id != self.organization_id:
+            raise ValueError("Logical send key belongs to another organization.")
+        if attempt.recipient_phone != normalized_phone or attempt.message_body_digest != body_digest:
+            raise ValueError("Logical send key payload does not match its original recipient and body.")
+        if attempt.status == "sent":
+            replay_result = {
+                "success": True,
+                "sid": attempt.provider_message_sid,
+                "status": "sent",
+                "error": None,
+                "account_sid": self.account_sid,
+                "send_kind": normalized_send_kind,
+                "logical_send_key": normalized_key,
+                "idempotent_replay": True,
+            }
+            db.session.commit()
+            return replay_result
+        if attempt.status == "failed":
+            replay_result = {
+                "success": False,
+                "sid": attempt.provider_message_sid,
+                "status": "failed",
+                "error": attempt.last_error or "Provider rejected this logical send.",
+                "account_sid": self.account_sid,
+                "send_kind": normalized_send_kind,
+                "logical_send_key": normalized_key,
+                "idempotent_replay": True,
+            }
+            db.session.commit()
+            return replay_result
+        if attempt.status in {"sending", "ambiguous"}:
+            replay_result = {
+                "success": False,
+                "sid": attempt.provider_message_sid,
+                "status": "ambiguous" if attempt.status == "ambiguous" else "sending",
+                "error": (
+                    attempt.last_error
+                    or "Provider acceptance is unresolved; Twinevia will not resend automatically."
+                ),
+                "account_sid": self.account_sid,
+                "send_kind": normalized_send_kind,
+                "logical_send_key": normalized_key,
+                "idempotent_replay": True,
+            }
+            db.session.commit()
+            return replay_result
+
+        attempt.status = "sending"
+        attempt.attempt_count = int(attempt.attempt_count or 0) + 1
+        attempt.sending_at = utc_now()
+        attempt.last_error = None
+        db.session.commit()
+
+        try:
+            result = self.send_message(
+                normalized_phone,
+                body,
+                raise_on_transient=True,
+                send_kind=normalized_send_kind,
+            )
+        except Exception as exc:
+            db.session.rollback()
+            unresolved = db.session.get(MessageDispatchAttempt, attempt.id)
+            if unresolved is None:
+                raise RuntimeError(
+                    f"Dispatch attempt {normalized_key} disappeared after an ambiguous provider result."
+                ) from exc
+            unresolved.status = "ambiguous"
+            unresolved.last_error = str(exc)[:2000]
+            unresolved.resolved_at = None
+            db.session.commit()
+            return {
+                "success": False,
+                "sid": None,
+                "status": "ambiguous",
+                "error": (
+                    "Provider acceptance could not be determined. "
+                    "The message was not retried automatically."
+                ),
+                "account_sid": self.account_sid,
+                "send_kind": normalized_send_kind,
+                "logical_send_key": normalized_key,
+            }
+
+        resolved = db.session.get(MessageDispatchAttempt, attempt.id)
+        if resolved is None:
+            raise RuntimeError(f"Dispatch attempt {normalized_key} disappeared before resolution.")
+        resolved.provider_message_sid = str(result.get("sid") or "").strip() or None
+        resolved.status = "sent" if result.get("success") else "failed"
+        resolved.last_error = str(result.get("error") or "")[:2000] or None
+        resolved.resolved_at = utc_now()
+        db.session.commit()
+        return {
+            **result,
+            "logical_send_key": normalized_key,
+        }
+
+    def send_bulk_with_attempts(
+        self,
+        recipients: list[dict[str, object]],
+        body: str,
+        logical_send_prefix: str,
+        message_log_id: int | None,
+        scheduled_message_id: int | None,
+        delay: float,
+        send_kind: str,
+    ) -> dict[str, object]:
+        recipient_limit = int(current_app.config.get("SEND_MAX_RECIPIENTS", 5000) or 5000)
+        if len(recipients) > recipient_limit:
+            raise ValueError(
+                f"Recipient count {len(recipients)} exceeds SEND_MAX_RECIPIENTS={recipient_limit}."
+            )
+        estimate = analyze_personalized_sms_blast(body, recipients)
+        segment_limit = int(current_app.config.get("SEND_MAX_SEGMENTS", 15000) or 15000)
+        estimated_segments = int(estimate.get("total_segments") or 0)
+        if estimated_segments > segment_limit:
+            raise ValueError(
+                f"Estimated segment count {estimated_segments} exceeds SEND_MAX_SEGMENTS={segment_limit}."
+            )
+
+        details: list[dict[str, object]] = []
+        success_count = 0
+        failure_count = 0
+        for recipient in recipients:
+            phone = str(recipient.get("phone") or "")
+            name = str(recipient.get("name") or "")
+            personalized_body = render_message_template(body, recipient)
+            recipient_digest = hashlib.sha256(
+                f"{logical_send_prefix}|{normalize_phone(phone)}|{personalized_body}".encode("utf-8")
+            ).hexdigest()
+            result = self.send_message_with_attempt(
+                phone,
+                personalized_body,
+                f"{logical_send_prefix}:{recipient_digest}",
+                message_log_id,
+                scheduled_message_id,
+                send_kind,
+            )
+            detail = {
+                "phone": phone,
+                "name": name,
+                "success": result.get("success") is True,
+                "error": result.get("error"),
+                "sid": result.get("sid"),
+                "status": result.get("status"),
+                "account_sid": result.get("account_sid"),
+                "num_segments": result.get("num_segments"),
+                "logical_send_key": result.get("logical_send_key"),
+            }
+            details.append(detail)
+            if detail["success"]:
+                success_count += 1
+            else:
+                failure_count += 1
+            if delay > 0:
+                time.sleep(delay)
+
+        return {
+            "total": len(recipients),
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "details": details,
+        }
+
 
 def get_messaging_provider(organization_id: int | None = None) -> TwilioService:
     return TwilioService(organization_id=organization_id)
@@ -1654,12 +1960,12 @@ def get_twilio_service(organization_id: int | None = None) -> TwilioService:
     return get_messaging_provider(organization_id=organization_id)
 
 
-def send_operational_test_message(
+def _send_operational_test_message_with_key(
     organization_id: int,
-    *,
     to_number: str,
     body: str,
-    actor_user_id: int | None = None,
+    actor_user_id: int | None,
+    logical_send_key: str,
 ) -> dict[str, object]:
     organization = db.session.get(Organization, organization_id)
     if organization is None:
@@ -1686,11 +1992,13 @@ def send_operational_test_message(
     }
 
     try:
-        result = get_twilio_service(organization_id).send_message(
+        result = get_twilio_service(organization_id).send_message_with_attempt(
             normalized_to,
             message_body,
-            raise_on_transient=True,
-            send_kind="manual_live_test",
+            logical_send_key,
+            None,
+            None,
+            "manual_live_test",
         )
     except Exception as exc:
         _record_provider_audit(
@@ -1744,6 +2052,38 @@ def send_operational_test_message(
     return result
 
 
+def send_operational_test_message(
+    organization_id: int,
+    *,
+    to_number: str,
+    body: str,
+    actor_user_id: int | None = None,
+) -> dict[str, object]:
+    return _send_operational_test_message_with_key(
+        organization_id,
+        to_number,
+        body,
+        actor_user_id,
+        f"operational-test:{organization_id}:{uuid4().hex}",
+    )
+
+
+def send_operational_test_message_with_key(
+    organization_id: int,
+    to_number: str,
+    body: str,
+    actor_user_id: int | None,
+    logical_send_key: str,
+) -> dict[str, object]:
+    return _send_operational_test_message_with_key(
+        organization_id,
+        to_number,
+        body,
+        actor_user_id,
+        logical_send_key,
+    )
+
+
 def ensure_messaging_profile(organization: Organization) -> OrganizationMessagingProfile:
     profile = organization.messaging_profile
     if profile is not None:
@@ -1760,6 +2100,55 @@ def ensure_messaging_profile(organization: Organization) -> OrganizationMessagin
     return profile
 
 
+def _lock_organization_for_provider_operation(organization_id: int) -> Organization:
+    organization = (
+        Organization.query
+        .filter(Organization.id == organization_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    return organization
+
+
+def _locked_messaging_profile(
+    organization: Organization,
+) -> OrganizationMessagingProfile:
+    profile = (
+        OrganizationMessagingProfile.query
+        .filter(OrganizationMessagingProfile.organization_id == organization.id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if profile is not None:
+        return profile
+    profile = OrganizationMessagingProfile(
+        organization=organization,
+        provider_mode="platform_managed",
+        status="pending",
+        provider_status="pending",
+        sender_finalization_status="awaiting_a2p_approval",
+    )
+    db.session.add(profile)
+    db.session.flush()
+    return profile
+
+
+def _provider_operation_has_active_lease(
+    profile: OrganizationMessagingProfile,
+    now: datetime,
+) -> bool:
+    started_at = as_utc_datetime(profile.provisioning_started_at)
+    normalized_now = as_utc_datetime(now)
+    return bool(
+        profile.provider_status == "provisioning"
+        and started_at is not None
+        and normalized_now is not None
+        and started_at >= normalized_now - PROVIDER_OPERATION_LEASE
+    )
+
+
 def save_customer_managed_profile(
     organization_id: int,
     *,
@@ -1773,11 +2162,15 @@ def save_customer_managed_profile(
     bind_inbound_webhook: bool = False,
     activation_complete: bool = False,
 ) -> tuple[OrganizationMessagingProfile, CustomerManagedValidationResult]:
-    organization = db.session.get(Organization, organization_id)
-    if organization is None:
-        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    organization = _lock_organization_for_provider_operation(organization_id)
+    require_chargeable_provider_entitlement(organization, "customer_managed_cutover")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
+    operation_started_at = utc_now()
+    if _provider_operation_has_active_lease(profile, operation_started_at):
+        raise ProviderProvisioningError(
+            "A provider cutover is already in progress for this organization."
+        )
     normalized_account_sid = (twilio_account_sid or "").strip().upper()
     normalized_auth_token = (twilio_auth_token or "").strip()
     normalized_from_number = normalize_phone(from_number)
@@ -1793,6 +2186,7 @@ def save_customer_managed_profile(
         raise ProviderProvisioningError("Twilio Messaging Service SID must start with MG.")
 
     profile.set_provider_status("provisioning")
+    profile.provisioning_started_at = operation_started_at
     profile.last_provision_error = None
     profile.provider_last_checked_at = utc_now()
     db.session.commit()
@@ -1841,11 +2235,73 @@ def save_customer_managed_profile(
                 None,
             )
 
+        existing_cutover_state = _json_dict(profile.cutover_state_json)
+        same_cutover_resource = bool(
+            existing_cutover_state
+            and _clean_text(existing_cutover_state.get("twilio_account_sid")) == normalized_account_sid
+            and _clean_text(existing_cutover_state.get("messaging_service_sid")) == _clean_text(resolved_service_sid)
+            and _clean_text(existing_cutover_state.get("phone_number_sid")) == _clean_text(resolved_number.sid)
+        )
+        cutover_state = {
+            "version": 1,
+            "phase": "validated",
+            "bind_inbound_webhook": bool(bind_inbound_webhook),
+            "activation_complete_requested": bool(activation_complete),
+            "twilio_account_sid": normalized_account_sid,
+            "messaging_service_sid": resolved_service_sid,
+            "phone_number_sid": resolved_number.sid,
+            "from_number": resolved_number.phone_number or normalized_from_number,
+            "pre_activation_phone_sms_url": (
+                existing_cutover_state.get("pre_activation_phone_sms_url")
+                if same_cutover_resource
+                else getattr(resolved_phone_resource, "sms_url", None)
+            ),
+            "pre_activation_phone_sms_method": (
+                existing_cutover_state.get("pre_activation_phone_sms_method")
+                if same_cutover_resource
+                else getattr(resolved_phone_resource, "sms_method", None)
+            ),
+            "pre_activation_service_use_inbound_webhook_on_number": (
+                existing_cutover_state.get("pre_activation_service_use_inbound_webhook_on_number")
+                if same_cutover_resource
+                else service_use_inbound_webhook_on_number
+            ),
+            "updated_at": utc_now().isoformat(),
+        }
+        profile.provider_mode = "customer_managed"
+        profile.twilio_account_sid = normalized_account_sid
+        profile.twilio_subaccount_sid = None
+        profile.twilio_auth_token_encrypted = encrypt_provider_secret(normalized_auth_token)
+        profile.messaging_service_sid = resolved_service_sid
+        profile.from_number = resolved_number.phone_number or normalized_from_number
+        profile.phone_number_sid = resolved_number.sid
+        profile.inbound_identity = profile.from_number
+        profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
+        db.session.commit()
+
         if normalized_service_sid and bind_inbound_webhook:
+            cutover_state["phase"] = "binding_messaging_service"
+            cutover_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
+            db.session.commit()
             service_context.update(use_inbound_webhook_on_number=True)
+            cutover_state["messaging_service_bound"] = True
+            cutover_state["phase"] = "messaging_service_bound"
+            cutover_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
+            db.session.commit()
 
         if bind_inbound_webhook:
+            cutover_state["phase"] = "binding_phone_number"
+            cutover_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
+            db.session.commit()
             _configure_phone_number_webhook(customer_client, resolved_number.sid)
+            cutover_state["phone_number_bound"] = True
+            cutover_state["phase"] = "remote_bound"
+            cutover_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
+            db.session.commit()
 
         provider_status, sender_review_status, failure_message = _customer_managed_provider_status(
             campaign_status=campaign_status,
@@ -1872,6 +2328,10 @@ def save_customer_managed_profile(
         profile.provider_last_checked_at = utc_now()
         profile.last_provision_error = failure_message if sender_review_status == "rejected" else None
         profile.set_provider_status(provider_status)
+        cutover_state["phase"] = "active" if provider_status == "active" else "validated"
+        cutover_state["provider_status"] = provider_status
+        cutover_state["updated_at"] = utc_now().isoformat()
+        profile.cutover_state_json = json.dumps(cutover_state, sort_keys=True)
         _record_provider_audit(
             organization.id,
             "customer_managed_validate",
@@ -1952,7 +2412,7 @@ def rollback_customer_managed_profile(
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
     if profile.provider_mode != "customer_managed":
         raise ProviderProvisioningError("Rollback is only available for customer-managed providers.")
     if not profile.twilio_account_sid:
@@ -1964,6 +2424,8 @@ def rollback_customer_managed_profile(
 
     onboarding = organization.a2p_onboarding
     activation = _customer_managed_activation_payload(onboarding)
+    if not activation:
+        activation = _json_dict(profile.cutover_state_json)
     if not activation:
         raise ProviderProvisioningError("No stored customer-managed activation snapshot is available for rollback.")
 
@@ -2065,16 +2527,20 @@ def rollback_customer_managed_profile(
 
 
 def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> OrganizationMessagingProfile:
-    organization = db.session.get(Organization, organization_id)
-    if organization is None:
-        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    organization = _lock_organization_for_provider_operation(organization_id)
+    require_chargeable_provider_entitlement(organization, "provider_provisioning")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
     if profile.provider_mode != "platform_managed":
         raise ProviderProvisioningError("Only platform-managed providers can be provisioned automatically.")
 
+    operation_started_at = utc_now()
+    if _provider_operation_has_active_lease(profile, operation_started_at):
+        raise ProviderProvisioningError(
+            "Provider provisioning is already in progress for this organization."
+        )
     profile.set_provider_status("provisioning")
-    profile.provisioning_started_at = utc_now()
+    profile.provisioning_started_at = operation_started_at
     profile.last_provision_error = None
     _record_provider_audit(
         organization.id,
@@ -2086,24 +2552,82 @@ def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> 
 
     try:
         master_client = _master_client()
+        friendly_name = (
+            f"{current_app.config.get('TWILIO_PLATFORM_FRIENDLY_NAME')} - {organization.name}"
+        )
+        provisioning_state = _json_dict(profile.cutover_state_json)
+        provisioning_state.update(
+            {
+                "version": 1,
+                "flow": "platform_managed_provisioning",
+                "friendly_name": friendly_name,
+                "phase": "reconciling_subaccount",
+                "updated_at": utc_now().isoformat(),
+            }
+        )
+        profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
+        db.session.commit()
         if not profile.twilio_subaccount_sid:
-            subaccount = master_client.api.v2010.accounts.create(
-                friendly_name=f"{current_app.config.get('TWILIO_PLATFORM_FRIENDLY_NAME')} - {organization.name}"
+            matching_subaccounts = [
+                account
+                for account in master_client.api.v2010.accounts.list(status="active", limit=100)
+                if str(getattr(account, "friendly_name", "") or "").strip() == friendly_name
+            ]
+            if len(matching_subaccounts) > 1:
+                raise ProviderProvisioningError(
+                    f"Multiple Twilio subaccounts match {friendly_name!r}; reconcile them before continuing."
+                )
+            provisioning_state["phase"] = "creating_subaccount"
+            provisioning_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
+            db.session.commit()
+            subaccount = (
+                matching_subaccounts[0]
+                if matching_subaccounts
+                else master_client.api.v2010.accounts.create(friendly_name=friendly_name)
             )
             profile.twilio_subaccount_sid = subaccount.sid
             auth_token = getattr(subaccount, "auth_token", None)
             if auth_token:
                 profile.twilio_auth_token_encrypted = encrypt_provider_secret(auth_token)
+            provisioning_state["twilio_subaccount_sid"] = profile.twilio_subaccount_sid
+            provisioning_state["phase"] = "subaccount_ready"
+            provisioning_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
             db.session.commit()
 
         subaccount_client = _build_subaccount_client(profile)
         if not profile.messaging_service_sid:
-            service = subaccount_client.messaging.v1.services.create(
-                friendly_name=organization.name[:64]
+            service_name = organization.name[:64]
+            matching_services = [
+                service
+                for service in subaccount_client.messaging.v1.services.list(limit=100)
+                if str(getattr(service, "friendly_name", "") or "").strip() == service_name
+            ]
+            if len(matching_services) > 1:
+                raise ProviderProvisioningError(
+                    f"Multiple Twilio Messaging Services match {service_name!r}; reconcile them before continuing."
+                )
+            provisioning_state["phase"] = "creating_messaging_service"
+            provisioning_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
+            db.session.commit()
+            service = (
+                matching_services[0]
+                if matching_services
+                else subaccount_client.messaging.v1.services.create(friendly_name=service_name)
             )
             profile.messaging_service_sid = service.sid
+            provisioning_state["messaging_service_sid"] = profile.messaging_service_sid
+            provisioning_state["phase"] = "messaging_service_ready"
+            provisioning_state["updated_at"] = utc_now().isoformat()
+            profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
             db.session.commit()
         _configure_service_webhooks(profile, client=subaccount_client)
+        provisioning_state["phase"] = "webhooks_configured"
+        provisioning_state["updated_at"] = utc_now().isoformat()
+        profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
+        db.session.commit()
 
         if not profile.inbound_identity:
             profile.inbound_identity = profile.from_number or profile.messaging_service_sid
@@ -2118,6 +2642,10 @@ def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> 
                 profile.sender_finalization_status or "awaiting_a2p_approval"
             )
             profile.set_provider_status("pending")
+        provisioning_state["phase"] = "complete"
+        provisioning_state["provider_status"] = profile.provider_status
+        provisioning_state["updated_at"] = utc_now().isoformat()
+        profile.cutover_state_json = json.dumps(provisioning_state, sort_keys=True)
 
         _record_provider_audit(
             organization.id,
@@ -2276,6 +2804,7 @@ def finalize_sender_setup(
     organization = db.session.get(Organization, organization_id)
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    require_chargeable_provider_entitlement(organization, "sender_finalization")
 
     profile = ensure_messaging_profile(organization)
     if profile.provider_mode != "platform_managed":
@@ -2727,6 +3256,7 @@ def reconcile_messaging_usage() -> dict[str, int]:
 
 def backfill_usage_record_failure_suppressions(
     *,
+    organization_id: int,
     batch_size: int = 200,
     logger: object | None = None,
 ) -> dict[str, int]:
@@ -2743,6 +3273,7 @@ def backfill_usage_record_failure_suppressions(
         batch = (
             MessagingUsageRecord.query
             .filter(MessagingUsageRecord.id > last_id)
+            .filter(MessagingUsageRecord.organization_id == organization_id)
             .filter(MessagingUsageRecord.reconciliation_status == "finalized")
             .filter(MessagingUsageRecord.twilio_message_status.in_(("failed", "undelivered")))
             .order_by(MessagingUsageRecord.id.asc())
@@ -2820,15 +3351,26 @@ def upsert_closed_usage_billing_periods() -> int:
                 period_end=period_end,
             )
             db.session.add(period)
+        grace_hours = int(current_app.config.get("BILLING_USAGE_SETTLEMENT_GRACE_HOURS", 72) or 72)
+        initial_settlement_due_at = period_end + timedelta(hours=grace_hours)
         period.included_units = included_units
         period.used_units = int(used_units)
         period.overage_units = overage_units
         period.sell_amount = sell_amount
         period.currency = _usage_currency()
         if overage_units == 0:
-            period.status = "included"
-        elif not period.stripe_invoice_item_id:
+            period.status = "included" if int(period.invoiced_units or 0) == 0 else "posted"
+            period.settlement_due_at = None
+        elif int(period.invoiced_units or 0) == 0:
             period.status = "pending"
+            period.settlement_due_at = period.settlement_due_at or initial_settlement_due_at
+        elif overage_units > int(period.invoiced_units or 0):
+            next_month = period_end.replace(
+                year=period_end.year + (1 if period_end.month == 12 else 0),
+                month=1 if period_end.month == 12 else period_end.month + 1,
+            )
+            period.status = "carry_forward"
+            period.settlement_due_at = next_month + timedelta(hours=grace_hours)
         updated += 1
     db.session.commit()
     return updated

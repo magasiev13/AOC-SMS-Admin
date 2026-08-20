@@ -131,6 +131,17 @@ async function acceptInvitation(
 
 async function startFakeCheckoutFromSetup(page) {
   await page.getByRole('button', { name: /Start subscription|Update subscription/ }).click();
+  if (/\/policies\/accept/.test(page.url())) {
+    await expect(page.getByRole('heading', { name: 'Required before Checkout' })).toBeVisible();
+    const policyCheckboxes = page.locator('input[name="accepted_policy"]');
+    const policyCount = await policyCheckboxes.count();
+    for (let index = 0; index < policyCount; index += 1) {
+      await policyCheckboxes.nth(index).check();
+    }
+    await page.getByRole('button', { name: 'Accept policies' }).click();
+    await expect(page).toHaveURL(/\/setup\?step=billing$/);
+    await page.getByRole('button', { name: /Start subscription|Update subscription/ }).click();
+  }
   await expect(page).toHaveURL(/\/_test\/stripe\/checkout\/cs_fake_org_/);
 }
 

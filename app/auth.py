@@ -2,7 +2,7 @@ from functools import wraps
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app import db
 from app.models import (
@@ -15,7 +15,7 @@ from app.models import (
     slugify_organization_name,
 )
 from app.tenant import clear_current_organization_id, set_current_organization_id
-from app.utils import is_safe_url, normalize_phone, validate_phone
+from app.utils import normalize_phone, safe_redirect_path, validate_phone
 from app.services.auth_security_service import (
     check_login_limited,
     clear_failed_logins,
@@ -44,7 +44,9 @@ TENANT_ENDPOINT_PREFIXES = (
     "main.billing_",
     "main.community_",
     "main.events_",
+    "main.event_",
     "main.logs_",
+    "main.log_",
     "main.scheduled_",
     "main.unsubscribed_",
     "main.inbox_",
@@ -275,17 +277,23 @@ def _render_login(surface: str):
 
 
 def _lookup_login_user(username_input: str, normalized_username: str):
-    user = AppUser.query.filter(func.lower(AppUser.email) == normalized_username).first()
-    if not user:
-        user = AppUser.query.filter_by(username=username_input).first()
-    if not user and normalized_username:
-        user = (
-            AppUser.query
-            .filter(func.lower(AppUser.username) == normalized_username)
-            .order_by(AppUser.id.asc())
-            .first()
+    if not normalized_username:
+        return None
+    matches = (
+        AppUser.query
+        .filter(
+            or_(
+                func.lower(AppUser.email) == normalized_username,
+                func.lower(AppUser.username) == normalized_username,
+            )
         )
-    return user
+        .order_by(AppUser.id.asc())
+        .limit(2)
+        .all()
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
@@ -305,8 +313,9 @@ def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
         return redirect(url_for("main.change_password"))
 
     next_page = request.args.get("next")
-    if next_page and is_safe_url(next_page, request.host_url):
-        return redirect(next_page)
+    safe_next_page = safe_redirect_path(next_page, request.host_url)
+    if safe_next_page is not None:
+        return redirect(safe_next_page)
     return redirect(url_for(home_endpoint_for_user(user)))
 
 
@@ -398,6 +407,8 @@ def platform_login():
 def signup():
     if not current_app.config.get("SAAS_MODE"):
         abort(404)
+    if current_app.config.get("MANAGED_PILOT_ENABLED", True):
+        return redirect("/request-a-pilot", code=303)
     if request.method == "POST":
         organization_name = request.form.get("organization_name", "").strip()
         full_name = request.form.get("full_name", "").strip() or None
@@ -432,12 +443,21 @@ def signup():
         if not validate_phone(normalized_phone):
             flash("Phone number must be a valid E.164 number.", "error")
             return render_template("auth/signup.html")
-        if AppUser.query.filter(func.lower(AppUser.email) == email).first():
+        if AppUser.query.filter(
+            or_(
+                func.lower(AppUser.email) == email,
+                func.lower(AppUser.username) == email,
+            )
+        ).first():
             flash("That email is already in use.", "error")
             return render_template("auth/signup.html")
         if (
-            AppUser.query.filter(func.lower(AppUser.username) == normalize_login_username(username)).first()
-            or AppUser.query.filter_by(username=username).first()
+            AppUser.query.filter(
+                or_(
+                    func.lower(AppUser.username) == normalize_login_username(username),
+                    func.lower(AppUser.email) == normalize_login_username(username),
+                )
+            ).first()
         ):
             flash("That username is already taken.", "error")
             return render_template("auth/signup.html")

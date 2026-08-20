@@ -139,6 +139,7 @@ class Organization(db.Model):
     slug = db.Column(db.String(64), nullable=False, unique=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='active')
     billing_offer = db.Column(db.String(30), nullable=False, default='standard')
+    billing_offer_version = db.Column(db.String(80), nullable=False, default='legacy-v1')
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -181,6 +182,12 @@ class Organization(db.Model):
         back_populates='organization',
         cascade='all, delete-orphan',
         order_by='OrganizationSettingsAuditLog.created_at',
+    )
+    event_sync_integrations = db.relationship(
+        'OrganizationEventSyncIntegration',
+        back_populates='organization',
+        cascade='all, delete-orphan',
+        order_by='OrganizationEventSyncIntegration.created_at',
     )
 
     @validates("name")
@@ -285,6 +292,13 @@ class OrganizationSubscription(db.Model):
     stripe_customer_id = db.Column(db.String(80), nullable=True, unique=True)
     stripe_subscription_id = db.Column(db.String(80), nullable=True, unique=True)
     stripe_price_id = db.Column(db.String(80), nullable=True)
+    activation_fee_paid_at = db.Column(db.DateTime, nullable=True)
+    activation_price_id = db.Column(db.String(80), nullable=True)
+    activation_payment_intent_id = db.Column(db.String(80), nullable=True, index=True)
+    activation_invoice_id = db.Column(db.String(80), nullable=True, index=True)
+    offer_version = db.Column(db.String(80), nullable=True)
+    last_stripe_event_created_at = db.Column(db.DateTime, nullable=True)
+    last_stripe_event_id = db.Column(db.String(80), nullable=True)
     status = db.Column(db.String(30), nullable=False, default='incomplete')
     current_period_end = db.Column(db.DateTime, nullable=True)
     cancel_at_period_end = db.Column(db.Boolean, default=False, nullable=False)
@@ -321,6 +335,158 @@ class StripeWebhookEvent(db.Model):
 
     def __repr__(self):
         return f'<StripeWebhookEvent {self.stripe_event_id} status={self.status}>'
+
+
+class StripeCheckoutSession(db.Model):
+    """Issued Checkout sessions bound to an organization offer version."""
+    __tablename__ = 'stripe_checkout_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    stripe_checkout_session_id = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    billing_plan_code = db.Column(db.String(30), nullable=False)
+    recurring_price_id = db.Column(db.String(80), nullable=False)
+    activation_price_id = db.Column(db.String(80), nullable=True)
+    offer_version = db.Column(db.String(80), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='open', index=True)
+    stripe_customer_id = db.Column(db.String(80), nullable=True, index=True)
+    stripe_subscription_id = db.Column(db.String(80), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    expired_at = db.Column(db.DateTime, nullable=True)
+
+    organization = db.relationship('Organization')
+
+    def __repr__(self):
+        return f'<StripeCheckoutSession {self.stripe_checkout_session_id} status={self.status}>'
+
+
+class CustomerPolicyAcceptance(db.Model):
+    """Versioned legal-policy acceptance captured during customer onboarding."""
+    __tablename__ = 'customer_policy_acceptances'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    policy_name = db.Column(db.String(40), nullable=False, index=True)
+    policy_version = db.Column(db.String(80), nullable=False, index=True)
+    accepted_ip = db.Column(db.String(45), nullable=True)
+    accepted_user_agent = db.Column(db.String(255), nullable=True)
+    accepted_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+
+    organization = db.relationship('Organization')
+    user = db.relationship('AppUser')
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'organization_id',
+            'user_id',
+            'policy_name',
+            'policy_version',
+            name='ux_policy_acceptance_org_user_name_version',
+        ),
+    )
+
+    def __repr__(self):
+        return f'<CustomerPolicyAcceptance org={self.organization_id} user={self.user_id}>'
+
+
+class PilotApplication(db.Model):
+    """Public managed-pilot request that allocates no tenant resources."""
+    __tablename__ = 'pilot_applications'
+
+    id = db.Column(db.Integer, primary_key=True)
+    business_name = db.Column(db.String(120), nullable=False)
+    contact_name = db.Column(db.String(120), nullable=False)
+    email = db.Column(db.String(255), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=True)
+    website_url = db.Column(db.String(255), nullable=True)
+    use_case = db.Column(db.Text, nullable=False)
+    expected_monthly_segments = db.Column(db.Integer, nullable=True)
+    twilio_account_status = db.Column(db.String(40), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='new', index=True)
+    source_ip_hash = db.Column(db.String(64), nullable=False, index=True)
+    user_agent = db.Column(db.String(255), nullable=True)
+    reviewed_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    review_note = db.Column(db.Text, nullable=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    owner_invitation_id = db.Column(
+        db.Integer,
+        db.ForeignKey('organization_invitations.id'),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    reviewed_by_user = db.relationship('AppUser')
+    organization = db.relationship('Organization')
+    owner_invitation = db.relationship('OrganizationInvitation')
+
+    @validates('status')
+    def _normalize_pilot_status(self, key, value):
+        normalized = (value or '').strip().lower()
+        if normalized not in {'new', 'under_review', 'approved', 'declined', 'onboarded'}:
+            raise ValueError(
+                'Pilot application status must be new, under_review, approved, declined, or onboarded.'
+            )
+        return normalized
+
+    def __repr__(self):
+        return f'<PilotApplication {self.id} status={self.status}>'
+
+
+class PilotApplicationStatusHistory(db.Model):
+    """Immutable status transition audit for a managed-pilot request."""
+    __tablename__ = 'pilot_application_status_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    pilot_application_id = db.Column(
+        db.Integer,
+        db.ForeignKey('pilot_applications.id'),
+        nullable=False,
+        index=True,
+    )
+    from_status = db.Column(db.String(20), nullable=True)
+    to_status = db.Column(db.String(20), nullable=False, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+
+    pilot_application = db.relationship('PilotApplication')
+    actor_user = db.relationship('AppUser')
+
+    def __repr__(self):
+        return f'<PilotApplicationStatusHistory application={self.pilot_application_id} to={self.to_status}>'
+
+
+class ExternalWebhookDelivery(db.Model):
+    """Replay ledger for signed external webhook deliveries."""
+    __tablename__ = 'external_webhook_deliveries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider = db.Column(db.String(30), nullable=False, index=True)
+    delivery_id = db.Column(db.String(160), nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
+    resource_key = db.Column(db.String(200), nullable=True, index=True)
+    payload_digest = db.Column(db.String(64), nullable=False)
+    source_revision_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='processing', index=True)
+    received_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+    processed_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    response_json = db.Column(db.Text, nullable=True)
+
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint('provider', 'delivery_id', name='ux_external_webhook_provider_delivery'),
+    )
+
+    def __repr__(self):
+        return f'<ExternalWebhookDelivery {self.provider}:{self.delivery_id}>'
 
 
 class PlatformServiceRestartRequest(db.Model):
@@ -399,6 +565,7 @@ class OrganizationMessagingProfile(db.Model):
     event_stream_subscription_sid = db.Column(db.String(64), nullable=True)
     event_stream_status = db.Column(db.String(30), nullable=True, index=True)
     event_stream_error = db.Column(db.Text, nullable=True)
+    cutover_state_json = db.Column(db.Text, nullable=True)
     last_provision_error = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -627,6 +794,7 @@ class OrganizationA2POnboarding(db.Model):
     desired_phone_number_sid = db.Column(db.String(64), nullable=True)
     raw_submission_json = db.Column(db.Text, nullable=True)
     raw_status_json = db.Column(db.Text, nullable=True)
+    provisioning_state_json = db.Column(db.Text, nullable=True)
     last_error = db.Column(db.Text, nullable=True)
     failure_code = db.Column(db.String(80), nullable=True)
     upgrade_recommended_reason = db.Column(db.Text, nullable=True)
@@ -806,6 +974,40 @@ class OrganizationSettingsAuditLog(db.Model):
         return f'<OrganizationSettingsAuditLog org={self.organization_id} category={self.category} action={self.action}>'
 
 
+class OrganizationEventSyncIntegration(db.Model):
+    """Per-organization external event source configuration."""
+    __tablename__ = 'organization_event_sync_integrations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    provider = db.Column(db.String(40), nullable=False, default='wordpress', index=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    webhook_secret_encrypted = db.Column(db.Text, nullable=True)
+    last_event_synced_at = db.Column(db.DateTime, nullable=True)
+    last_signup_synced_at = db.Column(db.DateTime, nullable=True)
+    last_reconcile_synced_at = db.Column(db.DateTime, nullable=True)
+    last_error_at = db.Column(db.DateTime, nullable=True)
+    last_error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    organization = db.relationship('Organization', back_populates='event_sync_integrations')
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'provider', name='ux_org_event_sync_org_provider'),
+    )
+
+    @validates("provider")
+    def _normalize_provider(self, key, value):
+        normalized = (value or "").strip().lower()
+        if normalized not in {"wordpress"}:
+            raise ValueError("Event sync provider must be wordpress.")
+        return normalized
+
+    def __repr__(self):
+        return f'<OrganizationEventSyncIntegration org={self.organization_id} provider={self.provider}>'
+
+
 class MessagingUsageRecord(db.Model):
     """Per-message usage ledger for outbound billing reconciliation."""
     __tablename__ = 'messaging_usage_records'
@@ -851,6 +1053,10 @@ class OrganizationUsageBillingPeriod(db.Model):
     sell_amount = db.Column(db.Numeric(12, 4), nullable=False, default=0)
     currency = db.Column(db.String(8), nullable=False, default='usd')
     stripe_invoice_item_id = db.Column(db.String(80), nullable=True, unique=True)
+    stripe_invoice_id = db.Column(db.String(80), nullable=True, index=True)
+    invoiced_units = db.Column(db.Integer, nullable=False, default=0)
+    settlement_version = db.Column(db.Integer, nullable=False, default=0)
+    settlement_due_at = db.Column(db.DateTime, nullable=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='pending', index=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -976,6 +1182,7 @@ class Event(db.Model):
     location_country = db.Column(db.String(2), nullable=True)
     rsvp_enabled = db.Column(db.Boolean, nullable=True)
     capacity = db.Column(db.Integer, nullable=True)
+    sms_location_note = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
 
@@ -985,6 +1192,14 @@ class Event(db.Model):
     __table_args__ = (
         db.UniqueConstraint('organization_id', 'external_source', 'external_event_id', name='ux_events_org_external_source_event'),
     )
+
+    @property
+    def contact_count(self) -> int:
+        return len(self.registrations)
+
+    @property
+    def attendee_count(self) -> int:
+        return sum(max(registration.booking_spaces or 1, 1) for registration in self.registrations)
 
     def __repr__(self):
         return f'<Event {self.title}>'
@@ -1004,6 +1219,8 @@ class EventRegistration(db.Model):
     external_person_id = db.Column(db.String(80), nullable=True, index=True)
     external_booking_status = db.Column(db.String(30), nullable=True, index=True)
     booking_spaces = db.Column(db.Integer, nullable=True)
+    selections_json = db.Column(db.Text, nullable=True)
+    booking_comment = db.Column(db.Text, nullable=True)
     external_updated_at = db.Column(db.DateTime, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
@@ -1022,6 +1239,36 @@ class EventRegistration(db.Model):
         if not validate_phone(normalized):
             raise ValueError("Event registration phone must be a valid E.164 number.")
         return normalized
+
+    @property
+    def selections(self) -> list[dict[str, str | int]]:
+        if not self.selections_json:
+            return []
+        try:
+            parsed = json.loads(self.selections_json)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        selections: list[dict[str, str | int]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            try:
+                quantity = int(item.get("quantity") or 0)
+            except (TypeError, ValueError):
+                continue
+            if label and quantity > 0:
+                selections.append({"label": label, "quantity": quantity})
+        return selections
+
+    @property
+    def selection_summary(self) -> str:
+        return "; ".join(
+            f"{selection['label']} ({selection['quantity']})"
+            for selection in self.selections
+        )
 
     def __repr__(self):
         return f'<EventRegistration event={self.event_id} phone={self.phone}>'
@@ -1049,6 +1296,42 @@ class MessageLog(db.Model):
 
     def __repr__(self):
         return f'<MessageLog {self.id} target={self.target}>'
+
+
+class MessageDispatchAttempt(db.Model):
+    """Durable per-recipient claim used to prevent ambiguous resend duplication."""
+    __tablename__ = 'message_dispatch_attempts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id'), nullable=True, index=True)
+    scheduled_message_id = db.Column(db.Integer, db.ForeignKey('scheduled_messages.id'), nullable=True, index=True)
+    logical_send_key = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    recipient_phone = db.Column(db.String(20), nullable=False, index=True)
+    message_body_digest = db.Column(db.String(64), nullable=False)
+    send_kind = db.Column(db.String(30), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='queued', index=True)
+    provider_message_sid = db.Column(db.String(64), nullable=True, unique=True, index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+    sending_at = db.Column(db.DateTime, nullable=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+
+    organization = db.relationship('Organization')
+    message_log = db.relationship('MessageLog')
+    scheduled_message = db.relationship('ScheduledMessage')
+
+    @validates('status')
+    def _normalize_dispatch_status(self, key, value):
+        normalized = (value or '').strip().lower()
+        if normalized not in {'queued', 'sending', 'sent', 'failed', 'ambiguous'}:
+            raise ValueError('Message dispatch status must be queued, sending, sent, failed, or ambiguous.')
+        return normalized
+
+    def __repr__(self):
+        return f'<MessageDispatchAttempt {self.logical_send_key} status={self.status}>'
 
 
 class InboxThread(db.Model):
@@ -1266,6 +1549,7 @@ class ScheduledMessage(db.Model):
     automation_source = db.Column(db.String(50), nullable=True, index=True)
     automation_key = db.Column(db.String(160), nullable=True, index=True)
     automation_kind = db.Column(db.String(40), nullable=True, index=True)
+    request_idempotency_key = db.Column(db.String(64), nullable=True, index=True)
 
     event = db.relationship('Event')
     message_log = db.relationship('MessageLog')
@@ -1273,6 +1557,11 @@ class ScheduledMessage(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('organization_id', 'automation_source', 'automation_key', name='ux_scheduled_messages_org_automation_key'),
+        db.UniqueConstraint(
+            'organization_id',
+            'request_idempotency_key',
+            name='ux_scheduled_messages_org_request_key',
+        ),
     )
 
     @validates("test_recipient_selection_mode")

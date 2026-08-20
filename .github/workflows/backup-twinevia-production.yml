@@ -1,0 +1,149 @@
+name: Backup Twinevia Production
+
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: backup-twinevia-production
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Write SSH key + known_hosts
+        env:
+          TWINEVIA_SSH_KEY: ${{ secrets.TWINEVIA_SSH_KEY }}
+          TWINEVIA_SSH_KNOWN_HOSTS: ${{ secrets.TWINEVIA_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TWINEVIA_SSH_KEY:-}" ] || [ -z "${TWINEVIA_SSH_KNOWN_HOSTS:-}" ]; then
+            echo "Twinevia SSH credentials are missing." >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${TWINEVIA_SSH_KEY}" > ~/.ssh/vps_key
+          printf '%s\n' "${TWINEVIA_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/vps_key ~/.ssh/known_hosts
+
+      - name: Create encrypted backup export
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          SSH_TARGET_VALUE="${TWINEVIA_SSH_TARGET:-}"
+          if [ -z "${SSH_TARGET_VALUE}" ]; then
+            echo "TWINEVIA_SSH_TARGET is missing." >&2
+            exit 1
+          fi
+
+          BACKUP_SCRIPT_REMOTE="/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh"
+          PREPARE_SCRIPT_REMOTE="/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh"
+          CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          EXPORT_DIR_REMOTE="/tmp/twinevia-backup-export-${GITHUB_RUN_ID}"
+          SSH_OPTIONS=(-p "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          SCP_OPTIONS=(-P "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+
+          scp "${SCP_OPTIONS[@]}" deploy/backup_twinevia_saas.sh "${SSH_TARGET_VALUE}:${BACKUP_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/prepare_github_backup_export.sh "${SSH_TARGET_VALUE}:${PREPARE_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/confirm_github_backup.sh "${SSH_TARGET_VALUE}:${CONFIRM_SCRIPT_REMOTE}"
+          REMOTE_USER="$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" id -un)"
+          ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" \
+            sudo -n APP_ROOT=/opt/twinevia-saas/current \
+              TWINEVIA_ENV_FILE=/opt/twinevia-saas/.env \
+              APP_GROUP=twinevia \
+              bash "${PREPARE_SCRIPT_REMOTE}" \
+              --backup-script "${BACKUP_SCRIPT_REMOTE}" \
+              --export-dir "${EXPORT_DIR_REMOTE}" \
+              --export-owner "${REMOTE_USER}"
+
+          mkdir -p output/production-backup
+          scp -r "${SCP_OPTIONS[@]}" "${SSH_TARGET_VALUE}:${EXPORT_DIR_REMOTE}" output/production-backup/
+
+      - name: Upload encrypted off-host backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinevia-production-backup-${{ github.run_id }}
+          path: output/production-backup/**
+          if-no-files-found: error
+          retention-days: 35
+
+      - name: Confirm off-host backup proof
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          ssh -p "${SSH_PORT_VALUE}" \
+            -i ~/.ssh/vps_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${TWINEVIA_SSH_TARGET}" \
+            sudo -n APP_GROUP=twinevia bash "${CONFIRM_SCRIPT_REMOTE}" \
+              --status-file /var/lib/twinevia-saas/backup-status.json \
+              --repository "${GITHUB_REPOSITORY}" \
+              --run-id "${GITHUB_RUN_ID}" \
+              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}"
+
+      - name: Clean remote backup export
+        if: always()
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TWINEVIA_SSH_TARGET:-}" ]; then
+            exit 0
+          fi
+          ssh -p "${TWINEVIA_SSH_PORT:-22}" \
+            -i ~/.ssh/vps_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${TWINEVIA_SSH_TARGET}" \
+            sudo -n rm -rf -- \
+              "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
+              "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+
+      - name: Update backup incident
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Twinevia production backup failed"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          EXISTING_NUMBER="$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1)"
+          if [ "${JOB_STATUS}" = "success" ]; then
+            if [ -n "${EXISTING_NUMBER}" ]; then
+              gh issue comment "${EXISTING_NUMBER}" --body "Encrypted off-host backups recovered: ${RUN_URL}"
+              gh issue close "${EXISTING_NUMBER}" --reason completed
+            fi
+          elif [ -n "${EXISTING_NUMBER}" ]; then
+            gh issue comment "${EXISTING_NUMBER}" --body "Backup failed again: ${RUN_URL}"
+          else
+            gh issue create --title "${TITLE}" --body "The encrypted production backup workflow failed. Review ${RUN_URL}."
+          fi

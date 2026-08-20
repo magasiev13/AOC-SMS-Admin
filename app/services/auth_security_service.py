@@ -177,7 +177,11 @@ def check_login_limited(client_ip: str, username: str) -> tuple[bool, int | None
     normalized_username = normalize_login_username(username)
 
     ip_record = _load_attempt(client_ip, IP_SCOPE_USERNAME)
-    account_record = _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
+    account_record = (
+        _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
+        if normalized_username
+        else None
+    )
     ip_account_record = _load_attempt(client_ip, normalized_username) if normalized_username else None
 
     mutated = False
@@ -188,7 +192,11 @@ def check_login_limited(client_ip: str, username: str) -> tuple[bool, int | None
     if mutated:
         db.session.commit()
         ip_record = _load_attempt(client_ip, IP_SCOPE_USERNAME)
-        account_record = _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
+        account_record = (
+            _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
+            if normalized_username
+            else None
+        )
         ip_account_record = _load_attempt(client_ip, normalized_username) if normalized_username else None
 
     limited_seconds: int | None = None
@@ -263,7 +271,12 @@ def record_failed_login(client_ip: str, username: str) -> dict[str, bool]:
     account_locked_now = False
     ip_account_locked_now = False
     if normalized_username:
-        account_locked_now = _record_failed_attempt(ACCOUNT_SCOPE_IP, normalized_username, now, "account")
+        account_locked_now = _record_failed_attempt(
+            ACCOUNT_SCOPE_IP,
+            normalized_username,
+            now,
+            "account",
+        )
         ip_account_locked_now = _record_failed_attempt(client_ip, normalized_username, now, "ip_account")
 
     db.session.commit()

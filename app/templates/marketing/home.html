@@ -1,0 +1,142 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Twinevia — Managed business texting with a clear record{% endblock %}
+{% block meta_description %}Send timely business texts, run keyword-started surveys, follow recipient-level delivery, and keep replies connected to the work with Twinevia's managed pilot.{% endblock %}
+{% block body_class %}marketing-home{% endblock %}
+
+{% block content %}
+  <section class="dispatch-hero" aria-labelledby="home-title">
+    <div class="dispatch-promise">
+      <h1 id="home-title"><span>Reach them.</span><span>Know what</span><span>happened.</span><em>Keep the reply.</em></h1>
+      <p>Managed SMS from setup and compliance through delivery, automated surveys, and response.</p>
+      <div class="dispatch-promise__actions">
+        <a class="button button--primary button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot <i class="bi bi-send-fill" aria-hidden="true"></i></a>
+        <a class="text-link text-link--light" href="{{ url_for('main.features') }}">See how it works <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+      </div>
+      <p class="dispatch-promise__identity">Twinevia, a service of IT Wingman LLC.</p>
+    </div>
+
+    <article class="dispatch-docket" aria-labelledby="dispatch-title">
+      <header class="dispatch-docket__header">
+        <div>
+          <h2 id="dispatch-title">Community update <span>· 142 recipients</span></h2>
+          <p class="dispatch-meta"><span>Illustrative workflow</span><span>Docket no. 000142</span></p>
+        </div>
+      </header>
+
+      <div class="dispatch-docket__body">
+        <div class="dispatch-route" aria-label="Message workflow stages">
+          <ol>
+            <li class="route-stage route-stage--one">
+              <span class="route-stage__icon"><i class="bi bi-shield-check" aria-hidden="true"></i></span>
+              <span class="route-stage__number">01</span>
+              <span class="route-stage__copy"><strong>Policy check</strong><small>Clear · No issues found</small></span>
+              <time datetime="2026-08-19T09:12:00-06:00">9:12 AM</time>
+            </li>
+            <li class="route-stage route-stage--two">
+              <span class="route-stage__icon"><i class="bi bi-clock" aria-hidden="true"></i></span>
+              <span class="route-stage__number">02</span>
+              <span class="route-stage__copy"><strong>Queued</strong><small>Queued for delivery</small></span>
+              <time datetime="2026-08-19T09:13:00-06:00">9:13 AM</time>
+            </li>
+            <li class="route-stage route-stage--three">
+              <span class="route-stage__icon"><i class="bi bi-send-fill" aria-hidden="true"></i></span>
+              <span class="route-stage__number">03</span>
+              <span class="route-stage__copy"><strong>Delivered</strong><small><b>139</b> · 3 failed</small></span>
+              <time datetime="2026-08-19T09:14:00-06:00">9:14 AM</time>
+            </li>
+          </ol>
+        </div>
+
+        <div class="attempts-region" role="region" aria-label="Illustrative recipient attempts" tabindex="0">
+          <table class="attempts-table">
+            <caption>Recipient attempts</caption>
+            <thead>
+              <tr><th scope="col">Recipient</th><th scope="col">Status</th><th scope="col">At</th><th scope="col">Attempt</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>••• 0142</td><td><span class="status status--delivered">Delivered</span></td><td>9:14</td><td>01</td></tr>
+              <tr><td>••• 0289</td><td><span class="status status--delivered">Delivered</span></td><td>9:14</td><td>01</td></tr>
+              <tr class="attempt-row--reply"><td>••• 1130</td><td><span class="status status--reply">Replied</span></td><td>9:18</td><td>01</td></tr>
+              <tr><td>••• 6704</td><td><span class="status status--failed">Failed</span></td><td>9:15</td><td>01</td></tr>
+              <tr><td>••• 7002</td><td><span class="status status--delivered">Delivered</span></td><td>9:15</td><td>01</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <footer class="dispatch-docket__footer">
+        <span><i class="bi bi-shield-check" aria-hidden="true"></i> Suppression checked</span>
+        <span><i class="bi bi-receipt" aria-hidden="true"></i> Usage recorded</span>
+      </footer>
+    </article>
+
+    <aside class="reply-margin" aria-labelledby="reply-title">
+      <blockquote id="reply-title">Thanks —<br>we’ll be there.</blockquote>
+      <p class="reply-meta">Reply received <span aria-hidden="true">·</span> 9:18 AM</p>
+      <div class="reply-thread" aria-label="Illustrative connected conversation">
+        <div><i class="bi bi-send" aria-hidden="true"></i><span>Community update</span><time datetime="2026-08-19T09:14:00-06:00">Sent 9:14 AM</time></div>
+        <div class="reply-thread__response"><i class="bi bi-chat-square-text" aria-hidden="true"></i><span>Thanks — we’ll be there.</span><time datetime="2026-08-19T09:18:00-06:00">Reply 9:18 AM</time></div>
+      </div>
+      <dl>
+        <div><dt>From</dt><dd>••• 1130</dd></div>
+        <div><dt>Connected to</dt><dd>Community update</dd></div>
+        <div><dt>Assigned</dt><dd>Inbox</dd></div>
+      </dl>
+      <p class="reply-margin__note"><i class="bi bi-people" aria-hidden="true"></i><span>Replies return to your team in one workspace.</span></p>
+    </aside>
+  </section>
+
+  <section class="offer-docket" aria-labelledby="offer-title">
+    <h2 class="visually-hidden" id="offer-title">Managed pilot pricing</h2>
+    <dl class="offer-ledger">
+      <div><dt><span class="offer-ledger__icon"><i class="bi bi-tag" aria-hidden="true"></i></span><strong>$149</strong></dt><dd>setup</dd></div>
+      <div><dt><span class="offer-ledger__icon"><i class="bi bi-calendar3" aria-hidden="true"></i></span><strong>$59.99</strong></dt><dd>monthly or $600 annual</dd></div>
+      <div><dt><span class="offer-ledger__icon"><i class="bi bi-chat-square-text" aria-hidden="true"></i></span><strong>1,000</strong></dt><dd>outbound segments included monthly</dd></div>
+      <div><dt><span class="offer-ledger__icon"><i class="bi bi-currency-dollar" aria-hidden="true"></i></span><strong>$0.03</strong></dt><dd>per additional segment</dd></div>
+    </dl>
+    <p class="offer-docket__note"><span aria-hidden="true">*</span> Provider approval is not guaranteed.</p>
+  </section>
+
+  <section class="handoff-story" aria-labelledby="handoff-title">
+    <h2 id="handoff-title">The record follows every handoff.</h2>
+    <div class="handoff-story__flow">
+      <article>
+        <span>01</span>
+        <h3>Managed setup</h3>
+        <p>We guide registration, compliance, and configuration before live sending begins.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h3>Recipient-level attempts</h3>
+        <p>Every queued, sent, failed, ambiguous, or replied attempt keeps its own record.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h3>Shared replies</h3>
+        <p>Responses return to the team with the dispatch and recipient context still attached.</p>
+      </article>
+      <article>
+        <span>04</span>
+        <h3>Automated survey flows</h3>
+        <p>A keyword can start a guided question sequence, record every answer, and optionally sync a completed response to an event.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="managed-pilot" aria-labelledby="pilot-title">
+    <div>
+      <h2 id="pilot-title">Start deliberately. Learn the workflow. Expand when it is ready.</h2>
+      <p>Twinevia is accepting a small number of approved pilot customers. We review the use case first, then guide accepted organizations through invitation, policies, billing, provider setup, and their protected first send.</p>
+    </div>
+    <div class="managed-pilot__steps" aria-label="Pilot sequence">
+      <ol>
+        <li><span>Request</span><p>Tell us about your organization and expected messaging.</p></li>
+        <li><span>Review</span><p>We confirm fit and the path needed for provider registration.</p></li>
+        <li><span>Invite</span><p>Approved owners accept policies and choose billing.</p></li>
+        <li><span>Launch</span><p>We configure, verify, and protect the first live workflow.</p></li>
+      </ol>
+      <a class="button button--light button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+    </div>
+  </section>
+{% endblock %}

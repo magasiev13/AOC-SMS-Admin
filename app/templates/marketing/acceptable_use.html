@@ -1,0 +1,23 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Acceptable Use Policy — Twinevia{% endblock %}
+{% block meta_description %}Rules for lawful, consent-based, non-abusive use of Twinevia messaging, provider resources, imports, automation, and platform access.{% endblock %}
+
+{% block content %}
+  <div class="policy-layout">
+    <aside class="policy-index"><p>Acceptable Use</p><time datetime="2026-08-19">Effective August 19, 2026</time><nav aria-label="Acceptable Use sections"><a href="#principle">Principle</a><a href="#consent">Consent</a><a href="#prohibited">Prohibited use</a><a href="#technical">Technical misuse</a><a href="#enforcement">Enforcement</a></nav></aside>
+    <article class="policy-document">
+      <header><h1>Acceptable Use Policy</h1><p>This policy protects message recipients, customer organizations, providers, and Twinevia. It applies to all customer data, users, integrations, imports, automations, messages, and provider resources used with the service.</p></header>
+
+      <section id="principle"><h2>Use Twinevia for expected, lawful communication</h2><p>Messages must identify the responsible organization, serve the approved use case, and match what recipients reasonably agreed to receive. Customers may not use approval for one campaign, organization, number, or purpose to run materially different traffic without review.</p></section>
+
+      <section id="consent"><h2>Consent and recipient control</h2><ul><li>Obtain and preserve any consent required for the message type and jurisdiction.</li><li>Do not use purchased, scraped, harvested, guessed, or unlawfully shared recipient lists.</li><li>Make opt-in language clear about the sender, purpose, frequency, and expected charges where required.</li><li>Honor STOP, revocation, suppression, and do-not-contact requests promptly across relevant sending paths.</li><li>Send at reasonable times and frequencies, and maintain required HELP or support information.</li></ul></section>
+
+      <section id="prohibited"><h2>Prohibited content and conduct</h2><p>You may not use Twinevia to:</p><ul><li>Send unlawful, deceptive, fraudulent, abusive, harassing, threatening, hateful, or exploitative content.</li><li>Impersonate another person or organization, hide the sender, or misrepresent an offer, affiliation, consent path, or registration.</li><li>Distribute malware, credential theft, phishing, scams, illegal goods or services, or content that violates intellectual-property or privacy rights.</li><li>Facilitate unwanted lead generation, snowshoe messaging, evasion of filtering, or traffic intended to inflate engagement or provider charges.</li><li>Transmit highly sensitive information when SMS is not an appropriate or authorized channel.</li><li>Use the service for emergency dispatch, life-safety, or other high-risk purposes unless Twinevia has explicitly approved a suitable written arrangement.</li></ul></section>
+
+      <section id="technical"><h2>Technical misuse</h2><p>Do not probe, disrupt, overload, reverse engineer, bypass access or entitlement controls, cross tenant boundaries, share credentials, forge provider callbacks, replay webhooks, manipulate usage, or attempt to access data or resources not assigned to the organization. Do not use automation or imports to evade request, recipient, queue, or rate limits.</p></section>
+
+      <section id="enforcement"><h2>Review and enforcement</h2><p>Twinevia may investigate suspected violations, require records or remediation, restrict features, pause messages, suspend provider resources, or terminate access. Severe or urgent risks may require immediate action without advance notice. Customers remain responsible for fees and consequences arising from their users, content, lists, or violations, subject to applicable law and the billing policy.</p><p>Report policy concerns through the <a href="{{ url_for('main.contact') }}">Contact page</a>.</p></section>
+    </article>
+  </div>
+{% endblock %}

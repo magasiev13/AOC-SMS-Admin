@@ -134,6 +134,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import (
+            MessageDispatchAttempt,
             MessagingUsageRecord,
             Organization,
             OrganizationA2POnboarding,
@@ -144,6 +145,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         )
 
         self.db = db
+        self.MessageDispatchAttempt = MessageDispatchAttempt
         self.Organization = Organization
         self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
@@ -175,7 +177,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._original_env)
 
-    def _create_org_with_profile(self, *, subscription_status="incomplete", **profile_overrides):
+    def _create_org_with_profile(self, *, subscription_status="active", **profile_overrides):
         organization = self.Organization(name="Acme", slug="acme", status="active")
         subscription = self.OrganizationSubscription(
             organization=organization,
@@ -279,6 +281,85 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(result["account_sid"], "ACactive0001")
         self.assertTrue(str(result["sid"]).startswith("SM"))
         self.assertEqual(result["num_segments"], "1")
+
+    def test_durable_send_attempt_replays_sent_result_without_sending_twice(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        self.app.config["TWILIO_BROWSER_FAKE_SENDS"] = True
+        organization, _profile = self._create_org_with_profile(
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive-durable-1",
+            from_number="+15550001111",
+            phone_number_sid="PNactive-durable-1",
+        )
+        service = get_twilio_service(organization.id)
+
+        first_result = service.send_message_with_attempt(
+            "+15550002222",
+            "Durable send",
+            "test-durable-send-1",
+            None,
+            None,
+            "blast",
+        )
+        second_result = service.send_message_with_attempt(
+            "+15550002222",
+            "Durable send",
+            "test-durable-send-1",
+            None,
+            None,
+            "blast",
+        )
+
+        self.assertTrue(first_result["success"])
+        self.assertTrue(second_result["success"])
+        self.assertTrue(second_result["idempotent_replay"])
+        self.assertEqual(first_result["sid"], second_result["sid"])
+        attempt = self.MessageDispatchAttempt.query.filter_by(logical_send_key="test-durable-send-1").one()
+        self.assertEqual(attempt.status, "sent")
+        self.assertEqual(attempt.attempt_count, 1)
+
+    def test_durable_send_attempt_marks_unknown_provider_result_ambiguous_without_retry(self) -> None:
+        from app.services.twilio_service import get_twilio_service
+
+        self.app.config["TWILIO_ALLOW_LIVE_SENDS_IN_TESTING"] = True
+        organization, _profile = self._create_org_with_profile(
+            status="active",
+            provider_status="active",
+            twilio_subaccount_sid="ACactive-durable-2",
+            from_number="+15550001111",
+            phone_number_sid="PNactive-durable-2",
+        )
+        service = get_twilio_service(organization.id)
+        service.client = MagicMock()
+        service.client.messages.create.side_effect = RuntimeError("connection ended after request write")
+
+        first_result = service.send_message_with_attempt(
+            "+15550003333",
+            "Ambiguous send",
+            "test-durable-send-2",
+            None,
+            None,
+            "blast",
+        )
+        second_result = service.send_message_with_attempt(
+            "+15550003333",
+            "Ambiguous send",
+            "test-durable-send-2",
+            None,
+            None,
+            "blast",
+        )
+
+        self.assertEqual(first_result["status"], "ambiguous")
+        self.assertEqual(second_result["status"], "ambiguous")
+        self.assertTrue(second_result["idempotent_replay"])
+        service.client.messages.create.assert_called_once()
+        attempt = self.MessageDispatchAttempt.query.filter_by(logical_send_key="test-durable-send-2").one()
+        self.assertEqual(attempt.status, "ambiguous")
+        self.assertEqual(attempt.attempt_count, 1)
+        self.assertIsNone(attempt.resolved_at)
 
     def test_send_message_blocks_auth_alert_in_testing_without_override(self) -> None:
         from app.services.twilio_service import get_twilio_service
@@ -1226,7 +1307,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             from_number="+15550001111",
         )
         mock_service = MagicMock()
-        mock_service.send_message.return_value = {
+        mock_service.send_message_with_attempt.return_value = {
             "success": True,
             "sid": "SM-op-test-1",
             "status": "sent",
@@ -1242,12 +1323,13 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         )
 
         self.assertTrue(result["success"])
-        mock_service.send_message.assert_called_once_with(
+        mock_service.send_message_with_attempt.assert_called_once()
+        send_args = mock_service.send_message_with_attempt.call_args.args
+        self.assertEqual(send_args[0:2], (
             "+15550009998",
             "Operational - test",
-            raise_on_transient=True,
-            send_kind="manual_live_test",
-        )
+        ))
+        self.assertEqual(send_args[-1], "manual_live_test")
         record = self.MessagingUsageRecord.query.filter_by(message_sid="SM-op-test-1").one()
         self.assertEqual(record.organization_id, organization.id)
         self.assertEqual(record.source, "operational_test")

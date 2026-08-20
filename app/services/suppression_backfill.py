@@ -24,7 +24,11 @@ def _load_details(log: MessageLog) -> list:
     return []
 
 
-def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None) -> dict:
+def backfill_suppressions(
+    organization_id: int,
+    batch_size: int = 500,
+    logger: Optional[object] = None,
+) -> dict:
     log = logger or current_app.logger
     last_id = 0
     batch_number = 0
@@ -37,6 +41,7 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
     while True:
         batch = (
             MessageLog.query.filter(MessageLog.id > last_id)
+            .filter(MessageLog.organization_id == organization_id)
             .order_by(MessageLog.id)
             .limit(batch_size)
             .all()
@@ -89,7 +94,10 @@ def backfill_suppressions(batch_size: int = 500, logger: Optional[object] = None
         total_suppressed,
     )
 
-    usage_summary = backfill_usage_record_failure_suppressions(logger=log)
+    usage_summary = backfill_usage_record_failure_suppressions(
+        organization_id=organization_id,
+        logger=log,
+    )
     log.info(
         "Backfill usage-record suppressions records_seen=%s records_checked=%s suppression_actions=%s errors=%s",
         usage_summary.get('records_seen', 0),

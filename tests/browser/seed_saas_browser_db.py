@@ -608,6 +608,29 @@ def main() -> None:
             consent_acknowledged_at=now,
         )
 
+        a2p_application_org = Organization(
+            name="A2P Application Bakery",
+            slug="a2p-application-bakery",
+            status="active",
+            billing_offer_version="2026-08-managed-pilot-v1",
+            created_at=now - timedelta(days=30),
+        )
+        a2p_application_subscription = OrganizationSubscription(
+            organization=a2p_application_org,
+            stripe_price_id="price_browser",
+            activation_fee_paid_at=now,
+            activation_price_id="price_browser_activation",
+            activation_payment_intent_id="pi_browser_a2p_setup",
+            activation_invoice_id="in_browser_a2p_setup",
+            offer_version="2026-08-managed-pilot-v1",
+            status="active",
+        )
+        a2p_application_messaging = OrganizationMessagingProfile(
+            organization=a2p_application_org,
+            status="pending",
+            provider_status="pending",
+        )
+
         db.session.add_all(
             [
                 platform_admin,
@@ -669,6 +692,9 @@ def main() -> None:
                 isolation_org,
                 isolation_subscription,
                 isolation_messaging,
+                a2p_application_org,
+                a2p_application_subscription,
+                a2p_application_messaging,
             ]
         )
         db.session.flush()

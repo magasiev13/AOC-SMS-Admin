@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
+
+{% block title %}Settings - {{ product_name }}{% endblock %}
+
+{% block page_title %}Settings{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Settings</span>
+{% endblock %}
+
+{% block content %}
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+
+    <section class="settings-grid" aria-label="Workspace settings">
+        {% for card in settings_cards %}
+        <a class="settings-card" href="{{ card.href }}">
+            <span class="settings-card__icon" aria-hidden="true">
+                <i class="bi {{ card.icon }}"></i>
+            </span>
+            <span class="settings-card__body">
+                <span class="settings-card__title">{{ card.title }}</span>
+                <span class="settings-card__description">{{ card.description }}</span>
+                <span class="settings-card__action">{{ card.action }} <i class="bi bi-arrow-right-short"></i></span>
+            </span>
+        </a>
+        {% endfor %}
+    </section>
+</div>
+{% endblock %}

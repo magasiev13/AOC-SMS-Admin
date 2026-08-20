@@ -25,7 +25,12 @@ Production behavior is also strict:
 | `FLASK_DEBUG` | unset | Explicit debug override. |
 | `TRUST_PROXY` | `0` | Enables `ProxyFix`; use only behind a trusted reverse proxy. |
 | `SAAS_MODE` | `0` | Enables the SaaS control plane and SaaS readiness validation. |
-| `SAAS_BASE_URL` | empty | Public base URL used for absolute links and Twilio webhook binding. |
+| `SAAS_BASE_URL` | empty | Compatibility base URL; production sets it to `https://app.twinevia.com`. |
+| `PUBLIC_BASE_URL` | `SAAS_BASE_URL` | Marketing and public-policy origin. Managed-pilot production requires `https://twinevia.com`. |
+| `APP_BASE_URL` | `SAAS_BASE_URL` | Application, invitation, Checkout, and provider-callback origin. Managed-pilot production requires `https://app.twinevia.com`. |
+| `APP_RELEASE_ID` | empty | Immutable release identifier supplied by `.release.env`; required in production. |
+| `MANAGED_PILOT_ENABLED` | `1` | Keeps anonymous self-service tenant creation disabled. Required for launch. |
+| `CUSTOMER_POLICY_VERSION` | `2026-08-18-managed-pilot-v1` | Base policy acceptance version. Production defines this and each policy-specific version explicitly. |
 
 ## Platform Operations
 
@@ -87,6 +92,27 @@ Important production rule:
 
 - host-header enforcement runs only when `FLASK_ENV=production` and `TRUSTED_HOSTS` is non-empty
 
+## Request And Shared-Capacity Limits
+
+| Variable | Default |
+|---|---:|
+| `MAX_CONTENT_LENGTH` | `2097152` |
+| `MAX_FORM_MEMORY_SIZE` | `262144` |
+| `MAX_FORM_PARTS` | `100` |
+| `WEBHOOK_MAX_BYTES` | `262144` |
+| `CSV_IMPORT_MAX_BYTES` | `1048576` |
+| `CSV_IMPORT_MAX_ROWS` | `5000` |
+| `CSV_IMPORT_MAX_COLUMNS` | `25` |
+| `CSV_IMPORT_MAX_CELL_CHARS` | `2000` |
+| `CSV_EXPORT_MAX_ROWS` | `25000` |
+| `SEND_MAX_RECIPIENTS` | `5000` |
+| `SEND_MAX_SEGMENTS` | `15000` |
+| `RECIPIENT_SNAPSHOT_MAX_BYTES` | `1048576` |
+| `TENANT_MAX_PROCESSING_MESSAGE_LOGS` | `5` |
+| `SCHEDULED_MAX_PENDING_PER_ORGANIZATION` | `25` |
+
+Production validates every range and requires these variables to be explicitly present.
+
 ## Browser Security Headers
 
 | Variable | Default | Notes |
@@ -116,6 +142,11 @@ Important production rule:
 |---|---|---|
 | `REDIS_URL` | `redis://localhost:6379/0` | Shared by worker and local tooling. |
 | `RQ_QUEUE_NAME` | `twinevia-saas` when `SAAS_MODE=1`, else `sms` | Queue default follows the active runtime family. |
+
+The production `/ready` check also verifies that every timer named by
+`READINESS_REQUIRED_SYSTEMD_TIMERS` is active. The default list covers the
+send scheduler, billing reconciliation, A2P reconciliation, encrypted backup,
+and readiness timers. `READINESS_SYSTEMCTL_TIMEOUT_SECONDS` defaults to `5`.
 
 ## Hosted Compliance And A2P Defaults
 
@@ -178,6 +209,9 @@ Operational note:
 | `STRIPE_SECRET_KEY` | unset | Required for SaaS billing validation. |
 | `STRIPE_PUBLISHABLE_KEY` | unset | UI/client-side Stripe usage if needed. |
 | `STRIPE_WEBHOOK_SECRET` | unset | Required for webhook verification and SaaS billing validation. |
+| `STRIPE_WEBHOOK_ENDPOINT_ID` | unset | Dedicated live endpoint; startup verifies URL, enabled state, and required events. |
+| `STRIPE_PORTAL_CONFIGURATION_ID` | unset | Dedicated live portal configuration; startup verifies its price allowlist. |
+| `STRIPE_EXPECTED_ACCOUNT_ID` | `acct_1TCY8xEksbf3Q3Fg` | Live Twinevia Stripe account that must own all configured prices. |
 | `STRIPE_PRICE_ID` | unset | Legacy alias for the monthly recurring price ID. Keep set until all deploy scripts use `STRIPE_MONTHLY_PRICE_ID`. |
 | `STRIPE_MONTHLY_PRICE_ID` | `STRIPE_PRICE_ID` | Monthly recurring price ID for the `$59.99/mo` option. Required unless `STRIPE_PRICE_ID` is set. |
 | `STRIPE_ANNUAL_PRICE_ID` | unset | Annual recurring price ID for the `$600/year upfront` option. Required for SaaS billing validation. |
@@ -195,7 +229,8 @@ Operational note:
 | `BILLING_OUTBOUND_SEGMENT_RATE_USD` | `0.0300` | Per-segment sell rate. |
 | `BILLING_MONTHLY_PRICE_USD` | `59.99` | Display amount for the monthly option. Stripe price amount remains authoritative. |
 | `BILLING_ANNUAL_PRICE_USD` | `600.00` | Display amount for the annual upfront option. Stripe price amount remains authoritative. |
-| `BILLING_ACTIVATION_FEE_USD` | `150.00` | Display amount for the one-time setup fee. Stripe price amount remains authoritative. |
+| `BILLING_ACTIVATION_FEE_USD` | `149.00` | Display amount for the one-time setup fee. Stripe price amount remains authoritative. |
+| `BILLING_OFFER_VERSION` | `2026-08-managed-pilot-v1` | Stored with organizations and Checkout sessions so incompatible open sessions can expire. |
 | `BILLING_ANNUAL_ONLY_ORG_SLUGS` | unset | Break-glass comma-separated organization slugs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
 | `BILLING_ANNUAL_ONLY_ORG_IDS` | unset | Break-glass comma-separated organization IDs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
 
@@ -214,6 +249,29 @@ Workspace test recipients are tenant-scoped data managed from the Twinevia UI, n
 Compatibility note:
 
 - `SMS_ADMIN_ENV_FILE` remains accepted as a legacy fallback after `TWINEVIA_SAAS_ENV_FILE`
+
+## Readiness, Backup, And Restore
+
+| Variable | Default | Notes |
+|---|---|---|
+| `READINESS_TOKEN` | unset | Minimum 32-character secret for the internal `/ready` route. |
+| `READINESS_WORKER_MAX_AGE_SECONDS` | `120` | Maximum accepted RQ heartbeat age. |
+| `OPERATIONS_MONITORING_MODE` | `webhook` | `webhook` for direct alert/heartbeat URLs or `github_actions` for the external monitor workflow and GitHub issues. |
+| `OPERATIONS_GITHUB_REPOSITORY` | unset | `owner/repository` destination for GitHub Actions monitoring, backup artifacts, and incident issues. |
+| `ALERT_WEBHOOK_URL` | unset | HTTPS operational-alert destination required in `webhook` monitoring mode. |
+| `UPTIME_MONITOR_HEARTBEAT_URL` | unset | HTTPS heartbeat destination required in `webhook` monitoring mode. |
+| `BACKUP_LOCAL_DIR` | `/var/backups/twinevia-saas` | Dedicated local encrypted-archive directory. |
+| `BACKUP_OFFSITE_MODE` | `mounted` | `mounted` for a verified remote filesystem or `github_actions` for encrypted workflow artifacts. |
+| `BACKUP_OFFSITE_DESTINATION` | unset | Separately mounted off-host copy destination required only in `mounted` mode. |
+| `BACKUP_ENCRYPTION_PASSPHRASE_FILE` | unset | Root-managed passphrase file outside the repository. |
+| `BACKUP_RETENTION_DAYS` | `35` | Local and off-host archive retention. |
+| `BACKUP_STATUS_FILE` | `/var/lib/twinevia-saas/backup-status.json` | Latest verified encrypted/off-host backup proof. |
+| `BACKUP_MAX_AGE_HOURS` | `30` | Readiness freshness limit. |
+| `RESTORE_DRILL_STATUS_FILE` | `/var/lib/twinevia-saas/restore-drill-status.json` | Latest isolated restore proof. |
+| `RESTORE_DRILL_DATABASE_URL` | unset | Dedicated non-production PostgreSQL restore target. |
+| `RESTORE_DRILL_DATABASE_NAME` | unset | Exact destructive-confirmation name for the restore target. |
+| `RESTORE_DRILL_MAX_AGE_DAYS` | `90` | Readiness freshness limit. |
+| `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` | unset | Private record proving every dispatchable AOC launch send present at maintenance time was captured and canceled. |
 
 ## Production Validation Summary
 
@@ -242,19 +300,24 @@ Startup additionally requires:
 - `SESSION_COOKIE_SAMESITE` of `Lax` or `Strict`
 - non-empty `TRUSTED_HOSTS`
 - valid hardening ranges and relationships
+- the exact Twinevia public/app hosts and all explicit managed-pilot limit, policy, billing, readiness, backup, restore, and AOC cancellation configuration
+- a readable backup passphrase file and identifiable immutable `APP_RELEASE_ID`
 
 ## Recommended Production Baseline
 
 ```env
 FLASK_ENV=production
 TRUST_PROXY=1
-TRUSTED_HOSTS=app.example.com,www.example.com
+TRUSTED_HOSTS=twinevia.com,www.twinevia.com,app.twinevia.com
 SESSION_COOKIE_SECURE=1
 REMEMBER_COOKIE_SECURE=1
 SESSION_COOKIE_SAMESITE=Lax
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
 RQ_QUEUE_NAME=twinevia-saas
+PUBLIC_BASE_URL=https://twinevia.com
+APP_BASE_URL=https://app.twinevia.com
+MANAGED_PILOT_ENABLED=1
 ```
 
 ## Runtime Profiles

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
+
+{% block title %}Event Sync - {{ product_name }}{% endblock %}
+
+{% block page_title %}Event Sync{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>Event Sync</span>
+{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('main.events_list') }}" class="btn btn-outline-secondary">
+    <i class="bi bi-calendar-event me-1"></i>Events
+</a>
+{% endblock %}
+
+{% block content %}
+{% set setup_block = integration_view.setup_block.replace('PASTE_GENERATED_SECRET_HERE', generated_secret).replace('GENERATE_AND_PASTE_SECRET_HERE', generated_secret) if generated_secret else integration_view.setup_block %}
+<div class="workspace-shell">
+    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+
+    <div class="workspace-detail-layout">
+        <div class="workspace-detail-main">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">WordPress connection</h2>
+                        <p class="workspace-panel__meta">Events Manager and WPForms changes will sync after this connection is enabled on both sides.</p>
+                    </div>
+                </div>
+
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="workspace-panel__body">
+                        <div class="form-check form-switch mb-4">
+                            <input class="form-check-input" type="checkbox" role="switch" id="eventSyncEnabled" name="enabled" {% if integration_view.enabled %}checked{% endif %}>
+                            <label class="form-check-label" for="eventSyncEnabled">Enable WordPress event sync</label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label" for="eventSyncEndpoint">Webhook endpoint</label>
+                            <input class="form-control" id="eventSyncEndpoint" type="text" readonly value="{{ integration_view.endpoint }}">
+                        </div>
+
+                        {% if generated_secret %}
+                        <div class="alert alert-warning" role="alert">
+                            <div class="fw-semibold mb-2">Copy this secret now.</div>
+                            <input class="form-control font-monospace" type="text" readonly value="{{ generated_secret }}">
+                        </div>
+                        {% elif not integration_view.has_secret %}
+                        <div class="alert alert-info" role="alert">Saving this page with sync enabled will generate the WordPress secret.</div>
+                        {% endif %}
+
+                        <div class="mb-0">
+                            <label class="form-label" for="wordpressSetupBlock">WordPress setup block</label>
+                            <textarea class="form-control font-monospace" id="wordpressSetupBlock" rows="5" readonly>{{ setup_block }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">Install the WordPress helper plugin, paste the endpoint and secret there, then future events will sync automatically.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">Save settings</button>
+                        </div>
+                    </div>
+                </form>
+            </section>
+        </div>
+
+        <aside class="workspace-detail-side">
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Sync status</h2>
+                    </div>
+                </div>
+                <div class="workspace-panel__body">
+                    <ul class="workspace-support-list">
+                        <li>Last event: {{ integration_view.last_event_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_event_synced_at else 'None yet' }}</li>
+                        <li>Last signup: {{ integration_view.last_signup_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_signup_synced_at else 'None yet' }}</li>
+                        <li>Last reconcile: {{ integration_view.last_reconcile_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
+                    </ul>
+                    {% if integration_view.last_error_message %}
+                    <div class="workspace-callout workspace-callout--warning mt-3">
+                        <h3 class="workspace-callout__title">Latest error</h3>
+                        <p class="workspace-callout__copy">{{ integration_view.last_error_message }}</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="workspace-panel">
+                <div class="workspace-panel__header">
+                    <div>
+                        <h2 class="workspace-panel__title">Secret</h2>
+                    </div>
+                </div>
+                <div class="workspace-panel__body">
+                    <p class="workspace-callout__copy mb-3">Rotate the secret if the WordPress configuration was shared too broadly or replaced.</p>
+                    <form method="POST" action="{{ url_for('main.event_sync_rotate_secret') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-outline-danger w-100">Rotate secret</button>
+                    </form>
+                </div>
+            </section>
+        </aside>
+    </div>
+</div>
+{% endblock %}

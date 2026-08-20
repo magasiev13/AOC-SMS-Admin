@@ -1,4 +1,5 @@
 import importlib
+import io
 import json
 import os
 import tempfile
@@ -60,6 +61,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             AppUser,
             AuthEvent,
             CommunityMember,
+            CustomerPolicyAcceptance,
             Event,
             InboxThread,
             KeywordAutomationRule,
@@ -74,6 +76,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             OrganizationTestRecipient,
             PlatformServiceRestartRequest,
             OrganizationSubscription,
+            ScheduledMessage,
         )
         from app.services.inbox_service import process_inbound_sms
         from app.tenant import organization_context
@@ -82,6 +85,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.AppUser = AppUser
         self.AuthEvent = AuthEvent
         self.CommunityMember = CommunityMember
+        self.CustomerPolicyAcceptance = CustomerPolicyAcceptance
         self.Event = Event
         self.InboxThread = InboxThread
         self.KeywordAutomationRule = KeywordAutomationRule
@@ -96,6 +100,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.OrganizationTestRecipient = OrganizationTestRecipient
         self.PlatformServiceRestartRequest = PlatformServiceRestartRequest
         self.OrganizationSubscription = OrganizationSubscription
+        self.ScheduledMessage = ScheduledMessage
         self.organization_context = organization_context
         self.process_inbound_sms = process_inbound_sms
 
@@ -174,6 +179,25 @@ class TestSaasPilotFoundation(unittest.TestCase):
                 user_id=self.owner.id,
                 role="owner",
             )
+        )
+        policy_versions = {
+            "terms": self.app.config["TERMS_POLICY_VERSION"],
+            "privacy": self.app.config["PRIVACY_POLICY_VERSION"],
+            "acceptable_use": self.app.config["ACCEPTABLE_USE_POLICY_VERSION"],
+            "sms": self.app.config["SMS_POLICY_VERSION"],
+            "billing": self.app.config["BILLING_POLICY_VERSION"],
+        }
+        self.db.session.add_all(
+            [
+                self.CustomerPolicyAcceptance(
+                    organization_id=self.organization.id,
+                    user_id=self.owner.id,
+                    policy_name=policy_name,
+                    policy_version=policy_version,
+                    accepted_ip="127.0.0.1",
+                )
+                for policy_name, policy_version in policy_versions.items()
+            ]
         )
         self.db.session.commit()
 
@@ -389,7 +413,9 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Use the workspace login to access your organization account.", response.data)
 
-    def test_signup_creates_workspace_owner_and_redirects_to_setup(self) -> None:
+    def test_managed_pilot_signup_allocates_no_workspace_resources(self) -> None:
+        organization_count_before = self.Organization.query.count()
+        user_count_before = self.AppUser.query.count()
         response = self.client.post(
             "/signup",
             data={
@@ -404,23 +430,176 @@ class TestSaasPilotFoundation(unittest.TestCase):
             follow_redirects=False,
         )
 
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("/setup", response.headers.get("Location", ""))
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers.get("Location"), "/request-a-pilot")
         organization = self.Organization.query.filter_by(slug="beta-bakery").first()
-        self.assertIsNotNone(organization)
-        self.assertIsNotNone(organization.subscription)
-        self.assertEqual(organization.subscription.status, "incomplete")
-        self.assertIsNotNone(organization.messaging_profile)
-        self.assertEqual(organization.messaging_profile.provider_mode, "platform_managed")
-        self.assertIsNotNone(organization.a2p_onboarding)
-        self.assertEqual(organization.a2p_onboarding.onboarding_status, "draft")
-        self.assertEqual(organization.a2p_onboarding.number_strategy, "auto_buy")
-        recipients = self.OrganizationTestRecipient.query.filter_by(
-            organization_id=organization.id
+        self.assertIsNone(organization)
+        self.assertEqual(self.Organization.query.count(), organization_count_before)
+        self.assertEqual(self.AppUser.query.count(), user_count_before)
+
+    def test_public_marketing_routes_render_managed_pilot_offer(self) -> None:
+        public_paths = (
+            "/",
+            "/features",
+            "/pricing",
+            "/security",
+            "/request-a-pilot",
+            "/contact",
+            "/privacy",
+            "/terms",
+            "/acceptable-use",
+            "/sms-a2p-policy",
+            "/billing-cancellation-refund-policy",
+        )
+
+        for path in public_paths:
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, path)
+            self.assertIn(b"Twinevia", response.data, path)
+
+        homepage = self.client.get("/")
+        self.assertIn(b"Reach them.", homepage.data)
+        self.assertIn(b"Illustrative workflow", homepage.data)
+        self.assertIn(b"Request a pilot", homepage.data)
+
+        pricing = self.client.get("/pricing")
+        self.assertIn(b"$149", pricing.data)
+        self.assertIn(b"$59.99", pricing.data)
+        self.assertIn(b"$600", pricing.data)
+        self.assertIn(b"1,000 outbound SMS segments", pricing.data)
+        self.assertIn(b"$0.03", pricing.data)
+        self.assertIn(b"approval is never guaranteed", pricing.data)
+
+    def test_public_and_application_hosts_route_root_to_the_correct_surface(self) -> None:
+        self.app.config.update(
+            PUBLIC_BASE_URL="https://twinevia.com",
+            APP_BASE_URL="https://app.twinevia.com",
+        )
+
+        public_response = self.client.get(
+            "/",
+            base_url="https://twinevia.com",
+            follow_redirects=False,
+        )
+        app_response = self.client.get(
+            "/",
+            base_url="https://app.twinevia.com",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(public_response.status_code, 200)
+        self.assertIn(b"Reach them.", public_response.data)
+        self.assertEqual(app_response.status_code, 302)
+        self.assertEqual(app_response.headers.get("Location"), "/login")
+
+        self.app.config.update(
+            PUBLIC_BASE_URL="http://127.0.0.1:5000",
+            APP_BASE_URL="http://127.0.0.1:5000",
+        )
+        local_single_origin_response = self.client.get(
+            "/",
+            base_url="http://127.0.0.1:5000",
+            follow_redirects=False,
+        )
+        self.assertEqual(local_single_origin_response.status_code, 200)
+        self.assertIn(b"Reach them.", local_single_origin_response.data)
+
+    def test_pilot_application_stores_review_record_without_allocating_resources(self) -> None:
+        from app.models import PilotApplication, PilotApplicationStatusHistory
+
+        organization_count_before = self.Organization.query.count()
+        user_count_before = self.AppUser.query.count()
+        subscription_count_before = self.OrganizationSubscription.query.count()
+        profile_count_before = self.OrganizationMessagingProfile.query.count()
+        invitation_count_before = self.OrganizationInvitation.query.count()
+
+        response = self.client.post(
+            "/request-a-pilot",
+            data={
+                "business_name": "Front Range Neighbors",
+                "contact_name": "Dana Rivera",
+                "email": "dana@frontrange.example",
+                "phone": "+13035550142",
+                "website_url": "https://frontrange.example",
+                "use_case": (
+                    "Send expected community event updates to members who opted in "
+                    "through the organization registration form."
+                ),
+                "expected_monthly_segments": "750",
+                "twilio_account_status": "needs_guidance",
+                "company_fax": "",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers.get("Location"), "/request-a-pilot?submitted=1")
+        application = PilotApplication.query.filter_by(
+            email="dana@frontrange.example"
+        ).one()
+        self.assertEqual(application.status, "new")
+        self.assertEqual(application.expected_monthly_segments, 750)
+        self.assertEqual(application.twilio_account_status, "needs_guidance")
+        history = PilotApplicationStatusHistory.query.filter_by(
+            pilot_application_id=application.id
         ).all()
-        self.assertEqual(len(recipients), 1)
-        self.assertEqual(recipients[0].phone, "+15550000077")
-        self.assertEqual(recipients[0].label, "Beta Owner")
+        self.assertEqual([entry.to_status for entry in history], ["new"])
+
+        self.assertEqual(self.Organization.query.count(), organization_count_before)
+        self.assertEqual(self.AppUser.query.count(), user_count_before)
+        self.assertEqual(self.OrganizationSubscription.query.count(), subscription_count_before)
+        self.assertEqual(self.OrganizationMessagingProfile.query.count(), profile_count_before)
+        self.assertEqual(self.OrganizationInvitation.query.count(), invitation_count_before)
+
+        confirmation = self.client.get(response.headers["Location"])
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertIn(b"without creating an organization", confirmation.data)
+
+    def test_pilot_application_honeypot_rejects_without_storage(self) -> None:
+        from app.models import PilotApplication
+
+        count_before = PilotApplication.query.count()
+        response = self.client.post(
+            "/request-a-pilot",
+            data={
+                "business_name": "Automated Applicant",
+                "contact_name": "Auto Bot",
+                "email": "bot@example.test",
+                "use_case": "This apparently valid description should never be stored.",
+                "company_fax": "555-0100",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Unable to submit this pilot request.", response.data)
+        self.assertEqual(PilotApplication.query.count(), count_before)
+
+    @patch("app.routes.process_stripe_webhook_event")
+    def test_oversized_webhook_is_rejected_before_handler(self, mock_process_event) -> None:
+        self.app.config["WEBHOOK_MAX_BYTES"] = 32
+
+        response = self.client.post(
+            "/webhooks/stripe",
+            data=b"x" * 33,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 413)
+        mock_process_event.assert_not_called()
+
+    @patch("app.routes.parse_recipients_csv")
+    def test_oversized_multipart_upload_is_rejected_before_csv_parse(self, mock_parse) -> None:
+        self.app.config["MAX_CONTENT_LENGTH"] = 1024
+        self._login_owner()
+
+        response = self.client.post(
+            "/community/import",
+            data={"file": (io.BytesIO(b"x" * 2048), "recipients.csv")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(response.status_code, 413)
+        mock_parse.assert_not_called()
 
     def test_owner_setup_defaults_new_org_number_strategy_to_auto_buy(self) -> None:
         self._login_owner()
@@ -779,7 +958,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Activate billing", response.data)
         self.assertIn(b"$59.99/mo", response.data)
         self.assertIn(b"Annual upfront", response.data)
-        self.assertIn(b"$150 setup fee", response.data)
+        self.assertIn(b"$149 setup fee", response.data)
 
     def test_customer_managed_invalid_setup_step_falls_back_to_provider(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(
@@ -1005,6 +1184,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.subscription.status = "trialing"
         self.subscription.current_period_end = datetime(2026, 4, 2, 12, 30, tzinfo=timezone.utc)
+        self.subscription.activation_fee_paid_at = datetime.now(timezone.utc)
+        self.subscription.activation_price_id = "price_activation_123"
+        self.subscription.activation_payment_intent_id = "pi_setup_verified"
+        self.subscription.activation_invoice_id = "in_setup_verified"
         self.db.session.commit()
 
         self._login_owner()
@@ -1143,6 +1326,59 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn("/billing", response.headers.get("Location", ""))
         self.assertNotIn("/billing/checkout", response.headers.get("Location", ""))
         mock_create_checkout.assert_not_called()
+
+    @patch("app.routes.create_checkout_session")
+    def test_checkout_requires_all_current_policy_acceptances(self, mock_create_checkout) -> None:
+        mock_create_checkout.return_value = SimpleNamespace(
+            url="https://checkout.stripe.test/policy-gated"
+        )
+        self.CustomerPolicyAcceptance.query.filter_by(
+            organization_id=self.organization.id,
+            user_id=self.owner.id,
+        ).delete()
+        self.db.session.commit()
+        self._login_owner()
+
+        blocked = self.client.post("/billing/checkout", follow_redirects=False)
+
+        self.assertEqual(blocked.status_code, 302)
+        self.assertIn("/policies/accept?return_to=billing", blocked.headers.get("Location", ""))
+        mock_create_checkout.assert_not_called()
+
+        acceptance_page = self.client.get(blocked.headers["Location"])
+        self.assertEqual(acceptance_page.status_code, 200)
+        self.assertIn(b"Required before Checkout", acceptance_page.data)
+        accepted = self.client.post(
+            "/policies/accept",
+            data={
+                "return_to": "billing",
+                "accepted_policy": [
+                    "terms",
+                    "privacy",
+                    "acceptable_use",
+                    "sms",
+                    "billing",
+                ],
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(accepted.status_code, 302)
+        self.assertIn("/billing", accepted.headers.get("Location", ""))
+        self.assertEqual(
+            self.CustomerPolicyAcceptance.query.filter_by(
+                organization_id=self.organization.id,
+                user_id=self.owner.id,
+            ).count(),
+            5,
+        )
+
+        checkout = self.client.post("/billing/checkout", follow_redirects=False)
+        self.assertEqual(checkout.status_code, 303)
+        self.assertEqual(
+            checkout.headers.get("Location"),
+            "https://checkout.stripe.test/policy-gated",
+        )
+        mock_create_checkout.assert_called_once()
 
     @patch("app.routes.create_checkout_session")
     def test_billing_checkout_post_creates_session(self, mock_create_checkout) -> None:
@@ -1313,23 +1549,12 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_uses_subscription_status(self, mock_stripe_module) -> None:
-        from datetime import timedelta
-
         from app.services.billing_service import refresh_subscription_from_stripe
 
+        self.subscription.stripe_customer_id = "cus_test_123"
+        self.subscription.stripe_subscription_id = "sub_test_123"
+        self.db.session.commit()
         mock_stripe = MagicMock()
-        mock_stripe.checkout.Session.list.return_value.data = [
-            {
-                "id": "cs_test_123",
-                "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
-                "status": "complete",
-                "customer_email": "owner@acme.test",
-                "customer": "cus_test_123",
-                "subscription": "sub_test_123",
-                "client_reference_id": str(self.organization.id),
-                "metadata": {"organization_id": str(self.organization.id)},
-            }
-        ]
         mock_stripe.Subscription.retrieve.return_value = {
             "id": "sub_test_123",
             "customer": "cus_test_123",
@@ -1345,6 +1570,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(subscription.status, "trialing")
         self.assertEqual(subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(subscription.stripe_subscription_id, "sub_test_123")
+        mock_stripe.checkout.Session.list.assert_not_called()
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_ignores_checkout_sessions_older_than_org(self, mock_stripe_module) -> None:
@@ -2124,7 +2350,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Annual upfront-only checkout enabled", response.data)
         self.assertIn(b"Checkout offer: Annual upfront only", response.data)
-        self.assertIn(b"$600/year upfront plan plus the $150 setup fee", response.data)
+        self.assertIn(b"$600/year upfront plan plus the $149 setup fee", response.data)
         self.db.session.refresh(self.organization)
         self.db.session.refresh(self.subscription)
         self.assertEqual(self.organization.billing_offer, "annual_only")
@@ -2329,10 +2555,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Platform Test Send", response.data)
 
-    @patch("app.routes.send_operational_test_message")
+    @patch("app.routes.send_operational_test_message_with_key")
     def test_platform_organizations_messaging_edit_blocks_test_send_for_suspended_org(
         self,
-        mock_send_operational_test_message,
+        mock_send_operational_test_message_with_key,
     ) -> None:
         self._login_platform_admin()
         self.organization.status = "suspended"
@@ -2362,12 +2588,12 @@ class TestSaasPilotFoundation(unittest.TestCase):
             b"This organization is not ready for a live operational test send yet.",
             post_response.data,
         )
-        mock_send_operational_test_message.assert_not_called()
+        mock_send_operational_test_message_with_key.assert_not_called()
 
-    @patch("app.routes.send_operational_test_message")
+    @patch("app.routes.send_operational_test_message_with_key")
     def test_platform_organizations_messaging_edit_can_send_operational_test(
         self,
-        mock_send_operational_test_message,
+        mock_send_operational_test_message_with_key,
     ) -> None:
         self._login_platform_admin()
         self.subscription.status = "complimentary"
@@ -2384,17 +2610,23 @@ class TestSaasPilotFoundation(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        mock_send_operational_test_message.assert_called_once_with(
-            self.organization.id,
-            to_number="+15550001234",
-            body="Operational test",
-            actor_user_id=self.platform_admin.id,
+        mock_send_operational_test_message_with_key.assert_called_once()
+        call_args = mock_send_operational_test_message_with_key.call_args.args
+        self.assertEqual(
+            call_args[:4],
+            (
+                self.organization.id,
+                "+15550001234",
+                "Operational test",
+                self.platform_admin.id,
+            ),
         )
+        self.assertTrue(call_args[4].startswith("platform-test:"))
 
-    @patch("app.routes.send_operational_test_message")
+    @patch("app.routes.send_operational_test_message_with_key")
     def test_platform_organizations_messaging_edit_duplicate_test_send_is_suppressed(
         self,
-        mock_send_operational_test_message,
+        mock_send_operational_test_message_with_key,
     ) -> None:
         self._login_platform_admin()
         self.subscription.status = "complimentary"
@@ -2426,12 +2658,18 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 302)
         self.assertEqual(second_response.status_code, 200)
-        mock_send_operational_test_message.assert_called_once_with(
-            self.organization.id,
-            to_number="+15550001234",
-            body="Operational test",
-            actor_user_id=self.platform_admin.id,
+        mock_send_operational_test_message_with_key.assert_called_once()
+        call_args = mock_send_operational_test_message_with_key.call_args.args
+        self.assertEqual(
+            call_args[:4],
+            (
+                self.organization.id,
+                "+15550001234",
+                "Operational test",
+                self.platform_admin.id,
+            ),
         )
+        self.assertTrue(call_args[4].startswith("platform-test:"))
         self.assertIn(
             b"An identical platform test send was already submitted. The duplicate request was ignored.",
             second_response.data,
@@ -2489,10 +2727,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
             response.data,
         )
 
-    @patch("app.routes.send_operational_test_message")
+    @patch("app.routes.send_operational_test_message_with_key")
     def test_platform_organizations_messaging_edit_rejects_test_send_when_org_not_ready(
         self,
-        mock_send_operational_test_message,
+        mock_send_operational_test_message_with_key,
     ) -> None:
         self._login_platform_admin()
 
@@ -2511,7 +2749,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             b"This organization is not ready for a live operational test send yet.",
             response.data,
         )
-        mock_send_operational_test_message.assert_not_called()
+        mock_send_operational_test_message_with_key.assert_not_called()
 
     def test_platform_organizations_messaging_edit_browser_fake_test_send_records_normalized_metadata(self) -> None:
         self._login_platform_admin()
@@ -3560,6 +3798,54 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"route you to the right workspace page automatically", response.data)
         self.assertNotIn(b"land in the workspace dashboard", response.data)
 
+    def test_invitation_acceptance_rotates_existing_user_session_nonce(self) -> None:
+        existing_user = self.AppUser(
+            username="unassigned-user",
+            email="unassigned-user@acme.test",
+            full_name="Unassigned User",
+            phone="+15550000019",
+            role="social_manager",
+            must_change_password=False,
+        )
+        existing_user.set_password("Previous-pass1!")
+        invitation = self.OrganizationInvitation(
+            organization_id=self.organization.id,
+            email="unassigned-user@acme.test",
+            role="staff",
+            status="pending",
+        )
+        self.db.session.add_all([existing_user, invitation])
+        self.db.session.commit()
+        previous_session_id = existing_user.get_id()
+
+        response = self.client.post(
+            f"/invites/{invitation.token}",
+            data={
+                "username": "unassigned-user",
+                "full_name": "Assigned User",
+                "phone": "+15550000019",
+                "password": "Replacement-pass1!",
+                "confirm_password": "Replacement-pass1!",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.db.session.refresh(existing_user)
+        self.assertNotEqual(existing_user.get_id(), previous_session_id)
+        from app.auth import load_user
+
+        self.assertIsNone(load_user(previous_session_id))
+        accepted_event = (
+            self.AuthEvent.query.filter_by(
+                event_type="invitation_accepted",
+                user_id=existing_user.id,
+            )
+            .order_by(self.AuthEvent.id.desc())
+            .first()
+        )
+        self.assertIsNotNone(accepted_event)
+
     def test_invitation_accept_rejects_platform_admin_email(self) -> None:
         invitation = self.OrganizationInvitation(
             organization_id=self.organization.id,
@@ -4021,6 +4307,97 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(self.MessageLog.query.count(), before_logs)
         mock_queue.enqueue.assert_not_called()
 
+    @patch("app.queue.get_queue")
+    def test_dashboard_active_send_limit_blocks_same_tenant_queue_flood(self, mock_get_queue) -> None:
+        self.subscription.status = "complimentary"
+        self.app.config["TENANT_MAX_PROCESSING_MESSAGE_LOGS"] = 1
+        self.db.session.add_all(
+            [
+                self.CommunityMember(
+                    organization_id=self.organization.id,
+                    name="Queue Limit Target",
+                    phone="+15550001011",
+                ),
+                self.MessageLog(
+                    organization_id=self.organization.id,
+                    message_body="Already processing",
+                    target="community",
+                    status="processing",
+                ),
+            ]
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            "/dashboard",
+            data={
+                "message_body": "Do not enqueue another job",
+                "target": "community",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"This workspace already has 1 active send jobs; the limit is 1.", response.data)
+        self.assertEqual(
+            self.MessageLog.query.filter_by(
+                organization_id=self.organization.id,
+                status="processing",
+            ).count(),
+            1,
+        )
+        mock_get_queue.assert_not_called()
+
+    def test_dashboard_pending_schedule_limit_blocks_same_tenant_queue_flood(self) -> None:
+        self.subscription.status = "complimentary"
+        self.app.config["SCHEDULED_MAX_PENDING_PER_ORGANIZATION"] = 1
+        future = datetime.utcnow() + timedelta(days=1)
+        self.db.session.add_all(
+            [
+                self.CommunityMember(
+                    organization_id=self.organization.id,
+                    name="Scheduled Limit Target",
+                    phone="+15550001012",
+                ),
+                self.ScheduledMessage(
+                    organization_id=self.organization.id,
+                    scheduled_at=future,
+                    message_body="Already scheduled",
+                    target="community",
+                    status="pending",
+                ),
+            ]
+        )
+        self.db.session.commit()
+
+        self._login_owner()
+        response = self.client.post(
+            "/dashboard",
+            data={
+                "message_body": "Do not schedule another job",
+                "target": "community",
+                "schedule_later": "on",
+                "schedule_date": future.strftime("%Y-%m-%d"),
+                "schedule_time": future.strftime("%H:%M"),
+                "client_timezone": "UTC",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            b"This workspace already has 1 pending scheduled sends; the limit is 1.",
+            response.data,
+        )
+        self.assertEqual(
+            self.ScheduledMessage.query.filter_by(
+                organization_id=self.organization.id,
+                status="pending",
+            ).count(),
+            1,
+        )
+
     @patch("app.services.inbox_service.get_twilio_service")
     def test_inbound_sms_routes_by_destination_number(self, mock_get_twilio) -> None:
         with self.organization_context(self.organization.id):
@@ -4033,7 +4410,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             self.db.session.commit()
 
         mock_service = MagicMock()
-        mock_service.send_message.return_value = {
+        mock_service.send_message_with_attempt.return_value = {
             "success": True,
             "sid": "SM-OUT-1",
             "status": "sent",

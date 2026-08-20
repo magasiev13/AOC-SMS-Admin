@@ -238,33 +238,31 @@ test('customer-managed staff pending setup stays read-only and points to externa
   await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
 });
 
-test('self-serve signup creates a workspace and opens setup', async ({ page }) => {
+test('managed pilot replaces self-serve signup with a resource-safe application', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/signup');
+
+  await expect(page).toHaveURL(/\/request-a-pilot$/);
   await expect(page.locator('body')).not.toContainText(/SMS Admin|Twinevia Legacy/);
-  await expect(page.locator('[data-signup-indicator="1"]')).toHaveClass(/is-current/);
-  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tell us what the messages need to accomplish.' })).toBeVisible();
+  await expect(page.getByText('This is an application for a managed pilot—not instant signup.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submit pilot request' })).toBeVisible();
 
-  const signupMetrics = await surfaceMetrics(page);
-  expect(signupMetrics.scrollWidth).toBeLessThanOrEqual(signupMetrics.innerWidth);
+  const requestMetrics = await surfaceMetrics(page);
+  expect(requestMetrics.scrollWidth).toBeLessThanOrEqual(requestMetrics.innerWidth);
 
-  const continueBox = await box(page.getByRole('button', { name: 'Continue' }));
-  expect(continueBox.y + continueBox.height).toBeLessThanOrEqual(signupMetrics.innerHeight);
-
-  await page.getByLabel('Business name').fill('Signup Browser Bakery');
+  await page.getByLabel('Business or organization name').fill('Signup Browser Bakery');
   await page.getByLabel('Full name').fill('Signup Owner');
   await page.getByLabel('Business email').fill('signup-owner@browser.test');
-  await page.getByLabel('Mobile phone').fill('+15550001999');
-  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Phone optional').fill('+15550001999');
+  await page.getByLabel('What will you send, to whom, and how did they consent?').fill(
+    'Customers opt in at checkout for requested pickup reminders and can reply STOP at any time.'
+  );
+  await page.getByLabel('Expected outbound segments per month optional').fill('350');
+  await page.getByLabel('Current Twilio setup optional').selectOption('none');
+  await page.getByRole('button', { name: 'Submit pilot request' }).click();
 
-  await expect(page.locator('[data-signup-indicator="2"]')).toHaveClass(/is-current/);
-  await page.getByLabel('Username').fill('signup-owner');
-  await page.getByLabel('Password', { exact: true }).fill('Signup-pass1!');
-  await page.getByLabel('Confirm password').fill('Signup-pass1!');
-  await page.getByRole('button', { name: 'Create workspace' }).click();
-
-  await expect(page).toHaveURL(/\/setup$/);
-  await expect(page.getByText('Owner setup')).toBeVisible();
-  await expectSetupShell(page, { step: 'billing', heading: 'Activate billing' });
-  await expect(page.getByRole('heading', { name: 'Signup Browser Bakery' })).toBeVisible();
+  await expect(page).toHaveURL(/\/request-a-pilot\?submitted=1$/);
+  await expect(page.getByRole('heading', { name: 'Your pilot request is in the review queue.' })).toBeVisible();
+  await expect(page.getByText('without creating an organization, billing account, sending number, or provider resource')).toBeVisible();
 });

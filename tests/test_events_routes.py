@@ -1,5 +1,6 @@
 import importlib
 import io
+import csv
 import os
 import tempfile
 import unittest
@@ -98,6 +99,40 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(f"delete-event-mobile-{event.id}".encode(), response.data)
         self.assertIn(b'bi bi-trash"></i> Delete', response.data)
+
+    def test_event_detail_and_export_show_booking_report_fields(self) -> None:
+        self._login()
+        event = self.Event(
+            title="Vardavar",
+            sms_location_note="West Side Pavilion",
+        )
+        self.db.session.add(event)
+        self.db.session.flush()
+        registration = self.EventRegistration(
+            event_id=event.id,
+            name="Ani",
+            phone="+17205550123",
+            booking_spaces=3,
+            selections_json='[{"label":"Food to Share","quantity":2}]',
+            booking_comment="Bringing pizza",
+            external_booking_status="approved",
+        )
+        self.db.session.add(registration)
+        self.db.session.commit()
+
+        detail_response = self.client.get(f"/events/{event.id}")
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertIn(b"3", detail_response.data)
+        self.assertIn(b"Food to Share (2)", detail_response.data)
+        self.assertIn(b"Bringing pizza", detail_response.data)
+
+        export_response = self.client.get(f"/events/{event.id}/export")
+        self.assertEqual(export_response.status_code, 200)
+        rows = list(csv.reader(io.StringIO(export_response.get_data(as_text=True))))
+        self.assertIn("potluck_selections", rows[0])
+        self.assertIn("sms_eligibility", rows[0])
+        self.assertIn("Food to Share (2)", rows[1])
+        self.assertIn("sendable", rows[1])
 
     def test_events_list_mobile_delete_action_present_for_survey_linked_event(self) -> None:
         self._login()
@@ -239,7 +274,7 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"workspace-summary", response.data)
         self.assertIn(b"workspace-detail-layout", response.data)
-        self.assertIn(b"workspace-summary__stats--2", response.data)
+        self.assertIn(b"workspace-summary__stats--4", response.data)
         self.assertIn(b"Registrations", response.data)
 
 

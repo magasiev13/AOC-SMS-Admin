@@ -225,11 +225,7 @@ def subscription_activation_paid(subscription: OrganizationSubscription | None) 
     status = (subscription.status or "").strip().lower()
     if status == "complimentary":
         return True
-    return bool(
-        subscription.stripe_customer_id
-        or subscription.stripe_subscription_id
-        or status in {"active", "trialing"}
-    )
+    return subscription.activation_fee_paid_at is not None
 
 
 def activation_price_id() -> str:

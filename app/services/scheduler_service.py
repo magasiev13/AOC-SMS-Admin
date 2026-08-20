@@ -139,12 +139,21 @@ def _upsert_message_log_for_scheduled_send(
         )
         db.session.add(log)
         db.session.flush()
+        log.status = 'sent' if result_failure == 0 else 'failed'
         scheduled.message_log_id = log.id
         return log
 
     existing_rows = _load_log_detail_rows(log.details)
     log.test_mode = bool(scheduled.test_mode)
-    merged_rows = existing_rows + detail_rows
+    merged_by_phone: dict[str, dict] = {}
+    unkeyed_rows: list[dict] = []
+    for row in existing_rows + detail_rows:
+        phone = str(row.get('phone') or '').strip()
+        if phone:
+            merged_by_phone[phone] = row
+        else:
+            unkeyed_rows.append(row)
+    merged_rows = list(merged_by_phone.values()) + unkeyed_rows
     merged_success, merged_failure = _count_detail_outcomes(merged_rows)
 
     if merged_rows:
@@ -161,6 +170,7 @@ def _upsert_message_log_for_scheduled_send(
         len(merged_rows),
     )
     log.details = json.dumps(merged_rows)
+    log.status = 'sent' if log.failure_count == 0 else 'failed'
     db.session.flush()
     return log
 
@@ -318,6 +328,10 @@ def send_scheduled_messages(app):
             retry_backoff_seconds,
             int(current_app.config.get('SCHEDULED_SEND_RETRY_MAX_BACKOFF_SECONDS', 900)),
         )
+        recipient_limit = int(current_app.config.get('SEND_MAX_RECIPIENTS', 5000) or 5000)
+        snapshot_max_bytes = int(
+            current_app.config.get('RECIPIENT_SNAPSHOT_MAX_BYTES', 1024 * 1024) or 1024 * 1024
+        )
         logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
 
         def _load_scheduled_snapshot(scheduled_message) -> list[dict[str, str]]:
@@ -333,8 +347,17 @@ def send_scheduled_messages(app):
                     unusable_message=(
                         "This scheduled test message does not have a usable recipient snapshot. Recreate it to continue."
                     ),
+                    max_rows=recipient_limit,
+                    max_bytes=snapshot_max_bytes,
                 )
-            return load_recipient_snapshot(scheduled_message.test_recipient_snapshot_json)
+            return load_recipient_snapshot(
+                scheduled_message.test_recipient_snapshot_json,
+                missing_message="This scheduled message predates recipient snapshots. Recreate it to continue.",
+                invalid_message="This scheduled message has an invalid recipient snapshot. Recreate it to continue.",
+                unusable_message="This scheduled message does not have a usable recipient snapshot. Recreate it to continue.",
+                max_rows=recipient_limit,
+                max_bytes=snapshot_max_bytes,
+            )
         
         # Step 1: Handle stuck 'processing' messages (timed out after configured threshold)
         processing_timeout = now - timedelta(minutes=processing_timeout_minutes)
@@ -494,10 +517,20 @@ def send_scheduled_messages(app):
                             )
                             continue
                     elif scheduled.target == 'community':
-                        members = CommunityMember.query.all()
+                        members = CommunityMember.query.limit(recipient_limit + 1).all()
+                        if len(members) > recipient_limit:
+                            raise ValueError(
+                                f"Scheduled recipient count exceeds SEND_MAX_RECIPIENTS={recipient_limit}."
+                            )
                         recipient_data = [{'phone': m.phone, 'name': m.name} for m in members]
                     else:
-                        registrations = EventRegistration.query.filter_by(event_id=scheduled.event_id).all()
+                        registrations = EventRegistration.query.filter_by(
+                            event_id=scheduled.event_id
+                        ).limit(recipient_limit + 1).all()
+                        if len(registrations) > recipient_limit:
+                            raise ValueError(
+                                f"Scheduled recipient count exceeds SEND_MAX_RECIPIENTS={recipient_limit}."
+                            )
                         recipient_data = [{'phone': r.phone, 'name': r.name} for r in registrations]
 
                     duplicate_skipped = 0
@@ -592,12 +625,23 @@ def send_scheduled_messages(app):
                         recipient_fingerprint_phones(recipient_data),
                     )
                     twilio = get_twilio_service(scheduled.organization_id)
-                    result = twilio.send_bulk(
-                        recipient_data,
-                        scheduled.message_body,
-                        raise_on_transient=True,
-                        send_kind='blast',
-                    )
+                    if current_app.config.get("SAAS_MODE"):
+                        result = twilio.send_bulk_with_attempts(
+                            recipient_data,
+                            scheduled.message_body,
+                            f"scheduled:{scheduled.id}",
+                            scheduled.message_log_id,
+                            scheduled.id,
+                            0.1,
+                            "blast",
+                        )
+                    else:
+                        result = twilio.send_bulk(
+                            recipient_data,
+                            scheduled.message_body,
+                            raise_on_transient=True,
+                            send_kind='blast',
+                        )
 
                     log = _upsert_message_log_for_scheduled_send(
                         scheduled=scheduled,
@@ -606,10 +650,14 @@ def send_scheduled_messages(app):
                         db=db,
                     )
 
-                    scheduled.status = 'sent'
+                    scheduled.status = 'sent' if int(result.get('failure_count') or 0) == 0 else 'failed'
                     scheduled.sent_at = now
                     scheduled.message_log_id = log.id
-                    scheduled.error_message = None
+                    scheduled.error_message = (
+                        None
+                        if scheduled.status == 'sent'
+                        else 'One or more recipients failed or have ambiguous provider acceptance.'
+                    )
                     scheduled.next_retry_at = None
                     db.session.commit()
                     _record_usage_candidates_safely(
@@ -620,7 +668,10 @@ def send_scheduled_messages(app):
                         db=db,
                     )
 
-                    sent_count += 1
+                    if scheduled.status == 'sent':
+                        sent_count += 1
+                    else:
+                        failed_count += 1
                     logger.info(
                         "[Scheduler] Message id=%d organization_id=%s SENT: log_id=%d %d/%d successful skipped_duplicates=%d fingerprint=%s (status: processing -> sent)",
                         scheduled.id,

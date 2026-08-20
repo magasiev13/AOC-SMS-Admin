@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Pilot Requests - {{ product_name }}{% endblock %}
+{% block page_title %}Pilot Requests{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.platform_home') }}">Platform</a> / <span>Pilot Requests</span>
+{% endblock %}
+
+{% block content %}
+<div class="platform-shell platform-shell--compact">
+    <section class="platform-shell__summary platform-shell__summary--utility">
+        <p class="platform-shell__summary-meta-line">
+            {{ applications|length }} recent application{{ '' if applications|length == 1 else 's' }}
+        </p>
+    </section>
+
+    {% if applications %}
+    <div class="d-grid gap-3">
+        {% for application in applications %}
+        <article class="workspace-panel">
+            <div class="workspace-panel__header">
+                <div>
+                    <h2 class="workspace-panel__title">{{ application.business_name }}</h2>
+                    <p class="workspace-panel__meta">
+                        {{ application.contact_name }} · {{ application.email }} · submitted {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}
+                    </p>
+                </div>
+                <span class="badge bg-{{ 'success' if application.status == 'approved' else ('secondary' if application.status == 'declined' else 'warning text-dark') }}">
+                    {{ application.status.replace('_', ' ')|title }}
+                </span>
+            </div>
+            <div class="workspace-panel__body">
+                <dl class="row mb-3">
+                    <dt class="col-sm-3">Use case</dt>
+                    <dd class="col-sm-9">{{ application.use_case }}</dd>
+                    <dt class="col-sm-3">Expected usage</dt>
+                    <dd class="col-sm-9">{{ application.expected_monthly_segments or 'Not provided' }} SMS segments per month</dd>
+                    <dt class="col-sm-3">Twilio</dt>
+                    <dd class="col-sm-9">{{ (application.twilio_account_status or 'Not provided').replace('_', ' ')|title }}</dd>
+                    <dt class="col-sm-3">Website</dt>
+                    <dd class="col-sm-9">
+                        {% if application.website_url %}<a href="{{ application.website_url }}" target="_blank" rel="noopener">{{ application.website_url }}</a>{% else %}Not provided{% endif %}
+                    </dd>
+                </dl>
+
+                {% if application.status in ['new', 'under_review'] %}
+                <div class="row g-3">
+                    <div class="col-lg-6">
+                        <form method="POST" action="{{ url_for('main.platform_pilot_application_approve', application_id=application.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <label class="form-label" for="approve_note_{{ application.id }}">Approval note</label>
+                            <textarea class="form-control mb-2" id="approve_note_{{ application.id }}" name="review_note" rows="2" maxlength="4000"></textarea>
+                            <button class="btn btn-primary" type="submit">Approve and issue owner invite</button>
+                        </form>
+                    </div>
+                    <div class="col-lg-6">
+                        <form method="POST" action="{{ url_for('main.platform_pilot_application_decline', application_id=application.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <label class="form-label" for="decline_note_{{ application.id }}">Decline reason</label>
+                            <textarea class="form-control mb-2" id="decline_note_{{ application.id }}" name="review_note" rows="2" maxlength="4000" required></textarea>
+                            <button class="btn btn-outline-danger" type="submit">Decline</button>
+                        </form>
+                    </div>
+                </div>
+                {% elif application.status == 'approved' %}
+                    {% set invitation_url = invitation_urls.get(application.id) %}
+                    <p class="mb-2"><strong>Organization:</strong> {{ application.organization.name if application.organization else 'Missing' }}</p>
+                    {% if invitation_url %}
+                    <a class="btn btn-outline-primary" href="{{ invitation_url }}" target="_blank" rel="noopener">Open owner invitation</a>
+                    <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ invitation_url }}" data-copy-feedback="Copied">Copy invitation link</button>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="workspace-panel"><div class="workspace-panel__body text-muted">No pilot applications yet.</div></div>
+    {% endif %}
+</div>
+{% endblock %}

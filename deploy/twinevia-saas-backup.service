@@ -1,0 +1,28 @@
+[Unit]
+Description=Twinevia SaaS encrypted PostgreSQL and configuration backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=__APP_ROOT__/current
+EnvironmentFile=__APP_ROOT__/.env
+EnvironmentFile=__APP_ROOT__/current/.release.env
+Environment="APP_ROOT=__APP_ROOT__/current"
+Environment="TWINEVIA_ENV_FILE=__APP_ROOT__/.env"
+Environment="APP_GROUP=__APP_GROUP__"
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+ExecStart=__APP_ROOT__/current/deploy/backup_twinevia_saas.sh

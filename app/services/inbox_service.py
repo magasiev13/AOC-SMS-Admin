@@ -1,6 +1,7 @@
 import json
 import time
 from contextlib import nullcontext
+from uuid import uuid4
 
 from flask import current_app
 from sqlalchemy import func
@@ -182,7 +183,12 @@ def delete_survey_flow_with_dependencies(survey_id: int) -> dict[str, int] | Non
     }
 
 
-def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> dict:
+def _send_thread_reply_with_logical_key(
+    thread_id: int,
+    body: str,
+    actor: str | None,
+    logical_send_key: str,
+) -> dict:
     thread = db.session.get(InboxThread, thread_id)
     if thread is None:
         return {'success': False, 'error': 'thread_not_found'}
@@ -201,7 +207,21 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
 
     try:
         twilio = get_twilio_service(thread.organization_id)
-        result = twilio.send_message(thread.phone, reply_body, send_kind='manual_reply')
+        if current_app.config.get('SAAS_MODE'):
+            result = twilio.send_message_with_attempt(
+                thread.phone,
+                reply_body,
+                logical_send_key,
+                None,
+                None,
+                'manual_reply',
+            )
+        else:
+            result = twilio.send_message(
+                thread.phone,
+                reply_body,
+                send_kind='manual_reply',
+            )
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
 
@@ -233,6 +253,29 @@ def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> di
         source='reply',
     )
     return result
+
+
+def send_thread_reply(thread_id: int, body: str, actor: str | None = None) -> dict:
+    return _send_thread_reply_with_logical_key(
+        thread_id,
+        body,
+        actor,
+        f"manual-direct:{thread_id}:{uuid4().hex}",
+    )
+
+
+def send_thread_reply_with_key(
+    thread_id: int,
+    body: str,
+    actor: str | None,
+    logical_send_key: str,
+) -> dict:
+    return _send_thread_reply_with_logical_key(
+        thread_id,
+        body,
+        actor,
+        logical_send_key,
+    )
 
 
 def _normalize_unsubscribed_name(name: str | None) -> str | None:
@@ -419,13 +462,14 @@ def _append_inbox_message(
     return message
 
 
-def _send_automated_reply(
+def _send_automated_reply_with_key(
     phone: str,
     thread: InboxThread,
     body: str,
     *,
     source: str,
-    source_id: int | None = None,
+    source_id: int | None,
+    logical_send_key: str,
 ) -> dict:
     body = normalize_sms_body((body or '').strip())
     if not body:
@@ -447,7 +491,21 @@ def _send_automated_reply(
 
     try:
         twilio = get_twilio_service(thread.organization_id)
-        result = twilio.send_message(phone, body, send_kind='automation_reply')
+        if current_app.config.get('SAAS_MODE'):
+            result = twilio.send_message_with_attempt(
+                phone,
+                body,
+                logical_send_key,
+                None,
+                None,
+                'automation_reply',
+            )
+        else:
+            result = twilio.send_message(
+                phone,
+                body,
+                send_kind='automation_reply',
+            )
     except Exception as exc:
         result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
 
@@ -468,6 +526,24 @@ def _send_automated_reply(
         source=source,
     )
     return result
+
+
+def _send_automated_reply(
+    phone: str,
+    thread: InboxThread,
+    body: str,
+    *,
+    source: str,
+    source_id: int | None,
+) -> dict:
+    return _send_automated_reply_with_key(
+        phone,
+        thread,
+        body,
+        source=source,
+        source_id=source_id,
+        logical_send_key=f"automation-direct:{thread.id}:{uuid4().hex}",
+    )
 
 
 def _survey_start_question_delay_seconds() -> float:
@@ -988,7 +1064,7 @@ def process_inbound_sms(payload: dict) -> dict:
         db.session.commit()
 
         survey_reply_count = 0
-        for pending in pending_replies:
+        for pending_index, pending in enumerate(pending_replies):
             source = str(pending['source'])
             source_id = pending.get('source_id')
             body = str(pending.get('body') or '')
@@ -1003,12 +1079,16 @@ def process_inbound_sms(payload: dict) -> dict:
             sent_replies.append(
                 {
                     'source': source,
-                    'result': _send_automated_reply(
+                    'result': _send_automated_reply_with_key(
                         phone,
                         thread,
                         body,
                         source=source,
                         source_id=source_id if isinstance(source_id, int) else None,
+                        logical_send_key=(
+                            f"automation:{inbound_message.id}:{pending_index}:"
+                            f"{source}:{source_id if isinstance(source_id, int) else 0}"
+                        ),
                     ),
                 }
             )

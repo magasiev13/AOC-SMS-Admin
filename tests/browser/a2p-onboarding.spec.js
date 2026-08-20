@@ -26,7 +26,7 @@ async function openMessagingForOrg(page, orgName) {
 
 test('platform admin can navigate onboarding from messaging and submit deterministic local validation', async ({ page }) => {
   await login(page, 'platform@browser.test', 'Platform-pass1!');
-  await openMessagingForOrg(page, 'Onboarding Bakery');
+  await openMessagingForOrg(page, 'A2P Application Bakery');
 
   await expect(page.getByRole('heading', { name: 'Manage Messaging' })).toBeVisible();
   await expect(page.getByText('A2P onboarding', { exact: true })).toBeVisible();
@@ -41,8 +41,8 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await expect(page.getByRole('heading', { name: 'A2P Onboarding' })).toBeVisible();
   await expect(page.getByLabel('Registration Path')).toBeVisible();
   await expect(page.getByLabel('Number Strategy')).toBeVisible();
-  await expect(page.getByLabel('Legal Business Name')).toHaveValue('Onboarding Bakery');
-  await expect(page.getByLabel('Public Brand Name')).toHaveValue('Onboarding Bakery');
+  await expect(page.getByLabel('Legal Business Name')).toHaveValue('A2P Application Bakery');
+  await expect(page.getByLabel('Public Brand Name')).toHaveValue('A2P Application Bakery');
   await expect(page.getByLabel('Business Type')).toHaveValue('');
   await expect(page.getByLabel('Business Industry')).toBeVisible();
   await expect(page.getByLabel('Registration Identifier')).toHaveValue('EIN');
@@ -110,10 +110,10 @@ test('platform admin can navigate onboarding from messaging and submit determini
   await page.getByLabel('USA and Canada').check();
   await page.getByLabel('Campaign Description').fill('Community updates');
   await page.getByLabel('Opt-in / Message Flow').fill('Users opt in from the website and reply STOP to unsubscribe.');
-  await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder');
+  await page.getByLabel('Message Samples').fill('A2P Application Bakery reminder');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
-  await expect(page).toHaveURL(/\/platform\/organizations\/1\/messaging\/onboarding$/);
+  await expect(page).toHaveURL(/\/platform\/organizations\/\d+\/messaging\/onboarding$/);
   expect(await page.getByLabel('External Privacy Policy URL').evaluate((el) => el.validationMessage)).toBe('');
   expect(await page.getByLabel('Registration Number').evaluate((el) => el.validationMessage)).not.toBe('');
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Not submitted yet');
@@ -125,7 +125,9 @@ test('platform admin can navigate onboarding from messaging and submit determini
   );
   await expect(page.locator('li').filter({ hasText: 'Stage' })).toContainText('Not submitted yet');
 
-  await page.getByLabel('Message Samples').fill('Onboarding Bakery reminder 1\nOnboarding Bakery reminder 2');
+  await page
+    .getByLabel('Message Samples')
+    .fill('A2P Application Bakery reminder 1\nA2P Application Bakery reminder 2');
   await page.getByRole('button', { name: 'Submit A2P Onboarding' }).click();
 
   await expect(page.getByText('Twilio A2P onboarding queued for processing.')).toBeVisible();

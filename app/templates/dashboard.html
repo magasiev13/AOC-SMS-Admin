@@ -45,6 +45,7 @@
                     {% endif %}
                     <form method="POST" id="sendForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="request_idempotency_key" value="{{ scheduled_request_idempotency_key }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>

@@ -82,10 +82,7 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print("")
     print("Accounts")
     for account in summary["accounts"]:
-        print(
-            f"- {account['label']}: {account['email']} / {account['password']} "
-            f"({account['home']})"
-        )
+        print(f"- {account['label']}: {account['email']} ({account['home']})")
     print("")
     print("Organizations")
     for organization in summary["organizations"]:
@@ -96,9 +93,8 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print("")
     print("Pending invitations")
     for invite in summary["pending_invites"]:
-        print(
-            f"- {invite['organization']} {invite['role']} -> {invite['email']}: {invite['accept_url']}"
-        )
+        print(f"- {invite['organization']} {invite['role']} -> {invite['email']}")
+    print("Open pending invitations from the platform or organization access screen.")
     if summary["live_sender_note"]:
         print("")
         print(summary["live_sender_note"])
@@ -118,10 +114,12 @@ def seed_demo_database(
     _seed_env_defaults(database_url=database_url, base_url=base_url)
     configured_database_url = os.environ["DATABASE_URL"]
     sqlite_db_path = _sqlite_db_path(configured_database_url)
+    if sqlite_db_path is None:
+        raise RuntimeError("Demo seeding is restricted to a file-backed local SQLite database.")
+    if live_from_number or live_messaging_service_sid:
+        raise RuntimeError("Demo seeding cannot attach a live Twilio sender.")
 
     if reset:
-        if sqlite_db_path is None:
-            raise RuntimeError("--reset is only supported for SQLite databases.")
         sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
         _remove_db_files(sqlite_db_path)
 

@@ -406,10 +406,12 @@ class TestRestartDeployArtifacts(unittest.TestCase):
 
     def test_install_script_installs_and_enables_restart_queue_timer(self) -> None:
         install_script = self._read_repo_file("deploy", "install_saas.sh")
+        release_script = self._read_repo_file("deploy", "release_twinevia_saas.sh")
+        service_unit = self._read_repo_file("deploy", "twinevia-saas-platform-restart-queue.service")
 
         self.assertIn("twinevia-saas-platform-restart-queue.service", install_script)
         self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script)
-        self.assertIn("run_platform_restart_queue_once.sh", install_script)
+        self.assertIn("current/deploy/run_platform_restart_queue_once.sh", service_unit)
         self.assertIn("resolve_app_user", install_script)
         self.assertIn("resolve_app_group", install_script)
         self.assertIn("install_repo_file", install_script)
@@ -418,10 +420,14 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("/usr/local/bin/saas-dbdoctor", install_script)
         self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', install_script)
         self.assertIn('ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', install_script)
-        self.assertIn("twinevia-saas-platform-restart-queue.timer", install_script.split("enable --now", 1)[1])
+        self.assertIn("release_twinevia_saas.sh", install_script)
+        self.assertIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
+        runtime_units = release_script.split("RUNTIME_UNITS=(", 1)[1].split(")", 1)[0]
+        self.assertIn("twinevia-saas-platform-restart-queue.timer", runtime_units)
 
     def test_deploy_script_syncs_restart_helper_and_restart_queue_timer(self) -> None:
         deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
+        release_script = self._read_repo_file("deploy", "release_twinevia_saas.sh")
         runtime_units = deploy_script.split("SAAS_RUNTIME_UNITS=(", 1)[1].split(")", 1)[0]
 
         self.assertIn("restart_twinevia_saas_services.sh", deploy_script)
@@ -448,20 +454,23 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("twinevia-saas-platform-restart-queue.timer", deploy_script)
         self.assertIn("systemctl daemon-reload", deploy_script)
         self.assertIn("visudo", deploy_script)
-        self.assertIn('systemctl enable --now "${SAAS_RUNTIME_UNITS[@]}"', deploy_script)
+        self.assertIn('bash "${APP_ROOT}/deploy/release_twinevia_saas.sh"', deploy_script)
+        self.assertIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
         self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
         self.assertIn('"twinevia-saas-platform-restart-queue.timer"', runtime_units)
 
-    def test_saas_deploy_scripts_ensure_canonical_venv_before_restart(self) -> None:
+    def test_saas_deploy_scripts_build_release_scoped_venv_before_restart(self) -> None:
         install_script = self._read_repo_file("deploy", "install_saas.sh")
         deploy_script = self._read_repo_file("deploy", "deploy_twinevia_saas.sh")
+        release_script = self._read_repo_file("deploy", "release_twinevia_saas.sh")
 
         for script in (install_script, deploy_script):
-            self.assertIn("ensure_canonical_venv.sh", script)
-            self.assertIn("VENV_STATE_FILE", script)
-            self.assertIn("rollback_promoted_venv", script)
-            self.assertIn('"${VENV_BIN}/python" -m pip install', script)
-            self.assertNotIn('"${VENV_BIN}/pip" install', script)
+            self.assertIn("release_twinevia_saas.sh", script)
+            self.assertNotIn("ensure_canonical_venv.sh", script)
+        self.assertIn('python3.11 -m venv "${pending_release}/venv"', release_script)
+        self.assertIn('"${pending_release}/venv/bin/python" -m pip install', release_script)
+        self.assertIn("rollback_on_error", release_script)
+        self.assertIn('atomic_link "${release_dir}" "${CURRENT_LINK}"', release_script)
 
     def test_canonical_venv_helper_builds_next_venv_and_preserves_backup(self) -> None:
         helper = self._read_repo_file("deploy", "ensure_canonical_venv.sh")
@@ -480,7 +489,8 @@ class TestRestartDeployArtifacts(unittest.TestCase):
 
         self.assertIn("venv/bin/python -m gunicorn", service_unit)
         self.assertNotIn("venv/bin/gunicorn --workers", service_unit)
-        self.assertIn('"${APP_ROOT}/venv/bin/python" -m rq.cli worker', worker_script)
+        self.assertIn('"${APP_ROOT}/venv/bin/python" -m app.rq_worker', worker_script)
+        self.assertNotIn('"${APP_ROOT}/venv/bin/python" -m rq.cli worker', worker_script)
         self.assertNotIn('"${APP_ROOT}/venv/bin/python" -m rq worker', worker_script)
         self.assertNotIn('"${APP_ROOT}/venv/bin/rq" worker', worker_script)
 

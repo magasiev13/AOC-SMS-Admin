@@ -4,10 +4,9 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 from flask import current_app
 from twilio.base import serialize, values
@@ -22,6 +21,7 @@ from app.models import (
 )
 from app.queue import get_queue
 from app.services.provider_secret_service import decrypt_provider_secret, encrypt_provider_secret
+from app.services.public_https_service import PublicHttpsFetchError, fetch_public_https_text
 from app.services.twilio_service import (
     PlatformSubaccountAuthRequiredError,
     ProviderProvisioningError,
@@ -37,9 +37,11 @@ from app.services.twilio_service import (
     ensure_messaging_profile,
     finalize_sender_setup,
     provision_org,
+    require_chargeable_provider_entitlement,
     seed_service_address_from_onboarding,
     sync_sender_assignment,
 )
+from app.utils import as_utc_datetime
 
 
 STANDARD_CUSTOMER_PROFILE_POLICY_SID = "RNdfbf3fae0e1107f8aded0e7cead80bf5"
@@ -178,6 +180,7 @@ A2P_CAMPAIGN_ASSOCIATION_CONFLICT_FRAGMENT = "already a campaign associated with
 A2P_RECOVERY_STATE_KEY = "recovery_state"
 A2P_RECONCILED_PROFILE_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
 A2P_RECONCILED_TRUST_PRODUCT_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
+A2P_PROCESSING_LEASE = timedelta(minutes=15)
 A2P_TRANSIENT_PROVIDER_ERROR_FRAGMENTS = (
     "failed to resolve",
     "temporary failure in name resolution",
@@ -318,7 +321,11 @@ def a2p_registration_identifier_choices() -> tuple[tuple[str, str], ...]:
 
 
 def _public_base_url() -> str | None:
-    base_url = (current_app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    base_url = (
+        current_app.config.get("APP_BASE_URL")
+        or current_app.config.get("SAAS_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
     return base_url or None
 
 
@@ -379,28 +386,42 @@ def _normalize_external_public_url(raw_value: str | None) -> tuple[str | None, s
     parsed = urlparse(value)
     if parsed.scheme.lower() != "https" or not parsed.netloc:
         return None, "must use a public https:// URL"
+    if parsed.username or parsed.password:
+        return None, "must not contain user information"
+    try:
+        port = parsed.port or 443
+    except ValueError:
+        return None, "contains an invalid port"
+    if port != 443:
+        return None, "must use the standard HTTPS port 443"
+    if _is_reserved_test_host(value) and not current_app.testing:
+        return None, "must not use a reserved test or local domain"
     return value[:255], None
 
 
-def _http_fetch_text(url: str) -> tuple[int | None, str]:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (compatible; ITWingmanA2PValidator/1.0)",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-    )
+def _http_fetch_text(url: str) -> tuple[int | None, str, str | None]:
     timeout = float(current_app.config.get("TWILIO_A2P_URL_VALIDATION_TIMEOUT", 5))
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            status_code = getattr(response, "status", None) or response.getcode()
-            body = response.read(131072).decode("utf-8", errors="ignore")
-            return status_code, body
-    except HTTPError as exc:
-        body = exc.read(8192).decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
-        return exc.code, body
-    except URLError:
-        return None, ""
+    max_bytes = int(current_app.config.get("TWILIO_A2P_URL_VALIDATION_MAX_BYTES", 131072))
+    max_redirects = int(current_app.config.get("TWILIO_A2P_URL_VALIDATION_MAX_REDIRECTS", 3))
+    last_error: PublicHttpsFetchError | None = None
+    for attempt in range(1, 3):
+        try:
+            response = fetch_public_https_text(
+                url,
+                timeout,
+                max_bytes,
+                max_redirects,
+                "Mozilla/5.0 (compatible; TwineviaA2PValidator/1.0)",
+            )
+            return response.status_code, response.body, None
+        except PublicHttpsFetchError as exc:
+            last_error = exc
+            if attempt == 1:
+                current_app.logger.warning(
+                    "Public compliance URL validation fetch failed; retrying.",
+                    extra={"url": url, "attempt": attempt, "error": str(exc)},
+                )
+    return None, "", str(last_error or "Public URL validation failed.")
 
 
 def _is_reserved_test_host(url: str) -> bool:
@@ -506,18 +527,18 @@ def _validate_external_submission_urls(
     }
     page_errors: list[str] = []
     for field_name, url in normalized_urls.items():
-        if _is_reserved_test_host(url):
+        if _is_reserved_test_host(url) and current_app.testing:
             field_result = results["fields"][field_name]
             field_result["status_code"] = 200
             field_result["reachable"] = True
             field_result["valid"] = True
             continue
-        status_code, body = _http_fetch_text(url)
+        status_code, body, fetch_error = _http_fetch_text(url)
         field_result = results["fields"][field_name]
         field_result["status_code"] = status_code
         field_result["reachable"] = status_code == 200
         if status_code != 200:
-            field_result["error"] = f"returned HTTP {status_code or 'unreachable'}"
+            field_result["error"] = fetch_error or f"returned HTTP {status_code or 'unreachable'}"
             page_errors.append(f"{required_labels[field_name]} page {field_result['error']}")
             continue
         if not page_checks[field_name](body):
@@ -859,6 +880,111 @@ def _load_status_payload(onboarding: OrganizationA2POnboarding) -> dict[str, Any
 
 def _store_status_payload(onboarding: OrganizationA2POnboarding, payload: dict[str, Any]) -> None:
     onboarding.raw_status_json = json.dumps(payload, sort_keys=True)
+
+
+def _load_provisioning_state(onboarding: OrganizationA2POnboarding) -> dict[str, Any]:
+    raw_value = (onboarding.provisioning_state_json or "").strip()
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _checkpoint_a2p_provisioning(
+    onboarding: OrganizationA2POnboarding,
+    status_payload: dict[str, Any],
+    phase: str,
+) -> None:
+    resources = {
+        "address_sid": onboarding.address_sid,
+        "supporting_document_sid": onboarding.supporting_document_sid,
+        "customer_profile_sid": onboarding.customer_profile_sid,
+        "trust_product_sid": onboarding.trust_product_sid,
+        "brand_registration_sid": onboarding.brand_registration_sid,
+        "sole_proprietor_end_user_sid": status_payload.get("sole_proprietor_end_user_sid"),
+        "business_information_end_user_sid": status_payload.get("business_information_end_user_sid"),
+        "authorized_representative_sid": status_payload.get("authorized_representative_sid"),
+        "messaging_profile_end_user_sid": status_payload.get("messaging_profile_end_user_sid"),
+    }
+    state = _load_provisioning_state(onboarding)
+    state.update(
+        {
+            "version": 1,
+            "flow": "a2p_registration",
+            "phase": phase,
+            "resources": {key: value for key, value in resources.items() if value},
+            "updated_at": utc_now().isoformat(),
+        }
+    )
+    onboarding.provisioning_state_json = json.dumps(state, sort_keys=True)
+    _store_status_payload(onboarding, status_payload)
+    db.session.commit()
+
+
+def _single_remote_resource(resources: list[Any], label: str) -> Any | None:
+    if len(resources) > 1:
+        raise ProviderProvisioningError(
+            f"Multiple Twilio {label} resources match this onboarding record; reconcile them before continuing."
+        )
+    return resources[0] if resources else None
+
+
+def _resource_text(resource: Any, attribute: str) -> str:
+    return str(getattr(resource, attribute, "") or "").strip()
+
+
+def _required_remote_sid(resource: Any, label: str) -> str:
+    sid = _resource_text(resource, "sid")
+    if not sid:
+        raise ProviderProvisioningError(f"Twilio returned a {label} without a SID.")
+    return sid
+
+
+def _find_or_create_end_user(
+    client: Any,
+    friendly_name: str,
+    type_name: str,
+    attributes: dict[str, Any],
+    label: str,
+) -> Any:
+    matches = [
+        end_user
+        for end_user in client.trusthub.v1.end_users.list(limit=100)
+        if _resource_text(end_user, "friendly_name") == friendly_name
+        and _resource_text(end_user, "type") == type_name
+    ]
+    existing = _single_remote_resource(matches, label)
+    if existing is not None:
+        return existing
+    return _create_end_user(
+        client,
+        friendly_name=friendly_name,
+        type_name=type_name,
+        attributes=attributes,
+    )
+
+
+def _ensure_remote_assignment(assignment_context: Any, object_sid: str, label: str) -> None:
+    matches = [
+        assignment
+        for assignment in assignment_context.list(limit=100)
+        if _resource_text(assignment, "object_sid") == object_sid
+    ]
+    _single_remote_resource(matches, label)
+    if not matches:
+        assignment_context.create(object_sid=object_sid)
+
+
+def _existing_evaluation(evaluation_context: Any, policy_sid: str, label: str) -> Any | None:
+    matches = [
+        evaluation
+        for evaluation in evaluation_context.list(limit=100)
+        if _resource_text(evaluation, "policy_sid") == policy_sid
+    ]
+    return _single_remote_resource(matches, label)
 
 
 def _status_value(raw_value: Any) -> str | None:
@@ -1752,11 +1878,12 @@ def ensure_a2p_event_stream_subscription(
 ) -> None:
     if not a2p_event_streams_enabled():
         return
+    require_chargeable_provider_entitlement(organization, "a2p_event_stream_subscription")
 
     destination = a2p_event_stream_destination_url(organization)
     if not destination:
         profile.event_stream_status = "error"
-        profile.event_stream_error = "SAAS_BASE_URL must be configured before Twilio Event Streams can be enabled."
+        profile.event_stream_error = "APP_BASE_URL must be configured before Twilio Event Streams can be enabled."
         return
 
     try:
@@ -1953,51 +2080,95 @@ def _record_observed_identifier_drift(
     )
 
 
-def _find_onboarding_for_event(event_type: str, data: dict[str, Any]) -> tuple[OrganizationA2POnboarding | None, OrganizationMessagingProfile | None]:
+def _event_identifier_belongs_to_other_organization(
+    authenticated_organization_id: int,
+    data: dict[str, Any],
+) -> bool:
+    identifier_queries = (
+        (
+            OrganizationA2POnboarding,
+            OrganizationA2POnboarding.brand_registration_sid,
+            _clean_text(data.get("brandsid")),
+        ),
+        (
+            OrganizationA2POnboarding,
+            OrganizationA2POnboarding.campaign_sid,
+            _clean_text(data.get("campaignsid")),
+        ),
+        (
+            OrganizationMessagingProfile,
+            OrganizationMessagingProfile.phone_number_sid,
+            _clean_text(data.get("phonenumbersid")),
+        ),
+        (
+            OrganizationMessagingProfile,
+            OrganizationMessagingProfile.messaging_service_sid,
+            _event_value(data, "messagingservicesid", "messageservicesid", "service_sid"),
+        ),
+        (
+            OrganizationMessagingProfile,
+            OrganizationMessagingProfile.twilio_subaccount_sid,
+            _event_value(data, "accountsid", "account_sid"),
+        ),
+    )
+    for model, column, identifier in identifier_queries:
+        if not identifier:
+            continue
+        record = model.query.filter(column == identifier).first()
+        if record is not None and record.organization_id != authenticated_organization_id:
+            return True
+    return False
+
+
+def _event_identifier_matches_organization(
+    data: dict[str, Any],
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+) -> bool:
+    supplied_and_owned = (
+        (_clean_text(data.get("brandsid")), _clean_text(onboarding.brand_registration_sid)),
+        (_clean_text(data.get("campaignsid")), _clean_text(onboarding.campaign_sid)),
+        (_clean_text(data.get("phonenumbersid")), _clean_text(profile.phone_number_sid)),
+        (
+            _event_value(data, "messagingservicesid", "messageservicesid", "service_sid"),
+            _clean_text(profile.messaging_service_sid),
+        ),
+        (
+            _event_value(data, "accountsid", "account_sid"),
+            _clean_text(profile.twilio_subaccount_sid or profile.twilio_account_sid),
+        ),
+    )
+    return any(
+        supplied is not None and owned is not None and supplied == owned
+        for supplied, owned in supplied_and_owned
+    )
+
+
+def _find_onboarding_for_event(
+    event_type: str,
+    data: dict[str, Any],
+    authenticated_organization_id: int,
+) -> tuple[OrganizationA2POnboarding | None, OrganizationMessagingProfile | None]:
     topic = _event_stream_topic(event_type)
     if topic is None:
         return None, None
 
-    if topic == "brand":
-        brand_sid = _clean_text(data.get("brandsid"))
-        if brand_sid:
-            onboarding = OrganizationA2POnboarding.query.filter_by(brand_registration_sid=brand_sid).first()
-            if onboarding is not None:
-                organization = db.session.get(Organization, onboarding.organization_id)
-                profile = organization.messaging_profile if organization is not None else None
-                return onboarding, profile
-
-    campaign_sid = _clean_text(data.get("campaignsid"))
-    if campaign_sid:
-        onboarding = OrganizationA2POnboarding.query.filter_by(campaign_sid=campaign_sid).first()
-        if onboarding is not None:
-            organization = db.session.get(Organization, onboarding.organization_id)
-            profile = organization.messaging_profile if organization is not None else None
-            return onboarding, profile
-
-    phone_number_sid = _clean_text(data.get("phonenumbersid"))
-    if phone_number_sid:
-        profile = OrganizationMessagingProfile.query.filter_by(phone_number_sid=phone_number_sid).first()
-        if profile is not None and profile.organization is not None:
-            return profile.organization.a2p_onboarding, profile
-
-    messaging_service_sid = _event_value(data, "messagingservicesid", "messageservicesid", "service_sid")
-    if messaging_service_sid:
-        profile = OrganizationMessagingProfile.query.filter_by(messaging_service_sid=messaging_service_sid).first()
-        if profile is not None and profile.organization is not None:
-            return profile.organization.a2p_onboarding, profile
+    organization = db.session.get(Organization, authenticated_organization_id)
+    if organization is None:
+        return None, None
+    profile = organization.messaging_profile
+    onboarding = organization.a2p_onboarding
+    if profile is None or onboarding is None:
+        return None, None
 
     account_sid = _event_value(data, "accountsid", "account_sid")
-    onboarding, profile = _find_onboarding_by_subaccount_sid(account_sid)
-    if onboarding is not None or profile is not None:
-        return onboarding, profile
-
-    brand_tcr_id = _event_value(data, "brandtcrid", "brand_tcr_id", "tcrid", "brandtcr_id")
-    onboarding, profile = _find_onboarding_by_brand_tcr_id(brand_tcr_id, account_sid=account_sid)
-    if onboarding is not None or profile is not None:
-        return onboarding, profile
-
-    return None, None
+    if account_sid and profile.twilio_subaccount_sid and account_sid != profile.twilio_subaccount_sid:
+        return None, None
+    if _event_identifier_belongs_to_other_organization(authenticated_organization_id, data):
+        return None, None
+    if not _event_identifier_matches_organization(data, onboarding, profile):
+        return None, None
+    return onboarding, profile
 
 
 def _validate_message_flow_requirements(message_flow: str) -> None:
@@ -2631,6 +2802,7 @@ def submit_a2p_onboarding(
     organization = db.session.get(Organization, organization_id)
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    require_chargeable_provider_entitlement(organization, "a2p_submission")
 
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
     onboarding = ensure_a2p_onboarding(organization)
@@ -2965,6 +3137,7 @@ def create_missing_a2p_campaign(
     organization = db.session.get(Organization, organization_id)
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    require_chargeable_provider_entitlement(organization, "a2p_campaign_creation")
 
     onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
@@ -3004,6 +3177,7 @@ def create_missing_a2p_campaign(
 
 
 def _ensure_provider_resources(organization: Organization) -> OrganizationMessagingProfile:
+    require_chargeable_provider_entitlement(organization, "a2p_provider_resources")
     profile = organization.messaging_profile or ensure_messaging_profile(organization)
     if not profile.twilio_subaccount_sid or not profile.messaging_service_sid:
         profile = provision_org(organization.id)
@@ -3068,9 +3242,13 @@ def _resolved_campaign_status(onboarding: OrganizationA2POnboarding, campaign_st
 
 
 def _trusthub_status_callback_url() -> str:
-    base_url = (current_app.config.get("SAAS_BASE_URL") or "").strip().rstrip("/")
+    base_url = (
+        current_app.config.get("APP_BASE_URL")
+        or current_app.config.get("SAAS_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
     if not base_url:
-        raise ProviderProvisioningError("SAAS_BASE_URL must be configured to receive Twilio Trust Hub status callbacks.")
+        raise ProviderProvisioningError("APP_BASE_URL must be configured to receive Twilio Trust Hub status callbacks.")
     return f"{base_url}/webhooks/twilio/trusthub-status"
 
 
@@ -3098,16 +3276,32 @@ def _ensure_trusthub_address(onboarding: OrganizationA2POnboarding, client) -> s
         region=onboarding.address_region,
         postal_code=onboarding.address_postal_code,
     )
-    address = client.addresses.create(
-        customer_name=onboarding.business_name,
-        friendly_name=f"{onboarding.business_name[:48]} business address",
-        street=line1,
-        street_secondary=onboarding.address_line2 or None,
-        city=city,
-        region=region,
-        postal_code=postal_code,
-        iso_country=country,
-    )
+    friendly_name = f"{onboarding.business_name[:48]} business address"
+    matches = [
+        address
+        for address in client.addresses.list(
+            customer_name=onboarding.business_name,
+            friendly_name=friendly_name,
+            iso_country=country,
+            limit=20,
+        )
+        if _resource_text(address, "street") == line1
+        and _resource_text(address, "city") == city
+        and _resource_text(address, "region") == region
+        and _resource_text(address, "postal_code") == postal_code
+    ]
+    address = _single_remote_resource(matches, "business address")
+    if address is None:
+        address = client.addresses.create(
+            customer_name=onboarding.business_name,
+            friendly_name=friendly_name,
+            street=line1,
+            street_secondary=onboarding.address_line2 or None,
+            city=city,
+            region=region,
+            postal_code=postal_code,
+            iso_country=country,
+        )
     onboarding.address_sid = address.sid
     return address.sid
 
@@ -3129,24 +3323,37 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
     trusthub_status_callback = _trusthub_status_callback_url()
     notification_email = _normalize_notification_email(onboarding.notification_email, fallback=onboarding.email)
     address_sid = _ensure_trusthub_address(onboarding, client)
+    status_payload["address_sid"] = address_sid
+    _checkpoint_a2p_provisioning(onboarding, status_payload, "address_ready")
 
     customer_profile_policy_sid, trust_product_policy_sid = _policy_sids(onboarding.registration_path)
     if not onboarding.customer_profile_sid:
-        customer_profile = client.trusthub.v1.customer_profiles.create(
-            policy_sid=customer_profile_policy_sid,
-            friendly_name=f"{onboarding.business_name} Customer Profile",
-            email=notification_email,
-            status_callback=trusthub_status_callback,
+        customer_profile_name = f"{onboarding.business_name} Customer Profile"
+        matches = list(
+            client.trusthub.v1.customer_profiles.list(
+                friendly_name=customer_profile_name,
+                policy_sid=customer_profile_policy_sid,
+                limit=20,
+            )
         )
-        onboarding.customer_profile_sid = customer_profile.sid
+        customer_profile = _single_remote_resource(matches, "Customer Profile")
+        if customer_profile is None:
+            customer_profile = client.trusthub.v1.customer_profiles.create(
+                policy_sid=customer_profile_policy_sid,
+                friendly_name=customer_profile_name,
+                email=notification_email,
+                status_callback=trusthub_status_callback,
+            )
+        onboarding.customer_profile_sid = _required_remote_sid(customer_profile, "Customer Profile")
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "customer_profile_ready")
 
     if onboarding.registration_path == "sole_proprietor":
         if not status_payload.get("sole_proprietor_end_user_sid"):
-            sole_prop = _create_end_user(
+            sole_prop = _find_or_create_end_user(
                 client,
-                friendly_name=f"{onboarding.business_name} Sole Proprietor",
-                type_name="sole_proprietor_information",
-                attributes={
+                f"{onboarding.business_name} Sole Proprietor",
+                "sole_proprietor_information",
+                {
                     "first_name": onboarding.first_name,
                     "last_name": onboarding.last_name,
                     "email": onboarding.email,
@@ -3154,15 +3361,20 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "business_title": onboarding.business_title or "Owner",
                     "job_position": onboarding.job_position or "Other",
                 },
+                "sole proprietor End User",
             )
-            status_payload["sole_proprietor_end_user_sid"] = sole_prop.sid
+            status_payload["sole_proprietor_end_user_sid"] = _required_remote_sid(
+                sole_prop,
+                "sole proprietor End User",
+            )
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "sole_proprietor_end_user_ready")
     else:
         if not status_payload.get("business_information_end_user_sid"):
-            business_info = _create_end_user(
+            business_info = _find_or_create_end_user(
                 client,
-                friendly_name=f"{onboarding.business_name} Business Information",
-                type_name="customer_profile_business_information",
-                attributes={
+                f"{onboarding.business_name} Business Information",
+                "customer_profile_business_information",
+                {
                     "business_name": onboarding.business_name,
                     "social_media_profile_urls": onboarding.social_profile_url or "",
                     "website_url": onboarding.website_url or "",
@@ -3176,14 +3388,19 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                         business_registration_number,
                     ),
                 },
+                "business-information End User",
             )
-            status_payload["business_information_end_user_sid"] = business_info.sid
+            status_payload["business_information_end_user_sid"] = _required_remote_sid(
+                business_info,
+                "business-information End User",
+            )
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "business_information_end_user_ready")
         if not status_payload.get("authorized_representative_sid"):
-            authorized_rep = _create_end_user(
+            authorized_rep = _find_or_create_end_user(
                 client,
-                friendly_name=f"{onboarding.business_name} Authorized Representative",
-                type_name="authorized_representative_1",
-                attributes={
+                f"{onboarding.business_name} Authorized Representative",
+                "authorized_representative_1",
+                {
                     "first_name": onboarding.first_name,
                     "last_name": onboarding.last_name,
                     "email": onboarding.email,
@@ -3191,109 +3408,198 @@ def _upsert_a2p_resources(onboarding: OrganizationA2POnboarding, profile: Organi
                     "business_title": onboarding.business_title or "Owner",
                     "job_position": onboarding.job_position or "Other",
                 },
+                "authorized-representative End User",
             )
-            status_payload["authorized_representative_sid"] = authorized_rep.sid
+            status_payload["authorized_representative_sid"] = _required_remote_sid(
+                authorized_rep,
+                "authorized-representative End User",
+            )
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "authorized_representative_ready")
         if address_sid and not status_payload.get("supporting_document_sid"):
-            supporting_document = client.trusthub.v1.supporting_documents.create(
-                friendly_name=onboarding.business_name[:64],
-                type="customer_profile_address",
-                attributes={"address_sids": address_sid},
-            )
-            status_payload["supporting_document_sid"] = supporting_document.sid
-            onboarding.supporting_document_sid = supporting_document.sid
+            document_name = onboarding.business_name[:64]
+            matches = []
+            for document in client.trusthub.v1.supporting_documents.list(limit=100):
+                attributes = getattr(document, "attributes", {}) or {}
+                address_sids = attributes.get("address_sids", []) if isinstance(attributes, dict) else []
+                if isinstance(address_sids, str):
+                    address_sids = [address_sids]
+                if (
+                    _resource_text(document, "friendly_name") == document_name
+                    and _resource_text(document, "type") == "customer_profile_address"
+                    and address_sid in address_sids
+                ):
+                    matches.append(document)
+            supporting_document = _single_remote_resource(matches, "address Supporting Document")
+            if supporting_document is None:
+                supporting_document = client.trusthub.v1.supporting_documents.create(
+                    friendly_name=document_name,
+                    type="customer_profile_address",
+                    attributes={"address_sids": address_sid},
+                )
+            supporting_document_sid = _required_remote_sid(supporting_document, "address Supporting Document")
+            status_payload["supporting_document_sid"] = supporting_document_sid
+            onboarding.supporting_document_sid = supporting_document_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "supporting_document_ready")
 
     if not onboarding.trust_product_sid:
-        trust_product = client.trusthub.v1.trust_products.create(
-            friendly_name=f"{onboarding.business_name} A2P Trust Product",
-            policy_sid=trust_product_policy_sid,
-            email=notification_email,
-            status_callback=trusthub_status_callback,
+        trust_product_name = f"{onboarding.business_name} A2P Trust Product"
+        matches = list(
+            client.trusthub.v1.trust_products.list(
+                friendly_name=trust_product_name,
+                policy_sid=trust_product_policy_sid,
+                limit=20,
+            )
         )
-        onboarding.trust_product_sid = trust_product.sid
+        trust_product = _single_remote_resource(matches, "A2P Trust Product")
+        if trust_product is None:
+            trust_product = client.trusthub.v1.trust_products.create(
+                friendly_name=trust_product_name,
+                policy_sid=trust_product_policy_sid,
+                email=notification_email,
+                status_callback=trusthub_status_callback,
+            )
+        onboarding.trust_product_sid = _required_remote_sid(trust_product, "A2P Trust Product")
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "trust_product_ready")
 
     if onboarding.registration_path == "sole_proprietor":
         object_sid = status_payload.get("sole_proprietor_end_user_sid")
         if object_sid and status_payload.get("sole_prop_assigned") != object_sid:
-            client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments.create(
-                object_sid=object_sid
+            _ensure_remote_assignment(
+                client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments,
+                object_sid,
+                "sole proprietor assignment",
             )
             status_payload["sole_prop_assigned"] = object_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "sole_proprietor_assigned")
     else:
         business_sid = status_payload.get("business_information_end_user_sid")
         if business_sid and status_payload.get("business_info_assigned") != business_sid:
-            client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments.create(
-                object_sid=business_sid
+            _ensure_remote_assignment(
+                client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments,
+                business_sid,
+                "business-information assignment",
             )
             status_payload["business_info_assigned"] = business_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "business_information_assigned")
         authorized_sid = status_payload.get("authorized_representative_sid")
         if authorized_sid and status_payload.get("authorized_rep_assigned") != authorized_sid:
-            client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments.create(
-                object_sid=authorized_sid
+            _ensure_remote_assignment(
+                client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments,
+                authorized_sid,
+                "authorized-representative assignment",
             )
             status_payload["authorized_rep_assigned"] = authorized_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "authorized_representative_assigned")
         supporting_sid = status_payload.get("supporting_document_sid")
         if supporting_sid and status_payload.get("supporting_doc_assigned") != supporting_sid:
-            client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments.create(
-                object_sid=supporting_sid
+            _ensure_remote_assignment(
+                client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments,
+                supporting_sid,
+                "supporting-document assignment",
             )
             status_payload["supporting_doc_assigned"] = supporting_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "supporting_document_assigned")
         if primary_customer_profile_sid and status_payload.get("primary_profile_assigned") != primary_customer_profile_sid:
-            client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments.create(
-                object_sid=primary_customer_profile_sid
+            _ensure_remote_assignment(
+                client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_entity_assignments,
+                primary_customer_profile_sid,
+                "primary-profile assignment",
             )
             status_payload["primary_profile_assigned"] = primary_customer_profile_sid
+            _checkpoint_a2p_provisioning(onboarding, status_payload, "primary_profile_assigned")
 
     if not status_payload.get("messaging_profile_end_user_sid"):
-        messaging_profile = _create_end_user(
+        messaging_profile = _find_or_create_end_user(
             client,
-            friendly_name=f"{onboarding.business_name} Messaging Profile",
-            type_name="us_a2p_messaging_profile_information",
-            attributes={"company_type": _messaging_profile_company_type(onboarding.registration_path)},
+            f"{onboarding.business_name} Messaging Profile",
+            "us_a2p_messaging_profile_information",
+            {"company_type": _messaging_profile_company_type(onboarding.registration_path)},
+            "A2P Messaging Profile End User",
         )
-        status_payload["messaging_profile_end_user_sid"] = messaging_profile.sid
+        status_payload["messaging_profile_end_user_sid"] = _required_remote_sid(
+            messaging_profile,
+            "A2P Messaging Profile End User",
+        )
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "messaging_profile_end_user_ready")
 
     messaging_profile_sid = status_payload.get("messaging_profile_end_user_sid")
     if messaging_profile_sid and status_payload.get("messaging_profile_assigned") != messaging_profile_sid:
-        client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments.create(
-            object_sid=messaging_profile_sid
+        _ensure_remote_assignment(
+            client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments,
+            messaging_profile_sid,
+            "messaging-profile assignment",
         )
         status_payload["messaging_profile_assigned"] = messaging_profile_sid
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "messaging_profile_assigned")
 
     if status_payload.get("customer_profile_assigned") != onboarding.customer_profile_sid:
-        client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments.create(
-            object_sid=onboarding.customer_profile_sid
+        _ensure_remote_assignment(
+            client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_entity_assignments,
+            onboarding.customer_profile_sid,
+            "Customer Profile assignment",
         )
         status_payload["customer_profile_assigned"] = onboarding.customer_profile_sid
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "customer_profile_assigned")
 
     if not status_payload.get("customer_profile_evaluated"):
-        evaluation = client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).customer_profiles_evaluations.create(
-            policy_sid=customer_profile_policy_sid
+        evaluation_context = client.trusthub.v1.customer_profiles(
+            onboarding.customer_profile_sid
+        ).customer_profiles_evaluations
+        evaluation = _existing_evaluation(
+            evaluation_context,
+            customer_profile_policy_sid,
+            "Customer Profile evaluation",
         )
+        if evaluation is None:
+            evaluation = evaluation_context.create(policy_sid=customer_profile_policy_sid)
         status_payload["customer_profile_evaluation_sid"] = getattr(evaluation, "sid", None)
         status_payload["customer_profile_evaluated"] = True
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "customer_profile_evaluated")
     if not status_payload.get("customer_profile_submitted"):
         client.trusthub.v1.customer_profiles(onboarding.customer_profile_sid).update(status="pending-review")
         status_payload["customer_profile_submitted"] = True
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "customer_profile_submitted")
 
     if not status_payload.get("trust_product_evaluated"):
-        evaluation = client.trusthub.v1.trust_products(onboarding.trust_product_sid).trust_products_evaluations.create(
-            policy_sid=trust_product_policy_sid
+        evaluation_context = client.trusthub.v1.trust_products(
+            onboarding.trust_product_sid
+        ).trust_products_evaluations
+        evaluation = _existing_evaluation(
+            evaluation_context,
+            trust_product_policy_sid,
+            "Trust Product evaluation",
         )
+        if evaluation is None:
+            evaluation = evaluation_context.create(policy_sid=trust_product_policy_sid)
         status_payload["trust_product_evaluation_sid"] = getattr(evaluation, "sid", None)
         status_payload["trust_product_evaluated"] = True
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "trust_product_evaluated")
     if not status_payload.get("trust_product_submitted"):
         client.trusthub.v1.trust_products(onboarding.trust_product_sid).update(status="pending-review")
         status_payload["trust_product_submitted"] = True
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "trust_product_submitted")
 
     if not onboarding.brand_registration_sid:
-        brand_registration = client.messaging.v1.brand_registrations.create(
-            customer_profile_bundle_sid=onboarding.customer_profile_sid,
-            a2p_profile_bundle_sid=onboarding.trust_product_sid,
-            brand_type="SOLE_PROPRIETOR" if onboarding.registration_path == "sole_proprietor" else "STANDARD",
-        )
-        onboarding.brand_registration_sid = brand_registration.sid
+        brand_type = "SOLE_PROPRIETOR" if onboarding.registration_path == "sole_proprietor" else "STANDARD"
+        matches = [
+            brand
+            for brand in client.messaging.v1.brand_registrations.list(limit=100)
+            if _resource_text(brand, "customer_profile_bundle_sid") == onboarding.customer_profile_sid
+            and _resource_text(brand, "a2p_profile_bundle_sid") == onboarding.trust_product_sid
+            and _resource_text(brand, "brand_type").upper() == brand_type
+            and _resource_text(brand, "status").upper() != "DELETED"
+        ]
+        brand_registration = _single_remote_resource(matches, "Brand Registration")
+        if brand_registration is None:
+            brand_registration = client.messaging.v1.brand_registrations.create(
+                customer_profile_bundle_sid=onboarding.customer_profile_sid,
+                a2p_profile_bundle_sid=onboarding.trust_product_sid,
+                brand_type=brand_type,
+            )
+        onboarding.brand_registration_sid = _required_remote_sid(brand_registration, "Brand Registration")
+        _checkpoint_a2p_provisioning(onboarding, status_payload, "brand_registration_ready")
 
-    _store_status_payload(onboarding, status_payload)
+    _checkpoint_a2p_provisioning(onboarding, status_payload, "complete")
 
 
 def _create_a2p_campaign(
@@ -3370,6 +3676,7 @@ def _create_a2p_campaign(
 
 
 def _buy_phone_number(onboarding: OrganizationA2POnboarding, profile: OrganizationMessagingProfile):
+    require_chargeable_provider_entitlement(profile.organization, "phone_number_purchase")
     subaccount_client = _build_subaccount_client(profile, require_stored_auth_token=True)
     country = current_app.config.get("TWILIO_A2P_NUMBER_COUNTRY") or "US"
     if onboarding.desired_phone_number:
@@ -3533,20 +3840,42 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
     if not a2p_onboarding_enabled():
         raise ProviderProvisioningError("Twilio A2P onboarding automation is not enabled.")
 
-    organization = db.session.get(Organization, organization_id)
+    organization = (
+        Organization.query
+        .filter(Organization.id == organization_id)
+        .with_for_update()
+        .one_or_none()
+    )
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    require_chargeable_provider_entitlement(organization, "a2p_processing")
     onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
-    profile = _ensure_provider_resources(organization)
 
     if onboarding.onboarding_status in {"canceled", "approved"}:
         return onboarding
+
+    onboarding_updated_at = as_utc_datetime(onboarding.updated_at)
+    processing_now = as_utc_datetime(utc_now())
+    if (
+        onboarding.onboarding_status == "processing"
+        and onboarding_updated_at is not None
+        and processing_now is not None
+        and onboarding_updated_at >= processing_now - A2P_PROCESSING_LEASE
+    ):
+        raise ProviderProvisioningError(
+            "A2P onboarding is already being processed for this organization."
+        )
 
     onboarding.onboarding_status = "processing"
     onboarding.last_error = None
     db.session.commit()
 
     try:
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+        onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+        profile = _ensure_provider_resources(organization)
         _upsert_a2p_resources(onboarding, profile)
         db.session.commit()
         ensure_a2p_event_stream_subscription(organization, profile)
@@ -3932,7 +4261,7 @@ def describe_a2p_onboarding(
     }
 
 
-def ingest_a2p_event_stream_payload(payload: Any) -> dict[str, int]:
+def ingest_a2p_event_stream_payload(payload: Any, authenticated_organization_id: int) -> dict[str, int]:
     if isinstance(payload, dict) and isinstance(payload.get("events"), list):
         events = payload["events"]
     elif isinstance(payload, list):
@@ -3963,7 +4292,11 @@ def ingest_a2p_event_stream_payload(payload: Any) -> dict[str, int]:
             summary["events_ignored"] += 1
             continue
 
-        onboarding, profile = _find_onboarding_for_event(event_type, data)
+        onboarding, profile = _find_onboarding_for_event(
+            event_type,
+            data,
+            authenticated_organization_id,
+        )
         if onboarding is None:
             summary["events_ignored"] += 1
             continue

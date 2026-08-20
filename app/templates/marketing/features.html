@@ -1,0 +1,65 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Features — Twinevia{% endblock %}
+{% block meta_description %}Twinevia connects audience preparation, protected sending, automated survey flows, recipient-level outcomes, replies, and usage records in one managed messaging workflow.{% endblock %}
+
+{% block content %}
+  <header class="page-hero page-hero--split">
+    <div>
+      <h1>One path from approved message to accountable reply.</h1>
+    </div>
+    <div class="page-hero__copy">
+      <p>Twinevia is built around the operational handoffs that matter: who may receive a message, what was sent, how automated surveys progress, what the provider reported, what it cost, and who replied.</p>
+      <a class="button button--primary button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+    </div>
+  </header>
+
+  <section class="workflow-line" aria-labelledby="workflow-title">
+    <h2 id="workflow-title">The record moves with the message.</h2>
+    <ol>
+      <li><strong>Prepare</strong><span>Audience, message, consent, and suppression checks</span></li>
+      <li><strong>Approve</strong><span>Human review before a chargeable action</span></li>
+      <li><strong>Dispatch</strong><span>Queued work with an identifiable logical send</span></li>
+      <li><strong>Observe</strong><span>Recipient-level provider attempts and segment usage</span></li>
+      <li><strong>Reply</strong><span>Inbound response connected to the right workspace</span></li>
+    </ol>
+  </section>
+
+  <section class="capability-ledger" aria-label="Twinevia capabilities">
+    <article>
+      <div><i class="bi bi-people" aria-hidden="true"></i><h2>Audience operations</h2></div>
+      <p>Maintain community members, event registrants, imports, and saved recipient selections while keeping each organization’s records scoped to its own workspace.</p>
+      <ul><li>CSV import limits and validation</li><li>Recipient snapshots</li><li>Unsubscribe and suppression records</li></ul>
+    </article>
+    <article>
+      <div><i class="bi bi-send-check" aria-hidden="true"></i><h2>Protected sending</h2></div>
+      <p>Send immediately or schedule approved operational messages with entitlement, suppression, segment, and idempotency checks at the chargeable boundary.</p>
+      <ul><li>Immediate and scheduled sends</li><li>Recipient-level attempt states</li><li>Ambiguous-result protection</li></ul>
+    </article>
+    <article>
+      <div><i class="bi bi-inboxes" aria-hidden="true"></i><h2>Shared inbox</h2></div>
+      <p>Keep incoming texts, contact context, staff replies, and keyword-triggered responses together in the organization’s workspace.</p>
+      <ul><li>Threaded replies</li><li>Contact naming and assignment context</li><li>STOP-aware response handling</li></ul>
+    </article>
+    <article>
+      <div><i class="bi bi-list-check" aria-hidden="true"></i><h2>Automated survey flows</h2></div>
+      <p>Start a guided text conversation when a contact sends a configured keyword. Twinevia sends each question in sequence, records every answer, and can sync completed responses to an event registration.</p>
+      <ul><li>Up to 10 sequential prompts</li><li>Searchable and exportable submissions</li><li>Optional event-registration sync</li></ul>
+    </article>
+    <article>
+      <div><i class="bi bi-receipt-cutoff" aria-hidden="true"></i><h2>Usage and billing</h2></div>
+      <p>Count outbound SMS segments against the included monthly allowance and settle additional usage separately from the subscription cadence.</p>
+      <ul><li>1,000 segments included monthly</li><li>Recipient and segment records</li><li>Monthly overage settlement</li></ul>
+    </article>
+    <article>
+      <div><i class="bi bi-patch-check" aria-hidden="true"></i><h2>Provider onboarding</h2></div>
+      <p>Move through sender setup and A2P registration as a managed, resumable process. Submission does not guarantee approval by the provider or ecosystem.</p>
+      <ul><li>Guided registration data</li><li>Resumable provisioning steps</li><li>Status and rejection visibility</li></ul>
+    </article>
+  </section>
+
+  <section class="page-cta" aria-labelledby="features-cta-title">
+    <h2 id="features-cta-title">Bring the real use case. We’ll map the safest pilot path.</h2>
+    <a class="button button--light button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+  </section>
+{% endblock %}

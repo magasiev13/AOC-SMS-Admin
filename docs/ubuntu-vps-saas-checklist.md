@@ -75,13 +75,16 @@ sudo tee /opt/twinevia-saas/.env >/dev/null <<'EOF'
 FLASK_ENV=production
 FLASK_DEBUG=0
 TRUST_PROXY=1
-TRUSTED_HOSTS=app.example.com
+TRUSTED_HOSTS=twinevia.com,www.twinevia.com,app.twinevia.com
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
 RQ_QUEUE_NAME=twinevia-saas
 REDIS_URL=redis://localhost:6379/0
 DATABASE_URL=postgresql+psycopg://twinevia_saas:REPLACE_WITH_STRONG_DB_PASSWORD@127.0.0.1:5432/twinevia_saas
-SAAS_BASE_URL=https://app.example.com
+SAAS_BASE_URL=https://app.twinevia.com
+PUBLIC_BASE_URL=https://twinevia.com
+APP_BASE_URL=https://app.twinevia.com
+MANAGED_PILOT_ENABLED=1
 SECRET_KEY=REPLACE_WITH_LONG_RANDOM_SECRET
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=REPLACE_WITH_STRONG_ADMIN_PASSWORD
@@ -91,7 +94,7 @@ STRIPE_WEBHOOK_SECRET=whsec_replace_me
 STRIPE_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
 STRIPE_MONTHLY_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
 STRIPE_ANNUAL_PRICE_ID=price_1TYtO4Eksbf3Q3FgHzXB9S5b
-STRIPE_ACTIVATION_PRICE_ID=price_1TYtOAEksbf3Q3Fg0gCPD4nN
+STRIPE_ACTIVATION_PRICE_ID=price_1TPq4KEksbf3Q3FgwATaTJ7h
 BILLING_TRIAL_DAYS=0
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
@@ -230,7 +233,7 @@ curl -fsS -H "Host: app.example.com" http://127.0.0.1:8100/health
 
 ## 13. Configure Your Public Proxy
 
-The repo does not ship a dedicated SaaS nginx config. Whatever proxy you use must:
+The repo ships `deploy/nginx/twinevia.conf`. After DNS and a certificate containing `twinevia.com`, `www.twinevia.com`, and `app.twinevia.com` are approved, install it with `deploy/install_nginx_twinevia.sh --confirm-dns-and-certificate-ready`. The proxy must:
 
 - forward the original `Host` header
 - forward `X-Forwarded-*` headers when `TRUST_PROXY=1`
