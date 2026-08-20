@@ -349,7 +349,7 @@ main:focus {
   grid-template-rows: auto 1fr auto;
   align-self: stretch;
   min-width: 0;
-  margin-block: 1rem;
+  margin-block: 0;
   background: var(--paper);
   color: var(--ink);
   box-shadow: 0 8px 22px rgba(0, 10, 27, 0.14);
@@ -642,7 +642,7 @@ main:focus {
   align-self: stretch;
   min-width: 0;
   flex-direction: column;
-  margin: 1rem 0;
+  margin: 0;
   padding: clamp(3.25rem, 4.4vw, 4.25rem) clamp(1.6rem, 2.6vw, 2.5rem) 2rem;
   background: var(--paper);
   box-shadow: inset 1px 0 0 var(--rule);
@@ -712,7 +712,7 @@ main:focus {
 .reply-thread__response::after {
   content: "";
   position: absolute;
-  right: calc(100% + var(--reply-connector-run) - 4px);
+  right: calc(100% + var(--reply-connector-run) - 5px);
   bottom: calc(50% + var(--reply-connector-rise) - 4px);
   width: 8px;
   height: 8px;
@@ -2017,6 +2017,62 @@ main:focus {
 }
 
 @media (max-width: 1180px) {
+  .site-header {
+    grid-template-columns: 1fr auto;
+  }
+
+  .desktop-nav,
+  .desktop-actions {
+    display: none;
+  }
+
+  .mobile-menu {
+    position: relative;
+    display: block;
+  }
+
+  .mobile-menu summary {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.7rem;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 800;
+    list-style: none;
+  }
+
+  .mobile-menu summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-menu nav {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 0.5rem);
+    right: 0;
+    display: grid;
+    width: min(290px, calc(100vw - 2.5rem));
+    padding: 0.75rem;
+    border: 1px solid #29466d;
+    background: var(--navy);
+    box-shadow: 0 18px 38px rgba(0, 10, 27, 0.32);
+  }
+
+  .mobile-menu nav > a:not(.button) {
+    padding: 0.72rem;
+    color: #dce7f7;
+    font-size: 0.85rem;
+    font-weight: 750;
+    text-decoration: none;
+  }
+
+  .mobile-menu .button {
+    width: 100%;
+    margin-top: 0.5rem;
+  }
+
   .dispatch-hero {
     grid-template-columns: minmax(250px, 0.75fr) minmax(470px, 1.35fr);
   }
@@ -2078,62 +2134,6 @@ main:focus {
 }
 
 @media (max-width: 960px) {
-  .site-header {
-    grid-template-columns: 1fr auto;
-  }
-
-  .desktop-nav,
-  .desktop-actions {
-    display: none;
-  }
-
-  .mobile-menu {
-    position: relative;
-    display: block;
-  }
-
-  .mobile-menu summary {
-    display: inline-flex;
-    min-height: 44px;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 0.55rem 0.7rem;
-    cursor: pointer;
-    font-size: 0.82rem;
-    font-weight: 800;
-    list-style: none;
-  }
-
-  .mobile-menu summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .mobile-menu nav {
-    position: absolute;
-    z-index: 20;
-    top: calc(100% + 0.5rem);
-    right: 0;
-    display: grid;
-    width: min(290px, calc(100vw - 2.5rem));
-    padding: 0.75rem;
-    border: 1px solid #29466d;
-    background: var(--navy);
-    box-shadow: 0 18px 38px rgba(0, 10, 27, 0.32);
-  }
-
-  .mobile-menu nav > a:not(.button) {
-    padding: 0.72rem;
-    color: #dce7f7;
-    font-size: 0.85rem;
-    font-weight: 750;
-    text-decoration: none;
-  }
-
-  .mobile-menu .button {
-    width: 100%;
-    margin-top: 0.5rem;
-  }
-
   .dispatch-hero {
     grid-template-columns: 1fr;
   }

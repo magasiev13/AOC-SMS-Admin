@@ -58,9 +58,27 @@ async function layoutMetrics(page) {
     const attempts = document.querySelector('.attempts-region');
     const footer = document.querySelector('.site-footer');
     const identity = rect('.dispatch-promise__identity');
+    const docketPanel = rect('.dispatch-docket');
     const replyPanel = rect('.reply-margin');
     const replyResponse = rect('.reply-thread__response');
     const replyResponseIcon = rect('.reply-thread__response i');
+    const replyConnector = getComputedStyle(
+      document.querySelector('.reply-thread__response'),
+      '::before'
+    );
+    const replyConnectorDot = getComputedStyle(
+      document.querySelector('.reply-thread__response'),
+      '::after'
+    );
+    const replyConnectorLineCenter = (
+      -Number.parseFloat(replyConnector.right)
+      - Number.parseFloat(replyConnector.width)
+      + (Number.parseFloat(replyConnector.borderLeftWidth) / 2)
+    );
+    const replyConnectorDotCenter = (
+      -Number.parseFloat(replyConnectorDot.right)
+      - (Number.parseFloat(replyConnectorDot.width) / 2)
+    );
     const replyItems = Array.from(document.querySelectorAll('.reply-thread span, .reply-thread time')).map((element) => {
       const bounds = textBounds(element);
       const style = getComputedStyle(element);
@@ -78,6 +96,8 @@ async function layoutMetrics(page) {
       documentScrollWidth: document.documentElement.scrollWidth,
       footerBottom: footer.getBoundingClientRect().bottom + window.scrollY,
       footerHeight: footer.getBoundingClientRect().height,
+      desktopActionsDisplay: getComputedStyle(document.querySelector('.desktop-actions')).display,
+      desktopActions: rect('.desktop-actions'),
       headerBackground: getComputedStyle(document.querySelector('.site-header')).backgroundColor,
       header: rect('.site-header'),
       hero: rect('.dispatch-hero'),
@@ -107,10 +127,16 @@ async function layoutMetrics(page) {
         };
       }),
       promise,
+      docketPanel,
+      mobileMenuDisplay: getComputedStyle(document.querySelector('.mobile-menu')).display,
+      mobileMenuSummary: rect('.mobile-menu summary'),
       replyConnectorDisplay: getComputedStyle(
         document.querySelector('.reply-thread__response'),
         '::before'
       ).display,
+      replyConnectorCenterError: Math.abs(
+        replyConnectorLineCenter - replyConnectorDotCenter
+      ),
       replyIconClearance: replyResponseIcon.left - replyResponse.left,
       replyItems,
       replyPanel,
@@ -139,6 +165,7 @@ test('home geometry remains intact across the responsive breakpoint seams', asyn
     { width: 1180, height: 900 },
     { width: 1181, height: 900 },
     { width: 1200, height: 900 },
+    { width: 1226, height: 900 },
     { width: 1600, height: 1000 },
   ];
 
@@ -161,6 +188,23 @@ test('home geometry remains intact across the responsive breakpoint seams', asyn
     expect(metrics.replyIconClearance).toBeGreaterThanOrEqual(8);
     expect(metrics.identity.left).toBeGreaterThanOrEqual(metrics.promise.left - 1);
     expect(metrics.identity.right).toBeLessThanOrEqual(metrics.promise.right + 1);
+
+    if (viewport.width <= 1180) {
+      expect(metrics.desktopActionsDisplay).toBe('none');
+      expect(metrics.mobileMenuDisplay).not.toBe('none');
+      expect(metrics.mobileMenuSummary.left).toBeGreaterThanOrEqual(metrics.header.left - 1);
+      expect(metrics.mobileMenuSummary.right).toBeLessThanOrEqual(metrics.header.right + 1);
+    } else {
+      expect(metrics.desktopActionsDisplay).not.toBe('none');
+      expect(metrics.mobileMenuDisplay).toBe('none');
+      expect(metrics.desktopActions.left).toBeGreaterThanOrEqual(metrics.header.left - 1);
+      expect(metrics.desktopActions.right).toBeLessThanOrEqual(metrics.header.right + 1);
+      expect(Math.abs(metrics.docketPanel.top - metrics.hero.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(metrics.docketPanel.bottom - metrics.hero.bottom)).toBeLessThanOrEqual(1);
+      expect(Math.abs(metrics.replyPanel.top - metrics.hero.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(metrics.replyPanel.bottom - metrics.hero.bottom)).toBeLessThanOrEqual(1);
+      expect(metrics.replyConnectorCenterError).toBeLessThanOrEqual(0.1);
+    }
 
     for (const term of metrics.offerTerms) {
       expect(term.descriptionTop).toBeGreaterThanOrEqual(term.metricBottom - 1);
