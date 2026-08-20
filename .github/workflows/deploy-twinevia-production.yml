@@ -240,8 +240,26 @@ jobs:
           }
 
           resolve_health_host() {
+            local app_base_url
+            local canonical_host
             local trusted_hosts
             local first_host
+
+            app_base_url="$(sudo awk -F= '$1 == "APP_BASE_URL" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
+            canonical_host="$(printf '%s' "${app_base_url}" | awk '
+              {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+                gsub(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "", $0)
+                sub(/\/.*$/, "", $0)
+                sub(/^[^@]*@/, "", $0)
+                sub(/:.*/, "", $0)
+                print $0
+              }
+            ')"
+            if [ -n "${canonical_host}" ]; then
+              printf '%s\n' "${canonical_host}"
+              return
+            fi
 
             trusted_hosts="$(sudo grep -E '^TRUSTED_HOSTS=' "${APP_ROOT}/.env" | tail -n1 | cut -d= -f2- || true)"
             first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
@@ -337,7 +355,16 @@ jobs:
 
           echo "==> Health check"
           HEALTH_HOST="$(resolve_health_host)"
-          curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null
+          HEALTH_RESPONSE=""
+          for attempt in $(seq 1 15); do
+            HEALTH_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health 2>/dev/null || true)"
+            if [ "${HEALTH_RESPONSE}" = "OK" ]; then
+              break
+            fi
+            echo "Health attempt ${attempt}/15 did not return OK; retrying."
+            sleep 2
+          done
+          [ "${HEALTH_RESPONSE}" = "OK" ] || fail "Health endpoint did not return OK after 15 attempts."
           READINESS_TOKEN_VALUE="$(sudo awk -F= '$1 == "READINESS_TOKEN" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
           READY_RESPONSE=""
           for attempt in $(seq 1 15); do
@@ -354,8 +381,16 @@ jobs:
           [ "${RELEASE_SHA}" = "${EXPECTED_SHA}" ] || fail "Active release ${RELEASE_SHA} does not match workflow commit ${EXPECTED_SHA}."
 
           echo "==> External host and product identity checks"
-          EXTERNAL_HEALTH="$(curl -fsS --connect-timeout 3 --max-time 15 https://app.twinevia.com/health)"
-          [ "${EXTERNAL_HEALTH}" = "OK" ] || fail "External health endpoint did not return OK."
+          EXTERNAL_HEALTH=""
+          for attempt in $(seq 1 15); do
+            EXTERNAL_HEALTH="$(curl -fsS --connect-timeout 3 --max-time 15 https://app.twinevia.com/health 2>/dev/null || true)"
+            if [ "${EXTERNAL_HEALTH}" = "OK" ]; then
+              break
+            fi
+            echo "External health attempt ${attempt}/15 did not return OK; retrying."
+            sleep 2
+          done
+          [ "${EXTERNAL_HEALTH}" = "OK" ] || fail "External health endpoint did not return OK after 15 attempts."
           EXTERNAL_READY=""
           for attempt in $(seq 1 15); do
             EXTERNAL_READY="$(curl -fsS --connect-timeout 3 --max-time 20 -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" https://app.twinevia.com/ready 2>/dev/null || true)"
