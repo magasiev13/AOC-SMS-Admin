@@ -239,37 +239,6 @@ jobs:
             printf '/opt/twinevia-saas\n'
           }
 
-          resolve_health_host() {
-            local app_base_url
-            local canonical_host
-            local trusted_hosts
-            local first_host
-
-            app_base_url="$(sudo awk -F= '$1 == "APP_BASE_URL" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
-            canonical_host="$(printf '%s' "${app_base_url}" | awk '
-              {
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-                gsub(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, "", $0)
-                sub(/\/.*$/, "", $0)
-                sub(/^[^@]*@/, "", $0)
-                sub(/:.*/, "", $0)
-                print $0
-              }
-            ')"
-            if [ -n "${canonical_host}" ]; then
-              printf '%s\n' "${canonical_host}"
-              return
-            fi
-
-            trusted_hosts="$(sudo grep -E '^TRUSTED_HOSTS=' "${APP_ROOT}/.env" | tail -n1 | cut -d= -f2- || true)"
-            first_host="$(printf '%s' "${trusted_hosts}" | awk -F',' '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1}')"
-            if [ -n "${first_host}" ]; then
-              printf '%s\n' "${first_host}"
-              return
-            fi
-            printf '127.0.0.1\n'
-          }
-
           echo "==> Production preflight"
           APP_ROOT="$(resolve_app_root)"
           APP_USER="$(resolve_app_user)"
@@ -354,7 +323,8 @@ jobs:
           sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-twinevia-saas-services --check >/dev/null
 
           echo "==> Health check"
-          HEALTH_HOST="$(resolve_health_host)"
+          HEALTH_HOST="app.twinevia.com"
+          echo "Internal health host: ${HEALTH_HOST}"
           HEALTH_RESPONSE=""
           for attempt in $(seq 1 15); do
             HEALTH_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health 2>/dev/null || true)"

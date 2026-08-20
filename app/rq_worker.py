@@ -10,6 +10,8 @@ from redis.exceptions import RedisError
 from rq import Queue, Worker
 from rq.worker import DequeueStrategy
 
+RQ_WORKER_TTL_SECONDS: int = 60
+
 
 def _connect_redis(redis_url: str, attempts: int) -> Redis:
     logger = logging.getLogger(__name__)
@@ -53,7 +55,12 @@ def main() -> None:
     resolved_worker_name = worker_name or f"twinevia-{socket.gethostname()}-{os.getpid()}"
     connection = _connect_redis(redis_url, 3)
     queue = Queue(queue_name, connection=connection)
-    worker = Worker([queue], name=resolved_worker_name, connection=connection)
+    worker = Worker(
+        [queue],
+        name=resolved_worker_name,
+        connection=connection,
+        default_worker_ttl=RQ_WORKER_TTL_SECONDS,
+    )
     worker.work(
         burst=False,
         logging_level="INFO",
