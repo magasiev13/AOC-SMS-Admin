@@ -433,11 +433,23 @@ release_started=0
 deployment_completed=0
 cleanup_env_stage() {
   local exit_code=$?
+  local rollback_health_host
   trap - EXIT
   if [[ "${exit_code}" != "0" && "${env_installed}" == "1" && "${deployment_completed}" != "1" ]]; then
     sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_ORIGINAL_FILE}" "${ENV_TARGET_FILE}" || true
     if [[ "${release_started}" == "1" && -L "${APP_ROOT}/current" ]]; then
       sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+      ENV_FILE="${ENV_TARGET_FILE}"
+      rollback_health_host="$(resolve_health_host)"
+      if ! check_saas_health "${rollback_health_host}" 8; then
+        echo "==> Original configuration could not boot the rollback release; restoring the validated staged configuration." >&2
+        sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_STAGE_FILE}" "${ENV_TARGET_FILE}" || true
+        sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+        rollback_health_host="$(resolve_health_host)"
+        if ! check_saas_health "${rollback_health_host}" 15; then
+          echo "==> Rollback release is still unhealthy after restoring the validated staged configuration." >&2
+        fi
+      fi
     fi
   fi
   rm -f "${ENV_STAGE_FILE}" "${ENV_ORIGINAL_FILE}"
