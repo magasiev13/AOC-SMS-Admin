@@ -92,6 +92,8 @@
         <p class="auth-panel__footnote">
             {% if is_platform %}
             Need the customer workspace instead? <a href="{{ url_for('auth.login') }}">Open workspace login</a>.
+            {% elif config.get('MANAGED_PILOT_ENABLED', True) %}
+            Need a workspace? <a href="{{ url_for('main.request_pilot') }}">Request pilot access</a>.
             {% else %}
             Need a new workspace? <a href="{{ url_for('auth.signup') }}">Create a workspace</a>.
             {% endif %}
