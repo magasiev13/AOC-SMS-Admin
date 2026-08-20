@@ -27,17 +27,20 @@ async function backgroundColor(locator) {
   return locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 }
 
-async function centerDelta(container, child) {
-  const containerBox = await container.boundingBox();
-  const childBox = await child.boundingBox();
-  if (!containerBox || !childBox) {
-    throw new Error('Expected both brand elements to be visible before measuring alignment');
-  }
+async function centerDelta(container) {
+  return container.evaluate((containerElement) => {
+    const childElement = containerElement.querySelector('.brand-icon__image');
+    if (!childElement) {
+      throw new Error('Expected the brand image before measuring alignment');
+    }
 
-  return {
-    x: Math.abs((containerBox.x + containerBox.width / 2) - (childBox.x + childBox.width / 2)),
-    y: Math.abs((containerBox.y + containerBox.height / 2) - (childBox.y + childBox.height / 2)),
-  };
+    const containerBox = containerElement.getBoundingClientRect();
+    const childBox = childElement.getBoundingClientRect();
+    return {
+      x: Math.abs((containerBox.x + containerBox.width / 2) - (childBox.x + childBox.width / 2)),
+      y: Math.abs((containerBox.y + containerBox.height / 2) - (childBox.y + childBox.height / 2)),
+    };
+  });
 }
 
 test('platform admin desktop surfaces use the shared shell and aligned actions', async ({ page }) => {
@@ -139,7 +142,7 @@ test('shared airplane mark stays centered and favicon matches the app asset', as
   const authBrandImage = authBrandIcon.locator('.brand-icon__image');
   await expect(authBrandImage).toBeVisible();
 
-  const authCenter = await centerDelta(authBrandIcon, authBrandImage);
+  const authCenter = await centerDelta(authBrandIcon);
   expect(authCenter.x).toBeLessThanOrEqual(1.0);
   expect(authCenter.y).toBeLessThanOrEqual(1.0);
 
@@ -153,7 +156,7 @@ test('shared airplane mark stays centered and favicon matches the app asset', as
   const sidebarBrandImage = sidebarBrandIcon.locator('.brand-icon__image');
   await expect(sidebarBrandImage).toBeVisible();
 
-  const sidebarCenter = await centerDelta(sidebarBrandIcon, sidebarBrandImage);
+  const sidebarCenter = await centerDelta(sidebarBrandIcon);
   expect(sidebarCenter.x).toBeLessThanOrEqual(1.0);
   expect(sidebarCenter.y).toBeLessThanOrEqual(1.0);
 
@@ -164,7 +167,7 @@ test('shared airplane mark stays centered and favicon matches the app asset', as
   const topbarBrandImage = topbarBrandIcon.locator('.brand-icon__image');
   await expect(topbarBrandImage).toBeVisible();
 
-  const topbarCenter = await centerDelta(topbarBrandIcon, topbarBrandImage);
+  const topbarCenter = await centerDelta(topbarBrandIcon);
   expect(topbarCenter.x).toBeLessThanOrEqual(1.0);
   expect(topbarCenter.y).toBeLessThanOrEqual(1.0);
 });
