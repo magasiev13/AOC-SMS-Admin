@@ -102,6 +102,7 @@ create_bootstrap_release() {
     fi
     sudo cp -a "${SOURCE_ROOT}/venv" "${bootstrap_pending}/venv"
     sudo ln -s "${ENV_FILE}" "${bootstrap_pending}/.env"
+    sudo install -d -o root -g "${APP_GROUP}" -m 0550 "${bootstrap_pending}/instance"
     bootstrap_env_tmp="$(mktemp)"
     printf 'APP_RELEASE_ID=%s\nAPP_RELEASE_SHA=%s\n' "${bootstrap_id}" "${BOOTSTRAP_RELEASE_SHA}" > "${bootstrap_env_tmp}"
     sudo install -o root -g "${APP_GROUP}" -m 0440 "${bootstrap_env_tmp}" "${bootstrap_pending}/.release.env"
@@ -203,6 +204,7 @@ sudo chown "${APP_USER}:${APP_GROUP}" "${verify_cache_dir}"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; PYTHONPYCACHEPREFIX=\"${verify_cache_dir}\" ./run/verify.sh"
 sudo rm -rf -- "${verify_cache_dir}"
 
+sudo install -d -o root -g "${APP_GROUP}" -m 0550 "${pending_release}/instance"
 sudo chown -R root:"${APP_GROUP}" "${pending_release}"
 sudo chmod -R u=rwX,g=rX,o= "${pending_release}"
 
