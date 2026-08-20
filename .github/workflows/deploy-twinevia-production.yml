@@ -346,7 +346,7 @@ jobs:
             sleep 2
           done
           [ "${READY_RESPONSE}" = "READY" ] || fail "Readiness endpoint did not return READY after 15 attempts."
-          CURRENT_RELEASE="$(readlink -f "${APP_ROOT}/current")"
+          CURRENT_RELEASE="$(sudo readlink -f "${APP_ROOT}/current")"
           RELEASE_SHA="$(sudo awk -F= '$1 == "APP_RELEASE_SHA" { print substr($0, index($0, "=") + 1) }' "${CURRENT_RELEASE}/.release.env")"
           [ "${RELEASE_SHA}" = "${EXPECTED_SHA}" ] || fail "Active release ${RELEASE_SHA} does not match workflow commit ${EXPECTED_SHA}."
 
