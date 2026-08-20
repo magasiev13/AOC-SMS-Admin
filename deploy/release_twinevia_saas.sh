@@ -10,6 +10,8 @@ RELEASES_DIR="${APP_ROOT}/releases"
 CURRENT_LINK="${APP_ROOT}/current"
 PREVIOUS_LINK="${APP_ROOT}/previous"
 RELEASE_RETENTION_COUNT="${RELEASE_RETENTION_COUNT:-5}"
+BOOTSTRAP_RELEASE_ONLY="${BOOTSTRAP_RELEASE_ONLY:-0}"
+BOOTSTRAP_RELEASE_SHA="${BOOTSTRAP_RELEASE_SHA:-}"
 RUNTIME_UNITS=(
   twinevia-saas.service
   twinevia-saas-worker.service
@@ -29,10 +31,34 @@ if [[ ! -d "${SOURCE_ROOT}/.git" ]]; then
   echo "Release source must be a Git checkout: ${SOURCE_ROOT}" >&2
   exit 1
 fi
-if [[ ! -r "${ENV_FILE}" ]]; then
+if ! sudo test -r "${ENV_FILE}"; then
   echo "Production environment file is missing or unreadable: ${ENV_FILE}" >&2
   exit 1
 fi
+
+atomic_link() {
+  local target="$1"
+  local link_path="$2"
+  local temporary_link="${link_path}.next-$$"
+  sudo ln -s "${target}" "${temporary_link}"
+  sudo mv -Tf "${temporary_link}" "${link_path}"
+}
+
+read_env_value() {
+  local key="$1"
+  sudo awk -v key="${key}" '
+    $0 ~ ("^" key "=") { value = substr($0, length(key) + 2) }
+    END { print value }
+  ' "${ENV_FILE}"
+}
+
+load_env_value() {
+  local key="$1"
+  if declare -p "${key}" >/dev/null 2>&1; then
+    return
+  fi
+  printf -v "${key}" '%s' "$(read_env_value "${key}")"
+}
 
 source_status="$(sudo -u "${APP_USER}" git -C "${SOURCE_ROOT}" status --porcelain --untracked-files=all)"
 if [[ -n "${source_status}" ]]; then
@@ -42,18 +68,67 @@ if [[ -n "${source_status}" ]]; then
 fi
 
 release_sha="$(sudo -u "${APP_USER}" git -C "${SOURCE_ROOT}" rev-parse HEAD)"
+if [[ -z "${BOOTSTRAP_RELEASE_SHA}" ]]; then
+  BOOTSTRAP_RELEASE_SHA="${release_sha}"
+fi
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${release_sha:0:12}"
 pending_release="${RELEASES_DIR}/.pending-${release_id}"
 release_dir="${RELEASES_DIR}/${release_id}"
-old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 promoted=0
 
 sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
+
+create_bootstrap_release() {
+  local bootstrap_id="bootstrap-${BOOTSTRAP_RELEASE_SHA:0:12}"
+  local bootstrap_pending="${RELEASES_DIR}/.pending-${bootstrap_id}"
+  local bootstrap_dir="${RELEASES_DIR}/${bootstrap_id}"
+  local bootstrap_env_tmp
+
+  if [[ ! "${BOOTSTRAP_RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Bootstrap release SHA is invalid." >&2
+    exit 1
+  fi
+  if ! sudo -u "${APP_USER}" git -C "${SOURCE_ROOT}" cat-file -e "${BOOTSTRAP_RELEASE_SHA}^{commit}"; then
+    echo "Bootstrap release commit is unavailable: ${BOOTSTRAP_RELEASE_SHA}" >&2
+    exit 1
+  fi
+  if [[ ! -d "${bootstrap_dir}" ]]; then
+    sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${bootstrap_pending}"
+    sudo -u "${APP_USER}" git -C "${SOURCE_ROOT}" archive --format=tar "${BOOTSTRAP_RELEASE_SHA}" \
+      | sudo tar -xf - -C "${bootstrap_pending}"
+    if [[ ! -x "${SOURCE_ROOT}/venv/bin/python" ]]; then
+      echo "Cannot create a recoverable bootstrap release without ${SOURCE_ROOT}/venv." >&2
+      exit 1
+    fi
+    sudo cp -a "${SOURCE_ROOT}/venv" "${bootstrap_pending}/venv"
+    sudo ln -s "${ENV_FILE}" "${bootstrap_pending}/.env"
+    bootstrap_env_tmp="$(mktemp)"
+    printf 'APP_RELEASE_ID=%s\nAPP_RELEASE_SHA=%s\n' "${bootstrap_id}" "${BOOTSTRAP_RELEASE_SHA}" > "${bootstrap_env_tmp}"
+    sudo install -o root -g "${APP_GROUP}" -m 0440 "${bootstrap_env_tmp}" "${bootstrap_pending}/.release.env"
+    rm -f "${bootstrap_env_tmp}"
+    sudo chown -R root:"${APP_GROUP}" "${bootstrap_pending}"
+    sudo chmod -R u=rwX,g=rX,o= "${bootstrap_pending}"
+    sudo mv "${bootstrap_pending}" "${bootstrap_dir}"
+  fi
+  atomic_link "${bootstrap_dir}" "${CURRENT_LINK}"
+  atomic_link "${bootstrap_dir}" "${PREVIOUS_LINK}"
+  echo "Created recoverable bootstrap release ${bootstrap_id}."
+}
+
+if [[ ! -L "${CURRENT_LINK}" ]]; then
+  create_bootstrap_release
+fi
+if [[ "${BOOTSTRAP_RELEASE_ONLY}" == "1" ]]; then
+  echo "Bootstrap release is ready at $(readlink -f "${CURRENT_LINK}")."
+  exit 0
+fi
+
+old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 if [[ -e "${pending_release}" || -e "${release_dir}" ]]; then
   echo "Release path already exists: ${release_id}" >&2
   exit 1
 fi
-sudo install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${pending_release}"
+sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${pending_release}"
 
 cleanup_pending() {
   if [[ -d "${pending_release}" ]]; then
@@ -83,12 +158,12 @@ rollback_on_error() {
 trap rollback_on_error ERR
 
 sudo -u "${APP_USER}" git -C "${SOURCE_ROOT}" archive --format=tar "${release_sha}" \
-  | sudo -u "${APP_USER}" tar -xf - -C "${pending_release}"
-sudo -u "${APP_USER}" ln -s "${ENV_FILE}" "${pending_release}/.env"
+  | sudo tar -xf - -C "${pending_release}"
+sudo ln -s "${ENV_FILE}" "${pending_release}/.env"
 
 release_env_tmp="$(mktemp)"
 printf 'APP_RELEASE_ID=%s\nAPP_RELEASE_SHA=%s\n' "${release_id}" "${release_sha}" > "${release_env_tmp}"
-sudo install -o "${APP_USER}" -g "${APP_GROUP}" -m 0440 "${release_env_tmp}" "${pending_release}/.release.env"
+sudo install -o root -g "${APP_GROUP}" -m 0440 "${release_env_tmp}" "${pending_release}/.release.env"
 rm -f "${release_env_tmp}"
 
 release_manifest_tmp="$(mktemp)"
@@ -111,21 +186,41 @@ Path(os.environ["RELEASE_MANIFEST"]).write_text(
     encoding="utf-8",
 )
 '
-sudo install -o "${APP_USER}" -g "${APP_GROUP}" -m 0440 "${release_manifest_tmp}" "${pending_release}/release.json"
+sudo install -o root -g "${APP_GROUP}" -m 0440 "${release_manifest_tmp}" "${pending_release}/release.json"
 rm -f "${release_manifest_tmp}"
 
+sudo install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${pending_release}/venv"
 sudo -u "${APP_USER}" python3.11 -m venv "${pending_release}/venv"
 sudo -u "${APP_USER}" "${pending_release}/venv/bin/python" -m pip install --disable-pip-version-check -r "${pending_release}/requirements.txt"
 sudo -u "${APP_USER}" "${pending_release}/venv/bin/python" -m pip check
-sudo -u "${APP_USER}" "${pending_release}/venv/bin/python" -m pip freeze \
-  > "${pending_release}/requirements.resolved.txt"
+resolved_requirements_tmp="$(mktemp)"
+sudo -u "${APP_USER}" "${pending_release}/venv/bin/python" -m pip freeze > "${resolved_requirements_tmp}"
+sudo install -o root -g "${APP_GROUP}" -m 0440 "${resolved_requirements_tmp}" "${pending_release}/requirements.resolved.txt"
+rm -f "${resolved_requirements_tmp}"
 sudo -u "${APP_USER}" env APP_ROOT="${pending_release}" "${pending_release}/deploy/check_expand_only_migrations.sh"
-sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; ./run/verify.sh"
+verify_cache_dir="$(mktemp -d)"
+sudo chown "${APP_USER}:${APP_GROUP}" "${verify_cache_dir}"
+sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; PYTHONPYCACHEPREFIX=\"${verify_cache_dir}\" ./run/verify.sh"
+sudo rm -rf -- "${verify_cache_dir}"
 
-set -a
-source "${ENV_FILE}"
-set +a
+sudo chown -R root:"${APP_GROUP}" "${pending_release}"
+sudo chmod -R u=rwX,g=rX,o= "${pending_release}"
+
+for env_key in \
+  APP_BASE_URL \
+  AOC_EVENTS_ORGANIZATION_SLUG \
+  BACKUP_STATUS_FILE \
+  BACKUP_OFFSITE_MODE \
+  BACKUP_MAX_AGE_HOURS \
+  OPERATIONS_GITHUB_REPOSITORY \
+  BACKUP_ENCRYPTION_PASSPHRASE_FILE \
+  RESTORE_DRILL_DATABASE_URL \
+  RESTORE_DRILL_DATABASE_NAME \
+  READINESS_TOKEN; do
+  load_env_value "${env_key}"
+done
 : "${BACKUP_STATUS_FILE:?BACKUP_STATUS_FILE is required before a release can migrate production}"
+: "${BACKUP_OFFSITE_MODE:?BACKUP_OFFSITE_MODE is required}"
 : "${BACKUP_ENCRYPTION_PASSPHRASE_FILE:?BACKUP_ENCRYPTION_PASSPHRASE_FILE is required}"
 : "${RESTORE_DRILL_DATABASE_URL:?RESTORE_DRILL_DATABASE_URL is required}"
 : "${RESTORE_DRILL_DATABASE_NAME:?RESTORE_DRILL_DATABASE_NAME is required}"
@@ -134,12 +229,45 @@ backup_application_root="${SOURCE_ROOT}"
 if [[ -n "${old_release}" && -d "${old_release}" ]]; then
   backup_application_root="${old_release}"
 fi
-echo "Creating and verifying the encrypted pre-migration backup."
-APP_ROOT="${backup_application_root}" \
-APP_GROUP="${APP_GROUP}" \
-APP_RELEASE_ID="pre-migration-${release_id}" \
-TWINEVIA_ENV_FILE="${ENV_FILE}" \
-bash "${pending_release}/deploy/backup_twinevia_saas.sh"
+case "${BACKUP_OFFSITE_MODE}" in
+  mounted)
+    echo "Creating and verifying the encrypted pre-migration backup."
+    APP_ROOT="${backup_application_root}" \
+    APP_GROUP="${APP_GROUP}" \
+    APP_RELEASE_ID="pre-migration-${release_id}" \
+    TWINEVIA_ENV_FILE="${ENV_FILE}" \
+    bash "${pending_release}/deploy/backup_twinevia_saas.sh"
+    ;;
+  github_actions)
+    echo "Verifying the GitHub Actions pre-deployment backup."
+    : "${OPERATIONS_GITHUB_REPOSITORY:?OPERATIONS_GITHUB_REPOSITORY is required}"
+    BACKUP_STATUS_PATH="${BACKUP_STATUS_FILE}" \
+    BACKUP_GITHUB_REPOSITORY="${OPERATIONS_GITHUB_REPOSITORY}" \
+    python3 -c '
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+payload = json.loads(Path(os.environ["BACKUP_STATUS_PATH"]).read_text(encoding="utf-8"))
+completed_at = datetime.fromisoformat(str(payload["completed_at"]))
+if completed_at.tzinfo is None:
+    completed_at = completed_at.replace(tzinfo=timezone.utc)
+age_minutes = (datetime.now(timezone.utc) - completed_at).total_seconds() / 60
+expected_prefix = f"https://github.com/{os.environ['"'"'BACKUP_GITHUB_REPOSITORY'"'"']}/actions/runs/"
+if payload.get("offsite_mode") != "github_actions" or payload.get("offsite_verified") is not True:
+    raise SystemExit("pre-deployment backup is not marked off-host verified")
+if not str(payload.get("offsite_reference") or "").startswith(expected_prefix):
+    raise SystemExit("pre-deployment backup does not belong to the configured GitHub repository")
+if age_minutes < 0 or age_minutes > 60:
+    raise SystemExit(f"pre-deployment backup is {age_minutes:.1f} minutes old; maximum is 60")
+'
+    ;;
+  *)
+    echo "BACKUP_OFFSITE_MODE must be github_actions or mounted." >&2
+    exit 1
+    ;;
+esac
 
 backup_archive="$(BACKUP_STATUS_PATH="${BACKUP_STATUS_FILE}" python3 -c '
 import json
@@ -171,18 +299,8 @@ create_runtime_app(start_scheduler=False)
 print('Release startup and live provider configuration validation passed.')
 PY"
 
-sudo chown -R root:"${APP_GROUP}" "${pending_release}"
-sudo chmod -R u=rwX,g=rX,o= "${pending_release}"
 sudo mv "${pending_release}" "${release_dir}"
 pending_release=""
-
-atomic_link() {
-  local target="$1"
-  local link_path="$2"
-  local temporary_link="${link_path}.next-${release_id}"
-  sudo ln -s "${target}" "${temporary_link}"
-  sudo mv -Tf "${temporary_link}" "${link_path}"
-}
 
 if [[ -n "${old_release}" ]]; then
   atomic_link "${old_release}" "${PREVIOUS_LINK}"

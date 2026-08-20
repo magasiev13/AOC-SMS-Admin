@@ -257,9 +257,18 @@ class Config:
     ).strip()
     ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '').strip()
     UPTIME_MONITOR_HEARTBEAT_URL = os.environ.get('UPTIME_MONITOR_HEARTBEAT_URL', '').strip()
+    OPERATIONS_MONITORING_MODE = os.environ.get(
+        'OPERATIONS_MONITORING_MODE',
+        'webhook',
+    ).strip().lower()
+    OPERATIONS_GITHUB_REPOSITORY = os.environ.get(
+        'OPERATIONS_GITHUB_REPOSITORY',
+        '',
+    ).strip()
 
     # Encrypted, off-host PostgreSQL backup controls.
     BACKUP_LOCAL_DIR = os.environ.get('BACKUP_LOCAL_DIR', '/var/backups/twinevia-saas').strip()
+    BACKUP_OFFSITE_MODE = os.environ.get('BACKUP_OFFSITE_MODE', 'mounted').strip().lower()
     BACKUP_OFFSITE_DESTINATION = os.environ.get('BACKUP_OFFSITE_DESTINATION', '').strip()
     BACKUP_ENCRYPTION_PASSPHRASE_FILE = os.environ.get(
         'BACKUP_ENCRYPTION_PASSPHRASE_FILE',

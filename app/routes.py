@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote, urlsplit
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -26,7 +27,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
-from sqlalchemy import DateTime, Integer, String, Text, func, or_, select, text
+from sqlalchemy import BigInteger, String, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
 from werkzeug.exceptions import HTTPException
@@ -222,18 +223,22 @@ from app.utils import (
     as_utc_datetime,
     escape_like,
     find_invalid_template_tokens,
-    is_safe_url,
     normalize_keyword,
     normalize_phone,
     normalize_sms_body,
     parse_recipients_csv,
     phone_digits_sql,
+    safe_redirect_path,
     sanitize_csv_cell,
     validate_phone,
 )
 
 bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
+
+
+class ExternalWebhookDeliveryConflict(RuntimeError):
+    """Raised when a webhook delivery id is reused with different content or ownership."""
 
 
 @bp.before_app_request
@@ -4204,6 +4209,9 @@ def dashboard():
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
+            'scheduled_request_idempotency_key': (
+                request.form.get('request_idempotency_key', '').strip() or uuid4().hex
+            ),
             'blast_unsubscribe_footer': BLAST_UNSUBSCRIBE_FOOTER,
             'current_user_is_workspace_owner': _current_user_is_workspace_owner(),
             'dashboard_is_empty': (
@@ -4348,6 +4356,46 @@ def dashboard():
                 if limit_error:
                     flash(limit_error, 'error')
                     return render_dashboard()
+                request_idempotency_key = (
+                    request.form.get('request_idempotency_key', '').strip()
+                    or request.headers.get('Idempotency-Key', '').strip()
+                    or uuid4().hex
+                )
+                if (
+                    len(request_idempotency_key) > 64
+                    or not re.fullmatch(r'[A-Za-z0-9._:-]+', request_idempotency_key)
+                ):
+                    flash('The scheduled-send request key is invalid. Refresh and try again.', 'error')
+                    return render_dashboard()
+                organization_id = _current_organization_id() if saas_mode_enabled() else None
+                if organization_id is not None:
+                    locked_organization = (
+                        Organization.query
+                        .filter(Organization.id == organization_id)
+                        .with_for_update()
+                        .one()
+                    )
+                    existing_scheduled = ScheduledMessage.query.filter_by(
+                        organization_id=locked_organization.id,
+                        request_idempotency_key=request_idempotency_key,
+                    ).first()
+                    if existing_scheduled is not None:
+                        same_request = bool(
+                            existing_scheduled.message_body == final_message
+                            and existing_scheduled.target == target
+                            and existing_scheduled.event_id == (event_id if target == 'event' else None)
+                            and existing_scheduled.scheduled_at == scheduled_utc
+                            and bool(existing_scheduled.test_mode) == bool(test_mode)
+                        )
+                        db.session.commit()
+                        if not same_request:
+                            flash(
+                                'That scheduled-send request key was already used for different content. Refresh and try again.',
+                                'error',
+                            )
+                            return render_dashboard()
+                        flash('This message was already scheduled. Reusing the existing schedule.', 'warning')
+                        return redirect(url_for('main.scheduled_list'))
                 pending_schedule_limit = int(
                     current_app.config.get('SCHEDULED_MAX_PENDING_PER_ORGANIZATION', 25) or 25
                 )
@@ -4355,6 +4403,7 @@ def dashboard():
                     ScheduledMessage.status.in_(['pending', 'processing'])
                 ).count()
                 if pending_schedule_count >= pending_schedule_limit:
+                    db.session.rollback()
                     flash(
                         f'This workspace already has {pending_schedule_count} pending scheduled sends; '
                         f'the limit is {pending_schedule_limit}.',
@@ -4373,6 +4422,7 @@ def dashboard():
                         test_recipient_selection_mode if test_mode else None
                     ),
                     test_recipient_snapshot_json=recipient_snapshot_json,
+                    request_idempotency_key=request_idempotency_key,
                 )
                 db.session.add(scheduled)
                 db.session.commit()
@@ -4422,11 +4472,20 @@ def dashboard():
         if limit_error:
             flash(limit_error, 'error')
             return render_dashboard()
+        organization_id = _current_organization_id() if saas_mode_enabled() else None
+        if organization_id is not None:
+            (
+                Organization.query
+                .filter(Organization.id == organization_id)
+                .with_for_update()
+                .one()
+            )
         active_job_limit = int(
             current_app.config.get('TENANT_MAX_PROCESSING_MESSAGE_LOGS', 5) or 5
         )
         active_job_count = MessageLog.query.filter_by(status='processing').count()
         if active_job_count >= active_job_limit:
+            db.session.rollback()
             flash(
                 f'This workspace already has {active_job_count} active send jobs; '
                 f'the limit is {active_job_limit}.',
@@ -4474,6 +4533,7 @@ def dashboard():
                     )
                 existing_log = existing_log_query.first()
                 if existing_log is not None:
+                    db.session.rollback()
                     flash('Blast already queued. Reusing the existing log.', 'warning')
                     return redirect(url_for('main.log_detail', log_id=existing_log.id))
                 current_app.logger.warning(
@@ -4484,6 +4544,7 @@ def dashboard():
                 )
                 release_outbound_idempotency(idempotency_claim.redis_key)
             else:
+                db.session.rollback()
                 flash('An identical blast is already being queued. Refresh the logs in a moment.', 'warning')
                 return redirect(url_for('main.logs_list'))
 
@@ -4492,6 +4553,7 @@ def dashboard():
 
             queue = _get_queue_with_preflight()
         except Exception:
+            db.session.rollback()
             release_outbound_idempotency(idempotency_claim.redis_key)
             current_app.logger.exception(
                 'Background queue unavailable for blast enqueue organization_id=%s target=%s.',
@@ -6051,7 +6113,7 @@ def platform_organizations_messaging_edit(organization_id):
                         to_number,
                         body,
                         current_user.id,
-                        f"platform-test:{send_fingerprint}",
+                        f"platform-test:{send_fingerprint}:{uuid4().hex}",
                     )
                 except Exception:
                     release_outbound_idempotency(idempotency_claim.redis_key)
@@ -6475,18 +6537,20 @@ def fake_stripe_checkout(session_id):
     success_url = (request.values.get('success_url') or '').strip()
     cancel_url = (request.values.get('cancel_url') or '').strip()
     resolved_success_url = success_url.replace('{CHECKOUT_SESSION_ID}', session_id)
+    resolved_success_path = safe_redirect_path(resolved_success_url, request.host_url)
+    cancel_path = safe_redirect_path(cancel_url, request.host_url)
     if (
         not success_url
         or not cancel_url
-        or not is_safe_url(resolved_success_url, request.host_url)
-        or not is_safe_url(cancel_url, request.host_url)
+        or resolved_success_path is None
+        or cancel_path is None
     ):
         abort(400)
 
     if request.method == 'POST':
         action = (request.form.get('action') or 'complete').strip().lower()
-        target_url = cancel_url if action == 'cancel' else resolved_success_url
-        return redirect(target_url)
+        target_path = cancel_path if action == 'cancel' else resolved_success_path
+        return redirect(target_path)
 
     return render_template(
         'testing/fake_checkout.html',
@@ -6874,14 +6938,161 @@ def stripe_webhook():
     return '', 200
 
 
+def _validated_external_delivery_id(raw_delivery_id: str | None) -> str:
+    delivery_id = (raw_delivery_id or '').strip()
+    if (
+        not delivery_id
+        or len(delivery_id) > 140
+        or not re.fullmatch(r'[A-Za-z0-9._:-]+', delivery_id)
+    ):
+        raise ValueError('Invalid delivery id.')
+    return delivery_id
+
+
+def _event_sync_resource_metadata(
+    payload: dict,
+) -> tuple[str | None, datetime | None]:
+    event_payload = payload.get('event') if isinstance(payload.get('event'), dict) else {}
+    booking_payload = payload.get('booking') if isinstance(payload.get('booking'), dict) else {}
+    action = str(payload.get('action') or '').strip().lower()
+    if action.startswith('booking_'):
+        provider = str(booking_payload.get('provider') or 'events_manager').strip().lower()
+        external_id = str(booking_payload.get('booking_id') or '').strip()
+        if not external_id:
+            raise AocEventSyncPayloadError(
+                'Event-sync booking mutations require a booking id.'
+            )
+        resource_key = f'booking:{provider}:{external_id}'
+        revision_value = booking_payload.get('updated_at')
+    elif action.startswith('event_'):
+        external_id = str(event_payload.get('event_id') or '').strip()
+        if not external_id:
+            raise AocEventSyncPayloadError(
+                'Event-sync event mutations require an event id.'
+            )
+        resource_key = f'event:{external_id}'
+        revision_value = event_payload.get('modified_at')
+    else:
+        resource_key = action or None
+        revision_value = None
+
+    source_revision_at = None
+    if action.startswith(('booking_', 'event_')) and not revision_value:
+        raise AocEventSyncPayloadError(
+            'Event-sync mutations require a source revision timestamp.'
+        )
+    if revision_value:
+        try:
+            source_revision_at = datetime.fromisoformat(
+                str(revision_value).replace('Z', '+00:00')
+            )
+        except ValueError as exc:
+            raise AocEventSyncPayloadError(
+                'Event-sync source revision timestamp must be ISO-8601.'
+            ) from exc
+        if source_revision_at.tzinfo is None:
+            raise AocEventSyncPayloadError(
+                'Event-sync source revision timestamps must include a timezone.'
+            )
+        source_revision_at = source_revision_at.astimezone(timezone.utc).replace(tzinfo=None)
+    return resource_key, source_revision_at
+
+
+def _claim_external_webhook_delivery(
+    *,
+    provider: str,
+    delivery_id: str,
+    organization_id: int,
+    payload_digest: str,
+    payload: dict,
+    received_at: datetime,
+    response_delivery_id: str,
+) -> tuple[ExternalWebhookDelivery, dict | None]:
+    resource_key, source_revision_at = _event_sync_resource_metadata(payload)
+    delivery_record = (
+        ExternalWebhookDelivery.query
+        .filter_by(provider=provider, delivery_id=delivery_id)
+        .with_for_update()
+        .first()
+    )
+    if delivery_record is not None:
+        if delivery_record.organization_id != organization_id:
+            raise ExternalWebhookDeliveryConflict('Delivery id belongs to another organization.')
+        if delivery_record.payload_digest != payload_digest:
+            raise ExternalWebhookDeliveryConflict('Delivery id payload conflict.')
+        if delivery_record.status in {'processed', 'ignored'}:
+            try:
+                stored_response = json.loads(delivery_record.response_json or '{}')
+            except json.JSONDecodeError as exc:
+                raise RuntimeError('Stored webhook response is invalid JSON.') from exc
+            if not isinstance(stored_response, dict):
+                raise RuntimeError('Stored webhook response must be a JSON object.')
+            return delivery_record, stored_response
+        delivery_record.status = 'processing'
+        delivery_record.last_error = None
+        delivery_record.processed_at = None
+        delivery_record.resource_key = resource_key
+        delivery_record.source_revision_at = source_revision_at
+    else:
+        delivery_record = ExternalWebhookDelivery(
+            provider=provider,
+            delivery_id=delivery_id,
+            organization_id=organization_id,
+            resource_key=resource_key,
+            payload_digest=payload_digest,
+            source_revision_at=source_revision_at,
+            status='processing',
+            received_at=received_at,
+        )
+        db.session.add(delivery_record)
+        db.session.flush()
+
+    if resource_key and source_revision_at is not None:
+        newer_delivery = (
+            ExternalWebhookDelivery.query
+            .filter(
+                ExternalWebhookDelivery.provider == provider,
+                ExternalWebhookDelivery.organization_id == organization_id,
+                ExternalWebhookDelivery.resource_key == resource_key,
+                ExternalWebhookDelivery.status == 'processed',
+                ExternalWebhookDelivery.source_revision_at >= source_revision_at,
+                ExternalWebhookDelivery.id != delivery_record.id,
+            )
+            .order_by(ExternalWebhookDelivery.source_revision_at.desc())
+            .first()
+        )
+        if newer_delivery is not None:
+            summary = {
+                'ignored': True,
+                'reason': 'stale_source_revision',
+                'delivery_id': response_delivery_id,
+            }
+            delivery_record.status = 'ignored'
+            delivery_record.response_json = json.dumps(summary, sort_keys=True)
+            delivery_record.processed_at = utc_now()
+            return delivery_record, summary
+    return delivery_record, None
+
+
+def _complete_external_webhook_delivery(
+    delivery_record: ExternalWebhookDelivery,
+    summary: dict,
+) -> None:
+    delivery_record.status = 'processed'
+    delivery_record.response_json = json.dumps(summary, sort_keys=True)
+    delivery_record.processed_at = utc_now()
+    delivery_record.last_error = None
+
+
 @bp.route('/webhooks/event-sync/<organization_slug>/<provider>', methods=['POST'])
 @csrf.exempt
 def event_sync_webhook(organization_slug, provider):
     body = request.get_data(cache=True)
-    delivery_id = request.headers.get('X-Twinevia-Delivery-ID') or request.headers.get('X-AOC-Delivery-ID')
+    raw_delivery_id = request.headers.get('X-Twinevia-Delivery-ID') or request.headers.get('X-AOC-Delivery-ID')
     received_at = utc_now_for_aoc_sync()
     integration = None
     try:
+        delivery_id = _validated_external_delivery_id(raw_delivery_id)
         integration = event_sync_integration_for_webhook(organization_slug, provider)
         verify_event_sync_webhook_signature(
             body=body,
@@ -6892,20 +7103,44 @@ def event_sync_webhook(organization_slug, provider):
             now_timestamp=int(utc_now().timestamp()),
         )
         payload = parse_aoc_webhook_json(body)
+        with without_tenant_scope():
+            integration = (
+                OrganizationEventSyncIntegration.query
+                .filter(OrganizationEventSyncIntegration.id == integration.id)
+                .with_for_update()
+                .one()
+            )
+            ledger_delivery_id = f'{integration.organization_id}:{delivery_id}'
+            delivery_record, stored_response = _claim_external_webhook_delivery(
+                provider='event_sync',
+                delivery_id=ledger_delivery_id,
+                organization_id=integration.organization_id,
+                payload_digest=hashlib.sha256(body).hexdigest(),
+                payload=payload,
+                received_at=received_at,
+                response_delivery_id=delivery_id,
+            )
+        if stored_response is not None:
+            db.session.commit()
+            return jsonify(stored_response), 200
         summary = process_event_sync_payload(
             payload=payload,
             integration=integration,
             received_at=received_at,
         )
+        _complete_external_webhook_delivery(delivery_record, summary)
         db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 400
+    except ExternalWebhookDeliveryConflict as exc:
+        db.session.rollback()
+        return jsonify({'error': str(exc)}), 409
     except AocWebhookAuthError as exc:
         db.session.rollback()
-        if integration is not None:
-            record_event_sync_error(integration, str(exc), received_at)
-            db.session.commit()
         current_app.logger.warning(
             'Rejected event sync webhook authentication.',
-            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
+            extra={'delivery_id': raw_delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
         )
         return 'Forbidden', 403
     except AocEventSyncPayloadError as exc:
@@ -6915,9 +7150,9 @@ def event_sync_webhook(organization_slug, provider):
             db.session.commit()
         current_app.logger.warning(
             'Rejected event sync webhook payload.',
-            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
+            extra={'delivery_id': raw_delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
         )
-        return jsonify({'error': str(exc)}), 400
+        return jsonify({'error': 'Invalid event sync payload.'}), 400
     except Exception as exc:
         db.session.rollback()
         if integration is not None:
@@ -6925,7 +7160,7 @@ def event_sync_webhook(organization_slug, provider):
             db.session.commit()
         current_app.logger.exception(
             'Failed to process event sync webhook.',
-            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider},
+            extra={'delivery_id': raw_delivery_id, 'organization_slug': organization_slug, 'provider': provider},
         )
         return 'Webhook processing failed', 500
 
@@ -6939,8 +7174,9 @@ def aoc_events_webhook():
         abort(404)
 
     body = request.get_data(cache=True)
-    delivery_id = (request.headers.get('X-AOC-Delivery-ID') or '').strip()
-    if not delivery_id or len(delivery_id) > 160 or not re.fullmatch(r'[A-Za-z0-9._:-]+', delivery_id):
+    try:
+        delivery_id = _validated_external_delivery_id(request.headers.get('X-AOC-Delivery-ID'))
+    except ValueError:
         return 'Invalid delivery id', 400
     delivery_record = None
     try:
@@ -6954,96 +7190,35 @@ def aoc_events_webhook():
         )
         payload = parse_aoc_webhook_json(body)
         organization_slug = current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG') or ''
-        organization = Organization.query.filter_by(slug=organization_slug).first()
+        organization = (
+            Organization.query
+            .filter_by(slug=organization_slug)
+            .with_for_update()
+            .first()
+        )
         if organization is None:
             raise AocEventSyncPayloadError(
                 f"AOC organization slug {organization_slug!r} was not found."
             )
-        payload_digest = hashlib.sha256(body).hexdigest()
-        existing_delivery = ExternalWebhookDelivery.query.filter_by(
+        delivery_record, stored_response = _claim_external_webhook_delivery(
             provider='aoc_events',
             delivery_id=delivery_id,
-        ).first()
-        if existing_delivery is not None:
-            if existing_delivery.payload_digest != payload_digest:
-                return 'Delivery id payload conflict', 409
-            if existing_delivery.status in {'processed', 'ignored'}:
-                stored_response = json.loads(existing_delivery.response_json or '{}')
-                return jsonify(stored_response), 200
-            if existing_delivery.status == 'processing':
-                return jsonify({'status': 'processing', 'delivery_id': delivery_id}), 202
-            delivery_record = existing_delivery
-            delivery_record.status = 'processing'
-            delivery_record.last_error = None
-        else:
-            event_payload = payload.get('event') if isinstance(payload.get('event'), dict) else {}
-            booking_payload = payload.get('booking') if isinstance(payload.get('booking'), dict) else {}
-            action = str(payload.get('action') or '').strip().lower()
-            if action.startswith('booking_'):
-                provider = str(booking_payload.get('provider') or 'events_manager').strip().lower()
-                external_id = str(booking_payload.get('booking_id') or '').strip()
-                resource_key = f'booking:{provider}:{external_id}' if external_id else None
-                revision_value = booking_payload.get('updated_at')
-            elif action.startswith('event_'):
-                external_id = str(event_payload.get('event_id') or '').strip()
-                resource_key = f'event:{external_id}' if external_id else None
-                revision_value = event_payload.get('modified_at')
-            else:
-                resource_key = action or None
-                revision_value = None
-            source_revision_at = None
-            if revision_value:
-                try:
-                    source_revision_at = datetime.fromisoformat(
-                        str(revision_value).replace('Z', '+00:00')
-                    )
-                    if source_revision_at.tzinfo is not None:
-                        source_revision_at = source_revision_at.astimezone(timezone.utc).replace(tzinfo=None)
-                except ValueError as exc:
-                    raise AocEventSyncPayloadError(
-                        'AOC source revision timestamp must be ISO-8601.'
-                    ) from exc
-            delivery_record = ExternalWebhookDelivery(
-                provider='aoc_events',
-                delivery_id=delivery_id,
-                organization_id=organization.id,
-                resource_key=resource_key,
-                payload_digest=payload_digest,
-                source_revision_at=source_revision_at,
-                status='processing',
-            )
-            db.session.add(delivery_record)
-        db.session.commit()
-
-        if delivery_record.resource_key and delivery_record.source_revision_at is not None:
-            newer_delivery = ExternalWebhookDelivery.query.filter(
-                ExternalWebhookDelivery.provider == 'aoc_events',
-                ExternalWebhookDelivery.organization_id == organization.id,
-                ExternalWebhookDelivery.resource_key == delivery_record.resource_key,
-                ExternalWebhookDelivery.status == 'processed',
-                ExternalWebhookDelivery.source_revision_at >= delivery_record.source_revision_at,
-                ExternalWebhookDelivery.id != delivery_record.id,
-            ).order_by(ExternalWebhookDelivery.source_revision_at.desc()).first()
-            if newer_delivery is not None:
-                summary = {
-                    'ignored': True,
-                    'reason': 'stale_source_revision',
-                    'delivery_id': delivery_id,
-                }
-                delivery_record.status = 'ignored'
-                delivery_record.response_json = json.dumps(summary, sort_keys=True)
-                delivery_record.processed_at = utc_now()
-                db.session.commit()
-                return jsonify(summary), 200
+            organization_id=organization.id,
+            payload_digest=hashlib.sha256(body).hexdigest(),
+            payload=payload,
+            received_at=utc_now(),
+            response_delivery_id=delivery_id,
+        )
+        if stored_response is not None:
+            db.session.commit()
+            return jsonify(stored_response), 200
 
         summary = process_aoc_event_sync_payload(
             payload=payload,
             organization_slug=organization_slug,
             received_at=utc_now_for_aoc_sync(),
         )
-        delivery_record.status = 'processed'
-        delivery_record.response_json = json.dumps(summary, sort_keys=True)
-        delivery_record.processed_at = utc_now()
+        _complete_external_webhook_delivery(delivery_record, summary)
         db.session.commit()
     except AocWebhookAuthError as exc:
         db.session.rollback()
@@ -7052,30 +7227,24 @@ def aoc_events_webhook():
             extra={'delivery_id': delivery_id, 'reason': str(exc)},
         )
         return 'Forbidden', 403
+    except ExternalWebhookDeliveryConflict as exc:
+        db.session.rollback()
+        return str(exc), 409
     except AocEventSyncPayloadError as exc:
         db.session.rollback()
-        if delivery_record is not None:
-            failed_delivery = db.session.get(ExternalWebhookDelivery, delivery_record.id)
-            if failed_delivery is not None:
-                failed_delivery.status = 'failed'
-                failed_delivery.last_error = str(exc)[:2000]
-                db.session.commit()
         current_app.logger.warning(
             'Rejected AOC event webhook payload.',
             extra={'delivery_id': delivery_id, 'reason': str(exc)},
         )
-        return jsonify({'error': str(exc)}), 400
-    except Exception:
+        return jsonify({'error': 'Invalid event sync payload.'}), 400
+    except Exception as exc:
         db.session.rollback()
-        if delivery_record is not None:
-            failed_delivery = db.session.get(ExternalWebhookDelivery, delivery_record.id)
-            if failed_delivery is not None:
-                failed_delivery.status = 'failed'
-                failed_delivery.last_error = 'Unhandled AOC webhook processing failure.'
-                db.session.commit()
-        current_app.logger.exception(
+        current_app.logger.error(
             'Failed to process AOC event webhook.',
-            extra={'delivery_id': delivery_id},
+            extra={
+                'delivery_id': delivery_id,
+                'exception_type': type(exc).__name__,
+            },
         )
         return 'Webhook processing failed', 500
 
@@ -8137,23 +8306,20 @@ def unsubscribed_list():
         )
     )
     suppressed_query = SuppressedContact.query
-    search_filter_unsubscribed = ''
-    search_filter_suppressed = ''
-    tenant_filter_unsubscribed = ''
-    tenant_filter_suppressed = ''
-    sql_params = {}
+    organization_id: int | None = None
+    pattern: str | None = None
     if saas_mode_enabled() and not current_user.is_platform_admin:
-        org_id = _current_organization_id()
-        sql_params['org_id'] = org_id
-        unsubscribed_query = unsubscribed_query.filter(UnsubscribedContact.organization_id == org_id)
-        suppressed_query = suppressed_query.filter(SuppressedContact.organization_id == org_id)
-        tenant_filter_unsubscribed = "AND u.organization_id = :org_id"
-        tenant_filter_suppressed = "AND s.organization_id = :org_id"
+        organization_id = _current_organization_id()
+        unsubscribed_query = unsubscribed_query.filter(
+            UnsubscribedContact.organization_id == organization_id
+        )
+        suppressed_query = suppressed_query.filter(
+            SuppressedContact.organization_id == organization_id
+        )
 
     if search:
         escaped = escape_like(search)
         pattern = f'%{escaped}%'
-        sql_params['pattern'] = pattern
         unsubscribed_query = unsubscribed_query.filter(
             db.or_(
                 UnsubscribedContact.name.ilike(pattern, escape='\\'),
@@ -8172,24 +8338,6 @@ def unsubscribed_list():
                 SuppressedContact.source.ilike(pattern, escape='\\'),
             )
         )
-        search_filter_unsubscribed = """
-            AND (
-                LOWER(u.name) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(cm.name) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(it.contact_name) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(u.phone) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(u.reason) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(u.source) LIKE LOWER(:pattern) ESCAPE '\\'
-            )
-        """
-        search_filter_suppressed = """
-            AND (
-                LOWER(s.phone) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(s.reason) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(s.category) LIKE LOWER(:pattern) ESCAPE '\\'
-                OR LOWER(s.source) LIKE LOWER(:pattern) ESCAPE '\\'
-            )
-        """
 
     unsubscribed_count = unsubscribed_query.count()
     suppressed_count = suppressed_query.count()
@@ -8198,95 +8346,141 @@ def unsubscribed_list():
     page = max(1, min(page, total_pages))
 
     offset = (page - 1) * per_page
-    sql_params.update({'limit': per_page, 'offset': offset})
-    phone_sort_expr = (
-        "CAST(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), '(', ''), ')', ''), '-', ''), ' ', ''), '.', '') AS BIGINT)"
+    resolved_name = func.coalesce(
+        func.nullif(UnsubscribedContact.name, ''),
+        func.nullif(CommunityMember.name, ''),
+        func.nullif(InboxThread.contact_name, ''),
+    )
+    unsubscribed_rows = (
+        select(
+            UnsubscribedContact.id.label('id'),
+            resolved_name.label('name'),
+            UnsubscribedContact.phone.label('phone'),
+            UnsubscribedContact.reason.label('reason'),
+            literal('unsubscribed').label('category'),
+            UnsubscribedContact.source.label('source'),
+            UnsubscribedContact.created_at.label('created_at'),
+            literal('unsubscribed').label('entry_type'),
+        )
+        .select_from(UnsubscribedContact)
+        .outerjoin(
+            CommunityMember,
+            db.and_(
+                CommunityMember.phone == UnsubscribedContact.phone,
+                db.or_(
+                    CommunityMember.organization_id == UnsubscribedContact.organization_id,
+                    db.and_(
+                        CommunityMember.organization_id.is_(None),
+                        UnsubscribedContact.organization_id.is_(None),
+                    ),
+                ),
+            ),
+        )
+        .outerjoin(
+            InboxThread,
+            db.and_(
+                InboxThread.phone == UnsubscribedContact.phone,
+                db.or_(
+                    InboxThread.organization_id == UnsubscribedContact.organization_id,
+                    db.and_(
+                        InboxThread.organization_id.is_(None),
+                        UnsubscribedContact.organization_id.is_(None),
+                    ),
+                ),
+            ),
+        )
+    )
+    suppressed_rows = select(
+        SuppressedContact.id.label('id'),
+        literal(None, String()).label('name'),
+        SuppressedContact.phone.label('phone'),
+        SuppressedContact.reason.label('reason'),
+        SuppressedContact.category.label('category'),
+        SuppressedContact.source.label('source'),
+        SuppressedContact.created_at.label('created_at'),
+        literal('suppressed').label('entry_type'),
+    ).select_from(SuppressedContact)
+
+    if organization_id is not None:
+        unsubscribed_rows = unsubscribed_rows.where(
+            UnsubscribedContact.organization_id == organization_id
+        )
+        suppressed_rows = suppressed_rows.where(
+            SuppressedContact.organization_id == organization_id
+        )
+    if pattern is not None:
+        unsubscribed_rows = unsubscribed_rows.where(
+            or_(
+                UnsubscribedContact.name.ilike(pattern, escape='\\'),
+                CommunityMember.name.ilike(pattern, escape='\\'),
+                InboxThread.contact_name.ilike(pattern, escape='\\'),
+                UnsubscribedContact.phone.ilike(pattern, escape='\\'),
+                UnsubscribedContact.reason.ilike(pattern, escape='\\'),
+                UnsubscribedContact.source.ilike(pattern, escape='\\'),
+            )
+        )
+        suppressed_rows = suppressed_rows.where(
+            or_(
+                SuppressedContact.phone.ilike(pattern, escape='\\'),
+                SuppressedContact.reason.ilike(pattern, escape='\\'),
+                SuppressedContact.category.ilike(pattern, escape='\\'),
+                SuppressedContact.source.ilike(pattern, escape='\\'),
+            )
+        )
+
+    combined_rows = union_all(unsubscribed_rows, suppressed_rows).subquery('suppression_entries')
+    normalized_phone = func.replace(
+        func.replace(
+            func.replace(
+                func.replace(
+                    func.replace(
+                        func.replace(combined_rows.c.phone, '+', ''),
+                        '(',
+                        '',
+                    ),
+                    ')',
+                    '',
+                ),
+                '-',
+                '',
+            ),
+            ' ',
+            '',
+        ),
+        '.',
+        '',
     )
     sort_config = {
-        'name': {'expr': 'LOWER(name)', 'null_check': 'name'},
-        'phone': {'expr': phone_sort_expr, 'null_check': 'phone'},
-        'reason': {'expr': 'LOWER(reason)', 'null_check': 'reason'},
-        'category': {'expr': 'LOWER(category)', 'null_check': 'category'},
-        'source': {'expr': 'LOWER(source)', 'null_check': 'source'},
-        'created_at': {'expr': 'created_at', 'null_check': 'created_at'},
+        'name': func.lower(combined_rows.c.name),
+        'phone': cast(normalized_phone, BigInteger),
+        'reason': func.lower(combined_rows.c.reason),
+        'category': func.lower(combined_rows.c.category),
+        'source': func.lower(combined_rows.c.source),
+        'created_at': combined_rows.c.created_at,
     }
-    sort_expr = sort_config[sort_key]['expr']
-    null_check = sort_config[sort_key]['null_check']
+    sort_column = sort_config[sort_key]
+    null_column = combined_rows.c[sort_key]
     null_rank = 1 if sort_dir == 'asc' else 0
     not_null_rank = 0 if sort_dir == 'asc' else 1
-    order_by = (
-        f"CASE WHEN {null_check} IS NULL OR {null_check} = '' THEN {null_rank} ELSE {not_null_rank} END, "
-        f"{sort_expr} {sort_dir}, "
-        "created_at DESC, entry_type, id"
-    )
-
-    combined_sql = f"""
-        SELECT
-            id,
-            name,
-            phone,
-            reason,
-            category,
-            source,
-            created_at,
-            entry_type
-        FROM (
-            SELECT
-                u.id AS id,
-                COALESCE(NULLIF(u.name, ''), NULLIF(cm.name, ''), NULLIF(it.contact_name, '')) AS name,
-                u.phone AS phone,
-                u.reason AS reason,
-                'unsubscribed' AS category,
-                u.source AS source,
-                u.created_at AS created_at,
-                'unsubscribed' AS entry_type
-            FROM unsubscribed_contacts u
-            LEFT JOIN community_members cm
-                ON cm.phone = u.phone
-               AND (
-                   cm.organization_id = u.organization_id
-                   OR (cm.organization_id IS NULL AND u.organization_id IS NULL)
-               )
-            LEFT JOIN inbox_threads it
-                ON it.phone = u.phone
-               AND (
-                   it.organization_id = u.organization_id
-                   OR (it.organization_id IS NULL AND u.organization_id IS NULL)
-               )
-            WHERE 1 = 1
-            {tenant_filter_unsubscribed}
-            {search_filter_unsubscribed}
-            UNION ALL
-            SELECT
-                s.id AS id,
-                NULL AS name,
-                s.phone AS phone,
-                s.reason AS reason,
-                s.category AS category,
-                s.source AS source,
-                s.created_at AS created_at,
-                'suppressed' AS entry_type
-            FROM suppressed_contacts s
-            WHERE 1 = 1
-            {tenant_filter_suppressed}
-            {search_filter_suppressed}
-        ) combined
-        ORDER BY {order_by}
-        LIMIT :limit OFFSET :offset
-    """
-    combined_query = text(combined_sql).columns(
-        id=Integer(),
-        name=String(),
-        phone=String(),
-        reason=Text(),
-        category=String(),
-        source=String(),
-        created_at=DateTime(),
-        entry_type=String(),
+    null_condition = null_column.is_(None)
+    if sort_key != 'created_at':
+        null_condition = or_(null_condition, null_column == '')
+    sort_order = sort_column.asc() if sort_dir == 'asc' else sort_column.desc()
+    combined_query = (
+        select(combined_rows)
+        .order_by(
+            case((null_condition, null_rank), else_=not_null_rank),
+            sort_order,
+            combined_rows.c.created_at.desc(),
+            combined_rows.c.entry_type,
+            combined_rows.c.id,
+        )
+        .limit(per_page)
+        .offset(offset)
     )
     combined = [
         dict(row)
-        for row in db.session.execute(combined_query, sql_params).mappings().all()
+        for row in db.session.execute(combined_query).mappings().all()
     ]
 
     return render_template(
@@ -8347,8 +8541,9 @@ def unsubscribed_add():
         existing = UnsubscribedContact.query.filter_by(phone=phone).first()
         if existing:
             flash('That phone number is already unsubscribed.', 'warning')
-            if next_url and is_safe_url(next_url, request.host_url):
-                return redirect(next_url)
+            safe_next_url = safe_redirect_path(next_url, request.host_url)
+            if safe_next_url is not None:
+                return redirect(safe_next_url)
             return redirect(url_for('main.unsubscribed_list'))
 
         entry = UnsubscribedContact(name=name, phone=phone, reason=reason, source=source)
@@ -8356,8 +8551,9 @@ def unsubscribed_add():
         db.session.commit()
         flash('Added to unsubscribed list.', 'success')
 
-        if next_url and is_safe_url(next_url, request.host_url):
-            return redirect(next_url)
+        safe_next_url = safe_redirect_path(next_url, request.host_url)
+        if safe_next_url is not None:
+            return redirect(safe_next_url)
         return redirect(url_for('main.unsubscribed_list'))
 
     return _render_unsubscribed_form()
@@ -8554,10 +8750,6 @@ def twilio_a2p_event_stream_webhook():
     if not current_app.config.get('TWILIO_A2P_EVENT_STREAMS_ENABLED'):
         abort(404)
 
-    expected_token = (current_app.config.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN') or '').strip()
-    authorization = request.headers.get('Authorization', '')
-    bearer_valid = bool(expected_token) and authorization == f'Bearer {expected_token}'
-
     organization_id = request.args.get('organization_id', type=int)
     if organization_id is None:
         return 'Forbidden', 403
@@ -8576,9 +8768,7 @@ def twilio_a2p_event_stream_webhook():
             messaging_profile=messaging_profile,
         )
 
-    if validation is not None and validation.is_valid:
-        pass
-    elif not bearer_valid:
+    if validation is None or not validation.is_valid:
         current_app.logger.warning(
             'Rejected Twilio A2P Event Streams webhook due to auth validation failure. '
             'reason=%s remote_addr=%s organization_id=%s',
@@ -8597,10 +8787,23 @@ def twilio_a2p_event_stream_webhook():
         db.session.commit()
     except ProviderProvisioningError as exc:
         db.session.rollback()
-        return jsonify({'error': str(exc)}), 400
-    except Exception:
+        current_app.logger.warning(
+            'Rejected Twilio A2P Event Streams payload.',
+            extra={
+                'exception_type': type(exc).__name__,
+                'organization_id': organization_id,
+            },
+        )
+        return jsonify({'error': 'Invalid provider event payload.'}), 400
+    except Exception as exc:
         db.session.rollback()
-        current_app.logger.exception('Failed to process Twilio A2P Event Streams payload')
+        current_app.logger.error(
+            'Failed to process Twilio A2P Event Streams payload.',
+            extra={
+                'exception_type': type(exc).__name__,
+                'organization_id': organization_id,
+            },
+        )
         return jsonify({'error': 'Internal Server Error'}), 500
 
     return jsonify(summary), 200
@@ -8736,7 +8939,7 @@ def inbox_reply(thread_id):
             thread_id,
             body,
             current_user.username,
-            f"manual-reply:{send_fingerprint}",
+            f"manual-reply:{send_fingerprint}:{uuid4().hex}",
         )
     except Exception:
         release_outbound_idempotency(idempotency_claim.redis_key)

@@ -20,7 +20,7 @@ Notes:
 
 - `--reset` works only for SQLite databases
 - without `--live-from-number`, every org remains safe for non-live local testing
-- the command prints invite URLs that you can open directly
+- the command lists pending invitations without printing their single-use tokens; open them from the platform or organization access screen
 
 ## Seeded Accounts
 

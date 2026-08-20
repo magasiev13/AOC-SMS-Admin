@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from datetime import timezone
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 from sqlalchemy import func
 
@@ -47,12 +47,53 @@ def escape_like(value: str) -> str:
     return value.replace('\\', r'\\').replace('%', r'\%').replace('_', r'\_')
 
 
-def is_safe_url(target: str | None, host_url: str) -> bool:
+def safe_redirect_path(target: str | None, host_url: str) -> str | None:
     if not target or not host_url:
-        return False
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in target):
+        return None
     parsed_host_url = urlparse(host_url)
     redirect_url = urlparse(urljoin(host_url, target))
-    return redirect_url.scheme in ("http", "https") and parsed_host_url.netloc == redirect_url.netloc
+    if (
+        redirect_url.scheme not in ("http", "https")
+        or redirect_url.scheme != parsed_host_url.scheme
+        or parsed_host_url.netloc != redirect_url.netloc
+    ):
+        return None
+
+    local_path = redirect_url.path or "/"
+    decoded_components = (
+        unquote(local_path),
+        unquote(redirect_url.params),
+        unquote(redirect_url.query),
+        unquote(redirect_url.fragment),
+    )
+    if (
+        not local_path.startswith("/")
+        or decoded_components[0].startswith("//")
+        or any("\\" in component for component in decoded_components)
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for component in decoded_components
+            for character in component
+        )
+    ):
+        return None
+
+    return urlunparse(
+        (
+            "",
+            "",
+            local_path,
+            redirect_url.params,
+            redirect_url.query,
+            redirect_url.fragment,
+        )
+    )
+
+
+def is_safe_url(target: str | None, host_url: str) -> bool:
+    return safe_redirect_path(target, host_url) is not None
 
 
 def as_utc_datetime(value):

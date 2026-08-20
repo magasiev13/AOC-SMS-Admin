@@ -65,7 +65,7 @@ class TestLoginLockout(unittest.TestCase):
             follow_redirects=True,
         )
 
-    def test_lockout_is_source_scoped_and_records_audit_events(self) -> None:
+    def test_lockout_is_account_scoped_and_records_audit_events(self) -> None:
         for _ in range(3):
             failed = self._post_login("lockuser", "wrong-password", "10.1.1.1")
             self.assertEqual(failed.status_code, 200)
@@ -77,7 +77,7 @@ class TestLoginLockout(unittest.TestCase):
 
         allowed_from_other_source = self._post_login("lockuser", "Lock-user1!", "10.1.1.2")
         self.assertEqual(allowed_from_other_source.status_code, 200)
-        self.assertNotIn(b"Too many failed attempts.", allowed_from_other_source.data)
+        self.assertIn(b"Too many failed attempts.", allowed_from_other_source.data)
 
         ip_scope_record = self.LoginAttempt.query.filter_by(client_ip="10.1.1.1", username="").first()
         account_scope_record = self.LoginAttempt.query.filter_by(
@@ -89,7 +89,8 @@ class TestLoginLockout(unittest.TestCase):
             username="lockuser",
         ).first()
         self.assertIsNotNone(ip_scope_record)
-        self.assertIsNone(account_scope_record)
+        self.assertIsNotNone(account_scope_record)
+        self.assertIsNotNone(account_scope_record.locked_until)
         self.assertIsNotNone(source_account_record)
         self.assertIsNotNone(source_account_record.locked_until)
 
@@ -99,7 +100,7 @@ class TestLoginLockout(unittest.TestCase):
             .first()
         )
         self.assertIsNotNone(blocked_event)
-        self.assertIn(blocked_event.metadata_payload.get("scope"), {"ip", "ip_account"})
+        self.assertEqual(blocked_event.metadata_payload.get("scope"), "account")
 
         alert_failure_event = (
             self.AuthEvent.query.filter_by(event_type="alert_sms_failed", username="lockuser")

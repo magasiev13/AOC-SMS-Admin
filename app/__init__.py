@@ -1,7 +1,8 @@
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, redirect, request
@@ -155,8 +156,8 @@ def _validate_saas_billing_config(app: Flask) -> None:
             if str(app.config.get(name) or "").strip() != str(expected_value or "").strip()
         )
         secret_key = str(app.config.get("STRIPE_SECRET_KEY") or "").strip()
-        if not secret_key.startswith("sk_live_"):
-            mismatched.append("STRIPE_SECRET_KEY must be a live-mode key.")
+        if not secret_key.startswith(("sk_live_", "rk_live_")):
+            mismatched.append("STRIPE_SECRET_KEY must be a live-mode secret or restricted key.")
         webhook_secret = str(app.config.get("STRIPE_WEBHOOK_SECRET") or "").strip()
         if not webhook_secret.startswith("whsec_"):
             mismatched.append("STRIPE_WEBHOOK_SECRET must be a Stripe endpoint signing secret.")
@@ -229,6 +230,11 @@ def _validate_explicit_production_runtime(app: Flask) -> None:
         if not database_uri.startswith("postgresql"):
             errors.append("Production SaaS requires PostgreSQL DATABASE_URL; SQLite is not supported for live deploys.")
 
+        if app.config.get("STRIPE_LIVE_CONFIGURATION_REQUIRED") is not True:
+            errors.append(
+                "STRIPE_LIVE_CONFIGURATION_REQUIRED must be enabled (1) when FLASK_ENV=production."
+            )
+
         for flag_name in (
             "STRIPE_FAKE_CHECKOUT_ENABLED",
             "TWILIO_BROWSER_FAKE_SENDS",
@@ -290,10 +296,9 @@ def _validate_production_operations_config(app: Flask) -> None:
         "READINESS_WORKER_MAX_AGE_SECONDS",
         "READINESS_SYSTEMCTL_TIMEOUT_SECONDS",
         "READINESS_REQUIRED_SYSTEMD_TIMERS",
-        "ALERT_WEBHOOK_URL",
-        "UPTIME_MONITOR_HEARTBEAT_URL",
+        "OPERATIONS_MONITORING_MODE",
         "BACKUP_LOCAL_DIR",
-        "BACKUP_OFFSITE_DESTINATION",
+        "BACKUP_OFFSITE_MODE",
         "BACKUP_ENCRYPTION_PASSPHRASE_FILE",
         "BACKUP_RETENTION_DAYS",
         "BACKUP_STATUS_FILE",
@@ -318,10 +323,9 @@ def _validate_production_operations_config(app: Flask) -> None:
     required_values = {
         "APP_RELEASE_ID": app.config.get("APP_RELEASE_ID"),
         "READINESS_TOKEN": app.config.get("READINESS_TOKEN"),
-        "ALERT_WEBHOOK_URL": app.config.get("ALERT_WEBHOOK_URL"),
-        "UPTIME_MONITOR_HEARTBEAT_URL": app.config.get("UPTIME_MONITOR_HEARTBEAT_URL"),
+        "OPERATIONS_MONITORING_MODE": app.config.get("OPERATIONS_MONITORING_MODE"),
         "BACKUP_LOCAL_DIR": app.config.get("BACKUP_LOCAL_DIR"),
-        "BACKUP_OFFSITE_DESTINATION": app.config.get("BACKUP_OFFSITE_DESTINATION"),
+        "BACKUP_OFFSITE_MODE": app.config.get("BACKUP_OFFSITE_MODE"),
         "BACKUP_ENCRYPTION_PASSPHRASE_FILE": app.config.get("BACKUP_ENCRYPTION_PASSPHRASE_FILE"),
         "BACKUP_STATUS_FILE": app.config.get("BACKUP_STATUS_FILE"),
         "RESTORE_DRILL_STATUS_FILE": app.config.get("RESTORE_DRILL_STATUS_FILE"),
@@ -346,6 +350,20 @@ def _validate_production_operations_config(app: Flask) -> None:
     if readiness_token and len(readiness_token) < 32:
         errors.append("READINESS_TOKEN must contain at least 32 characters.")
 
+    monitoring_mode = str(app.config.get("OPERATIONS_MONITORING_MODE") or "").strip()
+    github_repository = str(app.config.get("OPERATIONS_GITHUB_REPOSITORY") or "").strip()
+    if monitoring_mode not in {"github_actions", "webhook"}:
+        errors.append("OPERATIONS_MONITORING_MODE must be github_actions or webhook.")
+    if monitoring_mode == "github_actions" and re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+        github_repository,
+    ) is None:
+        errors.append("OPERATIONS_GITHUB_REPOSITORY must use the owner/repository format.")
+    if monitoring_mode == "webhook":
+        for name in ("ALERT_WEBHOOK_URL", "UPTIME_MONITOR_HEARTBEAT_URL"):
+            if not str(app.config.get(name) or "").strip():
+                errors.append(f"{name} must be configured when OPERATIONS_MONITORING_MODE=webhook.")
+
     for name in ("ALERT_WEBHOOK_URL", "UPTIME_MONITOR_HEARTBEAT_URL"):
         raw_value = str(app.config.get(name) or "").strip()
         if raw_value:
@@ -356,11 +374,19 @@ def _validate_production_operations_config(app: Flask) -> None:
     local_backup_dir = str(app.config.get("BACKUP_LOCAL_DIR") or "").strip()
     if local_backup_dir and not Path(local_backup_dir).is_absolute():
         errors.append("BACKUP_LOCAL_DIR must be an absolute path.")
+    backup_offsite_mode = str(app.config.get("BACKUP_OFFSITE_MODE") or "").strip()
+    if backup_offsite_mode not in {"github_actions", "mounted"}:
+        errors.append("BACKUP_OFFSITE_MODE must be github_actions or mounted.")
     offsite_destination = str(app.config.get("BACKUP_OFFSITE_DESTINATION") or "").strip()
-    if local_backup_dir and offsite_destination == local_backup_dir:
-        errors.append("BACKUP_OFFSITE_DESTINATION must not be the local backup directory.")
-    if offsite_destination and not Path(offsite_destination).is_absolute():
-        errors.append("BACKUP_OFFSITE_DESTINATION must be an absolute path to an off-host mounted filesystem.")
+    if backup_offsite_mode == "mounted":
+        if not offsite_destination:
+            errors.append("BACKUP_OFFSITE_DESTINATION is required when BACKUP_OFFSITE_MODE=mounted.")
+        if local_backup_dir and offsite_destination == local_backup_dir:
+            errors.append("BACKUP_OFFSITE_DESTINATION must not be the local backup directory.")
+        if offsite_destination and not Path(offsite_destination).is_absolute():
+            errors.append("BACKUP_OFFSITE_DESTINATION must be an absolute path to an off-host mounted filesystem.")
+    elif offsite_destination:
+        errors.append("BACKUP_OFFSITE_DESTINATION must be empty when BACKUP_OFFSITE_MODE=github_actions.")
 
     passphrase_path = str(app.config.get("BACKUP_ENCRYPTION_PASSPHRASE_FILE") or "").strip()
     if passphrase_path and not Path(passphrase_path).is_absolute():
@@ -440,10 +466,28 @@ def _validate_production_operations_config(app: Flask) -> None:
         raise RuntimeError(f"Production operations configuration is invalid:\n - {details}")
 
 
-def _request_path_with_query() -> str:
-    if request.query_string:
-        return request.full_path
-    return request.path
+def _configured_host_redirect_url(base_url: str, path: str) -> str | None:
+    parsed_base_url = urlsplit(base_url)
+    decoded_path = unquote(path)
+    if (
+        parsed_base_url.scheme not in {"http", "https"}
+        or not parsed_base_url.netloc
+        or not path.startswith("/")
+        or decoded_path.startswith("//")
+        or "\\" in decoded_path
+        or any(ord(character) < 32 or ord(character) == 127 for character in decoded_path)
+    ):
+        return None
+    normalized_query = urlencode(list(request.args.items(multi=True)), doseq=True)
+    return urlunsplit(
+        (
+            parsed_base_url.scheme,
+            parsed_base_url.netloc,
+            path,
+            normalized_query,
+            "",
+        )
+    )
 
 
 def _is_public_marketing_path(path: str) -> bool:
@@ -485,13 +529,13 @@ def _host_redirect_target(app: Flask, host: str, path: str) -> str | None:
     if not public_host or not app_host:
         return None
     if host == www_host and _is_public_marketing_path(path):
-        return public_base_url + _request_path_with_query()
+        return _configured_host_redirect_url(public_base_url, path)
     if host in {public_host, www_host}:
         if _is_public_marketing_path(path) or _is_legacy_public_callback_path(path):
             return None
-        return app_base_url + _request_path_with_query()
+        return _configured_host_redirect_url(app_base_url, path)
     if host == app_host and path != "/" and _is_public_marketing_path(path):
-        return public_base_url + _request_path_with_query()
+        return _configured_host_redirect_url(public_base_url, path)
     return None
 
 

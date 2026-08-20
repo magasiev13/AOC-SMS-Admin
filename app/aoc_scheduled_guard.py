@@ -18,8 +18,9 @@ def _validated_record_message_ids(organization_slug: str, record_path: Path) -> 
         message_ids = [int(row["scheduled_message_id"]) for row in message_rows]
         if payload["cancellation_state"] != "confirmed":
             return [], "cancellation record is not confirmed"
-        if int(payload["expected_count"]) != 2 or len(message_ids) != 2:
-            return [], "cancellation record does not contain the two expected messages"
+        expected_count = int(payload["expected_count"])
+        if expected_count < 1 or expected_count > 100 or len(message_ids) != expected_count:
+            return [], "cancellation record does not contain the expected messages"
         if str(payload["organization"]["slug"]) != organization_slug:
             return [], "cancellation record organization does not match"
         if int(payload["dispatchable_count_after_cancellation"]) != 0:
@@ -78,7 +79,7 @@ def build_dispatchable_report(organization_slug: str, record_path: Path) -> dict
         recorded_statuses = {int(row["id"]): str(row["status"]) for row in recorded_rows}
     record_confirmed = (
         record_error is None
-        and len(recorded_statuses) == 2
+        and len(recorded_statuses) == len(record_message_ids)
         and all(recorded_statuses.get(message_id) == "cancelled" for message_id in record_message_ids)
     )
     return {

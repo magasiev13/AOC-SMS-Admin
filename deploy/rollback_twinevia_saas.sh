@@ -20,6 +20,7 @@ RUNTIME_UNITS=(
 )
 
 current_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+original_previous="$(readlink -f "${PREVIOUS_LINK}" 2>/dev/null || true)"
 if [[ -z "${current_release}" ]]; then
   echo "Current release link is missing." >&2
   exit 1
@@ -55,24 +56,57 @@ atomic_link() {
   sudo mv -Tf "${temporary_link}" "${link_path}"
 }
 
-atomic_link "${current_release}" "${PREVIOUS_LINK}"
+read_env_value() {
+  local key="$1"
+  sudo awk -v key="${key}" '
+    $0 ~ ("^" key "=") { value = substr($0, length(key) + 2) }
+    END { print value }
+  ' "${ENV_FILE}"
+}
+
+restore_original_release() {
+  local exit_code=$?
+  trap - ERR
+  atomic_link "${current_release}" "${CURRENT_LINK}" || true
+  if [[ -n "${original_previous}" && -d "${original_previous}" ]]; then
+    atomic_link "${original_previous}" "${PREVIOUS_LINK}" || true
+  elif [[ -L "${PREVIOUS_LINK}" ]]; then
+    sudo rm -- "${PREVIOUS_LINK}" || true
+  fi
+  sudo systemctl restart "${RUNTIME_UNITS[@]}" || true
+  echo "Rollback target failed verification; restored original release $(basename "${current_release}")." >&2
+  exit "${exit_code}"
+}
+
 atomic_link "${target_release}" "${CURRENT_LINK}"
+trap restore_original_release ERR
 sudo systemctl restart "${RUNTIME_UNITS[@]}"
 
-set -a
-source "${ENV_FILE}"
-set +a
-health_host="$(APP_URL="${APP_BASE_URL:-}" python3 -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["APP_URL"]).hostname or "")')"
+app_base_url="$(read_env_value "APP_BASE_URL")"
+readiness_token="$(read_env_value "READINESS_TOKEN")"
+health_host="$(APP_URL="${app_base_url}" python3 -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["APP_URL"]).hostname or "")')"
+if [[ -z "${health_host}" || -z "${readiness_token}" ]]; then
+  echo "Rollback verification requires APP_BASE_URL and READINESS_TOKEN." >&2
+  false
+fi
 for attempt in $(seq 1 20); do
-  if [[ "$(curl --silent --show-error --connect-timeout 2 --max-time 5 -H "Host: ${health_host}" http://127.0.0.1:8100/health || true)" == "OK" ]]; then
+  units_ready=1
+  for runtime_unit in "${RUNTIME_UNITS[@]}"; do
+    if ! sudo systemctl is-active --quiet "${runtime_unit}"; then
+      units_ready=0
+      break
+    fi
+  done
+  health_response="$(curl --silent --show-error --connect-timeout 2 --max-time 5 -H "Host: ${health_host}" http://127.0.0.1:8100/health || true)"
+  readiness_response="$(curl --silent --show-error --connect-timeout 2 --max-time 10 -H "Host: ${health_host}" -H "X-Twinevia-Readiness-Token: ${readiness_token}" http://127.0.0.1:8100/ready || true)"
+  if [[ "${units_ready}" == "1" && "${health_response}" == "OK" && "${readiness_response}" == "READY" ]]; then
+    atomic_link "${current_release}" "${PREVIOUS_LINK}"
+    trap - ERR
     echo "Rollback completed. Active release: $(basename "${target_release}")."
     exit 0
   fi
   sleep 2
 done
 
-atomic_link "${current_release}" "${CURRENT_LINK}"
-atomic_link "${target_release}" "${PREVIOUS_LINK}"
-sudo systemctl restart "${RUNTIME_UNITS[@]}" || true
-echo "Rollback target failed health verification; restored original release $(basename "${current_release}")." >&2
-exit 1
+echo "Rollback target did not pass service, health, and readiness verification." >&2
+false

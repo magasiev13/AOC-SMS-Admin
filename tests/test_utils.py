@@ -20,6 +20,7 @@ from app.utils import (
     parse_phones_csv,
     phone_lookup_variants,
     render_message_template,
+    safe_redirect_path,
     sanitize_csv_cell,
     validate_phone,
 )
@@ -88,6 +89,26 @@ class TestIsSafeUrl(unittest.TestCase):
 
     def test_rejects_non_http_scheme(self) -> None:
         self.assertFalse(is_safe_url("javascript:alert(1)", "https://example.com/"))
+
+    def test_safe_redirect_path_reduces_same_origin_absolute_url_to_local_path(self) -> None:
+        self.assertEqual(
+            safe_redirect_path(
+                "https://example.com/account?tab=billing#payment",
+                "https://example.com/",
+            ),
+            "/account?tab=billing#payment",
+        )
+
+    def test_safe_redirect_path_rejects_downgrade_and_encoded_network_paths(self) -> None:
+        self.assertIsNone(
+            safe_redirect_path("http://example.com/account", "https://example.com/")
+        )
+        self.assertIsNone(
+            safe_redirect_path("/%5c%5cevil.example/phish", "https://example.com/")
+        )
+        self.assertIsNone(
+            safe_redirect_path("/%2f%2fevil.example/phish", "https://example.com/")
+        )
 
 
 class TestAsUtcDatetime(unittest.TestCase):

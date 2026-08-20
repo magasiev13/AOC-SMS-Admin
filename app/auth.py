@@ -15,7 +15,7 @@ from app.models import (
     slugify_organization_name,
 )
 from app.tenant import clear_current_organization_id, set_current_organization_id
-from app.utils import is_safe_url, normalize_phone, validate_phone
+from app.utils import normalize_phone, safe_redirect_path, validate_phone
 from app.services.auth_security_service import (
     check_login_limited,
     clear_failed_logins,
@@ -313,8 +313,9 @@ def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
         return redirect(url_for("main.change_password"))
 
     next_page = request.args.get("next")
-    if next_page and is_safe_url(next_page, request.host_url):
-        return redirect(next_page)
+    safe_next_page = safe_redirect_path(next_page, request.host_url)
+    if safe_next_page is not None:
+        return redirect(safe_next_page)
     return redirect(url_for(home_endpoint_for_user(user)))
 
 
@@ -371,7 +372,7 @@ def _handle_login(surface: str):
             metadata=lock_result,
         )
 
-        if user and lock_result.get("ip_account_locked_now"):
+        if user and lock_result.get("account_locked_now"):
             alert_result = send_security_alert(user, "account_lockout")
             if not alert_result.get("success"):
                 record_auth_event(

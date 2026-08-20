@@ -201,7 +201,13 @@ def main() -> None:
     args = parser.parse_args()
 
     app = create_app(run_startup_tasks=False, start_scheduler=False)
-    record_path = Path(str(app.config.get("AOC_SCHEDULED_CANCELLATION_RECORD_FILE") or ""))
+    record_path = Path(
+        str(
+            app.config.get("AOC_SCHEDULED_CANCELLATION_RECORD_FILE")
+            or os.environ.get("AOC_SCHEDULED_CANCELLATION_RECORD_FILE")
+            or ""
+        )
+    )
     if not record_path.is_absolute() or record_path == Path("/"):
         raise RuntimeError("AOC_SCHEDULED_CANCELLATION_RECORD_FILE must be a dedicated absolute file path.")
     with app.app_context():

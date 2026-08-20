@@ -1,33 +1,19 @@
+import io
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 
 
 class TestDemoSeed(unittest.TestCase):
     def setUp(self) -> None:
-        self._original_env = {
-            "DATABASE_URL": os.environ.get("DATABASE_URL"),
-            "FLASK_DEBUG": os.environ.get("FLASK_DEBUG"),
-            "SAAS_MODE": os.environ.get("SAAS_MODE"),
-            "SCHEDULER_ENABLED": os.environ.get("SCHEDULER_ENABLED"),
-            "SAAS_BASE_URL": os.environ.get("SAAS_BASE_URL"),
-            "STRIPE_SECRET_KEY": os.environ.get("STRIPE_SECRET_KEY"),
-            "STRIPE_WEBHOOK_SECRET": os.environ.get("STRIPE_WEBHOOK_SECRET"),
-            "STRIPE_PRICE_ID": os.environ.get("STRIPE_PRICE_ID"),
-            "STRIPE_MONTHLY_PRICE_ID": os.environ.get("STRIPE_MONTHLY_PRICE_ID"),
-            "STRIPE_ANNUAL_PRICE_ID": os.environ.get("STRIPE_ANNUAL_PRICE_ID"),
-            "STRIPE_ACTIVATION_PRICE_ID": os.environ.get("STRIPE_ACTIVATION_PRICE_ID"),
-            "SECRET_KEY": os.environ.get("SECRET_KEY"),
-        }
+        self._original_env = os.environ.copy()
         self._temp_dir = tempfile.TemporaryDirectory()
         self.database_url = f"sqlite:///{os.path.join(self._temp_dir.name, 'demo-seed.db')}"
 
     def tearDown(self) -> None:
-        for key, value in self._original_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+        os.environ.clear()
+        os.environ.update(self._original_env)
         self._temp_dir.cleanup()
 
     def test_demo_seed_creates_production_like_multi_org_dataset(self) -> None:
@@ -102,3 +88,38 @@ class TestDemoSeed(unittest.TestCase):
                 database_url=self.database_url,
                 live_from_number="+15550001111",
             )
+
+    def test_demo_seed_summary_does_not_print_credentials_or_invitation_tokens(self) -> None:
+        from app.demo_seed import _print_summary
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            _print_summary(
+                {
+                    "database_url": "sqlite:///demo.db",
+                    "accounts": [
+                        {
+                            "label": "Owner",
+                            "email": "owner@example.test",
+                            "password": "Never-log-this-password",
+                            "home": "/dashboard",
+                        }
+                    ],
+                    "organizations": [],
+                    "pending_invites": [
+                        {
+                            "organization": "Example",
+                            "role": "owner",
+                            "email": "invite@example.test",
+                            "accept_url": "https://example.test/invites/Never-log-this-token",
+                        }
+                    ],
+                    "live_sender_note": "",
+                }
+            )
+
+        rendered = output.getvalue()
+        self.assertIn("owner@example.test", rendered)
+        self.assertIn("invite@example.test", rendered)
+        self.assertNotIn("Never-log-this-password", rendered)
+        self.assertNotIn("Never-log-this-token", rendered)

@@ -137,7 +137,7 @@ def _worker_check(app: Flask) -> ReadinessCheck:
 
 
 def _configuration_check(app: Flask) -> ReadinessCheck:
-    required_names = (
+    required_names: list[str] = [
         "APP_RELEASE_ID",
         "PUBLIC_BASE_URL",
         "APP_BASE_URL",
@@ -148,15 +148,21 @@ def _configuration_check(app: Flask) -> ReadinessCheck:
         "TWILIO_CREDENTIAL_ENCRYPTION_KEY",
         "READINESS_TOKEN",
         "READINESS_REQUIRED_SYSTEMD_TIMERS",
-        "ALERT_WEBHOOK_URL",
-        "BACKUP_OFFSITE_DESTINATION",
+        "OPERATIONS_MONITORING_MODE",
+        "BACKUP_OFFSITE_MODE",
         "BACKUP_ENCRYPTION_PASSPHRASE_FILE",
         "BACKUP_STATUS_FILE",
         "RESTORE_DRILL_STATUS_FILE",
         "RESTORE_DRILL_DATABASE_URL",
         "RESTORE_DRILL_DATABASE_NAME",
         "AOC_SCHEDULED_CANCELLATION_RECORD_FILE",
-    )
+    ]
+    if str(app.config.get("OPERATIONS_MONITORING_MODE") or "") == "github_actions":
+        required_names.append("OPERATIONS_GITHUB_REPOSITORY")
+    else:
+        required_names.extend(("ALERT_WEBHOOK_URL", "UPTIME_MONITOR_HEARTBEAT_URL"))
+    if str(app.config.get("BACKUP_OFFSITE_MODE") or "") == "mounted":
+        required_names.append("BACKUP_OFFSITE_DESTINATION")
     missing = [name for name in required_names if not str(app.config.get(name) or "").strip()]
     if missing:
         return ReadinessCheck("required_configuration", False, "missing: " + ", ".join(missing))
@@ -224,7 +230,10 @@ def _backup_check(app: Flask) -> ReadinessCheck:
     try:
         payload = json.loads(status_path.read_text(encoding="utf-8"))
         completed_at = datetime.fromisoformat(str(payload["completed_at"]))
-        offsite_path = str(payload["offsite_path"] or "").strip()
+        offsite_reference = str(
+            payload.get("offsite_reference") or payload.get("offsite_path") or ""
+        ).strip()
+        offsite_verified = payload.get("offsite_verified", bool(payload.get("offsite_path"))) is True
         encrypted_sha256 = str(payload["encrypted_sha256"] or "").strip()
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         return ReadinessCheck("encrypted_backup", False, f"backup status is unavailable or invalid: {exc}")
@@ -238,7 +247,7 @@ def _backup_check(app: Flask) -> ReadinessCheck:
             False,
             f"latest off-host backup is {age_hours:.1f} hours old; maximum is {max_age_hours}",
         )
-    if not offsite_path or len(encrypted_sha256) != 64:
+    if not offsite_verified or not offsite_reference or len(encrypted_sha256) != 64:
         return ReadinessCheck("encrypted_backup", False, "backup status lacks off-host proof or SHA-256")
     return ReadinessCheck("encrypted_backup", True, f"latest off-host backup is {age_hours:.1f} hours old")
 
@@ -287,15 +296,16 @@ def _aoc_scheduled_cancellation_check(app: Flask) -> ReadinessCheck:
 
     if (
         cancellation_state != "confirmed"
-        or expected_count != 2
-        or len(recorded_messages) != 2
+        or expected_count < 1
+        or expected_count > 100
+        or len(recorded_messages) != expected_count
         or recorded_remaining != 0
         or recorded_slug != organization_slug
     ):
         return ReadinessCheck(
             "aoc_scheduled_cancellation",
             False,
-            "AOC cancellation record does not prove the two expected sends were captured and cancelled",
+            "AOC cancellation record does not prove the expected sends were captured and cancelled",
         )
 
     try:
@@ -331,7 +341,7 @@ def _aoc_scheduled_cancellation_check(app: Flask) -> ReadinessCheck:
     return ReadinessCheck(
         "aoc_scheduled_cancellation",
         True,
-        "two launch sends are recorded and no AOC scheduled message is dispatchable",
+        f"{expected_count} launch send(s) are recorded and no AOC scheduled message is dispatchable",
     )
 
 

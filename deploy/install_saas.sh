@@ -185,7 +185,7 @@ echo "✓ Installed sudoers rule to ${RESTART_SUDOERS_DEST}"
 
 sudo touch "${ENV_FILE}"
 sudo chown root:${APP_GROUP} "${ENV_FILE}"
-sudo chmod 660 "${ENV_FILE}"
+sudo chmod 640 "${ENV_FILE}"
 
 ensure_env_key() {
   local key="$1"
@@ -233,7 +233,7 @@ upsert_env_key() {
       }
     }
   ' "${ENV_FILE}" > "${tmp_file}"
-  sudo install -o root -g "${APP_GROUP}" -m 0660 "${tmp_file}" "${ENV_FILE}"
+  sudo install -o root -g "${APP_GROUP}" -m 0640 "${tmp_file}" "${ENV_FILE}"
   rm -f "${tmp_file}"
   echo "✓ Set ${key}"
 }
@@ -393,7 +393,11 @@ ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
 ensure_env_key "READINESS_WORKER_MAX_AGE_SECONDS" "120"
 ensure_env_key "READINESS_SYSTEMCTL_TIMEOUT_SECONDS" "5"
 upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "twinevia-saas-scheduler.timer,twinevia-saas-billing-reconcile.timer,twinevia-saas-a2p-reconcile.timer,twinevia-saas-backup.timer,twinevia-saas-readiness.timer"
+upsert_env_key "OPERATIONS_MONITORING_MODE" "github_actions"
+upsert_env_key "OPERATIONS_GITHUB_REPOSITORY" "magasiev13/AOC-SMS-Admin"
 ensure_env_key "BACKUP_LOCAL_DIR" "/var/backups/twinevia-saas"
+upsert_env_key "BACKUP_OFFSITE_MODE" "github_actions"
+upsert_env_key "BACKUP_OFFSITE_DESTINATION" ""
 ensure_env_key "BACKUP_ENCRYPTION_PASSPHRASE_FILE" "/etc/twinevia-saas/backup-passphrase"
 ensure_env_key "BACKUP_RETENTION_DAYS" "35"
 ensure_env_key "BACKUP_STATUS_FILE" "/var/lib/twinevia-saas/backup-status.json"
@@ -418,10 +422,10 @@ required_keys=(
   TWILIO_CREDENTIAL_ENCRYPTION_KEY
   SECRET_KEY
   READINESS_TOKEN
-  ALERT_WEBHOOK_URL
-  UPTIME_MONITOR_HEARTBEAT_URL
+  OPERATIONS_MONITORING_MODE
+  OPERATIONS_GITHUB_REPOSITORY
   BACKUP_LOCAL_DIR
-  BACKUP_OFFSITE_DESTINATION
+  BACKUP_OFFSITE_MODE
   BACKUP_ENCRYPTION_PASSPHRASE_FILE
   BACKUP_STATUS_FILE
   RESTORE_DRILL_STATUS_FILE
@@ -437,6 +441,17 @@ for key in "${required_keys[@]}"; do
     missing_required+=("${key}")
   fi
 done
+
+if [[ "$(current_env_value "OPERATIONS_MONITORING_MODE")" == "webhook" ]]; then
+  for key in ALERT_WEBHOOK_URL UPTIME_MONITOR_HEARTBEAT_URL; do
+    if [[ -z "$(current_env_value "${key}")" ]]; then
+      missing_required+=("${key}")
+    fi
+  done
+fi
+if [[ "$(current_env_value "BACKUP_OFFSITE_MODE")" == "mounted" && -z "$(current_env_value "BACKUP_OFFSITE_DESTINATION")" ]]; then
+  missing_required+=("BACKUP_OFFSITE_DESTINATION")
+fi
 
 if [[ ${#missing_required[@]} -gt 0 ]]; then
   echo "ERROR: Missing required SaaS env keys in ${ENV_FILE}: ${missing_required[*]}" >&2
@@ -462,6 +477,17 @@ if [[ "${a2p_enabled}" == "1" ]]; then
 fi
 
 validate_saas_runtime_env
+
+if [[ ! -L "${APP_ROOT}/current" ]]; then
+  echo "==> Creating a recoverable bootstrap release before systemd conversion"
+  SOURCE_ROOT="${REPO_ROOT}" \
+  APP_ROOT="${APP_ROOT}" \
+  APP_USER="${APP_USER}" \
+  APP_GROUP="${APP_GROUP}" \
+  TWINEVIA_ENV_FILE="${ENV_FILE}" \
+  BOOTSTRAP_RELEASE_ONLY=1 \
+  bash "${REPO_ROOT}/deploy/release_twinevia_saas.sh"
+fi
 
 sudo mkdir -p "${LOG_DIR}"
 sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"

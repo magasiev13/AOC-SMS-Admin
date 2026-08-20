@@ -5,7 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${APP_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 ENV_FILE="${TWINEVIA_ENV_FILE:-${APP_ROOT}/.env}"
 APP_GROUP="${APP_GROUP:-twinevia}"
+APP_USER="${APP_USER:-twinevia}"
 ARCHIVE_PATH=""
+HMAC_PATH=""
 TARGET_DATABASE_URL="${RESTORE_DRILL_DATABASE_URL:-}"
 PASSPHRASE_FILE=""
 CONFIRMED_DATABASE_NAME="${RESTORE_DRILL_DATABASE_NAME:-}"
@@ -17,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-  echo "Usage: $0 --archive PATH --passphrase-file PATH [--target-database-url URL --confirm-isolated-database NAME]" >&2
+  echo "Usage: $0 --archive PATH [--hmac PATH] --passphrase-file PATH [--target-database-url URL --confirm-isolated-database NAME]" >&2
   echo "RESTORE_DRILL_DATABASE_URL and RESTORE_DRILL_DATABASE_NAME may provide the target without exposing credentials in process arguments." >&2
 }
 
@@ -29,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --target-database-url)
       TARGET_DATABASE_URL="${2:-}"
+      shift 2
+      ;;
+    --hmac)
+      HMAC_PATH="${2:-}"
       shift 2
       ;;
     --passphrase-file)
@@ -51,16 +57,39 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -f "${ENV_FILE}" ]]; then
-  set -a
-  source "${ENV_FILE}"
-  set +a
-fi
+read_env_value() {
+  local key="$1"
+  awk -v key="${key}" '
+    $0 ~ ("^" key "=") { value = substr($0, length(key) + 2) }
+    END { print value }
+  ' "${ENV_FILE}"
+}
+
+load_env_value() {
+  local key="$1"
+  if declare -p "${key}" >/dev/null 2>&1; then
+    return
+  fi
+  if [[ -r "${ENV_FILE}" ]]; then
+    printf -v "${key}" '%s' "$(read_env_value "${key}")"
+  fi
+}
+
+for env_key in \
+  DATABASE_URL \
+  RESTORE_DRILL_DATABASE_URL \
+  RESTORE_DRILL_DATABASE_NAME \
+  RESTORE_DRILL_STATUS_FILE; do
+  load_env_value "${env_key}"
+done
 if [[ -z "${TARGET_DATABASE_URL}" ]]; then
   TARGET_DATABASE_URL="${RESTORE_DRILL_DATABASE_URL:-}"
 fi
 if [[ -z "${CONFIRMED_DATABASE_NAME}" ]]; then
   CONFIRMED_DATABASE_NAME="${RESTORE_DRILL_DATABASE_NAME:-}"
+fi
+if [[ -z "${HMAC_PATH}" && -n "${ARCHIVE_PATH}" ]]; then
+  HMAC_PATH="${ARCHIVE_PATH}.hmac"
 fi
 
 if [[ -z "${ARCHIVE_PATH}" || -z "${TARGET_DATABASE_URL}" || -z "${PASSPHRASE_FILE}" || -z "${CONFIRMED_DATABASE_NAME}" ]]; then
@@ -69,6 +98,10 @@ if [[ -z "${ARCHIVE_PATH}" || -z "${TARGET_DATABASE_URL}" || -z "${PASSPHRASE_FI
 fi
 if [[ ! -r "${ARCHIVE_PATH}" || ! -s "${ARCHIVE_PATH}" ]]; then
   echo "Encrypted backup archive is missing or unreadable." >&2
+  exit 1
+fi
+if [[ ! -r "${HMAC_PATH}" || ! -s "${HMAC_PATH}" ]]; then
+  echo "Backup authentication sidecar is missing or unreadable." >&2
   exit 1
 fi
 if [[ ! -r "${PASSPHRASE_FILE}" || ! -s "${PASSPHRASE_FILE}" ]]; then
@@ -92,7 +125,7 @@ from urllib.parse import urlsplit, urlunsplit
 parsed = urlsplit(os.environ["DATABASE_URL_INPUT"])
 if not parsed.scheme.startswith("postgresql"):
     raise SystemExit("database URL must use PostgreSQL")
-print(urlunsplit(("postgresql", parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
+print(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
 '
 }
 
@@ -138,17 +171,31 @@ if [[ -z "${target_database_name}" || "${target_database_name}" != "${CONFIRMED_
   echo "The confirmation name does not match the target database." >&2
   exit 1
 fi
+if [[ ! "${target_database_name}" =~ ^twinevia_restore_drill_[A-Za-z0-9_]+$ ]]; then
+  echo "Restore targets must use the dedicated twinevia_restore_drill_ database namespace." >&2
+  exit 1
+fi
 if [[ "${target_database_name}" == "postgres" || "${target_database_name}" == "template0" || "${target_database_name}" == "template1" ]]; then
   echo "Refusing to restore into a PostgreSQL administrative database." >&2
   exit 1
 fi
 
-target_identity="$(PGPASSWORD="${target_pg_password}" psql "${target_client_url}" -v ON_ERROR_STOP=1 -Atc "SELECT current_database() || '|' || COALESCE(inet_server_addr()::text, 'local') || '|' || inet_server_port()::text")"
+target_identity="$(PGPASSWORD="${target_pg_password}" psql "${target_client_url}" -v ON_ERROR_STOP=1 -Atc "SELECT oid::text || '|' || datname FROM pg_database WHERE datname = current_database()")"
 if [[ -n "${DATABASE_URL:-}" ]]; then
   production_pg_url="$(normalize_postgres_url "${DATABASE_URL}")"
   production_client_url="$(passwordless_postgres_url "${production_pg_url}")"
   production_pg_password="$(postgres_password "${production_pg_url}")"
-  production_identity="$(PGPASSWORD="${production_pg_password}" psql "${production_client_url}" -v ON_ERROR_STOP=1 -Atc "SELECT current_database() || '|' || COALESCE(inet_server_addr()::text, 'local') || '|' || inet_server_port()::text")"
+  production_database_name="$(DATABASE_URL_INPUT="${production_pg_url}" python3 -c '
+import os
+from urllib.parse import unquote, urlsplit
+
+print(unquote(urlsplit(os.environ["DATABASE_URL_INPUT"]).path.lstrip("/")))
+')"
+  if [[ "${target_database_name}" == "${production_database_name}" ]]; then
+    echo "Refusing to restore into the configured production database name." >&2
+    exit 1
+  fi
+  production_identity="$(PGPASSWORD="${production_pg_password}" psql "${production_client_url}" -v ON_ERROR_STOP=1 -Atc "SELECT oid::text || '|' || datname FROM pg_database WHERE datname = current_database()")"
   unset production_pg_password
   if [[ "${target_identity}" == "${production_identity}" ]]; then
     echo "Refusing to restore into the configured production database." >&2
@@ -159,6 +206,34 @@ fi
 decrypted_tar="${WORK_DIR}/backup.tar"
 restore_dir="${WORK_DIR}/restore"
 install -d -m 0700 "${restore_dir}"
+BACKUP_ARCHIVE_PATH="${ARCHIVE_PATH}" \
+BACKUP_HMAC_PATH="${HMAC_PATH}" \
+BACKUP_PASSPHRASE_PATH="${PASSPHRASE_FILE}" \
+python3 -c '
+import hashlib
+import hmac
+import os
+from pathlib import Path
+
+archive_path = Path(os.environ["BACKUP_ARCHIVE_PATH"])
+expected = Path(os.environ["BACKUP_HMAC_PATH"]).read_text(encoding="ascii").strip().lower()
+if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+    raise SystemExit("backup authentication sidecar is invalid")
+passphrase = Path(os.environ["BACKUP_PASSPHRASE_PATH"]).read_bytes()
+authentication_key = hashlib.pbkdf2_hmac(
+    "sha256",
+    passphrase,
+    b"twinevia-backup-authentication-v1",
+    250000,
+    dklen=32,
+)
+digest = hmac.new(authentication_key, digestmod=hashlib.sha256)
+with archive_path.open("rb") as archive_handle:
+    for block in iter(lambda: archive_handle.read(1024 * 1024), b""):
+        digest.update(block)
+if not hmac.compare_digest(digest.hexdigest(), expected):
+    raise SystemExit("backup authentication failed")
+'
 openssl enc \
   -d \
   -aes-256-cbc \
@@ -167,6 +242,19 @@ openssl enc \
   -pass "file:${PASSPHRASE_FILE}" \
   -in "${ARCHIVE_PATH}" \
   -out "${decrypted_tar}"
+DECRYPTED_ARCHIVE_PATH="${decrypted_tar}" python3 -c '
+import os
+import tarfile
+from pathlib import Path, PurePosixPath
+
+with tarfile.open(Path(os.environ["DECRYPTED_ARCHIVE_PATH"]), "r:") as archive:
+    for member in archive.getmembers():
+        member_path = PurePosixPath(member.name)
+        if member_path.is_absolute() or ".." in member_path.parts:
+            raise SystemExit(f"unsafe backup archive path: {member.name}")
+        if member.issym() or member.islnk() or member.isdev():
+            raise SystemExit(f"unsafe backup archive entry: {member.name}")
+'
 tar --no-same-owner --no-same-permissions -xf "${decrypted_tar}" -C "${restore_dir}"
 (
   cd "${restore_dir}"
@@ -182,17 +270,22 @@ PGPASSWORD="${target_pg_password}" pg_restore \
   --dbname="${target_client_url}" \
   "${restore_dir}/database/postgresql.dump"
 
-DATABASE_URL="${target_pg_url}" \
-SAAS_MODE=1 \
-FLASK_ENV=development \
-FLASK_DEBUG=1 \
-"${APP_ROOT}/venv/bin/python" -m app.saas_db --apply
+(
+  cd "${APP_ROOT}"
+  sudo -u "${APP_USER}" env \
+  DATABASE_URL="${target_pg_url}" \
+  SAAS_MODE=1 \
+  FLASK_ENV=development \
+  FLASK_DEBUG=1 \
+  "${APP_ROOT}/venv/bin/python" -m app.saas_db --apply
 
-DATABASE_URL="${target_pg_url}" \
-SAAS_MODE=1 \
-FLASK_ENV=development \
-FLASK_DEBUG=1 \
-"${APP_ROOT}/venv/bin/python" -m app.saas_db --doctor
+  sudo -u "${APP_USER}" env \
+  DATABASE_URL="${target_pg_url}" \
+  SAAS_MODE=1 \
+  FLASK_ENV=development \
+  FLASK_DEBUG=1 \
+  "${APP_ROOT}/venv/bin/python" -m app.saas_db --doctor
+)
 
 required_table_count="$(PGPASSWORD="${target_pg_password}" psql "${target_client_url}" -v ON_ERROR_STOP=1 -Atc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('organizations','organization_subscriptions','organization_messaging_profiles','message_dispatch_attempts','external_webhook_deliveries')")"
 unset target_pg_password

@@ -851,6 +851,24 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIn("workspace-summary", html)
         self.assertIn("collection-shell", html)
 
+    def test_unsubscribed_list_rejects_sql_shaped_sort_input(self) -> None:
+        self._login()
+        self.db.session.add(
+            self.UnsubscribedContact(
+                phone="+13037918171",
+                reason="Manual suppression",
+                source="manual",
+            )
+        )
+        self.db.session.commit()
+
+        response = self.client.get(
+            "/unsubscribed?sort=created_at%20DESC%3B%20DROP%20TABLE%20unsubscribed_contacts--&dir=desc"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.UnsubscribedContact.query.count(), 1)
+
     def test_survey_submissions_requires_login(self) -> None:
         survey = self._create_survey_flow(
             name="Submission Login Guard",

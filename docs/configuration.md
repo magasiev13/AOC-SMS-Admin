@@ -256,10 +256,13 @@ Compatibility note:
 |---|---|---|
 | `READINESS_TOKEN` | unset | Minimum 32-character secret for the internal `/ready` route. |
 | `READINESS_WORKER_MAX_AGE_SECONDS` | `120` | Maximum accepted RQ heartbeat age. |
-| `ALERT_WEBHOOK_URL` | unset | HTTPS operational-alert destination. |
-| `UPTIME_MONITOR_HEARTBEAT_URL` | unset | HTTPS heartbeat destination after an internal readiness pass. |
+| `OPERATIONS_MONITORING_MODE` | `webhook` | `webhook` for direct alert/heartbeat URLs or `github_actions` for the external monitor workflow and GitHub issues. |
+| `OPERATIONS_GITHUB_REPOSITORY` | unset | `owner/repository` destination for GitHub Actions monitoring, backup artifacts, and incident issues. |
+| `ALERT_WEBHOOK_URL` | unset | HTTPS operational-alert destination required in `webhook` monitoring mode. |
+| `UPTIME_MONITOR_HEARTBEAT_URL` | unset | HTTPS heartbeat destination required in `webhook` monitoring mode. |
 | `BACKUP_LOCAL_DIR` | `/var/backups/twinevia-saas` | Dedicated local encrypted-archive directory. |
-| `BACKUP_OFFSITE_DESTINATION` | unset | Separately mounted off-host copy destination. |
+| `BACKUP_OFFSITE_MODE` | `mounted` | `mounted` for a verified remote filesystem or `github_actions` for encrypted workflow artifacts. |
+| `BACKUP_OFFSITE_DESTINATION` | unset | Separately mounted off-host copy destination required only in `mounted` mode. |
 | `BACKUP_ENCRYPTION_PASSPHRASE_FILE` | unset | Root-managed passphrase file outside the repository. |
 | `BACKUP_RETENTION_DAYS` | `35` | Local and off-host archive retention. |
 | `BACKUP_STATUS_FILE` | `/var/lib/twinevia-saas/backup-status.json` | Latest verified encrypted/off-host backup proof. |
@@ -268,7 +271,7 @@ Compatibility note:
 | `RESTORE_DRILL_DATABASE_URL` | unset | Dedicated non-production PostgreSQL restore target. |
 | `RESTORE_DRILL_DATABASE_NAME` | unset | Exact destructive-confirmation name for the restore target. |
 | `RESTORE_DRILL_MAX_AGE_DAYS` | `90` | Readiness freshness limit. |
-| `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` | unset | Private record proving the two launch sends were captured and canceled. |
+| `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` | unset | Private record proving every dispatchable AOC launch send present at maintenance time was captured and canceled. |
 
 ## Production Validation Summary
 

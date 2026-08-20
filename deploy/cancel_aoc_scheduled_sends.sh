@@ -7,7 +7,7 @@ EXPECTED_COUNT=""
 CONFIRMED_SLUG=""
 
 usage() {
-  echo "Usage: $0 --expected-count 2 --confirm-organization-slug armenians-of-colorado" >&2
+  echo "Usage: $0 --expected-count COUNT --confirm-organization-slug armenians-of-colorado" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -27,8 +27,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${EXPECTED_COUNT}" != "2" || "${CONFIRMED_SLUG}" != "armenians-of-colorado" ]]; then
-  echo "This launch operation requires the exact AOC slug and expected count of 2." >&2
+if [[ ! "${EXPECTED_COUNT}" =~ ^[0-9]+$ ]] || (( EXPECTED_COUNT < 1 || EXPECTED_COUNT > 100 )); then
+  echo "This launch operation requires an expected count between 1 and 100." >&2
+  exit 1
+fi
+if [[ "${CONFIRMED_SLUG}" != "armenians-of-colorado" ]]; then
+  echo "This launch operation requires the exact AOC organization slug." >&2
   exit 1
 fi
 if [[ ! -r "${ENV_FILE}" || ! -x "${APP_ROOT}/venv/bin/python" ]]; then

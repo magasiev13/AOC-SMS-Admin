@@ -19,9 +19,12 @@ env:
   TWINEVIA_DEPLOY_BRANCH: ${{ vars.TWINEVIA_DEPLOY_BRANCH }}
   TWINEVIA_DEPLOY_TRACKING: ${{ vars.TWINEVIA_DEPLOY_TRACKING }}
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-twinevia-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -52,10 +55,20 @@ jobs:
         run: |
           ./run/test.sh -q
 
+      - name: Run browser regression suite
+        run: |
+          ./run/test_browser.sh
+
   deploy:
     runs-on: ubuntu-latest
     needs: validate
+    permissions:
+      contents: read
+      issues: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Write SSH key + known_hosts
         env:
           TWINEVIA_SSH_KEY: ${{ secrets.TWINEVIA_SSH_KEY }}
@@ -80,6 +93,72 @@ jobs:
           fi
           printf '%s\n' "${KNOWN_HOSTS_VALUE}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+      - name: Create encrypted pre-deployment backup export
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          SSH_TARGET_VALUE="${TWINEVIA_SSH_TARGET:-}"
+          if [ -z "${SSH_TARGET_VALUE}" ]; then
+            echo "missing TWINEVIA_SSH_TARGET" >&2
+            exit 1
+          fi
+
+          BACKUP_SCRIPT_REMOTE="/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh"
+          PREPARE_SCRIPT_REMOTE="/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh"
+          CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          EXPORT_DIR_REMOTE="/tmp/twinevia-backup-export-${GITHUB_RUN_ID}"
+          SSH_OPTIONS=(-p "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          SCP_OPTIONS=(-P "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+
+          scp "${SCP_OPTIONS[@]}" deploy/backup_twinevia_saas.sh "${SSH_TARGET_VALUE}:${BACKUP_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/prepare_github_backup_export.sh "${SSH_TARGET_VALUE}:${PREPARE_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/confirm_github_backup.sh "${SSH_TARGET_VALUE}:${CONFIRM_SCRIPT_REMOTE}"
+          REMOTE_USER="$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" id -un)"
+          ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" \
+            sudo -n APP_ROOT=/opt/twinevia-saas \
+              TWINEVIA_ENV_FILE=/opt/twinevia-saas/.env \
+              APP_GROUP=twinevia \
+              bash "${PREPARE_SCRIPT_REMOTE}" \
+              --backup-script "${BACKUP_SCRIPT_REMOTE}" \
+              --export-dir "${EXPORT_DIR_REMOTE}" \
+              --export-owner "${REMOTE_USER}"
+
+          mkdir -p output/production-backup
+          scp -r "${SCP_OPTIONS[@]}" "${SSH_TARGET_VALUE}:${EXPORT_DIR_REMOTE}" output/production-backup/
+
+      - name: Upload encrypted off-host backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinevia-production-backup-${{ github.run_id }}
+          path: output/production-backup/**
+          if-no-files-found: error
+          retention-days: 35
+
+      - name: Confirm off-host backup proof
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          SSH_TARGET_VALUE="${TWINEVIA_SSH_TARGET:-}"
+          CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          ssh -p "${SSH_PORT_VALUE}" \
+            -i ~/.ssh/vps_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${SSH_TARGET_VALUE}" \
+            sudo -n APP_GROUP=twinevia bash "${CONFIRM_SCRIPT_REMOTE}" \
+              --status-file /var/lib/twinevia-saas/backup-status.json \
+              --repository "${GITHUB_REPOSITORY}" \
+              --run-id "${GITHUB_RUN_ID}" \
+              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}"
 
       - name: Deploy
         env:
@@ -109,11 +188,12 @@ jobs:
             -i ~/.ssh/vps_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
-            "${SSH_TARGET_VALUE}" bash -s -- "${REQUIRED_BRANCH}" "${REQUIRED_TRACKING}" <<'REMOTE'
+            "${SSH_TARGET_VALUE}" bash -s -- "${REQUIRED_BRANCH}" "${REQUIRED_TRACKING}" "${GITHUB_SHA}" <<'REMOTE'
           set -euo pipefail
 
           REQUIRED_BRANCH="$1"
           REQUIRED_TRACKING="$2"
+          EXPECTED_SHA="$3"
           APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
           APP_USER="${APP_USER:-twinevia}"
           TWINEVIA_SAAS_DBDOCTOR_BIN="/usr/local/bin/twinevia-saas-dbdoctor"
@@ -182,6 +262,10 @@ jobs:
           TRACKING_BRANCH="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
           [ "${TRACKING_BRANCH}" = "${REQUIRED_TRACKING}" ] || fail "${APP_ROOT} tracks ${TRACKING_BRANCH:-<none>}, expected ${REQUIRED_TRACKING}."
 
+          sudo -u "${APP_USER}" git -C "${APP_ROOT}" fetch --prune origin
+          REMOTE_TRACKING_SHA="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse "${REQUIRED_TRACKING}")"
+          [ "${REMOTE_TRACKING_SHA}" = "${EXPECTED_SHA}" ] || fail "${REQUIRED_TRACKING} is ${REMOTE_TRACKING_SHA}, expected workflow commit ${EXPECTED_SHA}."
+
           if [ -x "${TWINEVIA_SAAS_DBDOCTOR_BIN}" ]; then
             ACTIVE_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN}"
           elif [ -x "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}" ]; then
@@ -222,6 +306,9 @@ jobs:
           sudo install -m 0755 "${APP_ROOT}/bin/twinevia-saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_BIN}"
           sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
 
+          echo "==> Install and verify Twinevia Nginx virtual hosts"
+          sudo bash "${APP_ROOT}/deploy/install_nginx_twinevia.sh" --confirm-dns-and-certificate-ready
+
           echo "==> Deploy latest branch"
           sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" /usr/local/bin/deploy_twinevia_saas.sh
 
@@ -232,6 +319,8 @@ jobs:
           sudo systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
           sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer
           sudo systemctl is-active --quiet twinevia-saas-a2p-reconcile.timer
+          sudo systemctl is-active --quiet twinevia-saas-backup.timer
+          sudo systemctl is-active --quiet twinevia-saas-readiness.timer
 
           echo "==> Restart helper smoke check"
           sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-twinevia-saas-services --check >/dev/null
@@ -239,6 +328,63 @@ jobs:
           echo "==> Health check"
           HEALTH_HOST="$(resolve_health_host)"
           curl -fsS --connect-timeout 2 --max-time 5 -H "Host: ${HEALTH_HOST}" http://127.0.0.1:8100/health >/dev/null
+          READINESS_TOKEN_VALUE="$(sudo awk -F= '$1 == "READINESS_TOKEN" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
+          READY_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 10 -H "Host: ${HEALTH_HOST}" -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" http://127.0.0.1:8100/ready)"
+          [ "${READY_RESPONSE}" = "READY" ] || fail "Readiness endpoint did not return READY."
+          CURRENT_RELEASE="$(readlink -f "${APP_ROOT}/current")"
+          RELEASE_SHA="$(sudo awk -F= '$1 == "APP_RELEASE_SHA" { print substr($0, index($0, "=") + 1) }' "${CURRENT_RELEASE}/.release.env")"
+          [ "${RELEASE_SHA}" = "${EXPECTED_SHA}" ] || fail "Active release ${RELEASE_SHA} does not match workflow commit ${EXPECTED_SHA}."
+
+          echo "==> External host and product identity checks"
+          EXTERNAL_HEALTH="$(curl -fsS --connect-timeout 3 --max-time 15 https://app.twinevia.com/health)"
+          [ "${EXTERNAL_HEALTH}" = "OK" ] || fail "External health endpoint did not return OK."
+          EXTERNAL_READY="$(curl -fsS --connect-timeout 3 --max-time 20 -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" https://app.twinevia.com/ready)"
+          [ "${EXTERNAL_READY}" = "READY" ] || fail "External readiness endpoint did not return READY."
+          PUBLIC_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://twinevia.com/)"
+          [[ "${PUBLIC_PAGE}" == *"Automated survey flows"* ]] || fail "Public site is missing the automated survey flow feature."
+          LOGIN_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://app.twinevia.com/login)"
+          [[ "${LOGIN_PAGE}" == *"Twinevia"* ]] || fail "App login does not contain the Twinevia identity."
+          [[ "${LOGIN_PAGE}" != *"Absolute Home Keeper"* ]] || fail "App host is serving the Absolute Home Keeper site."
 
           echo "✅ Twinevia production deploy complete and healthy"
           REMOTE
+
+      - name: Clean remote backup export
+        if: always()
+        env:
+          TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
+          TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          SSH_PORT_VALUE="${TWINEVIA_SSH_PORT:-22}"
+          SSH_TARGET_VALUE="${TWINEVIA_SSH_TARGET:-}"
+          if [ -z "${SSH_TARGET_VALUE}" ]; then
+            exit 0
+          fi
+          ssh -p "${SSH_PORT_VALUE}" \
+            -i ~/.ssh/vps_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${SSH_TARGET_VALUE}" \
+            sudo -n rm -rf -- \
+              "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
+              "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+
+      - name: Open deployment incident
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Twinevia production deployment failed"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          EXISTING_NUMBER="$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1)"
+          if [ -n "${EXISTING_NUMBER}" ]; then
+            gh issue comment "${EXISTING_NUMBER}" --body "Deployment failed again: ${RUN_URL}"
+          else
+            gh issue create --title "${TITLE}" --body "The production deployment workflow failed. Review ${RUN_URL} before retrying."
+          fi

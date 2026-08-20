@@ -15,6 +15,15 @@ const TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_URL = 'twinevia_event_sync_webhook_url'
 const TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_SECRET = 'twinevia_event_sync_webhook_secret';
 const TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP = 'twinevia_event_sync_wpforms_event_map';
 const TWINEVIA_EVENT_SYNC_CRON_HOOK = 'twinevia_event_sync_reconcile_future_events';
+const TWINEVIA_EVENT_SYNC_DELIVERY_HOOK = 'twinevia_event_sync_deliver_payload';
+const TWINEVIA_EVENT_SYNC_DELIVERY_ATTEMPTS = 3;
+const TWINEVIA_EVENT_SYNC_DELIVERY_TIMEOUT_SECONDS = 8;
+const TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE = 50;
+const TWINEVIA_EVENT_SYNC_RECONCILE_LOCK_SECONDS = 900;
+const TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK = 'twinevia_event_sync_reconcile_lock';
+const TWINEVIA_EVENT_SYNC_OPTION_EVENT_PAGE = 'twinevia_event_sync_event_page';
+const TWINEVIA_EVENT_SYNC_OPTION_BOOKING_CURSOR = 'twinevia_event_sync_booking_cursor';
+const TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CURSOR = 'twinevia_event_sync_wpforms_cursor';
 
 function twinevia_event_sync_enabled(): bool {
 	if ( defined( 'TWINEVIA_EVENT_SYNC_ENABLED' ) ) {
@@ -54,64 +63,89 @@ function twinevia_event_sync_log_error( string $message, array $context ): void 
 	error_log( 'Twinevia Event Sync error: ' . $message . ' ' . wp_json_encode( $context ) );
 }
 
+function twinevia_event_sync_schedule_delivery( array $payload, string $delivery_id, int $attempt, int $delay_seconds ): void {
+	$scheduled = wp_schedule_single_event(
+		time() + max( 1, $delay_seconds ),
+		TWINEVIA_EVENT_SYNC_DELIVERY_HOOK,
+		[ $payload, $delivery_id, $attempt ],
+		true
+	);
+	if ( is_wp_error( $scheduled ) ) {
+		throw new RuntimeException( $scheduled->get_error_message() );
+	}
+	if ( false === $scheduled ) {
+		throw new RuntimeException( 'WordPress could not schedule the Twinevia webhook delivery.' );
+	}
+}
+
 function twinevia_event_sync_send_payload( array $payload ): void {
+	if ( ! twinevia_event_sync_ready() ) {
+		return;
+	}
+	twinevia_event_sync_schedule_delivery( $payload, wp_generate_uuid4(), 1, 1 );
+}
+
+function twinevia_event_sync_deliver_payload( array $payload, string $delivery_id, int $attempt ): void {
 	if ( ! twinevia_event_sync_ready() ) {
 		return;
 	}
 
 	$body      = wp_json_encode( $payload );
 	if ( ! is_string( $body ) ) {
-		throw new RuntimeException( 'Twinevia webhook payload could not be encoded as JSON.' );
+		twinevia_event_sync_log_error( 'Twinevia webhook payload could not be encoded as JSON.', [ 'delivery_id' => $delivery_id ] );
+		return;
 	}
 	$timestamp = (string) time();
 	$signature = hash_hmac( 'sha256', $timestamp . '.' . $body, twinevia_event_sync_webhook_secret() );
-	$delivery_id = wp_generate_uuid4();
-	$last_error = null;
+	$response  = wp_remote_post(
+		twinevia_event_sync_webhook_url(),
+		[
+			'timeout' => TWINEVIA_EVENT_SYNC_DELIVERY_TIMEOUT_SECONDS,
+			'headers' => [
+				'Content-Type'           => 'application/json',
+				'X-Twinevia-Timestamp'   => $timestamp,
+				'X-Twinevia-Signature'   => 'sha256=' . $signature,
+				'X-Twinevia-Delivery-ID' => $delivery_id,
+			],
+			'body'    => $body,
+		]
+	);
 
-	for ( $attempt = 1; $attempt <= 3; $attempt++ ) {
-		$response  = wp_remote_post(
-			twinevia_event_sync_webhook_url(),
+	$error_message = '';
+	if ( is_wp_error( $response ) ) {
+		$error_message = $response->get_error_message();
+	} else {
+		$status_code = (int) wp_remote_retrieve_response_code( $response );
+		if ( 200 === $status_code ) {
+			return;
+		}
+		$error_message = 'Twinevia webhook returned HTTP ' . $status_code . ': ' . wp_remote_retrieve_body( $response );
+	}
+
+	if ( $attempt < TWINEVIA_EVENT_SYNC_DELIVERY_ATTEMPTS ) {
+		twinevia_event_sync_log_warning(
+			'Twinevia webhook attempt failed and was rescheduled.',
 			[
-				'timeout' => 15,
-				'headers' => [
-					'Content-Type'             => 'application/json',
-					'X-Twinevia-Timestamp'     => $timestamp,
-					'X-Twinevia-Signature'     => 'sha256=' . $signature,
-					'X-Twinevia-Delivery-ID'   => $delivery_id,
-				],
-				'body'    => $body,
+				'attempt'     => $attempt,
+				'delivery_id' => $delivery_id,
+				'error'       => $error_message,
 			]
 		);
-
-		if ( is_wp_error( $response ) ) {
-			$last_error = new RuntimeException( $response->get_error_message() );
-		} else {
-			$status_code = (int) wp_remote_retrieve_response_code( $response );
-			if ( 200 <= $status_code && 299 >= $status_code ) {
-				return;
-			}
-			$last_error = new RuntimeException( 'Twinevia webhook returned HTTP ' . $status_code . ': ' . wp_remote_retrieve_body( $response ) );
+		try {
+			twinevia_event_sync_schedule_delivery( $payload, $delivery_id, $attempt + 1, 60 * $attempt );
+		} catch ( Throwable $exception ) {
+			twinevia_event_sync_log_error( 'Could not reschedule Twinevia webhook delivery.', [ 'delivery_id' => $delivery_id, 'error' => $exception->getMessage() ] );
 		}
-
-		if ( 3 > $attempt ) {
-			twinevia_event_sync_log_warning(
-				'Twinevia webhook attempt failed.',
-				[
-					'attempt'     => $attempt,
-					'delivery_id' => $delivery_id,
-					'error'       => $last_error->getMessage(),
-				]
-			);
-			usleep( 250000 );
-		}
+		return;
 	}
 
-	if ( $last_error instanceof RuntimeException ) {
-		throw $last_error;
-	}
-
-	throw new RuntimeException( 'Twinevia webhook failed without a response.' );
+	twinevia_event_sync_log_error(
+		'Twinevia webhook delivery exhausted its retry limit.',
+		[ 'attempt' => $attempt, 'delivery_id' => $delivery_id, 'error' => $error_message ]
+	);
 }
+
+add_action( TWINEVIA_EVENT_SYNC_DELIVERY_HOOK, 'twinevia_event_sync_deliver_payload', 10, 3 );
 
 function twinevia_event_sync_events_table(): string {
 	global $wpdb;
@@ -395,6 +429,25 @@ function twinevia_event_sync_booking_name( object $booking, int $user_id ): stri
 	return isset( $booking->person_name ) ? trim( (string) $booking->person_name ) : '';
 }
 
+function twinevia_event_sync_affirmative_value( $value ): bool {
+	if ( true === $value || 1 === $value ) {
+		return true;
+	}
+	if ( ! is_scalar( $value ) ) {
+		return false;
+	}
+	$normalized = strtolower( trim( (string) $value ) );
+	return in_array( $normalized, [ '1', 'true', 'yes', 'on', 'agree', 'agreed', 'i agree' ], true );
+}
+
+function twinevia_event_sync_booking_sms_consent( object $booking ): bool {
+	$value = twinevia_event_sync_booking_meta_value(
+		$booking,
+		[ 'twinevia_sms_consent', 'sms_consent', 'text_message_consent' ]
+	);
+	return twinevia_event_sync_affirmative_value( $value );
+}
+
 function twinevia_event_sync_booking_payload( object $booking ): array {
 	$post_id = twinevia_event_sync_booking_event_post_id( $booking );
 	if ( 0 >= $post_id ) {
@@ -419,6 +472,7 @@ function twinevia_event_sync_booking_payload( object $booking ): array {
 			'person_id'  => 0 < $user_id ? (string) $user_id : '',
 			'name'       => twinevia_event_sync_booking_name( $booking, $user_id ),
 			'phone'      => twinevia_event_sync_booking_phone( $booking, $user_id ),
+			'sms_consent' => twinevia_event_sync_booking_sms_consent( $booking ),
 			'spaces'     => isset( $booking->booking_spaces ) ? (int) $booking->booking_spaces : 1,
 			'updated_at' => current_time( DATE_ATOM ),
 		],
@@ -466,8 +520,7 @@ function twinevia_event_sync_wpforms_event_post_id( int $form_id ): int {
 		return absint( (string) $map[ (string) $form_id ] );
 	}
 
-	$future_map = twinevia_event_sync_future_wpforms_map();
-	return isset( $future_map[ $form_id ] ) ? absint( (string) $future_map[ $form_id ] ) : 0;
+	return twinevia_event_sync_discover_wpforms_event_post_id( $form_id );
 }
 
 function twinevia_event_sync_wpforms_form_ids_from_content( string $content ): array {
@@ -478,32 +531,45 @@ function twinevia_event_sync_wpforms_form_ids_from_content( string $content ): a
 	return array_values( array_unique( array_map( 'absint', $matches[1] ) ) );
 }
 
-function twinevia_event_sync_future_event_post_ids(): array {
+function twinevia_event_sync_discover_wpforms_event_post_id( int $form_id ): int {
 	$query = new WP_Query(
 		[
-			'post_type'      => twinevia_event_sync_event_post_type(),
-			'post_status'    => 'publish',
-			'posts_per_page' => -1,
-			'fields'         => 'ids',
+			'post_type'           => twinevia_event_sync_event_post_type(),
+			'post_status'         => 'publish',
+			'posts_per_page'      => 20,
+			'no_found_rows'       => true,
+			'ignore_sticky_posts' => true,
+			's'                   => (string) $form_id,
 		]
 	);
-
-	$post_ids = [];
-	foreach ( $query->posts as $post_id ) {
+	$matches = [];
+	foreach ( $query->posts as $post ) {
+		if ( ! $post instanceof WP_Post ) {
+			continue;
+		}
+		if ( ! in_array( $form_id, twinevia_event_sync_wpforms_form_ids_from_content( (string) $post->post_content ), true ) ) {
+			continue;
+		}
 		try {
-			$event_payload = twinevia_event_sync_event_payload_from_post_id( absint( (string) $post_id ) );
+			$event_payload = twinevia_event_sync_event_payload_from_post_id( $post->ID );
 			if ( twinevia_event_sync_event_payload_is_future( $event_payload ) ) {
-				$post_ids[] = absint( (string) $post_id );
+				$matches[] = absint( (string) $post->ID );
 			}
 		} catch ( Throwable $exception ) {
-			twinevia_event_sync_log_error( 'Could not inspect future event post.', [ 'post_id' => $post_id, 'error' => $exception->getMessage() ] );
+			twinevia_event_sync_log_error( 'Could not inspect a WPForms event candidate.', [ 'form_id' => $form_id, 'post_id' => $post->ID, 'error' => $exception->getMessage() ] );
 		}
 	}
-
-	return $post_ids;
+	$matches = array_values( array_unique( $matches ) );
+	if ( 1 === count( $matches ) ) {
+		return $matches[0];
+	}
+	if ( 1 < count( $matches ) ) {
+		twinevia_event_sync_log_warning( 'WPForms auto-mapping skipped because the form appears on multiple future event pages.', [ 'form_id' => $form_id, 'post_ids' => $matches ] );
+	}
+	return 0;
 }
 
-function twinevia_event_sync_future_wpforms_map(): array {
+function twinevia_event_sync_future_wpforms_map( array $candidate_post_ids ): array {
 	$form_event_map = [];
 	$embedded_candidates = [];
 
@@ -522,7 +588,7 @@ function twinevia_event_sync_future_wpforms_map(): array {
 		}
 	}
 
-	foreach ( twinevia_event_sync_future_event_post_ids() as $post_id ) {
+	foreach ( $candidate_post_ids as $post_id ) {
 		$post = get_post( $post_id );
 		if ( ! $post instanceof WP_Post ) {
 			continue;
@@ -602,6 +668,21 @@ function twinevia_event_sync_wpforms_submission_phone( array $fields ): string {
 	return '';
 }
 
+function twinevia_event_sync_wpforms_submission_sms_consent( array $fields ): bool {
+	foreach ( $fields as $field ) {
+		if ( ! is_array( $field ) ) {
+			continue;
+		}
+		$label = strtolower( twinevia_event_sync_wpforms_field_label( $field ) );
+		$mentions_sms = false !== strpos( $label, 'sms' ) || false !== strpos( $label, 'text message' );
+		$mentions_consent = false !== strpos( $label, 'consent' ) || false !== strpos( $label, 'agree' ) || false !== strpos( $label, 'permission' );
+		if ( $mentions_sms && $mentions_consent ) {
+			return twinevia_event_sync_affirmative_value( twinevia_event_sync_wpforms_field_value( $field ) );
+		}
+	}
+	return false;
+}
+
 function twinevia_event_sync_wpforms_process_complete( array $fields, array $entry, array $form_data, int $entry_id ): void {
 	if ( ! twinevia_event_sync_ready() ) {
 		return;
@@ -634,7 +715,7 @@ function twinevia_event_sync_sync_wpforms_entry( int $entry_id, int $form_id, ar
 					'phone'       => twinevia_event_sync_wpforms_submission_phone( $fields ),
 					'spaces'      => 1,
 					'updated_at'  => current_time( DATE_ATOM ),
-					'sms_consent' => true,
+					'sms_consent' => twinevia_event_sync_wpforms_submission_sms_consent( $fields ),
 				],
 			]
 		);
@@ -654,46 +735,81 @@ function twinevia_event_sync_wpforms_entry_fields( string $fields_json ): array 
 	return array_values( array_filter( $decoded, 'is_array' ) );
 }
 
+function twinevia_event_sync_acquire_reconcile_lock(): bool {
+	$expires_at = time() + TWINEVIA_EVENT_SYNC_RECONCILE_LOCK_SECONDS;
+	if ( add_option( TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK, (string) $expires_at, '', false ) ) {
+		return true;
+	}
+	$current_expiry = absint( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK, '0' ) );
+	if ( 0 < $current_expiry && $current_expiry >= time() ) {
+		return false;
+	}
+	delete_option( TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK );
+	return add_option( TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK, (string) $expires_at, '', false );
+}
+
+function twinevia_event_sync_release_reconcile_lock(): void {
+	delete_option( TWINEVIA_EVENT_SYNC_OPTION_RECONCILE_LOCK );
+}
+
 function twinevia_event_sync_reconcile_future_events(): void {
 	if ( ! twinevia_event_sync_ready() ) {
 		return;
 	}
-
-	$query = new WP_Query(
-		[
-			'post_type'      => twinevia_event_sync_event_post_type(),
-			'post_status'    => 'publish',
-			'posts_per_page' => -1,
-			'fields'         => 'ids',
-		]
-	);
-
-	foreach ( $query->posts as $post_id ) {
-		try {
-			$event_payload = twinevia_event_sync_event_payload_from_post_id( absint( (string) $post_id ) );
-			if ( ! twinevia_event_sync_event_payload_is_future( $event_payload ) ) {
-				continue;
-			}
-			twinevia_event_sync_send_payload(
-				[
-					'action' => 'event_upsert',
-					'source' => 'wordpress_events_manager',
-					'event'  => $event_payload,
-				]
-			);
-		} catch ( Throwable $exception ) {
-			twinevia_event_sync_log_error( 'Could not reconcile event.', [ 'post_id' => $post_id, 'error' => $exception->getMessage() ] );
-		}
+	if ( ! twinevia_event_sync_acquire_reconcile_lock() ) {
+		twinevia_event_sync_log_warning( 'Skipped event reconciliation because another bounded batch is still running.', [] );
+		return;
 	}
 
-	twinevia_event_sync_reconcile_events_manager_bookings();
-	twinevia_event_sync_reconcile_wpforms_entries();
-	twinevia_event_sync_send_payload(
-		[
-			'action' => 'reconcile_complete',
-			'source' => 'wordpress_events_manager',
-		]
-	);
+	try {
+		$page = max( 1, absint( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_EVENT_PAGE, '1' ) ) );
+		$query = new WP_Query(
+			[
+				'post_type'           => twinevia_event_sync_event_post_type(),
+				'post_status'         => 'publish',
+				'posts_per_page'      => TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE,
+				'paged'               => $page,
+				'orderby'             => 'ID',
+				'order'               => 'ASC',
+				'ignore_sticky_posts' => true,
+				'fields'              => 'ids',
+			]
+		);
+		$future_post_ids = [];
+		foreach ( $query->posts as $post_id ) {
+			try {
+				$event_payload = twinevia_event_sync_event_payload_from_post_id( absint( (string) $post_id ) );
+				if ( ! twinevia_event_sync_event_payload_is_future( $event_payload ) ) {
+					continue;
+				}
+				$future_post_ids[] = absint( (string) $post_id );
+				twinevia_event_sync_send_payload(
+					[
+						'action' => 'event_upsert',
+						'source' => 'wordpress_events_manager',
+						'event'  => $event_payload,
+					]
+				);
+			} catch ( Throwable $exception ) {
+				twinevia_event_sync_log_error( 'Could not reconcile event.', [ 'post_id' => $post_id, 'error' => $exception->getMessage() ] );
+			}
+		}
+		$max_pages = max( 1, absint( (string) $query->max_num_pages ) );
+		update_option( TWINEVIA_EVENT_SYNC_OPTION_EVENT_PAGE, $page >= $max_pages ? '1' : (string) ( $page + 1 ), false );
+
+		twinevia_event_sync_reconcile_events_manager_bookings();
+		twinevia_event_sync_reconcile_wpforms_entries(
+			twinevia_event_sync_future_wpforms_map( $future_post_ids )
+		);
+		twinevia_event_sync_send_payload(
+			[
+				'action' => 'reconcile_complete',
+				'source' => 'wordpress_events_manager',
+			]
+		);
+	} finally {
+		twinevia_event_sync_release_reconcile_lock();
+	}
 }
 
 function twinevia_event_sync_reconcile_events_manager_bookings(): void {
@@ -703,13 +819,32 @@ function twinevia_event_sync_reconcile_events_manager_bookings(): void {
 		return;
 	}
 
-	$booking_ids = $wpdb->get_col(
-		'SELECT b.booking_id
+	$cursor = absint( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_BOOKING_CURSOR, '0' ) );
+	$query = 'SELECT b.booking_id
 		FROM ' . twinevia_event_sync_bookings_table() . ' b
 		INNER JOIN ' . twinevia_event_sync_events_table() . ' e ON e.event_id = b.event_id
 		WHERE b.booking_status IN (0, 1)
-		AND e.event_start_date >= CURDATE()'
+		AND e.event_start_date >= CURDATE()
+		AND b.booking_id > %d
+		ORDER BY b.booking_id ASC
+		LIMIT %d';
+	$booking_ids = $wpdb->get_col(
+		$wpdb->prepare( $query, $cursor, TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE )
 	);
+	if ( ! is_array( $booking_ids ) ) {
+		twinevia_event_sync_log_error( 'Could not load the bounded Events Manager booking batch.', [ 'cursor' => $cursor ] );
+		return;
+	}
+	if ( [] === $booking_ids && 0 < $cursor ) {
+		$cursor = 0;
+		$booking_ids = $wpdb->get_col(
+			$wpdb->prepare( $query, $cursor, TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE )
+		);
+		if ( ! is_array( $booking_ids ) ) {
+			twinevia_event_sync_log_error( 'Could not load the wrapped Events Manager booking batch.', [] );
+			return;
+		}
+	}
 
 	foreach ( $booking_ids as $booking_id ) {
 		$booking = em_get_booking( absint( (string) $booking_id ) );
@@ -717,12 +852,17 @@ function twinevia_event_sync_reconcile_events_manager_bookings(): void {
 			twinevia_event_sync_booking_upsert( $booking );
 		}
 	}
+	$last_booking_id = [] === $booking_ids ? 0 : absint( (string) end( $booking_ids ) );
+	update_option(
+		TWINEVIA_EVENT_SYNC_OPTION_BOOKING_CURSOR,
+		count( $booking_ids ) < TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE ? '0' : (string) $last_booking_id,
+		false
+	);
 }
 
-function twinevia_event_sync_reconcile_wpforms_entries(): void {
+function twinevia_event_sync_reconcile_wpforms_entries( array $form_event_map ): void {
 	global $wpdb;
 
-	$form_event_map = twinevia_event_sync_future_wpforms_map();
 	if ( [] === $form_event_map ) {
 		return;
 	}
@@ -735,16 +875,24 @@ function twinevia_event_sync_reconcile_wpforms_entries(): void {
 
 	$form_ids = array_keys( $form_event_map );
 	$placeholders = implode( ',', array_fill( 0, count( $form_ids ), '%d' ) );
-	$entries = $wpdb->get_results(
-		$wpdb->prepare(
-			'SELECT entry_id, form_id, user_id, status, fields, date_modified
+	$cursor = absint( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CURSOR, '0' ) );
+	$query = 'SELECT entry_id, form_id, user_id, status, fields, date_modified
 			FROM ' . $table_name . '
 			WHERE form_id IN (' . $placeholders . ')
-			AND (status IS NULL OR status = "" OR status IN ("completed", "publish", "published"))',
-			$form_ids
-		),
+			AND (status IS NULL OR status = "" OR status IN ("completed", "publish", "published"))
+			AND entry_id > %d
+			ORDER BY entry_id ASC
+			LIMIT %d';
+	$query_args = array_merge( $form_ids, [ $cursor, TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE ] );
+	$entries = $wpdb->get_results(
+		$wpdb->prepare( $query, $query_args ),
 		ARRAY_A
 	);
+	if ( [] === $entries && 0 < $cursor ) {
+		$cursor = 0;
+		$query_args = array_merge( $form_ids, [ $cursor, TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE ] );
+		$entries = $wpdb->get_results( $wpdb->prepare( $query, $query_args ), ARRAY_A );
+	}
 
 	if ( ! is_array( $entries ) ) {
 		return;
@@ -769,6 +917,13 @@ function twinevia_event_sync_reconcile_wpforms_entries(): void {
 			$post_id
 		);
 	}
+	$last_entry = end( $entries );
+	$last_entry_id = is_array( $last_entry ) ? absint( (string) $last_entry['entry_id'] ) : 0;
+	update_option(
+		TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CURSOR,
+		count( $entries ) < TWINEVIA_EVENT_SYNC_RECONCILE_BATCH_SIZE ? '0' : (string) $last_entry_id,
+		false
+	);
 }
 
 add_action( TWINEVIA_EVENT_SYNC_CRON_HOOK, 'twinevia_event_sync_reconcile_future_events' );

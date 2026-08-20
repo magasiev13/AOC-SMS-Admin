@@ -4,6 +4,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -40,6 +41,7 @@ from app.services.twilio_service import (
     seed_service_address_from_onboarding,
     sync_sender_assignment,
 )
+from app.utils import as_utc_datetime
 
 
 STANDARD_CUSTOMER_PROFILE_POLICY_SID = "RNdfbf3fae0e1107f8aded0e7cead80bf5"
@@ -178,6 +180,7 @@ A2P_CAMPAIGN_ASSOCIATION_CONFLICT_FRAGMENT = "already a campaign associated with
 A2P_RECOVERY_STATE_KEY = "recovery_state"
 A2P_RECONCILED_PROFILE_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
 A2P_RECONCILED_TRUST_PRODUCT_APPROVED_STATUSES = {"approved", "twilio-approved", "in_review", "pending-review"}
+A2P_PROCESSING_LEASE = timedelta(minutes=15)
 A2P_TRANSIENT_PROVIDER_ERROR_FRAGMENTS = (
     "failed to resolve",
     "temporary failure in name resolution",
@@ -2117,6 +2120,30 @@ def _event_identifier_belongs_to_other_organization(
     return False
 
 
+def _event_identifier_matches_organization(
+    data: dict[str, Any],
+    onboarding: OrganizationA2POnboarding,
+    profile: OrganizationMessagingProfile,
+) -> bool:
+    supplied_and_owned = (
+        (_clean_text(data.get("brandsid")), _clean_text(onboarding.brand_registration_sid)),
+        (_clean_text(data.get("campaignsid")), _clean_text(onboarding.campaign_sid)),
+        (_clean_text(data.get("phonenumbersid")), _clean_text(profile.phone_number_sid)),
+        (
+            _event_value(data, "messagingservicesid", "messageservicesid", "service_sid"),
+            _clean_text(profile.messaging_service_sid),
+        ),
+        (
+            _event_value(data, "accountsid", "account_sid"),
+            _clean_text(profile.twilio_subaccount_sid or profile.twilio_account_sid),
+        ),
+    )
+    return any(
+        supplied is not None and owned is not None and supplied == owned
+        for supplied, owned in supplied_and_owned
+    )
+
+
 def _find_onboarding_for_event(
     event_type: str,
     data: dict[str, Any],
@@ -2138,6 +2165,8 @@ def _find_onboarding_for_event(
     if account_sid and profile.twilio_subaccount_sid and account_sid != profile.twilio_subaccount_sid:
         return None, None
     if _event_identifier_belongs_to_other_organization(authenticated_organization_id, data):
+        return None, None
+    if not _event_identifier_matches_organization(data, onboarding, profile):
         return None, None
     return onboarding, profile
 
@@ -3811,21 +3840,42 @@ def process_a2p_onboarding(organization_id: int, actor_user_id: int | None = Non
     if not a2p_onboarding_enabled():
         raise ProviderProvisioningError("Twilio A2P onboarding automation is not enabled.")
 
-    organization = db.session.get(Organization, organization_id)
+    organization = (
+        Organization.query
+        .filter(Organization.id == organization_id)
+        .with_for_update()
+        .one_or_none()
+    )
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
     require_chargeable_provider_entitlement(organization, "a2p_processing")
     onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
-    profile = _ensure_provider_resources(organization)
 
     if onboarding.onboarding_status in {"canceled", "approved"}:
         return onboarding
+
+    onboarding_updated_at = as_utc_datetime(onboarding.updated_at)
+    processing_now = as_utc_datetime(utc_now())
+    if (
+        onboarding.onboarding_status == "processing"
+        and onboarding_updated_at is not None
+        and processing_now is not None
+        and onboarding_updated_at >= processing_now - A2P_PROCESSING_LEASE
+    ):
+        raise ProviderProvisioningError(
+            "A2P onboarding is already being processed for this organization."
+        )
 
     onboarding.onboarding_status = "processing"
     onboarding.last_error = None
     db.session.commit()
 
     try:
+        organization = db.session.get(Organization, organization_id)
+        if organization is None:
+            raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+        onboarding = organization.a2p_onboarding or ensure_a2p_onboarding(organization)
+        profile = _ensure_provider_resources(organization)
         _upsert_a2p_resources(onboarding, profile)
         db.session.commit()
         ensure_a2p_event_stream_subscription(organization, profile)

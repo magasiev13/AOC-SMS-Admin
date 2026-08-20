@@ -4,10 +4,12 @@ set -euo pipefail
 APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
 APP_USER="${APP_USER:-}"
 APP_GROUP="${APP_GROUP:-}"
-ENV_FILE="${APP_ROOT}/.env"
+ENV_TARGET_FILE="${APP_ROOT}/.env"
+ENV_FILE="${ENV_TARGET_FILE}"
 EXPECTED_GIT_BRANCH="${EXPECTED_GIT_BRANCH:-}"
 EXPECTED_GIT_TRACKING_BRANCH="${EXPECTED_GIT_TRACKING_BRANCH:-}"
 TWINEVIA_DEPLOY_REEXECED="${TWINEVIA_DEPLOY_REEXECED:-0}"
+TWINEVIA_DEPLOY_PRE_PULL_HEAD="${TWINEVIA_DEPLOY_PRE_PULL_HEAD:-}"
 TWINEVIA_SAAS_DBDOCTOR_BIN="${TWINEVIA_SAAS_DBDOCTOR_BIN:-${SAAS_DBDOCTOR_BIN:-/usr/local/bin/twinevia-saas-dbdoctor}}"
 TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN="${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN:-${SAAS_DBDOCTOR_ALIAS_BIN:-/usr/local/bin/saas-dbdoctor}}"
 RESTART_HELPER_SRC="${APP_ROOT}/deploy/restart_twinevia_saas_services.sh"
@@ -156,8 +158,8 @@ trusted_hosts_are_localhost_only() {
 ensure_env_key() {
   local key="$1"
   local value="$2"
-  if ! sudo grep -qE "^${key}=" "${ENV_FILE}"; then
-    echo "${key}=${value}" | sudo tee -a "${ENV_FILE}" >/dev/null
+  if ! grep -qE "^${key}=" "${ENV_FILE}"; then
+    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
     echo "==> Appended missing key ${key}"
   fi
 }
@@ -165,7 +167,7 @@ ensure_env_key() {
 current_env_value() {
   local key="$1"
   local line
-  line="$(sudo grep -E "^${key}=" "${ENV_FILE}" | tail -n1 || true)"
+  line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n1 || true)"
   if [[ -z "${line}" ]]; then
     echo ""
     return
@@ -189,6 +191,9 @@ validate_saas_runtime_env() {
   local app_base_url
   local stripe_secret_key
   local stripe_publishable_key
+  local operations_monitoring_mode
+  local operations_github_repository
+  local backup_offsite_mode
   local errors=()
 
   flask_env="$(current_env_value "FLASK_ENV")"
@@ -206,6 +211,9 @@ validate_saas_runtime_env() {
   app_base_url="$(current_env_value "APP_BASE_URL")"
   stripe_secret_key="$(current_env_value "STRIPE_SECRET_KEY")"
   stripe_publishable_key="$(current_env_value "STRIPE_PUBLISHABLE_KEY")"
+  operations_monitoring_mode="$(current_env_value "OPERATIONS_MONITORING_MODE")"
+  operations_github_repository="$(current_env_value "OPERATIONS_GITHUB_REPOSITORY")"
+  backup_offsite_mode="$(current_env_value "BACKUP_OFFSITE_MODE")"
 
   if [[ "${flask_env}" != "production" ]]; then
     errors+=("FLASK_ENV must be set to production for live SaaS deploys.")
@@ -253,11 +261,20 @@ validate_saas_runtime_env() {
   if [[ "$(current_env_value "MANAGED_PILOT_ENABLED")" != "1" ]]; then
     errors+=("MANAGED_PILOT_ENABLED must be 1.")
   fi
-  if [[ "${stripe_secret_key}" != sk_live_* ]]; then
-    errors+=("STRIPE_SECRET_KEY must be a live-mode key.")
+  if [[ "${stripe_secret_key}" != sk_live_* && "${stripe_secret_key}" != rk_live_* ]]; then
+    errors+=("STRIPE_SECRET_KEY must be a live-mode secret or restricted key.")
   fi
   if [[ "${stripe_publishable_key}" != pk_live_* ]]; then
     errors+=("STRIPE_PUBLISHABLE_KEY must be a live-mode key.")
+  fi
+  if [[ "${operations_monitoring_mode}" != "github_actions" ]]; then
+    errors+=("OPERATIONS_MONITORING_MODE must equal github_actions for this production deploy.")
+  fi
+  if [[ "${operations_github_repository}" != "magasiev13/AOC-SMS-Admin" ]]; then
+    errors+=("OPERATIONS_GITHUB_REPOSITORY must equal magasiev13/AOC-SMS-Admin.")
+  fi
+  if [[ "${backup_offsite_mode}" != "github_actions" ]]; then
+    errors+=("BACKUP_OFFSITE_MODE must equal github_actions for this production deploy.")
   fi
 
   local exact_values=(
@@ -313,7 +330,7 @@ upsert_env_key() {
   local tmp_file
 
   tmp_file="$(mktemp)"
-  sudo awk -v key="${key}" -v value="${value}" '
+  awk -v key="${key}" -v value="${value}" '
     BEGIN { updated = 0 }
     $0 ~ ("^" key "=") {
       if (updated == 0) {
@@ -329,7 +346,7 @@ upsert_env_key() {
       }
     }
   ' "${ENV_FILE}" > "${tmp_file}"
-  sudo install -o root -g "${APP_GROUP}" -m 0660 "${tmp_file}" "${ENV_FILE}"
+  install -m 0600 "${tmp_file}" "${ENV_FILE}"
   rm -f "${tmp_file}"
 }
 
@@ -377,6 +394,9 @@ echo "==> Deploying Twinevia SaaS"
 APP_USER="$(resolve_app_user)"
 APP_GROUP="$(resolve_app_group "${APP_USER}")"
 PRE_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/dev/null || true)"
+if [[ -z "${TWINEVIA_DEPLOY_PRE_PULL_HEAD}" ]]; then
+  TWINEVIA_DEPLOY_PRE_PULL_HEAD="${PRE_PULL_HEAD}"
+fi
 
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then
   echo "==> Missing SaaS app user ${APP_USER}." >&2
@@ -396,8 +416,40 @@ POST_PULL_HEAD="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse HEAD 2>/d
 if [[ "${TWINEVIA_DEPLOY_REEXECED}" != "1" && -n "${PRE_PULL_HEAD}" && -n "${POST_PULL_HEAD}" && "${PRE_PULL_HEAD}" != "${POST_PULL_HEAD}" ]]; then
   echo "==> Re-executing deploy script after checkout update"
   export TWINEVIA_DEPLOY_REEXECED=1
+  export TWINEVIA_DEPLOY_PRE_PULL_HEAD
   exec bash "${APP_ROOT}/deploy/deploy_twinevia_saas.sh"
 fi
+if [[ ! -L "${APP_ROOT}/current" && "${TWINEVIA_DEPLOY_PRE_PULL_HEAD}" == "${POST_PULL_HEAD}" ]]; then
+  reflog_previous_head="$(sudo -u "${APP_USER}" git -C "${APP_ROOT}" rev-parse 'HEAD@{1}' 2>/dev/null || true)"
+  if [[ "${reflog_previous_head}" =~ ^[0-9a-f]{40}$ && "${reflog_previous_head}" != "${POST_PULL_HEAD}" ]]; then
+    TWINEVIA_DEPLOY_PRE_PULL_HEAD="${reflog_previous_head}"
+  fi
+fi
+
+ENV_STAGE_FILE="$(mktemp)"
+ENV_ORIGINAL_FILE="$(mktemp)"
+env_installed=0
+release_started=0
+deployment_completed=0
+cleanup_env_stage() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ "${exit_code}" != "0" && "${env_installed}" == "1" && "${deployment_completed}" != "1" ]]; then
+    sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_ORIGINAL_FILE}" "${ENV_TARGET_FILE}" || true
+    if [[ "${release_started}" == "1" && -L "${APP_ROOT}/current" ]]; then
+      sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+    fi
+  fi
+  rm -f "${ENV_STAGE_FILE}" "${ENV_ORIGINAL_FILE}"
+  exit "${exit_code}"
+}
+trap cleanup_env_stage EXIT
+sudo cat "${ENV_TARGET_FILE}" > "${ENV_STAGE_FILE}"
+sudo cat "${ENV_TARGET_FILE}" > "${ENV_ORIGINAL_FILE}"
+chmod 0600 "${ENV_STAGE_FILE}"
+chmod 0600 "${ENV_ORIGINAL_FILE}"
+ENV_FILE="${ENV_STAGE_FILE}"
+
 ensure_env_key "FLASK_ENV" "production"
 ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"
@@ -464,7 +516,11 @@ ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 ensure_env_key "READINESS_WORKER_MAX_AGE_SECONDS" "120"
 ensure_env_key "READINESS_SYSTEMCTL_TIMEOUT_SECONDS" "5"
 upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "twinevia-saas-scheduler.timer,twinevia-saas-billing-reconcile.timer,twinevia-saas-a2p-reconcile.timer,twinevia-saas-backup.timer,twinevia-saas-readiness.timer"
+upsert_env_key "OPERATIONS_MONITORING_MODE" "github_actions"
+upsert_env_key "OPERATIONS_GITHUB_REPOSITORY" "magasiev13/AOC-SMS-Admin"
 ensure_env_key "BACKUP_LOCAL_DIR" "/var/backups/twinevia-saas"
+upsert_env_key "BACKUP_OFFSITE_MODE" "github_actions"
+upsert_env_key "BACKUP_OFFSITE_DESTINATION" ""
 ensure_env_key "BACKUP_ENCRYPTION_PASSPHRASE_FILE" "/etc/twinevia-saas/backup-passphrase"
 ensure_env_key "BACKUP_RETENTION_DAYS" "35"
 ensure_env_key "BACKUP_STATUS_FILE" "/var/lib/twinevia-saas/backup-status.json"
@@ -486,10 +542,10 @@ required_keys=(
   TWILIO_AUTH_TOKEN
   TWILIO_CREDENTIAL_ENCRYPTION_KEY
   READINESS_TOKEN
-  ALERT_WEBHOOK_URL
-  UPTIME_MONITOR_HEARTBEAT_URL
+  OPERATIONS_MONITORING_MODE
+  OPERATIONS_GITHUB_REPOSITORY
   BACKUP_LOCAL_DIR
-  BACKUP_OFFSITE_DESTINATION
+  BACKUP_OFFSITE_MODE
   BACKUP_ENCRYPTION_PASSPHRASE_FILE
   BACKUP_STATUS_FILE
   RESTORE_DRILL_STATUS_FILE
@@ -503,21 +559,50 @@ for key in "${required_keys[@]}"; do
     missing_required+=("${key}")
   fi
 done
+if [[ "$(current_env_value "OPERATIONS_MONITORING_MODE")" == "webhook" ]]; then
+  for key in ALERT_WEBHOOK_URL UPTIME_MONITOR_HEARTBEAT_URL; do
+    if [[ -z "$(current_env_value "${key}")" ]]; then
+      missing_required+=("${key}")
+    fi
+  done
+fi
+if [[ "$(current_env_value "BACKUP_OFFSITE_MODE")" == "mounted" && -z "$(current_env_value "BACKUP_OFFSITE_DESTINATION")" ]]; then
+  missing_required+=("BACKUP_OFFSITE_DESTINATION")
+fi
 if [[ ${#missing_required[@]} -gt 0 ]]; then
   echo "==> Refusing deploy: missing required production keys: ${missing_required[*]}" >&2
   exit 1
 fi
 
 validate_saas_runtime_env
+
+sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_STAGE_FILE}" "${ENV_TARGET_FILE}"
+env_installed=1
+ENV_FILE="${ENV_TARGET_FILE}"
+
+if [[ ! -L "${APP_ROOT}/current" ]]; then
+  echo "==> Creating a recoverable bootstrap release before systemd conversion"
+  SOURCE_ROOT="${APP_ROOT}" \
+  APP_ROOT="${APP_ROOT}" \
+  APP_USER="${APP_USER}" \
+  APP_GROUP="${APP_GROUP}" \
+  TWINEVIA_ENV_FILE="${ENV_FILE}" \
+  BOOTSTRAP_RELEASE_ONLY=1 \
+  BOOTSTRAP_RELEASE_SHA="${TWINEVIA_DEPLOY_PRE_PULL_HEAD}" \
+  bash "${APP_ROOT}/deploy/release_twinevia_saas.sh"
+fi
+
 sync_deploy_artifacts
 
 echo "==> Building and promoting an immutable release"
+release_started=1
 SOURCE_ROOT="${APP_ROOT}" \
 APP_ROOT="${APP_ROOT}" \
 APP_USER="${APP_USER}" \
 APP_GROUP="${APP_GROUP}" \
 TWINEVIA_ENV_FILE="${ENV_FILE}" \
 bash "${APP_ROOT}/deploy/release_twinevia_saas.sh"
+deployment_completed=1
 
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then
   echo "==> SaaS restart helper validation failed." >&2

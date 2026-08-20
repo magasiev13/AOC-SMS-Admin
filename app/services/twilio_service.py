@@ -40,6 +40,7 @@ from app.services.test_recipient_service import mask_phone_for_audit
 from app.utils import (
     analyze_personalized_sms_blast,
     analyze_sms_body,
+    as_utc_datetime,
     normalize_phone,
     normalize_sms_body,
     render_message_template,
@@ -79,6 +80,7 @@ TWILIO_MAGIC_TEST_WARNING_NUMBERS = {
     "+15550000005",
     "+15550004001",
 }
+PROVIDER_OPERATION_LEASE = timedelta(minutes=15)
 
 
 class TwilioTransientError(Exception):
@@ -1554,7 +1556,7 @@ class TwilioService:
 
     def _browser_fake_send_result(self, *, to_number: str, body: str, send_kind: str) -> dict:
         fingerprint = f"{self.account_sid}|{to_number}|{body}|{self.messaging_service_sid or self.from_number or ''}"
-        fake_sid = f"SM{hashlib.sha1(fingerprint.encode('utf-8')).hexdigest()[:32]}"
+        fake_sid = f"SM{hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:32]}"
         analysis = analyze_sms_body(body, apply_normalization=False)
         return {
             "success": True,
@@ -2098,6 +2100,55 @@ def ensure_messaging_profile(organization: Organization) -> OrganizationMessagin
     return profile
 
 
+def _lock_organization_for_provider_operation(organization_id: int) -> Organization:
+    organization = (
+        Organization.query
+        .filter(Organization.id == organization_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if organization is None:
+        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    return organization
+
+
+def _locked_messaging_profile(
+    organization: Organization,
+) -> OrganizationMessagingProfile:
+    profile = (
+        OrganizationMessagingProfile.query
+        .filter(OrganizationMessagingProfile.organization_id == organization.id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if profile is not None:
+        return profile
+    profile = OrganizationMessagingProfile(
+        organization=organization,
+        provider_mode="platform_managed",
+        status="pending",
+        provider_status="pending",
+        sender_finalization_status="awaiting_a2p_approval",
+    )
+    db.session.add(profile)
+    db.session.flush()
+    return profile
+
+
+def _provider_operation_has_active_lease(
+    profile: OrganizationMessagingProfile,
+    now: datetime,
+) -> bool:
+    started_at = as_utc_datetime(profile.provisioning_started_at)
+    normalized_now = as_utc_datetime(now)
+    return bool(
+        profile.provider_status == "provisioning"
+        and started_at is not None
+        and normalized_now is not None
+        and started_at >= normalized_now - PROVIDER_OPERATION_LEASE
+    )
+
+
 def save_customer_managed_profile(
     organization_id: int,
     *,
@@ -2111,12 +2162,15 @@ def save_customer_managed_profile(
     bind_inbound_webhook: bool = False,
     activation_complete: bool = False,
 ) -> tuple[OrganizationMessagingProfile, CustomerManagedValidationResult]:
-    organization = db.session.get(Organization, organization_id)
-    if organization is None:
-        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    organization = _lock_organization_for_provider_operation(organization_id)
     require_chargeable_provider_entitlement(organization, "customer_managed_cutover")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
+    operation_started_at = utc_now()
+    if _provider_operation_has_active_lease(profile, operation_started_at):
+        raise ProviderProvisioningError(
+            "A provider cutover is already in progress for this organization."
+        )
     normalized_account_sid = (twilio_account_sid or "").strip().upper()
     normalized_auth_token = (twilio_auth_token or "").strip()
     normalized_from_number = normalize_phone(from_number)
@@ -2132,6 +2186,7 @@ def save_customer_managed_profile(
         raise ProviderProvisioningError("Twilio Messaging Service SID must start with MG.")
 
     profile.set_provider_status("provisioning")
+    profile.provisioning_started_at = operation_started_at
     profile.last_provision_error = None
     profile.provider_last_checked_at = utc_now()
     db.session.commit()
@@ -2180,6 +2235,13 @@ def save_customer_managed_profile(
                 None,
             )
 
+        existing_cutover_state = _json_dict(profile.cutover_state_json)
+        same_cutover_resource = bool(
+            existing_cutover_state
+            and _clean_text(existing_cutover_state.get("twilio_account_sid")) == normalized_account_sid
+            and _clean_text(existing_cutover_state.get("messaging_service_sid")) == _clean_text(resolved_service_sid)
+            and _clean_text(existing_cutover_state.get("phone_number_sid")) == _clean_text(resolved_number.sid)
+        )
         cutover_state = {
             "version": 1,
             "phase": "validated",
@@ -2189,9 +2251,21 @@ def save_customer_managed_profile(
             "messaging_service_sid": resolved_service_sid,
             "phone_number_sid": resolved_number.sid,
             "from_number": resolved_number.phone_number or normalized_from_number,
-            "pre_activation_phone_sms_url": getattr(resolved_phone_resource, "sms_url", None),
-            "pre_activation_phone_sms_method": getattr(resolved_phone_resource, "sms_method", None),
-            "pre_activation_service_use_inbound_webhook_on_number": service_use_inbound_webhook_on_number,
+            "pre_activation_phone_sms_url": (
+                existing_cutover_state.get("pre_activation_phone_sms_url")
+                if same_cutover_resource
+                else getattr(resolved_phone_resource, "sms_url", None)
+            ),
+            "pre_activation_phone_sms_method": (
+                existing_cutover_state.get("pre_activation_phone_sms_method")
+                if same_cutover_resource
+                else getattr(resolved_phone_resource, "sms_method", None)
+            ),
+            "pre_activation_service_use_inbound_webhook_on_number": (
+                existing_cutover_state.get("pre_activation_service_use_inbound_webhook_on_number")
+                if same_cutover_resource
+                else service_use_inbound_webhook_on_number
+            ),
             "updated_at": utc_now().isoformat(),
         }
         profile.provider_mode = "customer_managed"
@@ -2338,7 +2412,7 @@ def rollback_customer_managed_profile(
     if organization is None:
         raise ProviderProvisioningError(f"Organization {organization_id} not found.")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
     if profile.provider_mode != "customer_managed":
         raise ProviderProvisioningError("Rollback is only available for customer-managed providers.")
     if not profile.twilio_account_sid:
@@ -2453,17 +2527,20 @@ def rollback_customer_managed_profile(
 
 
 def provision_org(organization_id: int, *, actor_user_id: int | None = None) -> OrganizationMessagingProfile:
-    organization = db.session.get(Organization, organization_id)
-    if organization is None:
-        raise ProviderProvisioningError(f"Organization {organization_id} not found.")
+    organization = _lock_organization_for_provider_operation(organization_id)
     require_chargeable_provider_entitlement(organization, "provider_provisioning")
 
-    profile = ensure_messaging_profile(organization)
+    profile = _locked_messaging_profile(organization)
     if profile.provider_mode != "platform_managed":
         raise ProviderProvisioningError("Only platform-managed providers can be provisioned automatically.")
 
+    operation_started_at = utc_now()
+    if _provider_operation_has_active_lease(profile, operation_started_at):
+        raise ProviderProvisioningError(
+            "Provider provisioning is already in progress for this organization."
+        )
     profile.set_provider_status("provisioning")
-    profile.provisioning_started_at = utc_now()
+    profile.provisioning_started_at = operation_started_at
     profile.last_provision_error = None
     _record_provider_audit(
         organization.id,

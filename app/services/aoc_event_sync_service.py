@@ -414,9 +414,9 @@ def _upsert_booking_registration(
     received_at: datetime,
 ) -> tuple[EventRegistration | None, int | None, str | None]:
     external_booking_id = _external_booking_id(payload)
-    if _optional_bool(payload, "sms_consent") is False:
+    if _optional_bool(payload, "sms_consent") is not True:
         _delete_event_registration_for_booking(event, payload, source)
-        return None, None, f"Booking {external_booking_id} did not include SMS consent."
+        return None, None, f"Booking {external_booking_id} did not include affirmative SMS consent."
 
     raw_phone = _optional_text(payload, "phone")
     if not raw_phone:

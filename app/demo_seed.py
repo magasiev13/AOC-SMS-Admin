@@ -82,10 +82,7 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print("")
     print("Accounts")
     for account in summary["accounts"]:
-        print(
-            f"- {account['label']}: {account['email']} / {account['password']} "
-            f"({account['home']})"
-        )
+        print(f"- {account['label']}: {account['email']} ({account['home']})")
     print("")
     print("Organizations")
     for organization in summary["organizations"]:
@@ -96,9 +93,8 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print("")
     print("Pending invitations")
     for invite in summary["pending_invites"]:
-        print(
-            f"- {invite['organization']} {invite['role']} -> {invite['email']}: {invite['accept_url']}"
-        )
+        print(f"- {invite['organization']} {invite['role']} -> {invite['email']}")
+    print("Open pending invitations from the platform or organization access screen.")
     if summary["live_sender_note"]:
         print("")
         print(summary["live_sender_note"])

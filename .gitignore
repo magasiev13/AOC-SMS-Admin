@@ -6,6 +6,9 @@ venv/
 venv.backup-*/
 venv.failed-*/
 venv.next-*/
+/releases/
+/current
+/previous
 
 # Python
 __pycache__/
@@ -53,6 +56,7 @@ output/playwright/report/
 output/playwright/test-results/
 output/playwright-*/
 output/signoff/
+output/production-backup/
 
 # Production release manager state (used only when the Git source checkout is /opt/twinevia-saas)
 /releases/

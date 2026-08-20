@@ -1549,6 +1549,7 @@ class ScheduledMessage(db.Model):
     automation_source = db.Column(db.String(50), nullable=True, index=True)
     automation_key = db.Column(db.String(160), nullable=True, index=True)
     automation_kind = db.Column(db.String(40), nullable=True, index=True)
+    request_idempotency_key = db.Column(db.String(64), nullable=True, index=True)
 
     event = db.relationship('Event')
     message_log = db.relationship('MessageLog')
@@ -1556,6 +1557,11 @@ class ScheduledMessage(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('organization_id', 'automation_source', 'automation_key', name='ux_scheduled_messages_org_automation_key'),
+        db.UniqueConstraint(
+            'organization_id',
+            'request_idempotency_key',
+            name='ux_scheduled_messages_org_request_key',
+        ),
     )
 
     @validates("test_recipient_selection_mode")

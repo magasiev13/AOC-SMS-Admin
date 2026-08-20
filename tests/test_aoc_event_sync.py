@@ -27,12 +27,20 @@ class TestAocEventSyncWebhook(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import CommunityMember, Event, EventRegistration, Organization, ScheduledMessage
+        from app.models import (
+            CommunityMember,
+            Event,
+            EventRegistration,
+            ExternalWebhookDelivery,
+            Organization,
+            ScheduledMessage,
+        )
 
         self.db = db
         self.CommunityMember = CommunityMember
         self.Event = Event
         self.EventRegistration = EventRegistration
+        self.ExternalWebhookDelivery = ExternalWebhookDelivery
         self.Organization = Organization
         self.ScheduledMessage = ScheduledMessage
         self.secret = "test-aoc-secret"
@@ -108,6 +116,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
             "booking_id": booking_id,
             "status": "pending",
             "active": True,
+            "sms_consent": True,
             "person_id": "991",
             "name": "Ani Petrosyan",
             "spaces": 2,
@@ -123,6 +132,21 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         secret: str | None,
         timestamp: int | None,
     ):
+        self.delivery_counter += 1
+        return self._signed_post_with_delivery(
+            payload,
+            secret,
+            timestamp,
+            f"test-delivery-{self.delivery_counter}",
+        )
+
+    def _signed_post_with_delivery(
+        self,
+        payload: dict[str, Any],
+        secret: str | None,
+        timestamp: int | None,
+        delivery_id: str,
+    ):
         body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         request_timestamp = timestamp if timestamp is not None else int(datetime.now(timezone.utc).timestamp())
         signing_secret = secret if secret is not None else self.secret
@@ -131,7 +155,6 @@ class TestAocEventSyncWebhook(unittest.TestCase):
             str(request_timestamp).encode("utf-8") + b"." + body,
             hashlib.sha256,
         ).hexdigest()
-        self.delivery_counter += 1
         return self.client.post(
             "/webhooks/aoc/events",
             data=body,
@@ -139,7 +162,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
                 "Content-Type": "application/json",
                 "X-AOC-Timestamp": str(request_timestamp),
                 "X-AOC-Signature": f"sha256={signature}",
-                "X-AOC-Delivery-ID": f"test-delivery-{self.delivery_counter}",
+                "X-AOC-Delivery-ID": delivery_id,
             },
         )
 
@@ -230,6 +253,72 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(self.Event.query.count(), 1)
         self.assertEqual(self.Event.query.one().title, "Vardavar Festival 2026")
         self.assertEqual(self.ScheduledMessage.query.count(), 4)
+
+    def test_delivery_replay_returns_stored_result_without_reapplying_payload(self) -> None:
+        payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
+        first_response = self._signed_post_with_delivery(
+            payload,
+            None,
+            None,
+            "fixed-replay-delivery",
+        )
+        second_response = self._signed_post_with_delivery(
+            payload,
+            None,
+            None,
+            "fixed-replay-delivery",
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.get_json(), first_response.get_json())
+        self.assertEqual(self.Event.query.count(), 1)
+        self.assertEqual(self.ScheduledMessage.query.count(), 4)
+        self.assertEqual(self.ExternalWebhookDelivery.query.count(), 1)
+
+    def test_stale_event_revision_cannot_overwrite_newer_state(self) -> None:
+        newer_event = self._event_payload()
+        newer_event["title"] = "Newest Vardavar title"
+        newer_event["modified_at"] = "2026-06-23T12:01:00-06:00"
+        newer_response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": newer_event},
+            secret=None,
+            timestamp=None,
+        )
+
+        stale_event = self._event_payload()
+        stale_event["title"] = "Stale Vardavar title"
+        stale_response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": stale_event},
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(newer_response.status_code, 200)
+        self.assertEqual(stale_response.status_code, 200)
+        self.assertTrue(stale_response.get_json()["ignored"])
+        self.assertEqual(stale_response.get_json()["reason"], "stale_source_revision")
+        self.assertEqual(self.Event.query.one().title, "Newest Vardavar title")
+        self.assertEqual(self.ScheduledMessage.query.count(), 4)
+
+    def test_event_mutation_requires_timezone_aware_source_revision(self) -> None:
+        event = self._event_payload()
+        event.pop("modified_at")
+        missing_response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": event},
+            secret=None,
+            timestamp=None,
+        )
+        event["modified_at"] = "2026-06-23T12:00:00"
+        naive_response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": event},
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(missing_response.status_code, 400)
+        self.assertEqual(naive_response.status_code, 400)
+        self.assertEqual(self.Event.query.count(), 0)
 
     def test_booking_upsert_creates_registration_and_community_member(self) -> None:
         booking = self._booking_payload("22", "+1 (720) 555-0123")
@@ -350,7 +439,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         )
 
         self.assertEqual(no_consent_response.status_code, 200)
-        self.assertIn("did not include SMS consent", no_consent_response.get_json()["warnings"][0])
+        self.assertIn("did not include affirmative SMS consent", no_consent_response.get_json()["warnings"][0])
         self.assertEqual(self.EventRegistration.query.count(), 0)
         self.assertEqual(self.CommunityMember.query.count(), 0)
 

@@ -194,8 +194,12 @@ class TestStripeWebhookHardening(unittest.TestCase):
             },
         }
 
-    def test_process_stripe_webhook_event_is_idempotent(self) -> None:
+    @patch("app.services.billing_service._stripe_module")
+    def test_process_stripe_webhook_event_is_idempotent(self, mock_stripe_module) -> None:
         event = self._subscription_event(event_id="evt_test_duplicate")
+        mock_stripe = MagicMock()
+        mock_stripe.Subscription.retrieve.return_value = event["data"]["object"]
+        mock_stripe_module.return_value = mock_stripe
 
         self.process_stripe_webhook_event(event)
         self.process_stripe_webhook_event(event)
@@ -208,14 +212,19 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.status, "trialing")
         self.assertEqual(self.subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
+        mock_stripe.Subscription.retrieve.assert_called_once_with("sub_test_123")
 
-    def test_paid_stripe_event_fails_for_complimentary_organization(self) -> None:
+    @patch("app.services.billing_service._stripe_module")
+    def test_paid_stripe_event_fails_for_complimentary_organization(self, mock_stripe_module) -> None:
         self.subscription.status = "complimentary"
         self.db.session.commit()
         event = self._subscription_event(
             event_id="evt_test_complimentary_conflict",
             status="active",
         )
+        mock_stripe = MagicMock()
+        mock_stripe.Subscription.retrieve.return_value = event["data"]["object"]
+        mock_stripe_module.return_value = mock_stripe
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -570,6 +579,17 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
         mock_stripe = MagicMock()
         mock_stripe.Invoice.create.return_value = SimpleNamespace(id="in_overage_123")
+        mock_stripe.Invoice.retrieve.return_value = {
+            "id": "in_overage_123",
+            "status": "draft",
+            "metadata": {
+                "organization_id": str(self.organization.id),
+                "period_start": period_start.date().isoformat(),
+                "period_end": period_end.date().isoformat(),
+                "overage_units": "5",
+                "settlement_version": "1",
+            },
+        }
         mock_stripe.InvoiceItem.create.return_value = SimpleNamespace(id="ii_test_123")
         mock_stripe.Invoice.finalize_invoice.return_value = SimpleNamespace(
             id="in_overage_123",
@@ -582,13 +602,13 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
         def flaky_commit():
             state["calls"] += 1
-            if state["calls"] == 1:
+            if state["calls"] == 3:
                 raise RuntimeError("db write failed")
             return real_commit()
 
         with patch("app.services.billing_service.db.session.commit", side_effect=flaky_commit):
-            with self.assertRaises(RuntimeError):
-                _post_closed_usage_invoice_items()
+            first_summary = _post_closed_usage_invoice_items()
+            self.assertEqual(first_summary["periods_failed"], 1)
             self.db.session.rollback()
             self.db.session.expire_all()
             second_summary = _post_closed_usage_invoice_items()

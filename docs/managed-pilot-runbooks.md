@@ -10,7 +10,7 @@ These runbooks are the production operating contract for the first 3–5 managed
 - `/health` returns the exact plain-text body `OK`.
 - Token-protected `/ready` returns `READY`.
 - PostgreSQL, Redis, the RQ worker, scheduler, billing reconciliation, platform restart queue, A2P reconciliation, backup, and readiness units are active.
-- The configured AOC cancellation record proves the two launch sends were captured and canceled.
+- The configured AOC cancellation record proves every dispatchable launch send present at maintenance time was captured and canceled.
 - A recent encrypted off-host backup and isolated restore drill are recorded.
 
 ## AOC Scheduled-Send Freeze
@@ -100,7 +100,7 @@ The command validates the target schema, atomically switches `current`, restarts
 
 ## Backup and Restore Drill
 
-The passphrase file must be root-readable, stored outside the repository, and escrowed separately. `BACKUP_OFFSITE_DESTINATION` must be a separately mounted filesystem; the backup command refuses the root filesystem or the local backup device.
+The passphrase file must be root-readable, stored outside the repository, and escrowed separately. Production uses the scheduled GitHub Actions backup workflow: it creates the encrypted archive on the host, uploads only the encrypted archive and HMAC sidecar as a retained off-host artifact, and records the workflow run as proof. Mounted mode remains available only for supported remote filesystems; local disks are rejected.
 
 Manual backup:
 
@@ -178,7 +178,7 @@ sudo /opt/twinevia-saas/current/deploy/install_nginx_twinevia.sh \
 
 The installer validates all SANs, tests Nginx, reloads atomically, and restores the prior configuration on failure. Existing `www` webhook, invitation, compliance, billing, and setup callback paths continue to reverse proxy to Flask.
 
-Configure an external HTTPS monitor against `https://app.twinevia.com/health`. The internal readiness timer checks the application, PostgreSQL, migrations, Redis, queue round-trip, RQ heartbeat, backup proof, restore proof, AOC freeze, and required systemd units; it sends alerts and a monitor heartbeat.
+The scheduled GitHub Actions monitor checks `https://app.twinevia.com/health`, the authenticated readiness endpoint, public product identity, and security headers from outside the host. It opens or updates a repository incident on failure and closes it after recovery. The internal readiness timer independently checks PostgreSQL, migrations, Redis, queue round-trip, RQ heartbeat, backup proof, restore proof, the AOC send freeze, and required systemd units.
 
 ## Launch Approval Package
 
