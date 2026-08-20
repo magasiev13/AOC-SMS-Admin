@@ -2,6 +2,7 @@ import importlib
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -139,6 +140,24 @@ class TestBillingSendReadiness(unittest.TestCase):
 
         self.assertTrue(self.organization_can_send(organization))
         self.assertFalse(self.organization_can_transmit_messages(organization))
+
+    def test_current_offer_requires_verified_setup_payment(self) -> None:
+        organization = self._create_organization()
+        organization.billing_offer_version = "pilot-offer-v1:standard"
+        organization.subscription.offer_version = "pilot-offer-v1:standard"
+        self.db.session.commit()
+
+        self.assertFalse(self.organization_can_send(organization))
+        self.assertFalse(self.organization_can_transmit_messages(organization))
+
+        organization.subscription.activation_fee_paid_at = datetime.now(timezone.utc)
+        organization.subscription.activation_price_id = "price_activation"
+        organization.subscription.activation_payment_intent_id = "pi_setup_verified"
+        organization.subscription.activation_invoice_id = "in_setup_verified"
+        self.db.session.commit()
+
+        self.assertTrue(self.organization_can_send(organization))
+        self.assertTrue(self.organization_can_transmit_messages(organization))
 
     def test_missing_organization_blocks_sending(self) -> None:
         self.assertFalse(self.organization_can_transmit_messages(None))
@@ -426,12 +445,17 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
             )
 
     @patch("app.services.billing_service._stripe_module")
-    def test_checkout_omits_activation_for_resubscribing_stripe_customer(self, mock_stripe_module) -> None:
-        organization, _subscription = self._create_subscription(
+    def test_checkout_omits_activation_only_after_verified_setup_payment(self, mock_stripe_module) -> None:
+        organization, subscription = self._create_subscription(
             status="canceled",
             customer_id="cus_test_123",
             subscription_id="sub_old_123",
         )
+        subscription.activation_fee_paid_at = datetime.now(timezone.utc)
+        subscription.activation_price_id = "price_activation"
+        subscription.activation_payment_intent_id = "pi_test_setup"
+        subscription.activation_invoice_id = "in_test_setup"
+        self.db.session.commit()
         mock_stripe = MagicMock()
         mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
             id="cs_test_resubscribe",

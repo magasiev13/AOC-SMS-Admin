@@ -709,7 +709,7 @@ class TestInboxRoutes(unittest.TestCase):
         self.db.session.commit()
 
         with patch("app.routes.claim_outbound_idempotency") as mock_claim, patch(
-            "app.routes.send_thread_reply"
+            "app.routes.send_thread_reply_with_key"
         ) as mock_send_thread_reply:
             response = self.client.post(
                 f"/inbox/{thread.id}/reply",
@@ -750,7 +750,7 @@ class TestInboxRoutes(unittest.TestCase):
 
         fake_redis = FakeRedis()
         with patch(
-            "app.routes.send_thread_reply",
+            "app.routes.send_thread_reply_with_key",
             return_value={"success": True, "status": "sent", "sid": "SMreply-1"},
         ) as mock_send_thread_reply, patch(
             "app.services.outbound_idempotency_service.get_redis_connection",
@@ -769,7 +769,9 @@ class TestInboxRoutes(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        mock_send_thread_reply.assert_called_once_with(thread.id, "Hello there", actor="admin")
+        mock_send_thread_reply.assert_called_once()
+        self.assertEqual(mock_send_thread_reply.call_args.args[0:3], (thread.id, "Hello there", "admin"))
+        self.assertTrue(str(mock_send_thread_reply.call_args.args[3]).startswith("manual-reply:"))
         self.assertIn(b"Reply sent.", first_response.data)
         self.assertIn(
             b"An identical reply was already submitted. The duplicate request was ignored.",
@@ -783,7 +785,7 @@ class TestInboxRoutes(unittest.TestCase):
 
         fake_redis = FakeRedis()
         with patch(
-            "app.routes.send_thread_reply",
+            "app.routes.send_thread_reply_with_key",
             return_value={"success": True, "status": "sent", "sid": "SMreply-2"},
         ) as mock_send_thread_reply, patch(
             "app.services.outbound_idempotency_service.get_redis_connection",
@@ -802,7 +804,9 @@ class TestInboxRoutes(unittest.TestCase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        mock_send_thread_reply.assert_called_once_with(thread.id, "“Hello” — team…", actor="admin")
+        mock_send_thread_reply.assert_called_once()
+        self.assertEqual(mock_send_thread_reply.call_args.args[0:3], (thread.id, "“Hello” — team…", "admin"))
+        self.assertTrue(str(mock_send_thread_reply.call_args.args[3]).startswith("manual-reply:"))
         self.assertIn(b"Reply sent.", first_response.data)
         self.assertIn(
             b"An identical reply was already submitted. The duplicate request was ignored.",

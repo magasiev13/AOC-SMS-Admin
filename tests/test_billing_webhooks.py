@@ -37,6 +37,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             OrganizationMembership,
             OrganizationSubscription,
             OrganizationUsageBillingPeriod,
+            StripeCheckoutSession,
             StripeWebhookEvent,
             utc_now,
         )
@@ -51,6 +52,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.OrganizationMembership = OrganizationMembership
         self.OrganizationSubscription = OrganizationSubscription
         self.OrganizationUsageBillingPeriod = OrganizationUsageBillingPeriod
+        self.StripeCheckoutSession = StripeCheckoutSession
         self.StripeWebhookEvent = StripeWebhookEvent
         self.utc_now = utc_now
         self.process_stripe_webhook_event = process_stripe_webhook_event
@@ -102,6 +104,67 @@ class TestStripeWebhookHardening(unittest.TestCase):
         )
         self.db.session.commit()
 
+    def _issue_checkout_session(self, session_id: str) -> str:
+        offer_version = f"{self.app.config['BILLING_OFFER_VERSION']}:standard"
+        self.organization.billing_offer_version = offer_version
+        self.subscription.offer_version = offer_version
+        self.db.session.add(
+            self.StripeCheckoutSession(
+                organization_id=self.organization.id,
+                stripe_checkout_session_id=session_id,
+                billing_plan_code="monthly",
+                recurring_price_id="price_test_123",
+                activation_price_id="price_activation_123",
+                offer_version=offer_version,
+                status="open",
+            )
+        )
+        self.db.session.commit()
+        return offer_version
+
+    def _paid_checkout_session(self, session_id: str, offer_version: str) -> dict:
+        return {
+            "id": session_id,
+            "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
+            "status": "complete",
+            "payment_status": "paid",
+            "customer_email": "owner@acme.test",
+            "customer": "cus_test_123",
+            "subscription": "sub_test_123",
+            "invoice": "in_test_setup",
+            "client_reference_id": str(self.organization.id),
+            "metadata": {
+                "organization_id": str(self.organization.id),
+                "billing_offer_version": offer_version,
+            },
+        }
+
+    def _configure_paid_checkout_mocks(self, mock_stripe: MagicMock, session: dict) -> None:
+        mock_stripe.checkout.Session.retrieve.return_value = session
+        mock_stripe.checkout.Session.list_line_items.return_value = SimpleNamespace(
+            data=[
+                {"price": {"id": "price_activation_123"}, "quantity": 1},
+                {"price": {"id": "price_test_123"}, "quantity": 1},
+            ]
+        )
+        mock_stripe.Invoice.retrieve.return_value = {
+            "id": "in_test_setup",
+            "paid": True,
+            "status": "paid",
+            "amount_paid": 20899,
+            "payment_intent": {
+                "id": "pi_test_setup",
+                "status": "succeeded",
+                "amount_received": 20899,
+            },
+            "lines": {
+                "data": [
+                    {"price": {"id": "price_activation_123"}, "quantity": 1},
+                    {"price": {"id": "price_test_123"}, "quantity": 1},
+                ]
+            },
+        }
+
     def tearDown(self) -> None:
         self.db.session.remove()
         self.db.drop_all()
@@ -145,6 +208,30 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.status, "trialing")
         self.assertEqual(self.subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
+
+    def test_paid_stripe_event_fails_for_complimentary_organization(self) -> None:
+        self.subscription.status = "complimentary"
+        self.db.session.commit()
+        event = self._subscription_event(
+            event_id="evt_test_complimentary_conflict",
+            status="active",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Stripe reported chargeable billing for complimentary organization",
+        ):
+            self.process_stripe_webhook_event(event)
+
+        record = self.StripeWebhookEvent.query.filter_by(
+            stripe_event_id="evt_test_complimentary_conflict"
+        ).one()
+        self.assertEqual(record.status, "failed")
+        self.assertIn("customer_id=cus_test_123", record.last_error)
+        self.assertIn("subscription_id=sub_test_123", record.last_error)
+        self.assertEqual(self.subscription.status, "complimentary")
+        self.assertIsNone(self.subscription.stripe_customer_id)
+        self.assertIsNone(self.subscription.stripe_subscription_id)
 
     @patch("app.services.billing_service._stripe_module")
     def test_invoice_webhook_uses_nested_subscription_details(self, mock_stripe_module) -> None:
@@ -349,21 +436,11 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_reconcile_billing_subscriptions_repairs_incomplete_subscription(self, mock_stripe_module) -> None:
-        from datetime import timedelta
-
         mock_stripe = MagicMock()
-        mock_stripe.checkout.Session.list.return_value.data = [
-            {
-                "id": "cs_test_123",
-                "created": int((self.subscription.created_at + timedelta(minutes=1)).timestamp()),
-                "status": "complete",
-                "customer_email": "owner@acme.test",
-                "customer": "cus_test_123",
-                "subscription": "sub_test_123",
-                "client_reference_id": str(self.organization.id),
-                "metadata": {"organization_id": str(self.organization.id)},
-            }
-        ]
+        offer_version = self._issue_checkout_session("cs_test_123")
+        checkout_session = self._paid_checkout_session("cs_test_123", offer_version)
+        mock_stripe.checkout.Session.list.return_value.data = [checkout_session]
+        self._configure_paid_checkout_mocks(mock_stripe, checkout_session)
         mock_stripe.Subscription.retrieve.return_value = {
             "id": "sub_test_123",
             "customer": "cus_test_123",
@@ -384,9 +461,9 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_paginates_checkout_sessions_until_match(self, mock_stripe_module) -> None:
-        from datetime import timedelta
-
         from app.services.billing_service import refresh_subscription_from_stripe
+
+        offer_version = self._issue_checkout_session("cs_target")
 
         first_page = SimpleNamespace(
             data=[
@@ -406,14 +483,8 @@ class TestStripeWebhookHardening(unittest.TestCase):
         second_page = SimpleNamespace(
             data=[
                 {
-                    "id": "cs_target",
+                    **self._paid_checkout_session("cs_target", offer_version),
                     "created": int((self.subscription.created_at + timedelta(minutes=2)).timestamp()),
-                    "status": "complete",
-                    "customer_email": "owner@acme.test",
-                    "customer": "cus_test_123",
-                    "subscription": "sub_test_123",
-                    "client_reference_id": str(self.organization.id),
-                    "metadata": {"organization_id": str(self.organization.id)},
                 }
             ],
             has_more=False,
@@ -421,6 +492,10 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
         mock_stripe = MagicMock()
         mock_stripe.checkout.Session.list.side_effect = [first_page, second_page]
+        self._configure_paid_checkout_mocks(
+            mock_stripe,
+            self._paid_checkout_session("cs_target", offer_version),
+        )
         mock_stripe.Subscription.retrieve.return_value = {
             "id": "sub_test_123",
             "customer": "cus_test_123",
@@ -494,7 +569,12 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.db.session.commit()
 
         mock_stripe = MagicMock()
+        mock_stripe.Invoice.create.return_value = SimpleNamespace(id="in_overage_123")
         mock_stripe.InvoiceItem.create.return_value = SimpleNamespace(id="ii_test_123")
+        mock_stripe.Invoice.finalize_invoice.return_value = SimpleNamespace(
+            id="in_overage_123",
+            status="open",
+        )
         mock_stripe_module.return_value = mock_stripe
 
         real_commit = self.db.session.commit
@@ -518,11 +598,16 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(second_summary["periods_posted"], 1)
         self.assertEqual(period.status, "posted")
         self.assertEqual(period.stripe_invoice_item_id, "ii_test_123")
+        self.assertEqual(period.stripe_invoice_id, "in_overage_123")
+        self.assertEqual(period.invoiced_units, 5)
         self.assertEqual(mock_stripe.InvoiceItem.create.call_count, 2)
         first_call = mock_stripe.InvoiceItem.create.call_args_list[0].kwargs
         second_call = mock_stripe.InvoiceItem.create.call_args_list[1].kwargs
         self.assertEqual(first_call["idempotency_key"], second_call["idempotency_key"])
         self.assertIn(f"sms-overage:{self.organization.id}:", first_call["idempotency_key"])
+        self.assertEqual(first_call["invoice"], "in_overage_123")
+        self.assertEqual(first_call["amount"], 15)
+        mock_stripe.Invoice.finalize_invoice.assert_called()
 
 
 class TestSaasBillingConfigValidation(unittest.TestCase):

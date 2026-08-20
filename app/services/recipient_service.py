@@ -110,13 +110,17 @@ def dedupe_recipients_by_phone(recipients: list[dict]) -> tuple[list[dict], list
 def load_recipient_snapshot(
     snapshot_json: str | None,
     *,
-    missing_message: str = "This scheduled message predates recipient snapshots. Recreate it to continue.",
-    invalid_message: str = "This scheduled message has an invalid recipient snapshot. Recreate it to continue.",
-    unusable_message: str = "This scheduled message does not have a usable recipient snapshot. Recreate it to continue.",
+    missing_message: str,
+    invalid_message: str,
+    unusable_message: str,
+    max_rows: int,
+    max_bytes: int,
 ) -> list[dict[str, str]]:
     normalized = (snapshot_json or "").strip()
     if not normalized:
         raise ValueError(missing_message)
+    if len(normalized.encode("utf-8")) > max_bytes:
+        raise ValueError(f"{invalid_message} Snapshot exceeds {max_bytes} bytes.")
 
     try:
         payload = json.loads(normalized)
@@ -125,6 +129,8 @@ def load_recipient_snapshot(
 
     if not isinstance(payload, list) or not payload:
         raise ValueError(unusable_message)
+    if len(payload) > max_rows:
+        raise ValueError(f"{invalid_message} Snapshot exceeds {max_rows} recipients.")
 
     normalized_rows: list[dict[str, str]] = []
     seen_phones: set[str] = set()

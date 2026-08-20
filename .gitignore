@@ -1,5 +1,6 @@
 # Environment
 .env
+.env.bak-*
 venv/
 .venv/
 venv.backup-*/
@@ -39,14 +40,24 @@ instance/
 .vscode/
 *.swp
 *.swo
+.agents/
+.codex-backups/
 .codex/
+.impeccable/*
+!.impeccable/design.json
 .playwright/
 .playwright-cli/
 node_modules/
 playwright-report/
 output/playwright/report/
 output/playwright/test-results/
+output/playwright-*/
 output/signoff/
+
+# Production release manager state (used only when the Git source checkout is /opt/twinevia-saas)
+/releases/
+/current
+/previous
 
 # Logs
 *.log

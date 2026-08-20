@@ -72,6 +72,39 @@ class Config:
     TRUST_PROXY = _env_bool('TRUST_PROXY', '0')
     SAAS_MODE = _env_bool('SAAS_MODE', '0')
     SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
+    PUBLIC_BASE_URL = (os.environ.get('PUBLIC_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
+    APP_BASE_URL = (os.environ.get('APP_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
+    APP_RELEASE_ID = os.environ.get('APP_RELEASE_ID', '').strip()
+    MANAGED_PILOT_ENABLED = _env_bool('MANAGED_PILOT_ENABLED', '1')
+    PILOT_APPLICATION_RATE_LIMIT_COUNT = _env_int('PILOT_APPLICATION_RATE_LIMIT_COUNT', '5')
+    PILOT_APPLICATION_RATE_LIMIT_WINDOW_SECONDS = _env_int(
+        'PILOT_APPLICATION_RATE_LIMIT_WINDOW_SECONDS',
+        '3600',
+    )
+    CUSTOMER_POLICY_VERSION = (
+        os.environ.get('CUSTOMER_POLICY_VERSION', '2026-08-18-managed-pilot-v1').strip()
+        or '2026-08-18-managed-pilot-v1'
+    )
+    TERMS_POLICY_VERSION = (
+        os.environ.get('TERMS_POLICY_VERSION', CUSTOMER_POLICY_VERSION).strip()
+        or CUSTOMER_POLICY_VERSION
+    )
+    PRIVACY_POLICY_VERSION = (
+        os.environ.get('PRIVACY_POLICY_VERSION', CUSTOMER_POLICY_VERSION).strip()
+        or CUSTOMER_POLICY_VERSION
+    )
+    ACCEPTABLE_USE_POLICY_VERSION = (
+        os.environ.get('ACCEPTABLE_USE_POLICY_VERSION', CUSTOMER_POLICY_VERSION).strip()
+        or CUSTOMER_POLICY_VERSION
+    )
+    SMS_POLICY_VERSION = (
+        os.environ.get('SMS_POLICY_VERSION', CUSTOMER_POLICY_VERSION).strip()
+        or CUSTOMER_POLICY_VERSION
+    )
+    BILLING_POLICY_VERSION = (
+        os.environ.get('BILLING_POLICY_VERSION', CUSTOMER_POLICY_VERSION).strip()
+        or CUSTOMER_POLICY_VERSION
+    )
     PLATFORM_SERVICE_RESTART_ENABLED = _env_bool('PLATFORM_SERVICE_RESTART_ENABLED', '0')
     PLATFORM_SERVICE_RESTART_SCRIPT = os.environ.get(
         'PLATFORM_SERVICE_RESTART_SCRIPT',
@@ -147,6 +180,26 @@ class Config:
     # Leaving this empty in production can allow unsafe Host header usage.
     TRUSTED_HOSTS = _env_csv('TRUSTED_HOSTS', '')
 
+    # Request and shared-capacity limits. These are intentionally conservative for
+    # the managed pilot and can be raised only through explicit configuration.
+    MAX_CONTENT_LENGTH = _env_int('MAX_CONTENT_LENGTH', str(2 * 1024 * 1024))
+    MAX_FORM_MEMORY_SIZE = _env_int('MAX_FORM_MEMORY_SIZE', str(256 * 1024))
+    MAX_FORM_PARTS = _env_int('MAX_FORM_PARTS', '100')
+    WEBHOOK_MAX_BYTES = _env_int('WEBHOOK_MAX_BYTES', str(256 * 1024))
+    CSV_IMPORT_MAX_BYTES = _env_int('CSV_IMPORT_MAX_BYTES', str(1024 * 1024))
+    CSV_IMPORT_MAX_ROWS = _env_int('CSV_IMPORT_MAX_ROWS', '5000')
+    CSV_IMPORT_MAX_COLUMNS = _env_int('CSV_IMPORT_MAX_COLUMNS', '25')
+    CSV_IMPORT_MAX_CELL_CHARS = _env_int('CSV_IMPORT_MAX_CELL_CHARS', '2000')
+    CSV_EXPORT_MAX_ROWS = _env_int('CSV_EXPORT_MAX_ROWS', '25000')
+    SEND_MAX_RECIPIENTS = _env_int('SEND_MAX_RECIPIENTS', '5000')
+    SEND_MAX_SEGMENTS = _env_int('SEND_MAX_SEGMENTS', '15000')
+    RECIPIENT_SNAPSHOT_MAX_BYTES = _env_int('RECIPIENT_SNAPSHOT_MAX_BYTES', str(1024 * 1024))
+    TENANT_MAX_PROCESSING_MESSAGE_LOGS = _env_int('TENANT_MAX_PROCESSING_MESSAGE_LOGS', '5')
+    SCHEDULED_MAX_PENDING_PER_ORGANIZATION = _env_int(
+        'SCHEDULED_MAX_PENDING_PER_ORGANIZATION',
+        '25',
+    )
+
     # Keep browser security headers centralized and enabled for every response.
     # Turning this off removes the app-level clickjacking, MIME sniffing, and CSP controls.
     SECURITY_HEADERS_ENABLED = _env_bool('SECURITY_HEADERS_ENABLED', '1')
@@ -187,6 +240,44 @@ class Config:
     # Redis / RQ
     REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
     RQ_QUEUE_NAME = os.environ.get('RQ_QUEUE_NAME', 'twinevia-saas' if SAAS_MODE else 'sms')
+    READINESS_TOKEN = os.environ.get('READINESS_TOKEN', '').strip()
+    READINESS_WORKER_MAX_AGE_SECONDS = _env_int('READINESS_WORKER_MAX_AGE_SECONDS', '120')
+    READINESS_SYSTEMCTL_TIMEOUT_SECONDS = _env_int('READINESS_SYSTEMCTL_TIMEOUT_SECONDS', '5')
+    READINESS_REQUIRED_SYSTEMD_TIMERS = os.environ.get(
+        'READINESS_REQUIRED_SYSTEMD_TIMERS',
+        ','.join(
+            (
+                'twinevia-saas-scheduler.timer',
+                'twinevia-saas-billing-reconcile.timer',
+                'twinevia-saas-a2p-reconcile.timer',
+                'twinevia-saas-backup.timer',
+                'twinevia-saas-readiness.timer',
+            )
+        ),
+    ).strip()
+    ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '').strip()
+    UPTIME_MONITOR_HEARTBEAT_URL = os.environ.get('UPTIME_MONITOR_HEARTBEAT_URL', '').strip()
+
+    # Encrypted, off-host PostgreSQL backup controls.
+    BACKUP_LOCAL_DIR = os.environ.get('BACKUP_LOCAL_DIR', '/var/backups/twinevia-saas').strip()
+    BACKUP_OFFSITE_DESTINATION = os.environ.get('BACKUP_OFFSITE_DESTINATION', '').strip()
+    BACKUP_ENCRYPTION_PASSPHRASE_FILE = os.environ.get(
+        'BACKUP_ENCRYPTION_PASSPHRASE_FILE',
+        '',
+    ).strip()
+    BACKUP_RETENTION_DAYS = _env_int('BACKUP_RETENTION_DAYS', '35')
+    BACKUP_STATUS_FILE = os.environ.get(
+        'BACKUP_STATUS_FILE',
+        '/var/lib/twinevia-saas/backup-status.json',
+    ).strip()
+    BACKUP_MAX_AGE_HOURS = _env_int('BACKUP_MAX_AGE_HOURS', '30')
+    RESTORE_DRILL_STATUS_FILE = os.environ.get(
+        'RESTORE_DRILL_STATUS_FILE',
+        '/var/lib/twinevia-saas/restore-drill-status.json',
+    ).strip()
+    RESTORE_DRILL_DATABASE_URL = os.environ.get('RESTORE_DRILL_DATABASE_URL', '').strip()
+    RESTORE_DRILL_DATABASE_NAME = os.environ.get('RESTORE_DRILL_DATABASE_NAME', '').strip()
+    RESTORE_DRILL_MAX_AGE_DAYS = _env_int('RESTORE_DRILL_MAX_AGE_DAYS', '90')
     
     # Database
     BASE_DIR = Path(__file__).resolve().parent.parent
@@ -220,11 +311,24 @@ class Config:
     TWILIO_BROWSER_FAKE_SENDS = _env_bool('TWILIO_BROWSER_FAKE_SENDS', '0')
     TWILIO_A2P_EVENT_STREAMS_ENABLED = _env_bool('TWILIO_A2P_EVENT_STREAMS_ENABLED', '0')
     TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN = os.environ.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN')
+    TWILIO_A2P_URL_VALIDATION_TIMEOUT = _env_int('TWILIO_A2P_URL_VALIDATION_TIMEOUT', '5')
+    TWILIO_A2P_URL_VALIDATION_MAX_BYTES = _env_int(
+        'TWILIO_A2P_URL_VALIDATION_MAX_BYTES',
+        str(128 * 1024),
+    )
+    TWILIO_A2P_URL_VALIDATION_MAX_REDIRECTS = _env_int(
+        'TWILIO_A2P_URL_VALIDATION_MAX_REDIRECTS',
+        '3',
+    )
     TWILIO_ALLOW_LIVE_SENDS_IN_TESTING = _env_bool('TWILIO_ALLOW_LIVE_SENDS_IN_TESTING', '0')
     AOC_EVENTS_WEBHOOK_ENABLED = _env_bool('AOC_EVENTS_WEBHOOK_ENABLED', '0')
     AOC_EVENTS_WEBHOOK_SECRET = os.environ.get('AOC_EVENTS_WEBHOOK_SECRET', '').strip()
     AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS = _env_int('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS', '300')
     AOC_EVENTS_ORGANIZATION_SLUG = os.environ.get('AOC_EVENTS_ORGANIZATION_SLUG', 'armenians-of-colorado').strip()
+    AOC_SCHEDULED_CANCELLATION_RECORD_FILE = os.environ.get(
+        'AOC_SCHEDULED_CANCELLATION_RECORD_FILE',
+        '',
+    ).strip()
     INBOUND_AUTO_REPLY_ENABLED = _env_bool('INBOUND_AUTO_REPLY_ENABLED', '1')
     SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
     BILLING_TRIAL_DAYS = _env_int('BILLING_TRIAL_DAYS', '0')
@@ -247,7 +351,15 @@ class Config:
     BILLING_OUTBOUND_SEGMENT_RATE_USD = os.environ.get('BILLING_OUTBOUND_SEGMENT_RATE_USD', '0.0300').strip() or '0.0300'
     BILLING_MONTHLY_PRICE_USD = os.environ.get('BILLING_MONTHLY_PRICE_USD', '59.99').strip() or '59.99'
     BILLING_ANNUAL_PRICE_USD = os.environ.get('BILLING_ANNUAL_PRICE_USD', '600.00').strip() or '600.00'
-    BILLING_ACTIVATION_FEE_USD = os.environ.get('BILLING_ACTIVATION_FEE_USD', '150.00').strip() or '150.00'
+    BILLING_ACTIVATION_FEE_USD = os.environ.get('BILLING_ACTIVATION_FEE_USD', '149.00').strip() or '149.00'
+    BILLING_OFFER_VERSION = (
+        os.environ.get('BILLING_OFFER_VERSION', '2026-08-managed-pilot-v1').strip()
+        or '2026-08-managed-pilot-v1'
+    )
+    BILLING_USAGE_SETTLEMENT_GRACE_HOURS = _env_int(
+        'BILLING_USAGE_SETTLEMENT_GRACE_HOURS',
+        '72',
+    )
     BILLING_ANNUAL_ONLY_ORG_SLUGS = os.environ.get('BILLING_ANNUAL_ONLY_ORG_SLUGS', '').strip()
     BILLING_ANNUAL_ONLY_ORG_IDS = os.environ.get('BILLING_ANNUAL_ONLY_ORG_IDS', '').strip()
     STRIPE_FAKE_CHECKOUT_ENABLED = _env_bool('STRIPE_FAKE_CHECKOUT_ENABLED', '0')
@@ -257,12 +369,38 @@ class Config:
     STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
     STRIPE_PUBLISHABLE_KEY = os.environ.get('STRIPE_PUBLISHABLE_KEY')
     STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
+    STRIPE_WEBHOOK_ENDPOINT_ID = os.environ.get('STRIPE_WEBHOOK_ENDPOINT_ID')
+    STRIPE_PORTAL_CONFIGURATION_ID = os.environ.get('STRIPE_PORTAL_CONFIGURATION_ID')
     STRIPE_PRICE_ID = os.environ.get('STRIPE_PRICE_ID')
     STRIPE_MONTHLY_PRICE_ID = os.environ.get('STRIPE_MONTHLY_PRICE_ID') or STRIPE_PRICE_ID
     STRIPE_ANNUAL_PRICE_ID = os.environ.get('STRIPE_ANNUAL_PRICE_ID')
     STRIPE_ACTIVATION_PRICE_ID = os.environ.get('STRIPE_ACTIVATION_PRICE_ID')
     STRIPE_GROWTH_PRICE_ID = os.environ.get('STRIPE_GROWTH_PRICE_ID')
     STRIPE_SCALE_PRICE_ID = os.environ.get('STRIPE_SCALE_PRICE_ID')
+    STRIPE_EXPECTED_ACCOUNT_ID = (
+        os.environ.get('STRIPE_EXPECTED_ACCOUNT_ID', 'acct_1TCY8xEksbf3Q3Fg').strip()
+        or 'acct_1TCY8xEksbf3Q3Fg'
+    )
+    STRIPE_EXPECTED_ACTIVATION_PRICE_ID = (
+        os.environ.get('STRIPE_EXPECTED_ACTIVATION_PRICE_ID', 'price_1TPq4KEksbf3Q3FgwATaTJ7h').strip()
+        or 'price_1TPq4KEksbf3Q3FgwATaTJ7h'
+    )
+    STRIPE_EXPECTED_MONTHLY_PRICE_ID = (
+        os.environ.get('STRIPE_EXPECTED_MONTHLY_PRICE_ID', 'price_1TYtNuEksbf3Q3FgN2B1VqGN').strip()
+        or 'price_1TYtNuEksbf3Q3FgN2B1VqGN'
+    )
+    STRIPE_EXPECTED_ANNUAL_PRICE_ID = (
+        os.environ.get('STRIPE_EXPECTED_ANNUAL_PRICE_ID', 'price_1TYtO4Eksbf3Q3FgHzXB9S5b').strip()
+        or 'price_1TYtO4Eksbf3Q3FgHzXB9S5b'
+    )
+    STRIPE_LIVE_CONFIGURATION_REQUIRED = _env_bool(
+        'STRIPE_LIVE_CONFIGURATION_REQUIRED',
+        '1' if os.environ.get('FLASK_ENV', '').lower() == 'production' else '0',
+    )
+    STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS = _env_int(
+        'STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS',
+        '3',
+    )
     
     # Admin login credentials
     ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')

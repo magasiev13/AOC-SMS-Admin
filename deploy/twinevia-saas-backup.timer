@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Twinevia SaaS encrypted backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+Unit=twinevia-saas-backup.service
+
+[Install]
+WantedBy=timers.target

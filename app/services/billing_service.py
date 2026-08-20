@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
+from typing import Any, Callable
+from uuid import uuid4
 
 from flask import current_app, url_for
 
@@ -13,12 +17,14 @@ from app.models import (
     OrganizationMembership,
     OrganizationSubscription,
     OrganizationUsageBillingPeriod,
+    StripeCheckoutSession,
     StripeWebhookEvent,
     utc_now,
 )
 from app.services.billing_plans import (
     activation_price_id,
     billing_plan_for_code,
+    billing_plan_for_price_id,
     billing_plan_options_for_organization,
     recurring_price_id_for_subscription,
     subscription_activation_paid,
@@ -48,6 +54,33 @@ RECONCILEABLE_SUBSCRIPTION_STATUSES = {
 WEBHOOK_PROCESSING_STALE_AFTER = timedelta(minutes=5)
 CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE = timedelta(minutes=5)
 FAKE_CHECKOUT_SESSION_PREFIX = "cs_fake_org_"
+REQUIRED_STRIPE_WEBHOOK_EVENTS = frozenset(RELEVANT_STRIPE_EVENT_TYPES)
+
+
+class StaleStripeEventError(RuntimeError):
+    """Raised when a verified Stripe event predates applied billing state."""
+
+
+class StripePaymentProofError(RuntimeError):
+    """Raised when Stripe objects do not prove the expected payment."""
+
+
+class StripeComplimentaryConflictError(RuntimeError):
+    """Raised when Stripe reports paid billing for a complimentary organization."""
+
+
+@dataclass(frozen=True)
+class StripePriceExpectation:
+    config_key: str
+    amount_cents: int
+    recurring_interval: str | None
+
+
+LIVE_PRICE_EXPECTATIONS = (
+    StripePriceExpectation("STRIPE_ACTIVATION_PRICE_ID", 14900, None),
+    StripePriceExpectation("STRIPE_MONTHLY_PRICE_ID", 5999, "month"),
+    StripePriceExpectation("STRIPE_ANNUAL_PRICE_ID", 60000, "year"),
+)
 
 
 def subscription_status_allows_sending(status: str | None) -> bool:
@@ -58,11 +91,31 @@ def subscription_status_is_complimentary(status: str | None) -> bool:
     return (status or "").strip().lower() == COMPLIMENTARY_SUBSCRIPTION_STATUS
 
 
+def subscription_requires_verified_setup_payment(
+    subscription: OrganizationSubscription | None,
+) -> bool:
+    if subscription is None or subscription_status_is_complimentary(subscription.status):
+        return False
+    organization_offer_version = ""
+    if subscription.organization is not None:
+        organization_offer_version = str(
+            subscription.organization.billing_offer_version or ""
+        ).strip()
+    offer_version = str(subscription.offer_version or organization_offer_version).strip()
+    return bool(offer_version and offer_version.lower() != "legacy-v1")
+
+
 def organization_can_send(organization: Organization | None) -> bool:
     if organization is None:
         return False
     subscription = organization.subscription
-    return subscription_status_allows_sending(subscription.status if subscription else None)
+    if not subscription_status_allows_sending(subscription.status if subscription else None):
+        return False
+    if subscription_status_is_complimentary(subscription.status if subscription else None):
+        return True
+    if subscription_requires_verified_setup_payment(subscription):
+        return subscription_activation_paid(subscription)
+    return True
 
 
 def organization_is_active(organization: Organization | None) -> bool:
@@ -115,6 +168,16 @@ def ensure_subscription_record(organization: Organization) -> OrganizationSubscr
 
 def mark_subscription_complimentary(organization: Organization) -> OrganizationSubscription:
     subscription = ensure_subscription_record(organization)
+    chargeable_statuses = {"trialing", "active", "past_due", "unpaid"}
+    normalized_status = str(subscription.status or "").strip().lower()
+    if (
+        subscription.stripe_customer_id
+        or subscription.stripe_subscription_id
+        or normalized_status in chargeable_statuses
+    ):
+        raise RuntimeError(
+            "Cancel and reconcile the Stripe subscription before granting complimentary billing."
+        )
     subscription.status = COMPLIMENTARY_SUBSCRIPTION_STATUS
     subscription.current_period_end = None
     subscription.cancel_at_period_end = False
@@ -202,11 +265,16 @@ def _apply_fake_checkout_session(
     subscription.cancel_at_period_end = False
     if not subscription.stripe_price_id:
         subscription.stripe_price_id = current_app.config.get("STRIPE_MONTHLY_PRICE_ID") or current_app.config.get("STRIPE_PRICE_ID")
+    if subscription.activation_fee_paid_at is None:
+        subscription.activation_fee_paid_at = utc_now()
+        subscription.activation_price_id = current_app.config.get("STRIPE_ACTIVATION_PRICE_ID")
+        subscription.activation_payment_intent_id = f"pi_fake_org_{target_organization.id}"
+        subscription.activation_invoice_id = f"in_fake_org_{target_organization.id}"
     db.session.commit()
     return subscription
 
 
-def _stripe_module():
+def _stripe_module() -> Any:
     try:
         import stripe  # type: ignore
     except ImportError as exc:  # pragma: no cover - exercised only when dependency missing
@@ -219,14 +287,155 @@ def _stripe_module():
     return stripe
 
 
-def _stripe_object_to_dict(value):
+def _stripe_object_to_dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, dict):
         return value
     if hasattr(value, "to_dict_recursive"):
         return value.to_dict_recursive()
+    if hasattr(value, "__dict__"):
+        return dict(vars(value))
     return dict(value)
+
+
+def _retry_stripe_operation(operation_name: str, operation: Callable[[], Any]) -> Any:
+    attempts = int(current_app.config.get("STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS", 3) or 3)
+    if attempts < 1:
+        raise RuntimeError("STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS must be at least 1.")
+    last_error: Exception | None = None
+    for attempt_number in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_error = exc
+            current_app.logger.warning(
+                "Stripe configuration read failed.",
+                extra={
+                    "operation": operation_name,
+                    "attempt_number": attempt_number,
+                    "attempt_limit": attempts,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            if attempt_number < attempts:
+                time.sleep(min(0.25 * attempt_number, 1.0))
+    if last_error is None:
+        raise RuntimeError(f"Stripe configuration read failed without an error: {operation_name}.")
+    raise RuntimeError(
+        f"Stripe configuration read failed after {attempts} attempts: {operation_name}: {last_error}"
+    ) from last_error
+
+
+def _portal_supported_price_ids(configuration: dict[str, Any]) -> set[str]:
+    subscription_update = (
+        configuration.get("features", {})
+        .get("subscription_update", {})
+    )
+    supported: set[str] = set()
+    for product in subscription_update.get("products", []) or []:
+        if not isinstance(product, dict):
+            continue
+        for price_id in product.get("prices", []) or []:
+            normalized = str(price_id or "").strip()
+            if normalized:
+                supported.add(normalized)
+    return supported
+
+
+def validate_live_stripe_configuration() -> dict[str, str]:
+    """Verify live account ownership, prices, webhook, and portal restrictions."""
+    stripe = _stripe_module()
+    expected_account_id = str(current_app.config["STRIPE_EXPECTED_ACCOUNT_ID"]).strip()
+    account = _stripe_object_to_dict(
+        _retry_stripe_operation("account.retrieve", lambda: stripe.Account.retrieve())
+    )
+    if str(account.get("id") or "").strip() != expected_account_id:
+        raise RuntimeError(
+            "Stripe account mismatch: "
+            f"expected {expected_account_id}, received {account.get('id') or 'missing id'}."
+        )
+
+    validated_price_ids: dict[str, str] = {}
+    for expectation in LIVE_PRICE_EXPECTATIONS:
+        price_id = str(current_app.config.get(expectation.config_key) or "").strip()
+        price = _stripe_object_to_dict(
+            _retry_stripe_operation(
+                f"price.retrieve:{price_id}",
+                lambda: stripe.Price.retrieve(price_id),
+            )
+        )
+        recurring = price.get("recurring") if isinstance(price.get("recurring"), dict) else None
+        actual_interval = str(recurring.get("interval") or "").strip() if recurring else None
+        errors: list[str] = []
+        if str(price.get("id") or "").strip() != price_id:
+            errors.append("returned id does not match")
+        if price.get("active") is not True:
+            errors.append("price is not active")
+        if price.get("livemode") is not True:
+            errors.append("price is not live mode")
+        if str(price.get("currency") or "").lower() != "usd":
+            errors.append("currency is not USD")
+        if int(price.get("unit_amount") or -1) != expectation.amount_cents:
+            errors.append(f"amount is not {expectation.amount_cents} cents")
+        if actual_interval != expectation.recurring_interval:
+            errors.append(
+                f"recurrence is {actual_interval or 'one-time'}, expected "
+                f"{expectation.recurring_interval or 'one-time'}"
+            )
+        if errors:
+            raise RuntimeError(f"Stripe price {price_id} is invalid: {', '.join(errors)}.")
+        validated_price_ids[expectation.config_key] = price_id
+
+    webhook_endpoint_id = str(current_app.config["STRIPE_WEBHOOK_ENDPOINT_ID"]).strip()
+    endpoint = _stripe_object_to_dict(
+        _retry_stripe_operation(
+            f"webhook_endpoint.retrieve:{webhook_endpoint_id}",
+            lambda: stripe.WebhookEndpoint.retrieve(webhook_endpoint_id),
+        )
+    )
+    expected_webhook_url = f"{str(current_app.config['APP_BASE_URL']).rstrip('/')}/webhooks/stripe"
+    enabled_events = {str(value) for value in endpoint.get("enabled_events", []) or []}
+    missing_events = sorted(REQUIRED_STRIPE_WEBHOOK_EVENTS - enabled_events)
+    if str(endpoint.get("url") or "").rstrip("/") != expected_webhook_url.rstrip("/"):
+        raise RuntimeError(
+            f"Stripe webhook endpoint URL must be {expected_webhook_url}; received {endpoint.get('url') or 'missing'}."
+        )
+    if str(endpoint.get("status") or "").lower() != "enabled":
+        raise RuntimeError(f"Stripe webhook endpoint {webhook_endpoint_id} is not enabled.")
+    if missing_events:
+        raise RuntimeError(
+            f"Stripe webhook endpoint {webhook_endpoint_id} is missing events: {', '.join(missing_events)}."
+        )
+
+    portal_configuration_id = str(current_app.config["STRIPE_PORTAL_CONFIGURATION_ID"]).strip()
+    portal = _stripe_object_to_dict(
+        _retry_stripe_operation(
+            f"billing_portal.configuration.retrieve:{portal_configuration_id}",
+            lambda: stripe.billing_portal.Configuration.retrieve(portal_configuration_id),
+        )
+    )
+    subscription_update = portal.get("features", {}).get("subscription_update", {})
+    expected_portal_prices = {
+        validated_price_ids["STRIPE_MONTHLY_PRICE_ID"],
+        validated_price_ids["STRIPE_ANNUAL_PRICE_ID"],
+    }
+    actual_portal_prices = _portal_supported_price_ids(portal)
+    if portal.get("active") is not True:
+        raise RuntimeError(f"Stripe portal configuration {portal_configuration_id} is not active.")
+    if subscription_update.get("enabled") is not True:
+        raise RuntimeError("Stripe portal subscription updates must be enabled with explicit products.")
+    if actual_portal_prices != expected_portal_prices:
+        raise RuntimeError(
+            "Stripe portal price allowlist mismatch: "
+            f"expected {sorted(expected_portal_prices)}, received {sorted(actual_portal_prices)}."
+        )
+
+    return {
+        "account_id": expected_account_id,
+        "webhook_endpoint_id": webhook_endpoint_id,
+        "portal_configuration_id": portal_configuration_id,
+    }
 
 
 def _event_timestamp_to_utc_datetime(value) -> datetime | None:
@@ -427,6 +636,13 @@ def _find_matching_checkout_session(
                 continue
             if not _checkout_session_matches_current_subscription(data_object, subscription):
                 continue
+            issued = StripeCheckoutSession.query.filter_by(
+                stripe_checkout_session_id=str(data_object.get("id") or ""),
+                organization_id=organization.id,
+                status="open",
+            ).first()
+            if issued is None or issued.offer_version != _organization_offer_version(organization):
+                continue
             return data_object
 
         if reference_time is not None and oldest_session_created_at is not None:
@@ -439,6 +655,124 @@ def _find_matching_checkout_session(
         starting_after = last_session.get("id")
         if not starting_after:
             return None
+
+
+def _organization_offer_version(organization: Organization) -> str:
+    catalog_version = str(current_app.config.get("BILLING_OFFER_VERSION") or "").strip()
+    if not catalog_version:
+        raise RuntimeError("BILLING_OFFER_VERSION is not configured.")
+    offer_code = str(organization.billing_offer or "standard").strip().lower()
+    return f"{catalog_version}:{offer_code}"
+
+
+def expire_incompatible_checkout_sessions(
+    organization: Organization,
+    target_offer_version: str,
+) -> int:
+    sessions = (
+        StripeCheckoutSession.query
+        .filter_by(organization_id=organization.id, status="open")
+        .filter(StripeCheckoutSession.offer_version != target_offer_version)
+        .all()
+    )
+    if not sessions:
+        return 0
+
+    stripe = None if fake_checkout_enabled() else _stripe_module()
+    expired_count = 0
+    for record in sessions:
+        if stripe is not None and not is_fake_checkout_session_id(record.stripe_checkout_session_id):
+            _retry_stripe_operation(
+                f"checkout.session.expire:{record.stripe_checkout_session_id}",
+                lambda: stripe.checkout.Session.expire(record.stripe_checkout_session_id),
+            )
+        record.status = "expired"
+        record.expired_at = utc_now()
+        expired_count += 1
+    db.session.commit()
+    return expired_count
+
+
+def update_organization_billing_offer(
+    organization: Organization,
+    billing_offer: str,
+) -> OrganizationSubscription:
+    normalized_offer = str(billing_offer or "").strip().lower()
+    if normalized_offer not in {"standard", "annual_only"}:
+        raise RuntimeError("Choose a valid checkout offer.")
+    target_version = (
+        f"{str(current_app.config.get('BILLING_OFFER_VERSION') or '').strip()}:{normalized_offer}"
+    )
+    if target_version.startswith(":"):
+        raise RuntimeError("BILLING_OFFER_VERSION is not configured.")
+    expire_incompatible_checkout_sessions(organization, target_version)
+    organization.billing_offer = normalized_offer
+    organization.billing_offer_version = target_version
+    subscription = ensure_subscription_record(organization)
+    if not subscription_activation_paid(subscription):
+        plan_code = "annual" if normalized_offer == "annual_only" else "monthly"
+        plan = billing_plan_for_code(plan_code)
+        if plan is not None:
+            subscription.stripe_price_id = plan.price_id
+    subscription.offer_version = target_version
+    db.session.commit()
+    return subscription
+
+
+def _checkout_session_record(
+    session_id: str,
+    organization: Organization,
+) -> StripeCheckoutSession:
+    record = StripeCheckoutSession.query.filter_by(
+        stripe_checkout_session_id=session_id,
+    ).first()
+    if record is None:
+        raise StripePaymentProofError(
+            "Checkout session was not issued by this Twinevia release."
+        )
+    if record.organization_id != organization.id:
+        raise StripePaymentProofError("Checkout session belongs to another organization.")
+    return record
+
+
+def _record_issued_checkout_session(
+    session: Any,
+    organization: Organization,
+    plan_code: str,
+    recurring_price_id: str,
+    setup_price_id: str | None,
+    offer_version: str,
+) -> StripeCheckoutSession:
+    session_data = _stripe_object_to_dict(session)
+    session_id = str(session_data.get("id") or getattr(session, "id", "") or "").strip()
+    if not session_id:
+        raise RuntimeError("Stripe Checkout did not return a session id.")
+    record = StripeCheckoutSession.query.filter_by(
+        stripe_checkout_session_id=session_id,
+    ).first()
+    if record is None:
+        record = StripeCheckoutSession(
+            organization_id=organization.id,
+            stripe_checkout_session_id=session_id,
+            billing_plan_code=plan_code,
+            recurring_price_id=recurring_price_id,
+            activation_price_id=setup_price_id,
+            offer_version=offer_version,
+            status="open",
+        )
+        db.session.add(record)
+    else:
+        if record.organization_id != organization.id:
+            raise RuntimeError("Stripe Checkout session id is already bound to another organization.")
+        record.billing_plan_code = plan_code
+        record.recurring_price_id = recurring_price_id
+        record.activation_price_id = setup_price_id
+        record.offer_version = offer_version
+        record.status = "open"
+    organization.billing_offer_version = offer_version
+    organization.subscription.offer_version = offer_version
+    db.session.commit()
+    return record
 
 
 def create_checkout_session(
@@ -466,10 +800,19 @@ def create_checkout_session(
     if selected_plan is not None and subscription.stripe_price_id != price_id:
         subscription.stripe_price_id = price_id
         db.session.commit()
+    resolved_plan = selected_plan or billing_plan_for_price_id(price_id)
+    if resolved_plan is None or resolved_plan.code not in eligible_plan_codes:
+        raise RuntimeError("The subscription price is not part of the current Twinevia offer.")
+
+    offer_version = _organization_offer_version(organization)
+    expire_incompatible_checkout_sessions(organization, offer_version)
+    setup_price_id = None if subscription_activation_paid(subscription) else activation_price_id()
+    if not setup_price_id and not subscription_activation_paid(subscription):
+        raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
 
     if fake_checkout_enabled():
         session_id = _fake_checkout_session_id(organization)
-        return SimpleNamespace(
+        session = SimpleNamespace(
             id=session_id,
             url=_fake_checkout_url(
                 organization,
@@ -478,18 +821,26 @@ def create_checkout_session(
                 cancel_url=cancel_url,
             ),
         )
+        _record_issued_checkout_session(
+            session,
+            organization,
+            resolved_plan.code,
+            price_id,
+            setup_price_id,
+            offer_version,
+        )
+        return session
 
     stripe = _stripe_module()
-    line_items = []
-    if not subscription_activation_paid(subscription):
-        activation_id = activation_price_id()
-        if not activation_id:
-            raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
-        line_items.append({"price": activation_id, "quantity": 1})
+    line_items: list[dict[str, Any]] = []
+    if setup_price_id:
+        line_items.append({"price": setup_price_id, "quantity": 1})
     line_items.append({"price": price_id, "quantity": 1})
-    checkout_metadata = {"organization_id": str(organization.id)}
-    if selected_plan is not None:
-        checkout_metadata["billing_plan_code"] = selected_plan.code
+    checkout_metadata = {
+        "organization_id": str(organization.id),
+        "billing_plan_code": resolved_plan.code,
+        "billing_offer_version": offer_version,
+    }
 
     params = {
         "mode": "subscription",
@@ -513,7 +864,35 @@ def create_checkout_session(
     if trial_days > 0 and not subscription.stripe_subscription_id:
         params["subscription_data"]["trial_period_days"] = trial_days
 
-    session = stripe.checkout.Session.create(**params)
+    checkout_request_key = (
+        f"checkout:{organization.id}:{offer_version}:{resolved_plan.code}:{uuid4().hex}"
+    )
+    session = _retry_stripe_operation(
+        f"checkout.session.create:{organization.id}:{offer_version}:{resolved_plan.code}",
+        lambda: stripe.checkout.Session.create(
+            **params,
+            idempotency_key=checkout_request_key,
+        ),
+    )
+    try:
+        _record_issued_checkout_session(
+            session,
+            organization,
+            resolved_plan.code,
+            price_id,
+            setup_price_id,
+            offer_version,
+        )
+    except Exception:
+        db.session.rollback()
+        session_data = _stripe_object_to_dict(session)
+        session_id = str(session_data.get("id") or getattr(session, "id", "") or "").strip()
+        if session_id:
+            _retry_stripe_operation(
+                f"checkout.session.expire:{session_id}",
+                lambda: stripe.checkout.Session.expire(session_id),
+            )
+        raise
     return session
 
 
@@ -525,13 +904,201 @@ def create_billing_portal_session(organization: Organization, return_url: str):
         raise RuntimeError("Organization does not have a Stripe customer yet.")
 
     stripe = _stripe_module()
+    portal_configuration_id = str(current_app.config.get("STRIPE_PORTAL_CONFIGURATION_ID") or "").strip()
+    if current_app.config.get("STRIPE_LIVE_CONFIGURATION_REQUIRED") and not portal_configuration_id:
+        raise RuntimeError("STRIPE_PORTAL_CONFIGURATION_ID is required for live billing.")
+    params: dict[str, str] = {
+        "customer": subscription.stripe_customer_id,
+        "return_url": return_url,
+    }
+    if portal_configuration_id:
+        params["configuration"] = portal_configuration_id
     return stripe.billing_portal.Session.create(
-        customer=subscription.stripe_customer_id,
-        return_url=return_url,
+        **params,
     )
 
 
-def sync_subscription_from_event(event_type: str, data_object: dict) -> OrganizationSubscription | None:
+def _stripe_line_item_price_id(line_item: dict[str, Any]) -> str:
+    price = line_item.get("price")
+    if isinstance(price, dict):
+        return str(price.get("id") or "").strip()
+    if isinstance(price, str):
+        return price.strip()
+    pricing = line_item.get("pricing")
+    if isinstance(pricing, dict):
+        price_details = pricing.get("price_details")
+        if isinstance(price_details, dict):
+            return str(price_details.get("price") or "").strip()
+    return ""
+
+
+def _checkout_line_item_quantities(stripe: Any, session_id: str) -> dict[str, int]:
+    collection = _retry_stripe_operation(
+        f"checkout.session.list_line_items:{session_id}",
+        lambda: stripe.checkout.Session.list_line_items(session_id, limit=100),
+    )
+    quantities: dict[str, int] = {}
+    for raw_line_item in _stripe_collection_data(collection):
+        line_item = _stripe_object_to_dict(raw_line_item)
+        price_id = _stripe_line_item_price_id(line_item)
+        if not price_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} contains a line without a price id."
+            )
+        quantity = int(line_item.get("quantity") or 0)
+        quantities[price_id] = quantities.get(price_id, 0) + quantity
+    return quantities
+
+
+def _verified_invoice_payment_intent(
+    stripe: Any,
+    invoice_id: str,
+    setup_price_id: str,
+) -> tuple[str, dict[str, Any]]:
+    invoice = _stripe_object_to_dict(
+        _retry_stripe_operation(
+            f"invoice.retrieve:{invoice_id}",
+            lambda: stripe.Invoice.retrieve(invoice_id, expand=["payment_intent"]),
+        )
+    )
+    if invoice.get("paid") is not True or str(invoice.get("status") or "").lower() != "paid":
+        raise StripePaymentProofError(f"Stripe invoice {invoice_id} is not paid.")
+    if int(invoice.get("amount_paid") or 0) < 14900:
+        raise StripePaymentProofError(
+            f"Stripe invoice {invoice_id} does not prove the $149 setup payment."
+        )
+
+    invoice_line_items = invoice.get("lines", {}).get("data", []) or []
+    invoice_prices = {
+        _stripe_line_item_price_id(_stripe_object_to_dict(line_item))
+        for line_item in invoice_line_items
+    }
+    if setup_price_id not in invoice_prices:
+        raise StripePaymentProofError(
+            f"Stripe invoice {invoice_id} does not contain setup price {setup_price_id}."
+        )
+
+    raw_payment_intent = invoice.get("payment_intent")
+    if isinstance(raw_payment_intent, dict):
+        payment_intent = raw_payment_intent
+    else:
+        payment_intent_id = str(raw_payment_intent or "").strip()
+        if not payment_intent_id:
+            raise StripePaymentProofError(
+                f"Stripe invoice {invoice_id} does not reference a PaymentIntent."
+            )
+        payment_intent = _stripe_object_to_dict(
+            _retry_stripe_operation(
+                f"payment_intent.retrieve:{payment_intent_id}",
+                lambda: stripe.PaymentIntent.retrieve(payment_intent_id),
+            )
+        )
+    payment_intent_id = str(payment_intent.get("id") or "").strip()
+    if not payment_intent_id:
+        raise StripePaymentProofError(f"Stripe invoice {invoice_id} has an invalid PaymentIntent.")
+    if str(payment_intent.get("status") or "").lower() != "succeeded":
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} has not succeeded."
+        )
+    if int(payment_intent.get("amount_received") or 0) < 14900:
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} does not prove the $149 setup payment."
+        )
+    return payment_intent_id, invoice
+
+
+def _verify_checkout_session_payment(
+    session_id: str,
+) -> tuple[OrganizationSubscription, dict[str, Any], StripeCheckoutSession]:
+    stripe = _stripe_module()
+    data_object = _stripe_object_to_dict(
+        _retry_stripe_operation(
+            f"checkout.session.retrieve:{session_id}",
+            lambda: stripe.checkout.Session.retrieve(session_id),
+        )
+    )
+    organization_id = _extract_organization_id(data_object)
+    organization = db.session.get(Organization, organization_id) if organization_id else None
+    if organization is None:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} does not identify an existing organization."
+        )
+    record = _checkout_session_record(session_id, organization)
+    current_offer_version = _organization_offer_version(organization)
+    metadata = data_object.get("metadata") or {}
+    if record.offer_version != current_offer_version:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} belongs to expired offer {record.offer_version}."
+        )
+    if str(metadata.get("billing_offer_version") or "") != record.offer_version:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} offer metadata does not match its issuance record."
+        )
+    if str(data_object.get("status") or "").lower() != "complete":
+        raise StripePaymentProofError(f"Checkout session {session_id} is not complete.")
+    if str(data_object.get("payment_status") or "").lower() != "paid":
+        raise StripePaymentProofError(f"Checkout session {session_id} is not paid.")
+
+    actual_quantities = _checkout_line_item_quantities(stripe, session_id)
+    expected_quantities = {record.recurring_price_id: 1}
+    if record.activation_price_id:
+        expected_quantities[record.activation_price_id] = 1
+    if actual_quantities != expected_quantities:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} line items do not match the issued offer."
+        )
+
+    subscription = ensure_subscription_record(organization)
+    if record.activation_price_id:
+        invoice_id = str(data_object.get("invoice") or "").strip()
+        if not invoice_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} does not reference its paid invoice."
+            )
+        payment_intent_id, _invoice = _verified_invoice_payment_intent(
+            stripe,
+            invoice_id,
+            record.activation_price_id,
+        )
+        subscription.activation_fee_paid_at = utc_now()
+        subscription.activation_price_id = record.activation_price_id
+        subscription.activation_payment_intent_id = payment_intent_id
+        subscription.activation_invoice_id = invoice_id
+
+    record.status = "completed"
+    record.completed_at = utc_now()
+    record.stripe_customer_id = str(data_object.get("customer") or "").strip() or None
+    record.stripe_subscription_id = str(data_object.get("subscription") or "").strip() or None
+    subscription.offer_version = record.offer_version
+    db.session.commit()
+    return subscription, data_object, record
+
+
+def _event_precedes_applied_state(
+    subscription: OrganizationSubscription,
+    event_created_at: datetime,
+    event_id: str,
+) -> bool:
+    previous_created_at = as_utc_datetime(subscription.last_stripe_event_created_at)
+    if previous_created_at is None:
+        return False
+    normalized_created_at = as_utc_datetime(event_created_at)
+    if normalized_created_at is None:
+        return True
+    if normalized_created_at < previous_created_at:
+        return True
+    if normalized_created_at > previous_created_at:
+        return False
+    previous_event_id = str(subscription.last_stripe_event_id or "")
+    return bool(previous_event_id and event_id <= previous_event_id)
+
+
+def sync_subscription_from_event(
+    event_type: str,
+    data_object: dict[str, Any],
+    event_created_at: datetime,
+    event_id: str,
+) -> OrganizationSubscription | None:
     organization_id = _extract_organization_id(data_object)
 
     subscription = None
@@ -552,7 +1119,22 @@ def sync_subscription_from_event(event_type: str, data_object: dict) -> Organiza
             return None
 
     if subscription_status_is_complimentary(subscription.status):
-        return subscription
+        stripe_customer_id = str(data_object.get("customer") or "").strip()
+        stripe_subscription_id = str(
+            _stripe_subscription_id_from_data_object(event_type, data_object) or ""
+        ).strip()
+        raise StripeComplimentaryConflictError(
+            "Stripe reported chargeable billing for complimentary organization "
+            f"{subscription.organization_id}: event_id={event_id}, "
+            f"customer_id={stripe_customer_id or 'missing'}, "
+            f"subscription_id={stripe_subscription_id or 'missing'}. "
+            "Cancel or reconcile the Stripe subscription before processing this event."
+        )
+
+    if _event_precedes_applied_state(subscription, event_created_at, event_id):
+        raise StaleStripeEventError(
+            f"Stripe event {event_id} is older than {subscription.last_stripe_event_id}."
+        )
 
     stripe_customer_id = data_object.get("customer")
     stripe_subscription_id = _stripe_subscription_id_from_data_object(event_type, data_object)
@@ -582,35 +1164,67 @@ def sync_subscription_from_event(event_type: str, data_object: dict) -> Organiza
         if not subscription.status:
             subscription.status = "active"
 
+    subscription.last_stripe_event_created_at = event_created_at
+    subscription.last_stripe_event_id = event_id
+
     db.session.commit()
     return subscription
 
 
-def _apply_stripe_event_to_billing_state(event_type: str, data_object: dict) -> OrganizationSubscription | None:
+def _apply_stripe_event_to_billing_state(
+    event_type: str,
+    data_object: dict[str, Any],
+    event_created_at: datetime,
+    event_id: str,
+) -> OrganizationSubscription | None:
     if event_type == "checkout.session.completed":
-        subscription = sync_subscription_from_event(event_type, data_object)
-        stripe_subscription_id = _stripe_subscription_id_from_data_object(event_type, data_object)
-        if stripe_subscription_id:
-            stripe = _stripe_module()
-            stripe_subscription = stripe.Subscription.retrieve(stripe_subscription_id)
-            return sync_subscription_from_event(
-                "customer.subscription.updated",
-                _stripe_object_to_dict(stripe_subscription),
+        session_id = str(data_object.get("id") or "").strip()
+        if not session_id:
+            raise StripePaymentProofError("Checkout event is missing a session id.")
+        subscription, verified_session, _record = _verify_checkout_session_payment(session_id)
+        stripe_subscription_id = str(verified_session.get("subscription") or "").strip()
+        if not stripe_subscription_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} does not reference a subscription."
             )
-        return subscription
+        stripe = _stripe_module()
+        stripe_subscription = _retry_stripe_operation(
+            f"subscription.retrieve:{stripe_subscription_id}",
+            lambda: stripe.Subscription.retrieve(stripe_subscription_id),
+        )
+        subscription_data = _stripe_object_to_dict(stripe_subscription)
+        subscription_data.setdefault("metadata", {})["organization_id"] = str(
+            subscription.organization_id
+        )
+        return sync_subscription_from_event(
+            "customer.subscription.updated",
+            subscription_data,
+            event_created_at,
+            event_id,
+        )
 
     if event_type in {"invoice.payment_succeeded", "invoice.payment_failed"}:
         stripe_subscription_id = _stripe_subscription_id_from_data_object(event_type, data_object)
         if not stripe_subscription_id:
             return None
         stripe = _stripe_module()
-        stripe_subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+        stripe_subscription = _retry_stripe_operation(
+            f"subscription.retrieve:{stripe_subscription_id}",
+            lambda: stripe.Subscription.retrieve(stripe_subscription_id),
+        )
         return sync_subscription_from_event(
             "customer.subscription.updated",
             _stripe_object_to_dict(stripe_subscription),
+            event_created_at,
+            event_id,
         )
 
-    return sync_subscription_from_event(event_type, data_object)
+    return sync_subscription_from_event(
+        event_type,
+        data_object,
+        event_created_at,
+        event_id,
+    )
 
 
 def _populate_webhook_record(
@@ -649,6 +1263,8 @@ def process_stripe_webhook_event(event: dict) -> StripeWebhookEvent:
 
     data_object = _stripe_object_to_dict(event.get("data", {}).get("object", {}))
     event_created_at = _event_timestamp_to_utc_datetime(event.get("created"))
+    if event_created_at is None:
+        raise RuntimeError(f"Stripe event {event_id} is missing a valid created timestamp.")
     now = utc_now()
 
     record = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
@@ -732,7 +1348,12 @@ def process_stripe_webhook_event(event: dict) -> StripeWebhookEvent:
         return ignored
 
     try:
-        subscription = _apply_stripe_event_to_billing_state(event_type, data_object)
+        subscription = _apply_stripe_event_to_billing_state(
+            event_type,
+            data_object,
+            event_created_at,
+            event_id,
+        )
         if subscription is None:
             ignored = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
             if ignored is None:
@@ -750,6 +1371,25 @@ def process_stripe_webhook_event(event: dict) -> StripeWebhookEvent:
                 ignored.stripe_subscription_id,
             )
             return ignored
+    except StaleStripeEventError as exc:
+        db.session.rollback()
+        ignored = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
+        if ignored is None:
+            raise
+        ignored.status = "ignored"
+        ignored.last_error = str(exc)[:2000]
+        ignored.processed_at = utc_now()
+        ignored.last_seen_at = utc_now()
+        db.session.commit()
+        current_app.logger.warning(
+            "Stripe webhook ignored because it was stale.",
+            extra={
+                "event_id": event_id,
+                "event_type": event_type,
+                "organization_id": ignored.organization_id,
+            },
+        )
+        return ignored
     except Exception as exc:
         db.session.rollback()
         failed = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
@@ -796,7 +1436,10 @@ def sync_checkout_session_by_id(
         return _apply_fake_checkout_session(session_id, organization)
 
     stripe = _stripe_module()
-    session = stripe.checkout.Session.retrieve(session_id)
+    session = _retry_stripe_operation(
+        f"checkout.session.retrieve:{session_id}",
+        lambda: stripe.checkout.Session.retrieve(session_id),
+    )
     data_object = _stripe_object_to_dict(session)
     if organization is not None:
         metadata = data_object.get("metadata") or {}
@@ -805,7 +1448,12 @@ def sync_checkout_session_by_id(
             raise RuntimeError("Checkout session does not belong to this organization.")
     if data_object.get("status") != "complete":
         return None
-    return _apply_stripe_event_to_billing_state("checkout.session.completed", data_object)
+    return _apply_stripe_event_to_billing_state(
+        "checkout.session.completed",
+        data_object,
+        utc_now(),
+        f"manual-checkout-sync:{session_id}:{uuid4().hex}",
+    )
 
 
 def refresh_subscription_from_stripe(
@@ -819,10 +1467,15 @@ def refresh_subscription_from_stripe(
     stripe = _stripe_module()
 
     if subscription.stripe_subscription_id:
-        stripe_subscription = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+        stripe_subscription = _retry_stripe_operation(
+            f"subscription.retrieve:{subscription.stripe_subscription_id}",
+            lambda: stripe.Subscription.retrieve(subscription.stripe_subscription_id),
+        )
         return sync_subscription_from_event(
             "customer.subscription.updated",
             _stripe_object_to_dict(stripe_subscription),
+            utc_now(),
+            f"subscription-refresh:{subscription.id}:{uuid4().hex}",
         )
 
     if subscription.stripe_customer_id:
@@ -835,6 +1488,8 @@ def refresh_subscription_from_stripe(
             return sync_subscription_from_event(
                 "customer.subscription.updated",
                 _stripe_object_to_dict(stripe_subscriptions.data[0]),
+                utc_now(),
+                f"customer-subscription-refresh:{subscription.id}:{uuid4().hex}",
             )
 
     checkout_session = _find_matching_checkout_session(
@@ -844,7 +1499,13 @@ def refresh_subscription_from_stripe(
         user_email,
     )
     if checkout_session is not None:
-        return _apply_stripe_event_to_billing_state("checkout.session.completed", checkout_session)
+        session_id = str(checkout_session.get("id") or "").strip()
+        return _apply_stripe_event_to_billing_state(
+            "checkout.session.completed",
+            checkout_session,
+            utc_now(),
+            f"checkout-refresh:{session_id}:{uuid4().hex}",
+        )
 
     return subscription
 
@@ -854,10 +1515,23 @@ def _decimal_to_cents(value: Decimal | int | float | str) -> int:
     return int(normalized * 100)
 
 
-def _usage_invoice_item_idempotency_key(period: OrganizationUsageBillingPeriod) -> str:
+def _usage_invoice_item_idempotency_key(
+    period: OrganizationUsageBillingPeriod,
+    settlement_version: int,
+) -> str:
     return (
         f"sms-overage:{period.organization_id}:"
-        f"{period.period_start.isoformat()}:{period.period_end.isoformat()}"
+        f"{period.period_start.isoformat()}:{period.period_end.isoformat()}:v{settlement_version}"
+    )
+
+
+def _usage_invoice_idempotency_key(
+    period: OrganizationUsageBillingPeriod,
+    settlement_version: int,
+) -> str:
+    return (
+        f"sms-overage-invoice:{period.organization_id}:"
+        f"{period.period_start.isoformat()}:{period.period_end.isoformat()}:v{settlement_version}"
     )
 
 
@@ -868,10 +1542,12 @@ def _post_closed_usage_invoice_items() -> dict[str, int]:
         "periods_skipped": 0,
         "periods_failed": 0,
     }
-    period_start, period_end = previous_billing_period_window()
-    periods = OrganizationUsageBillingPeriod.query.filter_by(
-        period_start=period_start,
-        period_end=period_end,
+    now = utc_now()
+    periods = OrganizationUsageBillingPeriod.query.filter(
+        OrganizationUsageBillingPeriod.overage_units > OrganizationUsageBillingPeriod.invoiced_units,
+    ).order_by(
+        OrganizationUsageBillingPeriod.period_end.asc(),
+        OrganizationUsageBillingPeriod.id.asc(),
     ).all()
     if not periods:
         return summary
@@ -879,11 +1555,18 @@ def _post_closed_usage_invoice_items() -> dict[str, int]:
     stripe = _stripe_module()
     for period in periods:
         summary["periods_scanned"] += 1
-        if period.stripe_invoice_item_id or (period.status or "").strip().lower() in {"posted", "included"}:
+        grace_hours = int(current_app.config.get("BILLING_USAGE_SETTLEMENT_GRACE_HOURS", 72) or 72)
+        settlement_due_at = as_utc_datetime(period.settlement_due_at)
+        if settlement_due_at is None:
+            settlement_due_at = as_utc_datetime(period.period_end) + timedelta(hours=grace_hours)
+            period.settlement_due_at = settlement_due_at
+        if settlement_due_at > now:
             summary["periods_skipped"] += 1
             continue
-        if period.overage_units <= 0:
+        outstanding_units = max(0, int(period.overage_units or 0) - int(period.invoiced_units or 0))
+        if outstanding_units <= 0:
             period.status = "included"
+            period.settlement_due_at = None
             summary["periods_skipped"] += 1
             continue
 
@@ -893,25 +1576,72 @@ def _post_closed_usage_invoice_items() -> dict[str, int]:
             period.status = "pending_customer"
             summary["periods_skipped"] += 1
             continue
+        if subscription_status_is_complimentary(subscription.status):
+            period.status = "included"
+            period.overage_units = 0
+            period.sell_amount = Decimal("0")
+            period.settlement_due_at = None
+            summary["periods_skipped"] += 1
+            continue
 
+        settlement_version = int(period.settlement_version or 0) + 1
+        invoice_key = _usage_invoice_idempotency_key(period, settlement_version)
+        item_key = _usage_invoice_item_idempotency_key(period, settlement_version)
+        rate = Decimal(str(current_app.config.get("BILLING_OUTBOUND_SEGMENT_RATE_USD") or "0.0300"))
+        settlement_amount_cents = _decimal_to_cents(Decimal(outstanding_units) * rate)
         try:
-            invoice_item = stripe.InvoiceItem.create(
-                customer=subscription.stripe_customer_id,
-                currency=period.currency or "usd",
-                amount=_decimal_to_cents(period.sell_amount),
-                description=(
-                    f"SMS overage for {(organization.name if organization is not None else f'org {period.organization_id}')}"
-                    f" ({period_start.date()} to {(period_end - timedelta(seconds=1)).date()})"
+            metadata = {
+                "organization_id": str(period.organization_id),
+                "period_start": period.period_start.date().isoformat(),
+                "period_end": period.period_end.date().isoformat(),
+                "overage_units": str(outstanding_units),
+                "settlement_version": str(settlement_version),
+            }
+            invoice = _retry_stripe_operation(
+                f"invoice.create:{invoice_key}",
+                lambda: stripe.Invoice.create(
+                    customer=subscription.stripe_customer_id,
+                    collection_method="charge_automatically",
+                    auto_advance=False,
+                    description="Twinevia monthly outbound SMS overage",
+                    metadata=metadata,
+                    idempotency_key=invoice_key,
                 ),
-                metadata={
-                    "organization_id": str(period.organization_id),
-                    "period_start": period_start.date().isoformat(),
-                    "period_end": period_end.date().isoformat(),
-                    "overage_units": str(period.overage_units),
-                },
-                idempotency_key=_usage_invoice_item_idempotency_key(period),
             )
-            period.stripe_invoice_item_id = invoice_item.id
+            invoice_id = str(_stripe_object_to_dict(invoice).get("id") or getattr(invoice, "id", "")).strip()
+            if not invoice_id:
+                raise RuntimeError("Stripe did not return an invoice id for SMS overage settlement.")
+            invoice_item = _retry_stripe_operation(
+                f"invoice_item.create:{item_key}",
+                lambda: stripe.InvoiceItem.create(
+                    customer=subscription.stripe_customer_id,
+                    invoice=invoice_id,
+                    currency=period.currency or "usd",
+                    amount=settlement_amount_cents,
+                    description=(
+                        f"{outstanding_units} outbound SMS segment overage"
+                        f" ({period.period_start.date()} to {(period.period_end - timedelta(seconds=1)).date()})"
+                    ),
+                    metadata=metadata,
+                    idempotency_key=item_key,
+                ),
+            )
+            _retry_stripe_operation(
+                f"invoice.finalize:{invoice_key}",
+                lambda: stripe.Invoice.finalize_invoice(
+                    invoice_id,
+                    auto_advance=True,
+                    idempotency_key=f"{invoice_key}:finalize",
+                ),
+            )
+            invoice_item_data = _stripe_object_to_dict(invoice_item)
+            period.stripe_invoice_item_id = str(
+                invoice_item_data.get("id") or getattr(invoice_item, "id", "")
+            ).strip()
+            period.stripe_invoice_id = invoice_id
+            period.invoiced_units = int(period.invoiced_units or 0) + outstanding_units
+            period.settlement_version = settlement_version
+            period.settlement_due_at = None
             period.status = "posted"
             period.posted_at = utc_now()
             summary["periods_posted"] += 1

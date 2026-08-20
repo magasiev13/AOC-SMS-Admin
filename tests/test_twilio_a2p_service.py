@@ -37,7 +37,12 @@ class TestTwilioA2PService(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import Organization, OrganizationA2POnboarding, OrganizationMessagingProfile
+        from app.models import (
+            Organization,
+            OrganizationA2POnboarding,
+            OrganizationMessagingProfile,
+            OrganizationSubscription,
+        )
         from app.services.provider_secret_service import encrypt_provider_secret
         from app.services.twilio_a2p_service import (
             _create_a2p_campaign,
@@ -59,6 +64,7 @@ class TestTwilioA2PService(unittest.TestCase):
         self.Organization = Organization
         self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationMessagingProfile = OrganizationMessagingProfile
+        self.OrganizationSubscription = OrganizationSubscription
         self.ProviderProvisioningError = ProviderProvisioningError
         self.encrypt_provider_secret = encrypt_provider_secret
         self._create_a2p_campaign = _create_a2p_campaign
@@ -92,7 +98,12 @@ class TestTwilioA2PService(unittest.TestCase):
             status="pending",
             provider_status="pending",
         )
-        self.db.session.add_all([self.organization, self.messaging_profile])
+        self.subscription = self.OrganizationSubscription(
+            organization=self.organization,
+            stripe_price_id="price_test_123",
+            status="active",
+        )
+        self.db.session.add_all([self.organization, self.messaging_profile, self.subscription])
         self.db.session.commit()
 
     def tearDown(self) -> None:
@@ -573,6 +584,7 @@ class TestTwilioA2PService(unittest.TestCase):
 
     def test_submit_a2p_onboarding_requires_public_compliance_urls_when_hosted_defaults_unavailable(self) -> None:
         self.app.config["SAAS_BASE_URL"] = ""
+        self.app.config["APP_BASE_URL"] = ""
 
         with self.assertRaisesRegex(self.ProviderProvisioningError, "Privacy policy URL is required"):
             self.submit_a2p_onboarding(
@@ -1417,8 +1429,8 @@ class TestTwilioA2PService(unittest.TestCase):
             },
         }
 
-        summary = self.ingest_a2p_event_stream_payload(event)
-        duplicate_summary = self.ingest_a2p_event_stream_payload(event)
+        summary = self.ingest_a2p_event_stream_payload(event, self.organization.id)
+        duplicate_summary = self.ingest_a2p_event_stream_payload(event, self.organization.id)
         stale_summary = self.ingest_a2p_event_stream_payload(
             {
                 "id": "evt-brand-2",
@@ -1428,7 +1440,8 @@ class TestTwilioA2PService(unittest.TestCase):
                     "brandstatus": "UNVERIFIED",
                     "updateddate": 100,
                 },
-            }
+            },
+            self.organization.id,
         )
 
         self.db.session.commit()
@@ -1461,7 +1474,8 @@ class TestTwilioA2PService(unittest.TestCase):
                     "campaignregistrationstatus": "APPROVED",
                     "updateddate": 400,
                 },
-            }
+            },
+            self.organization.id,
         )
 
         self.assertEqual(summary["events_applied"], 1)
@@ -1492,7 +1506,8 @@ class TestTwilioA2PService(unittest.TestCase):
                     ],
                     "updateddate": 300,
                 },
-            }
+            },
+            self.organization.id,
         )
 
         self.db.session.commit()
@@ -1501,6 +1516,47 @@ class TestTwilioA2PService(unittest.TestCase):
         self.assertEqual(onboarding.onboarding_status, "rejected")
         self.assertIn("Campaign description is too vague.", onboarding.last_error or "")
         self.assertEqual(self.messaging_profile.provider_status, "error")
+
+    def test_ingest_a2p_event_stream_payload_cannot_cross_authenticated_tenant(self) -> None:
+        authenticated_onboarding = self.ensure_a2p_onboarding(self.organization)
+        authenticated_onboarding.onboarding_status = "pending"
+        authenticated_onboarding.brand_registration_sid = "BNauthenticated"
+
+        other_organization = self.Organization(name="Other", slug="other", status="active")
+        other_profile = self.OrganizationMessagingProfile(
+            organization=other_organization,
+            provider_mode="platform_managed",
+            twilio_subaccount_sid="ACother",
+            messaging_service_sid="MGother",
+            provider_status="pending",
+        )
+        self.db.session.add_all([other_organization, other_profile])
+        self.db.session.flush()
+        other_onboarding = self.ensure_a2p_onboarding(other_organization)
+        other_onboarding.onboarding_status = "pending"
+        other_onboarding.brand_registration_sid = "BNother"
+        self.db.session.commit()
+
+        summary = self.ingest_a2p_event_stream_payload(
+            {
+                "id": "evt-cross-tenant",
+                "type": "com.twilio.messaging.a2p.brand-registration.brand-verified",
+                "data": {
+                    "accountsid": "ACother",
+                    "brandsid": "BNother",
+                    "brandstatus": "VERIFIED",
+                    "updateddate": 500,
+                },
+            },
+            self.organization.id,
+        )
+
+        self.db.session.refresh(authenticated_onboarding)
+        self.db.session.refresh(other_onboarding)
+        self.assertEqual(summary["events_applied"], 0)
+        self.assertEqual(summary["events_ignored"], 1)
+        self.assertNotEqual(authenticated_onboarding.brand_status, "verified")
+        self.assertNotEqual(other_onboarding.brand_status, "verified")
 
     @patch("app.routes.validate_inbound_signature_detailed")
     @patch("app.routes.ingest_a2p_event_stream_payload", return_value={"events_seen": 1, "events_applied": 1, "events_ignored": 0, "events_duplicate": 0, "events_out_of_order": 0})
@@ -1531,7 +1587,32 @@ class TestTwilioA2PService(unittest.TestCase):
 
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(forbidden.status_code, 403)
-        mock_ingest.assert_called_once()
+        mock_ingest.assert_called_once_with(
+            {
+                "id": "evt-1",
+                "type": "com.twilio.messaging.a2p.brand-registration.brand-verified",
+                "data": {},
+            },
+            self.organization.id,
+        )
+
+    def test_a2p_event_stream_webhook_requires_an_existing_organization_profile(self) -> None:
+        self.app.config["TWILIO_A2P_EVENT_STREAMS_ENABLED"] = True
+        self.app.config["TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN"] = "secret-token"
+
+        missing_scope = self.client.post(
+            "/webhooks/twilio/a2p-events",
+            json={"id": "evt-1", "type": "ignored", "data": {}},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+        unknown_scope = self.client.post(
+            "/webhooks/twilio/a2p-events?organization_id=999999",
+            json={"id": "evt-2", "type": "ignored", "data": {}},
+            headers={"Authorization": "Bearer secret-token"},
+        )
+
+        self.assertEqual(missing_scope.status_code, 403)
+        self.assertEqual(unknown_scope.status_code, 403)
 
     def test_describe_a2p_onboarding_surfaces_reviewing_wait_state(self) -> None:
         onboarding = self.ensure_a2p_onboarding(self.organization)

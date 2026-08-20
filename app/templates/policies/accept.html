@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Accept Policies - {{ product_name }}{% endblock %}
+{% block page_title %}Review and accept policies{% endblock %}
+
+{% block breadcrumbs %}
+<a href="{{ url_for('main.setup', step='billing') }}">Setup</a> / <span>Policy acceptance</span>
+{% endblock %}
+
+{% block content %}
+<section class="workspace-panel mx-auto" style="max-width: 760px;">
+    <div class="workspace-panel__header">
+        <div>
+            <h2 class="workspace-panel__title">Required before Checkout</h2>
+            <p class="workspace-panel__meta">{{ organization.name }}</p>
+        </div>
+    </div>
+    <div class="workspace-panel__body">
+        <p>Review each current Twinevia policy. Acceptance is recorded with its exact version for your organization.</p>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="{{ return_to }}">
+            <div class="list-group mb-4">
+                {% set labels = {
+                    'terms': 'Terms of Service',
+                    'privacy': 'Privacy Policy',
+                    'acceptable_use': 'Acceptable Use Policy',
+                    'sms': 'SMS/A2P Policy',
+                    'billing': 'Billing, Cancellation, and Refund Policy'
+                } %}
+                {% for policy_name, policy_version in required_policy_versions.items() %}
+                <label class="list-group-item d-flex gap-3 align-items-start">
+                    <input
+                        class="form-check-input mt-1"
+                        type="checkbox"
+                        name="accepted_policy"
+                        value="{{ policy_name }}"
+                        {% if policy_name not in missing_policy_names %}checked{% endif %}
+                        required
+                    >
+                    <span>
+                        <strong>{{ labels[policy_name] }}</strong>
+                        <span class="d-block small text-muted">Version {{ policy_version }}</span>
+                    </span>
+                </label>
+                {% endfor %}
+            </div>
+            <p class="small text-muted">By continuing, you confirm that you are authorized to accept these policies for {{ organization.name }}.</p>
+            <button class="btn btn-primary" type="submit">Accept policies</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('main.setup', step='billing') }}">Cancel</a>
+        </form>
+    </div>
+</section>
+{% endblock %}

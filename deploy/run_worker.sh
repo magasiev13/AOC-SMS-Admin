@@ -14,6 +14,6 @@ if [ -f "${APP_ROOT}/.env" ]; then
 fi
 
 : "${REDIS_URL:=redis://localhost:6379/0}"
-: "${RQ_QUEUE_NAME:=sms}"
+: "${RQ_QUEUE_NAME:=twinevia-saas}"
 
-exec "${APP_ROOT}/venv/bin/python" -m rq.cli worker --url "$REDIS_URL" "$RQ_QUEUE_NAME"
+exec "${APP_ROOT}/venv/bin/python" -m app.rq_worker

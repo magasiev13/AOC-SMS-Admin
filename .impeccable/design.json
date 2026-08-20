@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-19T23:17:52Z",
+  "title": "Design System: Twinevia Public Marketing",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#fefefe", "tonalRamp": ["#1a1a1a", "#343434", "#505050", "#707070", "#929292", "#b6b6b6", "#dddddd", "#fefefe"] },
+      "paper-cool": { "role": "neutral", "displayName": "Cool Paper", "canonical": "#f5f8fc", "tonalRamp": ["#15191f", "#29323d", "#404c5c", "#5d6a7c", "#7f8c9e", "#a5b1c1", "#ced6e1", "#f5f8fc"] },
+      "navy-field": { "role": "neutral", "displayName": "Navy Field", "canonical": "#001839", "tonalRamp": ["#001027", "#001839", "#092951", "#1c3d67", "#39577c", "#61758f", "#95a3b4", "#e7edf5"] },
+      "ledger-ink": { "role": "neutral", "displayName": "Ledger Ink", "canonical": "#06122e", "tonalRamp": ["#06122e", "#15213d", "#29344f", "#414c66", "#616b82", "#8991a3", "#b7bcc8", "#eef0f4"] },
+      "ink-muted": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#44536d", "tonalRamp": ["#17202f", "#2b374b", "#44536d", "#61708a", "#7f8da4", "#a2adbd", "#c8cfd8", "#f0f2f5"] },
+      "action-cobalt": { "role": "primary", "displayName": "Action Cobalt", "canonical": "#1550ee", "tonalRamp": ["#06194e", "#0a297d", "#0e3aae", "#1550ee", "#4774f2", "#7798f6", "#adbefa", "#e6ecff"] },
+      "action-cobalt-deep": { "role": "primary", "displayName": "Deep Action Cobalt", "canonical": "#0d3bc0", "tonalRamp": ["#05143d", "#082369", "#0a3298", "#0d3bc0", "#3f67d2", "#7191e2", "#a9baf0", "#e5eafa"] },
+      "route-cobalt": { "role": "secondary", "displayName": "Route Cobalt", "canonical": "#1547d3", "tonalRamp": ["#071644", "#0a2670", "#0e369f", "#1547d3", "#486fde", "#7895e8", "#aebcf2", "#e7ebfc"] },
+      "annotation-vermilion": { "role": "tertiary", "displayName": "Ledger Vermilion", "canonical": "#bf2e1b", "tonalRamp": ["#421008", "#711a0e", "#9d2516", "#bf2e1b", "#d45b49", "#e48777", "#efb5aa", "#f9e7e3"] },
+      "rule": { "role": "neutral", "displayName": "Rule", "canonical": "#d9e3f0", "tonalRamp": ["#17202c", "#2c3a4b", "#45566c", "#65778e", "#899aaf", "#afbdce", "#d9e3f0", "#f3f6fa"] },
+      "rule-strong": { "role": "neutral", "displayName": "Strong Rule", "canonical": "#afbdd1", "tonalRamp": ["#17202d", "#2c3a4c", "#45566d", "#65768d", "#8998ac", "#afbdd1", "#d4dce7", "#f1f4f8"] },
+      "status-success": { "role": "tertiary", "displayName": "Status Success", "canonical": "#087452", "tonalRamp": ["#03281c", "#044633", "#066148", "#087452", "#329575", "#68b39a", "#a4d2c0", "#e1f2eb"] },
+      "status-danger": { "role": "tertiary", "displayName": "Status Danger", "canonical": "#a32819", "tonalRamp": ["#390d07", "#61170d", "#882114", "#a32819", "#c15447", "#d98479", "#eab5ae", "#f7e7e3"] },
+      "focus-gold": { "role": "tertiary", "displayName": "Focus Gold", "canonical": "#ffca43", "tonalRamp": ["#4b3500", "#795700", "#a87c05", "#d9a81e", "#ffca43", "#ffda78", "#ffe8ad", "#fff6e1"] },
+      "white": { "role": "neutral", "displayName": "White", "canonical": "#ffffff", "tonalRamp": ["#1a1a1a", "#353535", "#515151", "#727272", "#949494", "#b8b8b8", "#dedede", "#ffffff"] }
+    },
+    "typographyMeta": {
+      "campaign-display": { "displayName": "Campaign Display", "purpose": "Home promise and reply payoff only, with a 66% desktop optical width that protects its docket gutter." },
+      "display": { "displayName": "Display", "purpose": "Public page heroes and policy titles." },
+      "headline": { "displayName": "Headline", "purpose": "Major section and call-to-action headings." },
+      "title": { "displayName": "Title", "purpose": "Record, capability, contact, and security headings." },
+      "body": { "displayName": "Body", "purpose": "Readable forms, policy prose, records, and supporting copy." },
+      "label": { "displayName": "Operational Label", "purpose": "Tracked uppercase metadata, docket labels, and table headers." }
+    },
+    "shadows": [
+      { "name": "docket-low", "value": "0 8px 22px rgba(0, 10, 27, 0.14)", "purpose": "Separates the active dispatch docket from the navy field." },
+      { "name": "menu-overlay", "value": "0 18px 38px rgba(0, 10, 27, 0.32)", "purpose": "Used only by the open mobile navigation overlay." }
+    ],
+    "motion": [
+      { "name": "button-lift", "value": "240ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Raises public buttons by 2px on hover and returns them on active." },
+      { "name": "route-draw", "value": "720ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Draws the home workflow route from policy check through delivery." },
+      { "name": "route-node-arrival", "value": "320ms cubic-bezier(0.16, 1, 0.3, 1), staggered at 0ms, 180ms, and 360ms", "purpose": "Introduces the three route nodes in operational order." },
+      { "name": "reply-link-draw", "value": "520ms cubic-bezier(0.16, 1, 0.3, 1) after a 620ms delay", "purpose": "Connects the written replied row to its reply margin." },
+      { "name": "reduced-motion", "value": "0.01ms, one iteration", "purpose": "Preserves visible final states without perceptible movement." }
+    ],
+    "breakpoints": [
+      { "name": "wide-collapse", "value": "1180px" },
+      { "name": "navigation-and-grid-collapse", "value": "960px" },
+      { "name": "compact-mobile", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The compact cobalt action used for pilot requests and primary public actions.",
+      "html": "<button class=\"ds-button-primary\">Request a pilot</button>",
+      "css": ".ds-button-primary { min-height: 44px; border: 1px solid transparent; border-radius: 4px; padding: .72rem 1.05rem; background: var(--blue, #1550ee); color: #fff; font: 800 .88rem/1 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; transition: background-color 160ms ease, transform 240ms cubic-bezier(.16,1,.3,1); } .ds-button-primary:hover { background: var(--blue-dark, #0d3bc0); transform: translateY(-2px); } .ds-button-primary:active { transform: translateY(0); } .ds-button-primary:focus-visible { outline: 3px solid var(--focus, #ffca43); outline-offset: 3px; }"
+    },
+    {
+      "name": "Light Button",
+      "kind": "button",
+      "refersTo": "button-light",
+      "description": "The white action used on cobalt campaign sections.",
+      "html": "<div class=\"ds-button-light-plane\"><button class=\"ds-button-light\">Request a pilot</button></div>",
+      "css": ".ds-button-light-plane { display: inline-block; padding: 24px; background: var(--blue, #1550ee); } .ds-button-light { min-height: 44px; border: 1px solid transparent; border-radius: 4px; padding: .72rem 1.05rem; background: #fff; color: var(--navy, #001839); font: 800 .88rem/1 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; transition: background-color 160ms ease, transform 240ms cubic-bezier(.16,1,.3,1); } .ds-button-light:hover { background: #e8effd; transform: translateY(-2px); } .ds-button-light:focus-visible { outline: 3px solid var(--focus, #ffca43); outline-offset: 3px; }"
+    },
+    {
+      "name": "Public Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "The minimally softened field used by pilot and contact forms.",
+      "html": "<label class=\"ds-field-label\">Organization<input class=\"ds-field\" value=\"Northside Community Center\"></label>",
+      "css": ".ds-field-label { display: grid; gap: .45rem; color: var(--ink, #06122e); font: 800 .78rem/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; } .ds-field { min-height: 48px; border: 1px solid var(--rule-strong, #afbdd1); border-radius: 3px; padding: .75rem .85rem; background: #fff; color: var(--ink, #06122e); font: 400 1rem/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; } .ds-field:hover { border-color: #7e91ac; } .ds-field:focus-visible { border-color: var(--blue, #1550ee); outline: 3px solid #c6d4ff; outline-offset: 1px; }"
+    },
+    {
+      "name": "Public Navigation",
+      "kind": "nav",
+      "refersTo": "nav-bar",
+      "description": "The restrained navy navigation plane with one active route and one primary action.",
+      "html": "<nav class=\"ds-nav\"><strong>Twinevia</strong><a href=\"#\" aria-current=\"page\">Features</a><a href=\"#\">Pricing</a><button>Request a pilot</button></nav>",
+      "css": ".ds-nav { min-height: 72px; display: flex; gap: 28px; align-items: center; padding: .75rem 2rem; background: var(--navy, #001839); color: #fff; font: 700 .88rem/1 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; } .ds-nav strong { margin-right: auto; font-size: 1.32rem; letter-spacing: -.035em; } .ds-nav a { color: #dce7f7; text-decoration: none; } .ds-nav a:hover, .ds-nav a[aria-current=\"page\"] { color: #fff; } .ds-nav a[aria-current=\"page\"] { text-decoration: underline; text-decoration-color: var(--focus, #ffca43); text-decoration-thickness: 2px; text-underline-offset: .5rem; } .ds-nav button { min-height: 44px; border: 0; border-radius: 4px; padding: .72rem 1.05rem; background: var(--blue, #1550ee); color: #fff; font-weight: 800; } .ds-nav :focus-visible { outline: 3px solid var(--focus, #ffca43); outline-offset: 3px; }"
+    },
+    {
+      "name": "Recipient Status Row",
+      "kind": "custom",
+      "refersTo": "ledger-surface",
+      "description": "A recipient-level ledger row that keeps written status, time, and attempt count together.",
+      "html": "<div class=\"ds-status-row ds-status-row-replied\"><span>••• 1130</span><strong>Replied</strong><time>9:18</time><span>01</span></div>",
+      "css": ".ds-status-row { display: grid; grid-template-columns: 1.2fr 1fr .7fr .35fr; gap: 1rem; align-items: center; padding: .62rem 1.35rem; border-bottom: 1px solid var(--rule, #d9e3f0); background: var(--paper, #fefefe); color: var(--ink, #06122e); font: 400 .77rem/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; font-variant-numeric: tabular-nums; } .ds-status-row strong { color: var(--route, #1547d3); font-weight: 800; } .ds-status-row strong::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: .35rem; border-radius: 50%; background: currentColor; } .ds-status-row-replied { box-shadow: inset 2px 0 0 var(--vermilion, #bf2e1b); background: #f6f9ff; }"
+    },
+    {
+      "name": "Offer Metric Lockup",
+      "kind": "custom",
+      "refersTo": "ledger-surface",
+      "description": "A compact icon, value, and descriptor lockup used for the four home-page commercial terms; provider approval remains a subordinate asterisk footnote below the ledger.",
+      "html": "<div class=\"ds-offer-metric\"><span aria-hidden=\"true\">$</span><strong>$0.03</strong><small>Per additional segment</small></div>",
+      "css": ".ds-offer-metric { display: grid; grid-template-columns: 3.15rem minmax(0,1fr); grid-template-rows: auto auto; column-gap: .8rem; align-items: center; min-width: 0; color: var(--ink, #06122e); } .ds-offer-metric > span { grid-row: 1 / span 2; display: grid; width: 3.15rem; height: 3.15rem; place-items: center; border: 2px solid var(--route, #1547d3); border-radius: 50%; color: var(--route, #1547d3); font: 500 1.2rem/1 ui-sans-serif, sans-serif; } .ds-offer-metric strong, .ds-offer-metric small { grid-column: 2; font-family: \"Oswald\", \"Arial Narrow\", sans-serif; font-weight: 650; } .ds-offer-metric strong { align-self: end; font-size: 2rem; line-height: 1; letter-spacing: -.035em; } .ds-offer-metric small { align-self: start; margin-top: .18rem; font-size: .92rem; line-height: 1.16; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Dispatch Ledger",
+    "overview": "The public marketing world treats managed SMS as an accountable operating record rather than generic SaaS lifestyle theater. Cool-white dockets sit inside a deep navy field; cobalt shows action and routing; one restrained vermilion annotation carries the reply or exception that deserves attention. Condensed Oswald gives campaign-scale urgency while the body sans keeps dense ledgers, policies, forms, and operational copy readable.\n\nThe system is precise, near-flat, and editorial. Fine rules, numbered handoffs, recipient-level rows, compact metadata, tabular figures, and mostly square planes make the service feel auditable without drifting into vintage office nostalgia. \"Reply in the Margin\" is the chosen home-page expression, not a universal page template: the other public routes reuse the visual grammar through split heroes, workflow lines, pricing sheets, policy indexes, forms, and bordered records.",
+    "keyCharacteristics": [
+      "Navy and cool-white ledger planes with cobalt routes and actions.",
+      "Restrained vermilion annotation for a reply connection, caveat, or narrow exception.",
+      "Condensed Oswald display type paired with a readable body sans.",
+      "Fine rules, near-flat depth, square or 4px controls, and circular route nodes.",
+      "Operational geometry built from stages, recipient rows, dockets, and accountable handoffs."
+    ],
+    "rules": [
+      { "name": "The Cobalt Route Rule", "body": "Use cobalt for movement, action, and selected operational state; it is not a decorative wash.", "section": "colors" },
+      { "name": "The Vermilion Margin Rule", "body": "Vermilion marks one narrow human reply, caveat, or exception at a time; never promote it into a competing primary action color.", "section": "colors" },
+      { "name": "The Cool-White Plane Rule", "body": "Separate public records with paper tone and fine rules before adding another container or effect.", "section": "colors" },
+      { "name": "The Condense-the-Claim Rule", "body": "Use Oswald to make the claim or number unmistakable; never use it for long policy prose, form help, or dense recipient data.", "section": "typography" },
+      { "name": "The Metadata Stays Sans Rule", "body": "Uppercase labels earn hierarchy through weight and tracking, not a second decorative typeface.", "section": "typography" },
+      { "name": "The Composition-Is-Not-a-Template Rule", "body": "Carry the palette, typography, rules, spacing, and operational geometry across public pages; keep the three-zone reply composition exclusive to the home first surface.", "section": "layout" },
+      { "name": "The Record Must Stay Legible Rule", "body": "Reflow the surrounding layout before shrinking stages, labels, or recipient rows below their usable density.", "section": "layout" },
+      { "name": "The Flat-Ledger Rule", "body": "Use tone and rules at rest; add shadow only when a surface is materially active or overlays another plane.", "section": "elevation" },
+      { "name": "The Square-Docket Rule", "body": "Do not turn public records into a rounded-card system; curvature belongs to controls and meaningful route markers.", "section": "shapes" },
+      { "name": "The State-Must-Explain Rule", "body": "Pair every color state, route node, and annotation with readable text or metadata that explains what happened.", "section": "components" }
+    ],
+    "dos": [
+      "Do keep cobalt reserved for primary actions, route lines, and selected operational states.",
+      "Do use fine 1px cool rules and cool-white tonal planes to separate dense records before adding elevation.",
+      "Do keep long public copy in the body sans with readable measure, and preserve all four recipient-table columns on narrow screens through the compact fixed layout.",
+      "Do preserve yellow 3px focus outlines and the reduced-motion override on public interactions and route animations.",
+      "Do treat \"Reply in the Margin\" as the home page's signature expression while carrying only its palette, typography, rule, shape, and data-geometry language to other public pages."
+    ],
+    "donts": [
+      "Don't apply the three-zone home hero to every marketing route; split heroes, policy indexes, forms, and ledgers already provide the broader public system.",
+      "Don't extend this document to authenticated workspace, platform-admin, setup, billing, or provider UI.",
+      "Don't introduce beige paper, vintage office forms, typewriter nostalgia, glass surfaces, generic bento cards, or a rounded-card system. The only gradient technique in the built CSS is the monochrome radial repeat that cuts the docket perforations.",
+      "Don't use vermilion as a broad fill or second primary action color; it marks the reply connection, a caveat, or a narrow exception.",
+      "Don't add testimonials, customer logos, awards, certifications, guarantees, or decorative analytics the product cannot substantiate."
+    ]
+  }
+}

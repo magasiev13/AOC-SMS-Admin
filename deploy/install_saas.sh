@@ -6,9 +6,6 @@ APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
 APP_USER="${APP_USER:-}"
 APP_GROUP="${APP_GROUP:-}"
 ENV_FILE="${APP_ROOT}/.env"
-VENV_BIN="${APP_ROOT}/venv/bin"
-PYTHON_BIN="${VENV_BIN}/python"
-VENV_STATE_FILE=""
 TWINEVIA_SAAS_DBDOCTOR_SRC="${REPO_ROOT}/bin/twinevia-saas-dbdoctor"
 TWINEVIA_SAAS_DBDOCTOR_DEST="${TWINEVIA_SAAS_DBDOCTOR_DEST:-${SAAS_DBDOCTOR_DEST:-/usr/local/bin/twinevia-saas-dbdoctor}}"
 TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC="${REPO_ROOT}/bin/saas-dbdoctor"
@@ -132,22 +129,6 @@ check_saas_health() {
   return 1
 }
 
-rollback_promoted_venv() {
-  local health_host="$1"
-
-  if [[ -z "${VENV_STATE_FILE}" || ! -f "${VENV_STATE_FILE}" ]]; then
-    return
-  fi
-
-  echo "==> Attempting virtualenv rollback after failed health check"
-  if APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" rollback "${VENV_STATE_FILE}"; then
-    sudo systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer || true
-    if check_saas_health "${health_host}" 10; then
-      echo "==> Health recovered after virtualenv rollback."
-    fi
-  fi
-}
-
 echo "============================================"
 echo "  Twinevia SaaS Install Script"
 echo "============================================"
@@ -185,10 +166,6 @@ if [[ ! -f "${RESTART_SUDOERS_SRC}" ]]; then
   echo "ERROR: ${RESTART_SUDOERS_SRC} not found." >&2
   exit 1
 fi
-
-VENV_STATE_FILE="$(mktemp)"
-echo "==> Ensuring canonical Python virtualenv"
-APP_USER="${APP_USER}" APP_GROUP="${APP_GROUP}" APP_ROOT="${APP_ROOT}" bash "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" ensure "${VENV_STATE_FILE}"
 
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_DEST}"
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
@@ -354,6 +331,33 @@ ensure_env_key "FLASK_DEBUG" "0"
 upsert_env_key "SAAS_MODE" "1"
 upsert_env_key "SCHEDULER_ENABLED" "0"
 upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"
+upsert_env_key "MANAGED_PILOT_ENABLED" "1"
+upsert_env_key "SAAS_BASE_URL" "https://app.twinevia.com"
+upsert_env_key "PUBLIC_BASE_URL" "https://twinevia.com"
+upsert_env_key "APP_BASE_URL" "https://app.twinevia.com"
+upsert_env_key "TRUSTED_HOSTS" "twinevia.com,www.twinevia.com,app.twinevia.com"
+ensure_env_key "PILOT_APPLICATION_RATE_LIMIT_COUNT" "5"
+ensure_env_key "PILOT_APPLICATION_RATE_LIMIT_WINDOW_SECONDS" "3600"
+ensure_env_key "CUSTOMER_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "TERMS_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "PRIVACY_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "ACCEPTABLE_USE_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "SMS_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "BILLING_POLICY_VERSION" "2026-08-18-managed-pilot-v1"
+ensure_env_key "MAX_CONTENT_LENGTH" "2097152"
+ensure_env_key "MAX_FORM_MEMORY_SIZE" "262144"
+ensure_env_key "MAX_FORM_PARTS" "100"
+ensure_env_key "WEBHOOK_MAX_BYTES" "262144"
+ensure_env_key "CSV_IMPORT_MAX_BYTES" "1048576"
+ensure_env_key "CSV_IMPORT_MAX_ROWS" "5000"
+ensure_env_key "CSV_IMPORT_MAX_COLUMNS" "25"
+ensure_env_key "CSV_IMPORT_MAX_CELL_CHARS" "2000"
+ensure_env_key "CSV_EXPORT_MAX_ROWS" "25000"
+ensure_env_key "SEND_MAX_RECIPIENTS" "5000"
+ensure_env_key "SEND_MAX_SEGMENTS" "15000"
+ensure_env_key "RECIPIENT_SNAPSHOT_MAX_BYTES" "1048576"
+ensure_env_key "TENANT_MAX_PROCESSING_MESSAGE_LOGS" "5"
+ensure_env_key "SCHEDULED_MAX_PENDING_PER_ORGANIZATION" "25"
 ensure_env_key "REDIS_URL" "redis://localhost:6379/0"
 ensure_env_key "TRUST_PROXY" "1"
 ensure_env_key "SESSION_COOKIE_SECURE" "1"
@@ -364,25 +368,66 @@ ensure_env_key "SECURITY_HSTS_ENABLED" "1"
 ensure_env_key "SECURITY_HSTS_MAX_AGE" "31536000"
 ensure_env_key "STRIPE_FAKE_CHECKOUT_ENABLED" "0"
 ensure_env_key "BILLING_TRIAL_DAYS" "0"
+upsert_env_key "STRIPE_EXPECTED_ACCOUNT_ID" "acct_1TCY8xEksbf3Q3Fg"
+upsert_env_key "STRIPE_EXPECTED_ACTIVATION_PRICE_ID" "price_1TPq4KEksbf3Q3FgwATaTJ7h"
+upsert_env_key "STRIPE_EXPECTED_MONTHLY_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
+upsert_env_key "STRIPE_EXPECTED_ANNUAL_PRICE_ID" "price_1TYtO4Eksbf3Q3FgHzXB9S5b"
+upsert_env_key "STRIPE_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
+upsert_env_key "STRIPE_MONTHLY_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
+upsert_env_key "STRIPE_ANNUAL_PRICE_ID" "price_1TYtO4Eksbf3Q3FgHzXB9S5b"
+upsert_env_key "STRIPE_ACTIVATION_PRICE_ID" "price_1TPq4KEksbf3Q3FgwATaTJ7h"
+upsert_env_key "STRIPE_LIVE_CONFIGURATION_REQUIRED" "1"
+upsert_env_key "BILLING_ACTIVATION_FEE_USD" "149.00"
+upsert_env_key "BILLING_MONTHLY_PRICE_USD" "59.99"
+upsert_env_key "BILLING_ANNUAL_PRICE_USD" "600.00"
+upsert_env_key "BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS" "1000"
+upsert_env_key "BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS" "1000"
+upsert_env_key "BILLING_OUTBOUND_SEGMENT_RATE_USD" "0.0300"
+ensure_env_key "BILLING_OFFER_VERSION" "2026-08-managed-pilot-v1"
 ensure_env_key "TWILIO_BROWSER_FAKE_SENDS" "0"
 ensure_env_key "TWILIO_A2P_FAKE_QUEUE" "0"
 ensure_env_key "TWILIO_VALIDATE_INBOUND_SIGNATURE" "1"
 ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
+ensure_env_key "READINESS_WORKER_MAX_AGE_SECONDS" "120"
+ensure_env_key "READINESS_SYSTEMCTL_TIMEOUT_SECONDS" "5"
+upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "twinevia-saas-scheduler.timer,twinevia-saas-billing-reconcile.timer,twinevia-saas-a2p-reconcile.timer,twinevia-saas-backup.timer,twinevia-saas-readiness.timer"
+ensure_env_key "BACKUP_LOCAL_DIR" "/var/backups/twinevia-saas"
+ensure_env_key "BACKUP_ENCRYPTION_PASSPHRASE_FILE" "/etc/twinevia-saas/backup-passphrase"
+ensure_env_key "BACKUP_RETENTION_DAYS" "35"
+ensure_env_key "BACKUP_STATUS_FILE" "/var/lib/twinevia-saas/backup-status.json"
+ensure_env_key "BACKUP_MAX_AGE_HOURS" "30"
+ensure_env_key "RESTORE_DRILL_STATUS_FILE" "/var/lib/twinevia-saas/restore-drill-status.json"
+ensure_env_key "RESTORE_DRILL_MAX_AGE_DAYS" "90"
+ensure_env_key "AOC_SCHEDULED_CANCELLATION_RECORD_FILE" "/var/lib/twinevia-saas/aoc-scheduled-cancellations/managed-pilot-launch.json"
 
 required_keys=(
   DATABASE_URL
   SAAS_BASE_URL
   STRIPE_SECRET_KEY
+  STRIPE_PUBLISHABLE_KEY
   STRIPE_WEBHOOK_SECRET
-  STRIPE_PRICE_ID
+  STRIPE_WEBHOOK_ENDPOINT_ID
+  STRIPE_PORTAL_CONFIGURATION_ID
+  STRIPE_MONTHLY_PRICE_ID
   STRIPE_ANNUAL_PRICE_ID
   STRIPE_ACTIVATION_PRICE_ID
   TWILIO_ACCOUNT_SID
   TWILIO_AUTH_TOKEN
   TWILIO_CREDENTIAL_ENCRYPTION_KEY
   SECRET_KEY
+  READINESS_TOKEN
+  ALERT_WEBHOOK_URL
+  UPTIME_MONITOR_HEARTBEAT_URL
+  BACKUP_LOCAL_DIR
+  BACKUP_OFFSITE_DESTINATION
+  BACKUP_ENCRYPTION_PASSPHRASE_FILE
+  BACKUP_STATUS_FILE
+  RESTORE_DRILL_STATUS_FILE
+  RESTORE_DRILL_DATABASE_URL
+  RESTORE_DRILL_DATABASE_NAME
+  AOC_SCHEDULED_CANCELLATION_RECORD_FILE
 )
 
 missing_required=()
@@ -418,22 +463,6 @@ fi
 
 validate_saas_runtime_env
 
-echo "==> Installing Python dependencies"
-sudo -u "${APP_USER}" "${VENV_BIN}/python" -m pip install -r "${APP_ROOT}/requirements.txt"
-
-echo "==> Applying SaaS schema"
-sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --apply && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --ensure-platform-admin && \"${TWINEVIA_SAAS_DBDOCTOR_DEST}\" --doctor"
-
-echo "==> Validating SaaS app configuration startup path"
-if ! sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source \"${ENV_FILE}\"; set +a; \"${VENV_BIN}/python\" - <<'PY'
-from app import create_app
-create_app(run_startup_tasks=False, start_scheduler=False)
-print('SaaS app config validation ok')
-PY"; then
-  echo "ERROR: SaaS app startup validation failed before services were enabled." >&2
-  exit 1
-fi
-
 sudo mkdir -p "${LOG_DIR}"
 sudo chown -R "${APP_USER}:${APP_GROUP}" "${LOG_DIR}"
 
@@ -448,16 +477,20 @@ render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.servic
 render_template "${REPO_ROOT}/deploy/twinevia-saas-platform-restart-queue.timer" /etc/systemd/system/twinevia-saas-platform-restart-queue.timer 0644
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.service" /etc/systemd/system/twinevia-saas-a2p-reconcile.service 0644
 render_template "${REPO_ROOT}/deploy/twinevia-saas-a2p-reconcile.timer" /etc/systemd/system/twinevia-saas-a2p-reconcile.timer 0644
-install_repo_file "${REPO_ROOT}/deploy/check_python_runtime.sh" "${APP_ROOT}/deploy/check_python_runtime.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/ensure_canonical_venv.sh" "${APP_ROOT}/deploy/ensure_canonical_venv.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/run_scheduler_once.sh" "${APP_ROOT}/deploy/run_scheduler_once.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/run_worker.sh" "${APP_ROOT}/deploy/run_worker.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/run_billing_reconcile_once.sh" "${APP_ROOT}/deploy/run_billing_reconcile_once.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/run_platform_restart_queue_once.sh" "${APP_ROOT}/deploy/run_platform_restart_queue_once.sh" 0755
-install_repo_file "${REPO_ROOT}/deploy/run_a2p_reconcile_once.sh" "${APP_ROOT}/deploy/run_a2p_reconcile_once.sh" 0755
+render_template "${REPO_ROOT}/deploy/twinevia-saas-backup.service" /etc/systemd/system/twinevia-saas-backup.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-backup.timer" /etc/systemd/system/twinevia-saas-backup.timer 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-readiness.service" /etc/systemd/system/twinevia-saas-readiness.service 0644
+render_template "${REPO_ROOT}/deploy/twinevia-saas-readiness.timer" /etc/systemd/system/twinevia-saas-readiness.timer 0644
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
+
+echo "==> Building and promoting the initial immutable release"
+SOURCE_ROOT="${REPO_ROOT}" \
+APP_ROOT="${APP_ROOT}" \
+APP_USER="${APP_USER}" \
+APP_GROUP="${APP_GROUP}" \
+TWINEVIA_ENV_FILE="${ENV_FILE}" \
+bash "${REPO_ROOT}/deploy/release_twinevia_saas.sh"
 
 echo "==> Verifying SaaS restart helper"
 if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; then
@@ -465,13 +498,4 @@ if ! sudo -u "${APP_USER}" sudo -n "${RESTART_HELPER_DEST}" --check >/dev/null; 
   exit 1
 fi
 
-echo "==> Verifying SaaS health"
-HEALTH_HOST="$(resolve_health_host)"
-if ! check_saas_health "${HEALTH_HOST}" 20; then
-  echo "ERROR: SaaS health check failed after install (Host=${HEALTH_HOST})." >&2
-  rollback_promoted_venv "${HEALTH_HOST}"
-  dump_service_diagnostics
-  exit 1
-fi
-
-echo "SaaS install completed."
+echo "SaaS versioned install completed."

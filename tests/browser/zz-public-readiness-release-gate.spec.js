@@ -22,24 +22,47 @@ test.afterEach(async ({ page }, testInfo) => {
   await attachFailureDiagnostics(page, testInfo);
 });
 
-test('golden owner journey covers signup billing onboarding staff invite and platform review', async ({ page }) => {
+test('golden owner journey covers pilot approval billing onboarding staff invite and platform review', async ({ page }) => {
   const organizationName = 'Golden Path Bakery';
   const ownerEmail = 'golden-owner@browser.test';
 
   await page.setViewportSize({ width: 1440, height: 1100 });
-  await page.goto('/signup');
-  await page.getByLabel('Business name').fill(organizationName);
+  await page.goto('/request-a-pilot');
+  await page.getByLabel('Business or organization name').fill(organizationName);
   await page.getByLabel('Full name').fill('Golden Owner');
   await page.getByLabel('Business email').fill(ownerEmail);
-  await page.getByLabel('Mobile phone').fill('+15550001999');
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.locator('[data-signup-indicator="2"]')).toHaveClass(/is-current/);
-  await page.getByLabel('Username').fill('golden-owner');
-  await page.getByLabel('Password', { exact: true }).fill('GoldenOwner-pass1!');
-  await page.getByLabel('Confirm password').fill('GoldenOwner-pass1!');
-  await page.getByRole('button', { name: 'Create workspace' }).click();
+  await page.getByLabel('Phone optional').fill('+15550001999');
+  await page.getByLabel('What will you send, to whom, and how did they consent?').fill(
+    'Customers opt in during online ordering for requested pickup updates and can reply STOP at any time.'
+  );
+  await page.getByLabel('Expected outbound segments per month optional').fill('600');
+  await page.getByLabel('Current Twilio setup optional').selectOption('none');
+  await page.getByRole('button', { name: 'Submit pilot request' }).click();
+  await expect(page).toHaveURL(/\/request-a-pilot\?submitted=1$/);
+  await expect(page.getByRole('heading', { name: 'Your pilot request is in the review queue.' })).toBeVisible();
 
-  await expect(page).toHaveURL(/\/setup$/);
+  await login(page, 'platform@browser.test', 'Platform-pass1!');
+  await page.goto('/platform/pilot-applications');
+  const pilotApplication = page.locator('article.workspace-panel').filter({ hasText: organizationName }).first();
+  await expect(pilotApplication).toBeVisible();
+  await expect(pilotApplication.getByText('New', { exact: true })).toBeVisible();
+  await pilotApplication.getByLabel('Approval note').fill('Approved for the protected browser pilot.');
+  await pilotApplication.getByRole('button', { name: 'Approve and issue owner invite' }).click();
+  await expect(page.getByText(`Pilot approved for ${organizationName}; a single-use owner invitation is ready.`)).toBeVisible();
+
+  const approvedApplication = page.locator('article.workspace-panel').filter({ hasText: organizationName }).first();
+  const ownerInviteHref = await approvedApplication.getByRole('link', { name: 'Open owner invitation' }).getAttribute('href');
+  expect(ownerInviteHref).toBeTruthy();
+
+  await acceptInvitation(page, {
+    invitePath: ownerInviteHref,
+    fullName: 'Golden Owner',
+    username: 'golden-owner',
+    phone: '+15550001999',
+    password: 'GoldenOwner-pass1!',
+    expectedUrl: /\/setup$/,
+  });
+
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'billing');
   await expect(page.locator('.setup-steps')).toBeVisible();
   await expect(page.getByRole('heading', { name: organizationName })).toBeVisible();

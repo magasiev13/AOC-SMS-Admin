@@ -1,0 +1,41 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Contact — Twinevia{% endblock %}
+{% block meta_description %}Contact Twinevia about pilot access, security and policy questions, or an existing managed account.{% endblock %}
+
+{% block content %}
+  <header class="page-hero page-hero--split">
+    <div><h1>Start with the right channel.</h1></div>
+    <div class="page-hero__copy"><p>Twinevia is operating as a small managed pilot. Choose the path that matches where you are so the request reaches the right operational record.</p></div>
+  </header>
+
+  <section class="contact-routes" aria-label="Contact options">
+    <article>
+      <i class="bi bi-send" aria-hidden="true"></i>
+      <h2>New organization</h2>
+      <p>Share your use case, consent path, volume, and current Twilio setup through the pilot application.</p>
+      <a class="button button--primary" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+    </article>
+    <article>
+      <i class="bi bi-shield-check" aria-hidden="true"></i>
+      <h2>Security or policy question</h2>
+      <p>Use the pilot request and state the question in the messaging-plan field. It will be stored for platform-admin review.</p>
+      <a class="text-link" href="{{ url_for('main.request_pilot') }}">Submit a question <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+    </article>
+    <article>
+      <i class="bi bi-person-workspace" aria-hidden="true"></i>
+      <h2>Existing pilot customer</h2>
+      <p>Sign in to your Twinevia workspace and use the managed support contact supplied during onboarding.</p>
+      <a class="text-link" href="{{ url_for('auth.login') }}">Sign in <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+    </article>
+  </section>
+
+  <section class="company-record" aria-labelledby="company-record-title">
+    <h2 id="company-record-title">Company identity</h2>
+    <dl>
+      <div><dt>Service</dt><dd>Twinevia</dd></div>
+      <div><dt>Operator</dt><dd>IT Wingman LLC</dd></div>
+      <div><dt>Launch model</dt><dd>Managed pilot for approved customers</dd></div>
+    </dl>
+  </section>
+{% endblock %}

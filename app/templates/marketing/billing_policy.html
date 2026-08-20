@@ -1,0 +1,25 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Billing, Cancellation & Refund Policy — Twinevia{% endblock %}
+{% block meta_description %}Twinevia setup, subscription, included SMS usage, overage, third-party charge, cancellation, failed-payment, and refund terms for the managed pilot.{% endblock %}
+
+{% block content %}
+  <div class="policy-layout">
+    <aside class="policy-index"><p>Billing &amp; Refunds</p><time datetime="2026-08-19">Effective August 19, 2026</time><nav aria-label="Billing policy sections"><a href="#offer">Pilot offer</a><a href="#usage">Usage</a><a href="#provider">Provider costs</a><a href="#payment">Payment</a><a href="#cancel">Cancellation</a><a href="#refunds">Refunds</a></nav></aside>
+    <article class="policy-document">
+      <header><h1>Billing, Cancellation &amp; Refund Policy</h1><p>This policy explains the Twinevia managed-pilot offer and how verified charges are created. The final Checkout page identifies the selected subscription and amount before payment.</p></header>
+
+      <section id="offer"><h2>Managed-pilot offer</h2><dl class="policy-prices"><div><dt>Setup fee</dt><dd>$149 one time</dd></div><div><dt>Monthly subscription</dt><dd>$59.99 per month</dd></div><div><dt>Annual subscription</dt><dd>$600 per year</dd></div></dl><p>The setup fee and selected subscription are collected through verified Stripe Checkout. A pilot application alone does not create a customer, start a subscription, or mark setup as paid.</p></section>
+
+      <section id="usage"><h2>Included usage and overages</h2><p>Monthly and annual subscriptions each include 1,000 outbound SMS segments per organization per calendar month. A single message can use more than one segment based on encoding and length. Additional segments cost $0.03 each.</p><p>Overage usage is settled on a separate automatically collected monthly invoice, including for annual subscribers. Usage finalized after a settlement cutoff carries into the next settlement rather than disappearing. Incoming messages, provider registrations, phone numbers, taxes, or special services are not converted into included outbound segments.</p></section>
+
+      <section id="provider"><h2>Provider and registration costs</h2><p>Twinevia absorbs normal first-time Low Volume Standard registration and routine platform-managed usage included in the approved offer. The customer is responsible for rejected resubmissions, appeals, customer-caused retries, high-volume or Standard upgrades, special vetting, and requested additional numbers. When practical, Twinevia will identify an unusual third-party charge before proceeding.</p><p>Provider approval is not guaranteed. A rejection does not automatically cancel valid setup work, subscription access, or third-party costs already incurred.</p></section>
+
+      <section id="payment"><h2>Payment, renewal, and failed charges</h2><p>Subscriptions renew automatically at the selected monthly or annual interval until canceled. The customer authorizes Stripe to charge the saved payment method for recurring fees, overages, applicable taxes, and approved customer-paid provider costs. Prices or offer versions may change only with notice and a compatible Checkout or renewal path.</p><p>Failed or disputed payments may restrict chargeable features, provisioning, or sending. The customer remains responsible for valid accrued charges and must update payment details through the supported Stripe customer portal or managed support path.</p></section>
+
+      <section id="cancel"><h2>Cancellation</h2><p>Customers may request cancellation through the supported billing portal or managed support path. Unless law or a written agreement requires otherwise, cancellation takes effect at the end of the paid subscription period and stops future renewal. Cancellation does not erase overages, provider costs, taxes, or other charges incurred before the effective date.</p></section>
+
+      <section id="refunds"><h2>Refunds</h2><p>The setup fee becomes non-refundable once managed setup, registration preparation, provisioning, or configuration work begins. Subscription periods and usage charges are generally non-refundable and are not prorated after service has been made available, except when required by law or expressly agreed in writing. Duplicate or incorrect charges should be reported promptly through the <a href="{{ url_for('main.contact') }}">Contact page</a> for review.</p></section>
+    </article>
+  </div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Security — Twinevia{% endblock %}
+{% block meta_description %}Learn how Twinevia approaches tenant isolation, access, provider credentials, webhooks, message integrity, and operational recovery for its managed pilot.{% endblock %}
+
+{% block content %}
+  <header class="page-hero page-hero--split">
+    <div><h1>Security is part of the sending path, not a badge beside it.</h1></div>
+    <div class="page-hero__copy">
+      <p>Twinevia’s managed pilot limits who can enter, what can allocate provider resources, and which actions may transmit messages. The controls below describe the application’s operating design—not a third-party certification.</p>
+      <a class="text-link" href="{{ url_for('main.contact') }}">Ask a security question <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+    </div>
+  </header>
+
+  <section class="security-record" aria-label="Security controls">
+    <article>
+      <h2>Tenant boundaries</h2>
+      <p>Workspace data is organization-scoped, with explicit cross-tenant administrative paths kept separate from ordinary customer access.</p>
+      <dl><div><dt>Scope</dt><dd>Organization records and provider resources</dd></div><div><dt>Control</dt><dd>Tenant-aware database access and route authorization</dd></div></dl>
+    </article>
+    <article>
+      <h2>Account access</h2>
+      <p>Approved organizations enter through single-use owner invitations. Session rotation, password rules, lockouts, and role checks protect account transitions.</p>
+      <dl><div><dt>Pilot access</dt><dd>Admin-approved invitation</dd></div><div><dt>Recovery</dt><dd>Admin-assisted during the pilot</dd></div></dl>
+    </article>
+    <article>
+      <h2>Provider credentials</h2>
+      <p>Customer-managed provider secrets are encrypted by the application and bound to the owning organization. They are not intended for public configuration files.</p>
+      <dl><div><dt>Mutations</dt><dd>Organization and resource binding required</dd></div><div><dt>Cutovers</dt><dd>Resumable provider steps</dd></div></dl>
+    </article>
+    <article>
+      <h2>Message integrity</h2>
+      <p>Chargeable routes apply entitlement, suppression, segment accounting, and idempotency checks. Recipient attempts preserve sent, failed, and ambiguous outcomes.</p>
+      <dl><div><dt>Retries</dt><dd>Ambiguous results are not blindly resent</dd></div><div><dt>Opt-out</dt><dd>STOP and suppression rules apply to sending paths</dd></div></dl>
+    </article>
+    <article>
+      <h2>External requests</h2>
+      <p>Webhook processing uses provider verification, bounded request bodies, delivery ledgers, replay defenses, and event ordering where supported.</p>
+      <dl><div><dt>Stripe</dt><dd>Verified events and stale-event protection</dd></div><div><dt>Twilio</dt><dd>Signature and tenant-resource checks</dd></div></dl>
+    </article>
+    <article>
+      <h2>Recovery</h2>
+      <p>The launch standard includes identifiable releases, readiness checks, encrypted off-host backups, restore drills, and a retained rollback path.</p>
+      <dl><div><dt>Health</dt><dd>Separate liveness and readiness checks</dd></div><div><dt>Release</dt><dd>Verified switch with recoverable predecessor</dd></div></dl>
+    </article>
+  </section>
+
+  <section class="security-boundary" aria-labelledby="security-boundary-title">
+    <h2 id="security-boundary-title">Shared responsibility still applies.</h2>
+    <p>Customers remain responsible for authorized users, lawful recipient consent, accurate registration information, appropriate message content, and prompt reporting of suspected account misuse. Provider networks, carriers, and customer websites remain outside Twinevia’s direct control.</p>
+  </section>
+
+  <section class="page-cta" aria-labelledby="security-cta-title">
+    <h2 id="security-cta-title">A pilot should begin with the real risk profile.</h2>
+    <a class="button button--light button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+  </section>
+{% endblock %}

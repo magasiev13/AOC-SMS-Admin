@@ -54,7 +54,7 @@ Use the platform admin UI before inviting or sending the first client to checkou
 3. In Billing State, enable annual-only checkout.
 4. Confirm the owner checkout page shows `First-client upfront pricing` and no `$59.99/mo` option.
 
-Do not use manual payment tracking for this path. Stripe Checkout should charge the `$150` setup fee plus the `$600/year` subscription.
+Do not use manual payment tracking for this path. Stripe Checkout should charge the `$149` setup fee plus the `$600/year` subscription.
 
 ## Platform-Managed Messaging Strategy
 

@@ -184,14 +184,14 @@ class TestParseRecipientsCsv(unittest.TestCase):
     def test_single_column_phone_only(self) -> None:
         content = "720-383-2388\n\n123\n"
         self.assertEqual(
-            parse_recipients_csv(content),
+            parse_recipients_csv(content, 100, 10, 500),
             [{"name": None, "phone": "+17203832388"}],
         )
 
     def test_two_column_name_phone_and_phone_name(self) -> None:
         content = "Name,Phone\nAlice,720-383-2388\n720-555-1212,Bob\nNope,StillNo\n"
         self.assertEqual(
-            parse_recipients_csv(content),
+            parse_recipients_csv(content, 100, 10, 500),
             [
                 {"name": "Alice", "phone": "+17203832388"},
                 {"name": "Bob", "phone": "+17205551212"},
@@ -201,9 +201,36 @@ class TestParseRecipientsCsv(unittest.TestCase):
     def test_three_column_first_last_phone_with_header(self) -> None:
         content = "First,Last,Phone\nVardan,Hovsepyan,(323) 630-0201\n,,\nBad,Data,123\n"
         self.assertEqual(
-            parse_recipients_csv(content),
+            parse_recipients_csv(content, 100, 10, 500),
             [{"name": "Vardan Hovsepyan", "phone": "+13236300201"}],
         )
+
+    def test_row_limit_rejects_excess_data(self) -> None:
+        with self.assertRaisesRegex(ValueError, "maximum of 1 data rows"):
+            parse_recipients_csv(
+                "720-383-2388\n720-555-1212\n",
+                1,
+                10,
+                500,
+            )
+
+    def test_column_limit_rejects_wide_rows(self) -> None:
+        with self.assertRaisesRegex(ValueError, "3 columns; the limit is 2"):
+            parse_recipients_csv(
+                "Alice,Denver,720-383-2388\n",
+                100,
+                2,
+                500,
+            )
+
+    def test_cell_limit_rejects_oversized_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cell longer than 5 characters"):
+            parse_recipients_csv(
+                "Long Name,720-383-2388\n",
+                100,
+                10,
+                5,
+            )
 
 
 class TestParsePhonesCsv(unittest.TestCase):

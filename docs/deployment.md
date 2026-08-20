@@ -62,29 +62,57 @@ Minimum production shape:
 FLASK_ENV=production
 FLASK_DEBUG=0
 TRUST_PROXY=1
-TRUSTED_HOSTS=app.example.com
+TRUSTED_HOSTS=twinevia.com,www.twinevia.com,app.twinevia.com
 SAAS_MODE=1
 SCHEDULER_ENABLED=0
 DATABASE_URL=postgresql+psycopg://user:password@127.0.0.1:5432/twinevia
 REDIS_URL=redis://localhost:6379/0
 RQ_QUEUE_NAME=twinevia-saas
-SAAS_BASE_URL=https://app.example.com
+SAAS_BASE_URL=https://app.twinevia.com
+PUBLIC_BASE_URL=https://twinevia.com
+APP_BASE_URL=https://app.twinevia.com
+MANAGED_PILOT_ENABLED=1
 SECRET_KEY=replace-me
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-me
 STRIPE_SECRET_KEY=sk_live_replace_me
+STRIPE_PUBLISHABLE_KEY=pk_live_replace_me
 STRIPE_WEBHOOK_SECRET=whsec_replace_me
+STRIPE_WEBHOOK_ENDPOINT_ID=we_replace_me
+STRIPE_PORTAL_CONFIGURATION_ID=bpc_replace_me
+STRIPE_EXPECTED_ACCOUNT_ID=acct_1TCY8xEksbf3Q3Fg
 STRIPE_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
 STRIPE_MONTHLY_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
 STRIPE_ANNUAL_PRICE_ID=price_1TYtO4Eksbf3Q3FgHzXB9S5b
-STRIPE_ACTIVATION_PRICE_ID=price_1TYtOAEksbf3Q3Fg0gCPD4nN
+STRIPE_ACTIVATION_PRICE_ID=price_1TPq4KEksbf3Q3FgwATaTJ7h
 BILLING_TRIAL_DAYS=0
+BILLING_ACTIVATION_FEE_USD=149.00
+BILLING_MONTHLY_PRICE_USD=59.99
+BILLING_ANNUAL_PRICE_USD=600.00
+BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS=1000
+BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS=1000
+BILLING_OUTBOUND_SEGMENT_RATE_USD=0.0300
+BILLING_OFFER_VERSION=2026-08-managed-pilot-v1
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=replace_me
 TWILIO_CREDENTIAL_ENCRYPTION_KEY=replace_me
 STRIPE_FAKE_CHECKOUT_ENABLED=0
 TWILIO_BROWSER_FAKE_SENDS=0
 TWILIO_A2P_FAKE_QUEUE=0
+READINESS_TOKEN=replace-with-at-least-32-random-characters
+ALERT_WEBHOOK_URL=https://alerts.example.com/replace-me
+UPTIME_MONITOR_HEARTBEAT_URL=https://monitor.example.com/replace-me
+BACKUP_LOCAL_DIR=/var/backups/twinevia-saas
+BACKUP_OFFSITE_DESTINATION=/mnt/twinevia-offsite
+BACKUP_ENCRYPTION_PASSPHRASE_FILE=/etc/twinevia-saas/backup-passphrase
+BACKUP_RETENTION_DAYS=35
+BACKUP_STATUS_FILE=/var/lib/twinevia-saas/backup-status.json
+BACKUP_MAX_AGE_HOURS=30
+RESTORE_DRILL_STATUS_FILE=/var/lib/twinevia-saas/restore-drill-status.json
+RESTORE_DRILL_DATABASE_URL=postgresql+psycopg://restore_user:replace-me@127.0.0.1:5432/twinevia_restore_drill
+RESTORE_DRILL_DATABASE_NAME=twinevia_restore_drill
+RESTORE_DRILL_MAX_AGE_DAYS=90
+AOC_SCHEDULED_CANCELLATION_RECORD_FILE=/var/lib/twinevia-saas/aoc-scheduled-cancellations/managed-pilot-launch.json
 ```
 
 Add these when applicable:
@@ -205,25 +233,33 @@ sudo ./deploy/deploy_twinevia_saas.sh
 That script:
 
 - pulls latest code
-- syncs restart helper and systemd artifacts
-- installs Python dependencies
-- applies SaaS migrations
-- ensures the first platform admin exists
-- validates config
-- enables and restarts the runtime units
-- validates the restart helper
-- retries the health check on `127.0.0.1:8100`
+- refuses a dirty production checkout
+- archives the reviewed commit into a versioned release
+- builds and verifies a per-release Python 3.11 environment
+- creates an encrypted pre-migration backup and off-host copy
+- restores and forward-migrates the backup in the isolated drill database
+- verifies the AOC cancellation record before production migration
+- applies additive SaaS migrations and ensures the first platform admin exists
+- validates the live Stripe account, prices, webhook, and portal
+- atomically switches `current`, retains `previous`, and restarts units
+- requires exact `OK` health and full `READY` status or rolls back
 
 ## 9. Reverse Proxy
 
-This repo does not currently ship a dedicated SaaS nginx config file.
+The repository ships `deploy/nginx/twinevia.conf` for the three managed-pilot hosts. After DNS and the three-name certificate are approved, install it with:
 
-Your reverse proxy must:
+```bash
+sudo /opt/twinevia-saas/current/deploy/install_nginx_twinevia.sh --confirm-dns-and-certificate-ready
+```
+
+The proxy:
 
 - forward the original `Host` header
 - forward `X-Forwarded-*` headers when `TRUST_PROXY=1`
 - proxy the app to `127.0.0.1:8100`
 - allow `/health` through for monitoring
+- block external access to `/ready`
+- preserve prior `www` webhook, invitation, compliance, billing, and setup callback paths
 
 Do not proxy SaaS traffic to any retired legacy runtime or non-SaaS port.
 
@@ -243,14 +279,9 @@ Do not proxy SaaS traffic to any retired legacy runtime or non-SaaS port.
 
 ## 11. Backup Expectations
 
-At minimum, back up:
+The daily backup timer encrypts PostgreSQL, configuration, provider secrets stored in PostgreSQL, Nginx, systemd units, and the deployed release before copying the archive to a separately mounted off-host destination. Releases also require a successful isolated restore drill before production migration.
 
-- PostgreSQL
-- Redis persistence files or managed Redis snapshots
-- `/opt/twinevia-saas/.env`
-- `/var/log/twinevia-saas` if your incident process relies on local log retention
-
-See [saas-operations.md](saas-operations.md) for day-2 backup and restore guidance.
+See [managed-pilot-runbooks.md](managed-pilot-runbooks.md) for release, rollback, backup/restore, incident, failed-send, and offboarding procedures.
 
 ## Retired Legacy Deployment
 

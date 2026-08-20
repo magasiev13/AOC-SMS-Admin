@@ -50,6 +50,7 @@ run_and_capture() {
 run_and_capture browser env PLAYWRIGHT_ARTIFACT_DIR="${PLAYWRIGHT_DIR}" "${REPO_ROOT}/run/test_browser.sh"
 run_and_capture backend "${REPO_ROOT}/run/test.sh"
 run_and_capture verify "${REPO_ROOT}/run/verify.sh"
+run_and_capture readiness "${REPO_ROOT}/run/readiness_check.sh"
 
 cat > "${RUN_DIR}/summary.txt" <<EOF
 Public-readiness local signoff completed successfully.
@@ -57,6 +58,7 @@ Run ID: ${RUN_ID}
 Browser artifacts: ${PLAYWRIGHT_DIR}
 Backend log: ${RUN_DIR}/backend.log
 Verify log: ${RUN_DIR}/verify.log
+Readiness log: ${RUN_DIR}/readiness.log
 EOF
 
 echo "Local signoff artifacts written to ${RUN_DIR}"

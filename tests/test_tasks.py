@@ -246,7 +246,7 @@ class TestSendBulkJob(unittest.TestCase):
         log_id = self._create_log(organization_id=organization.id, details=[])
         recipients = [{"phone": "+15550000008", "name": "Active Recipient"}]
         mock_service = MagicMock()
-        mock_service.send_bulk.return_value = {
+        mock_service.send_bulk_with_attempts.return_value = {
             "total": 1,
             "success_count": 1,
             "failure_count": 0,
@@ -258,7 +258,7 @@ class TestSendBulkJob(unittest.TestCase):
         self.send_bulk_job(log_id, organization.id, recipients, "Hello", delay=0)
 
         mock_get_twilio.assert_called_once_with(organization.id)
-        mock_service.send_bulk.assert_called_once()
+        mock_service.send_bulk_with_attempts.assert_called_once()
         mock_record_usage_candidates.assert_called_once()
         self.db.session.expire_all()
         log = self.db.session.get(self.MessageLog, log_id)

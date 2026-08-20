@@ -1,0 +1,33 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Privacy Policy — Twinevia{% endblock %}
+{% block meta_description %}How Twinevia, a service of IT Wingman LLC, handles pilot applications, account data, messaging records, billing references, and technical information.{% endblock %}
+
+{% block content %}
+  <div class="policy-layout">
+    <aside class="policy-index">
+      <p>Privacy Policy</p>
+      <time datetime="2026-08-19">Effective August 19, 2026</time>
+      <nav aria-label="Privacy Policy sections">
+        <a href="#scope">Scope</a><a href="#collect">Information we collect</a><a href="#use">How we use it</a><a href="#share">How it is shared</a><a href="#choices">Choices and retention</a><a href="#security">Security</a><a href="#contact">Contact</a>
+      </nav>
+    </aside>
+    <article class="policy-document">
+      <header><h1>Privacy Policy</h1><p>This policy explains how IT Wingman LLC handles information through Twinevia’s public website, pilot application, managed messaging workspace, and related support operations.</p></header>
+
+      <section id="scope"><h2>Scope</h2><p>Twinevia provides a business messaging service to approved organizations. This policy applies to visitors, pilot applicants, account users, and the business information processed when customers use Twinevia. A customer organization may have its own privacy obligations and policies for recipients whose data it submits to the service.</p></section>
+
+      <section id="collect"><h2>Information we collect</h2><h3>Information you provide</h3><p>We collect pilot-application details such as organization name, contact name, email, optional phone and website, messaging use case, expected volume, and provider-account status. Approved customers also provide account, organization, registration, policy-acceptance, billing, and support information.</p><h3>Messaging information</h3><p>When an organization uses Twinevia, the service may process recipient phone numbers and names, audience records, message content, schedules, consent or suppression records, delivery attempts, provider identifiers, replies, survey responses, and usage totals. The organization controls the purpose and recipients of its messages.</p><h3>Technical and transaction information</h3><p>We collect security and operational information such as IP-derived intake records, user agent, authentication events, timestamps, session and audit records, queue and delivery state, and error details. Stripe handles payment-card entry; Twinevia stores transaction and customer references needed to verify billing rather than full payment-card numbers.</p></section>
+
+      <section id="use"><h2>How we use information</h2><ul><li>Review pilot fit and communicate about onboarding.</li><li>Create and administer approved organizations and user access.</li><li>Provide messaging, inbox, registration, usage, billing, and support functions.</li><li>Apply suppression, consent, entitlement, security, fraud, and abuse controls.</li><li>Reconcile provider and payment events, investigate failures, and maintain audit records.</li><li>Protect, troubleshoot, improve, back up, and recover the service.</li><li>Meet legal, regulatory, carrier, and provider obligations.</li></ul></section>
+
+      <section id="share"><h2>How information is shared</h2><p>We disclose information only as needed to operate the service, follow customer instructions, protect Twinevia and others, or comply with law. Operational recipients may include:</p><ul><li><strong>Messaging providers and carriers,</strong> including Twilio and downstream networks, for number provisioning, registration, sending, receiving, and delivery status.</li><li><strong>Payment providers,</strong> including Stripe, for Checkout, subscriptions, invoices, payments, and the customer portal.</li><li><strong>Infrastructure and professional providers</strong> supporting hosting, storage, monitoring, security, backup, legal, and accounting functions.</li><li><strong>Authorities or affected parties</strong> when reasonably necessary to comply with law, enforce policies, or address fraud, abuse, security, or safety.</li></ul><p>Twinevia does not sell personal information for money. We do not use recipient message content for third-party advertising.</p></section>
+
+      <section id="choices"><h2>Choices, access, and retention</h2><p>Customers can manage many workspace records through the service and may request assistance through the <a href="{{ url_for('main.contact') }}">Contact page</a>. Message recipients should first contact the organization that sent the message and may use recognized opt-out keywords such as STOP. We retain information for as long as reasonably necessary to provide the service, maintain security and transaction records, meet legal or provider requirements, resolve disputes, and complete controlled backup retention. Deletion requests may be limited by those obligations.</p></section>
+
+      <section id="security"><h2>Security</h2><p>Twinevia uses administrative, technical, and operational safeguards intended to protect information, including tenant-aware access, role controls, session protections, encrypted storage for customer-managed provider credentials, request validation, provider webhook checks, audit records, backups, and recovery procedures. No internet service can guarantee absolute security.</p></section>
+
+      <section id="contact"><h2>Contact and changes</h2><p>Twinevia is a service of IT Wingman LLC. Submit privacy questions through the <a href="{{ url_for('main.contact') }}">Contact page</a>. We may update this policy as the service, law, or provider requirements change. A revised effective date will identify the current public version, and approved customers may be required to accept a new version before continuing to use chargeable features.</p></section>
+    </article>
+  </div>
+{% endblock %}

@@ -3,18 +3,33 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app import db
-from app.models import CommunityMember, Event, EventRegistration, Organization, ScheduledMessage, utc_now
+from app.models import (
+    CommunityMember,
+    Event,
+    EventRegistration,
+    Organization,
+    OrganizationEventSyncIntegration,
+    ScheduledMessage,
+    utc_now,
+)
+from app.services.provider_secret_service import decrypt_provider_secret, encrypt_provider_secret
 from app.tenant import organization_context, without_tenant_scope
 from app.utils import normalize_phone, normalize_sms_body, validate_phone
 
 
 AOC_EXTERNAL_SOURCE = "aoc-wordpress"
 AOC_AUTOMATION_SOURCE = "aoc_events"
+EVENT_SYNC_AUTOMATION_SOURCE = "event_sync"
+WORDPRESS_PROVIDER = "wordpress"
+WORDPRESS_EVENTS_MANAGER_SOURCE = "wordpress_events_manager"
+WORDPRESS_WPFORMS_SOURCE = "wordpress_wpforms"
+WORDPRESS_EVENT_SYNC_SOURCES = {WORDPRESS_EVENTS_MANAGER_SOURCE, WORDPRESS_WPFORMS_SOURCE, AOC_EXTERNAL_SOURCE}
 AOC_UNSUBSCRIBE_FOOTER = "\n\nReply STOP to unsubscribe."
 ACTIVE_BOOKING_STATUSES = {"active", "approved", "pending", "reserved", "submitted", "completed", "paid"}
 CANCELLED_BOOKING_STATUSES = {"cancelled", "canceled", "rejected", "deleted", "inactive"}
@@ -66,6 +81,24 @@ def verify_aoc_webhook_signature(
         raise AocWebhookAuthError("AOC webhook signature did not match.")
 
 
+def verify_event_sync_webhook_signature(
+    body: bytes,
+    timestamp_header: str | None,
+    signature_header: str | None,
+    secret: str,
+    tolerance_seconds: int,
+    now_timestamp: int,
+) -> None:
+    verify_aoc_webhook_signature(
+        body=body,
+        timestamp_header=timestamp_header,
+        signature_header=signature_header,
+        secret=secret,
+        tolerance_seconds=tolerance_seconds,
+        now_timestamp=now_timestamp,
+    )
+
+
 def parse_aoc_webhook_json(body: bytes) -> dict[str, Any]:
     try:
         payload = json.loads(body.decode("utf-8"))
@@ -76,17 +109,181 @@ def parse_aoc_webhook_json(body: bytes) -> dict[str, Any]:
     return payload
 
 
+def generate_event_sync_secret() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def event_sync_setup_view(organization: Organization, base_url: str) -> dict[str, Any]:
+    integration = OrganizationEventSyncIntegration.query.filter_by(
+        organization_id=organization.id,
+        provider=WORDPRESS_PROVIDER,
+    ).first()
+    endpoint = _event_sync_webhook_url(base_url, organization.slug)
+    enabled = integration.enabled if integration is not None else False
+    has_secret = bool(integration.webhook_secret_encrypted) if integration is not None else False
+    return {
+        "enabled": enabled,
+        "provider": WORDPRESS_PROVIDER,
+        "endpoint": endpoint,
+        "has_secret": has_secret,
+        "last_event_synced_at": integration.last_event_synced_at if integration is not None else None,
+        "last_signup_synced_at": integration.last_signup_synced_at if integration is not None else None,
+        "last_reconcile_synced_at": integration.last_reconcile_synced_at if integration is not None else None,
+        "last_error_at": integration.last_error_at if integration is not None else None,
+        "last_error_message": integration.last_error_message if integration is not None else None,
+        "setup_block": _wordpress_setup_block(endpoint, has_secret),
+    }
+
+
+def ensure_event_sync_integration(organization_id: int) -> OrganizationEventSyncIntegration:
+    integration = OrganizationEventSyncIntegration.query.filter_by(
+        organization_id=organization_id,
+        provider=WORDPRESS_PROVIDER,
+    ).first()
+    if integration is not None:
+        return integration
+    integration = OrganizationEventSyncIntegration(
+        organization_id=organization_id,
+        provider=WORDPRESS_PROVIDER,
+        enabled=False,
+    )
+    db.session.add(integration)
+    db.session.flush()
+    return integration
+
+
+def configure_event_sync_integration(
+    organization_id: int,
+    enabled: bool,
+    actor_user_id: int,
+) -> tuple[OrganizationEventSyncIntegration, str | None]:
+    integration = ensure_event_sync_integration(organization_id)
+    generated_secret = None
+    if enabled and not integration.webhook_secret_encrypted:
+        generated_secret = generate_event_sync_secret()
+        integration.webhook_secret_encrypted = encrypt_provider_secret(generated_secret)
+    integration.enabled = enabled
+    _record_event_sync_audit(
+        organization_id,
+        actor_user_id,
+        "enabled" if enabled else "disabled",
+        {"provider": integration.provider},
+    )
+    db.session.flush()
+    return integration, generated_secret
+
+
+def rotate_event_sync_secret(
+    organization_id: int,
+    actor_user_id: int,
+) -> tuple[OrganizationEventSyncIntegration, str]:
+    integration = ensure_event_sync_integration(organization_id)
+    generated_secret = generate_event_sync_secret()
+    integration.webhook_secret_encrypted = encrypt_provider_secret(generated_secret)
+    integration.enabled = True
+    integration.last_error_at = None
+    integration.last_error_message = None
+    _record_event_sync_audit(
+        organization_id,
+        actor_user_id,
+        "rotated_secret",
+        {"provider": integration.provider},
+    )
+    db.session.flush()
+    return integration, generated_secret
+
+
+def event_sync_integration_for_webhook(
+    organization_slug: str,
+    provider: str,
+) -> OrganizationEventSyncIntegration:
+    normalized_provider = (provider or "").strip().lower()
+    if normalized_provider != WORDPRESS_PROVIDER:
+        raise AocEventSyncPayloadError(f"Unsupported event sync provider {provider!r}.")
+    with without_tenant_scope():
+        organization = Organization.query.filter_by(slug=organization_slug.strip()).first()
+        if organization is None:
+            raise AocEventSyncPayloadError(f"Organization slug {organization_slug!r} was not found.")
+        integration = OrganizationEventSyncIntegration.query.filter_by(
+            organization_id=organization.id,
+            provider=WORDPRESS_PROVIDER,
+        ).first()
+    if integration is None or not integration.enabled:
+        raise AocWebhookAuthError("Event sync is not enabled for this organization.")
+    if not integration.webhook_secret_encrypted:
+        raise AocWebhookAuthError("Event sync webhook secret is not configured.")
+    return integration
+
+
+def decrypted_event_sync_secret(integration: OrganizationEventSyncIntegration) -> str:
+    secret = decrypt_provider_secret(integration.webhook_secret_encrypted)
+    if not secret:
+        raise AocWebhookAuthError("Event sync webhook secret is not configured.")
+    return secret
+
+
+def process_event_sync_payload(
+    payload: dict[str, Any],
+    integration: OrganizationEventSyncIntegration,
+    received_at: datetime,
+) -> dict[str, Any]:
+    try:
+        summary = _process_event_sync_payload_for_organization(
+            payload=payload,
+            organization_id=integration.organization_id,
+            received_at=received_at,
+        )
+    except AocEventSyncError as exc:
+        record_event_sync_error(integration, str(exc), received_at)
+        raise
+
+    action = summary["action"]
+    if action in {"event_upsert", "event_deleted"}:
+        integration.last_event_synced_at = _as_utc_naive(received_at)
+    elif action in {"booking_upsert", "booking_deleted"}:
+        integration.last_signup_synced_at = _as_utc_naive(received_at)
+    elif action == "reconcile_complete":
+        integration.last_reconcile_synced_at = _as_utc_naive(received_at)
+    integration.last_error_at = None
+    integration.last_error_message = None
+    db.session.flush()
+    return summary
+
+
+def record_event_sync_error(
+    integration: OrganizationEventSyncIntegration,
+    message: str,
+    received_at: datetime,
+) -> None:
+    integration.last_error_at = _as_utc_naive(received_at)
+    integration.last_error_message = message[:1000]
+    db.session.flush()
+
+
 def process_aoc_event_sync_payload(
     payload: dict[str, Any],
     organization_slug: str,
     received_at: datetime,
 ) -> dict[str, Any]:
+    organization = _organization_for_slug(organization_slug)
+    return _process_event_sync_payload_for_organization(
+        payload=payload,
+        organization_id=organization.id,
+        received_at=received_at,
+    )
+
+
+def _process_event_sync_payload_for_organization(
+    payload: dict[str, Any],
+    organization_id: int,
+    received_at: datetime,
+) -> dict[str, Any]:
     action = _required_text(payload, "action")
     source = _optional_text(payload, "source") or AOC_EXTERNAL_SOURCE
-    if source != AOC_EXTERNAL_SOURCE:
-        raise AocEventSyncPayloadError(f"Unsupported AOC event source {source!r}.")
+    if source not in WORDPRESS_EVENT_SYNC_SOURCES:
+        raise AocEventSyncPayloadError(f"Unsupported event sync source {source!r}.")
 
-    organization = _organization_for_slug(organization_slug)
+    organization = _organization_for_id(organization_id)
     received_at_utc = _as_utc_naive(received_at)
     summary: dict[str, Any] = {
         "organization_id": organization.id,
@@ -102,6 +299,11 @@ def process_aoc_event_sync_payload(
     }
 
     with organization_context(organization.id):
+        if action == "reconcile_complete":
+            summary["reconciled"] = True
+            db.session.flush()
+            return summary
+
         if action in {"event_upsert", "event_deleted"}:
             event_payload = _required_dict(payload, "event")
             event = _upsert_event(event_payload, source, received_at_utc)
@@ -109,19 +311,19 @@ def process_aoc_event_sync_payload(
             if _event_should_schedule(event, received_at_utc) and action == "event_upsert":
                 _sync_event_reminders(event, received_at_utc, summary)
             else:
-                summary["scheduled_cancelled"] += _cancel_pending_event_reminders(event.id)
+                summary["scheduled_cancelled"] += _cancel_pending_event_reminders(event)
             db.session.flush()
             return summary
 
         if action in {"booking_upsert", "booking_deleted"}:
             event_payload = _required_dict(payload, "event")
-            booking_payload = _required_dict(payload, "booking")
-            event = _upsert_event(event_payload, source, received_at_utc)
+            booking_payload = _booking_payload_for_source(_required_dict(payload, "booking"), source)
+            event = _upsert_event(event_payload, _event_source_for_booking_source(source), received_at_utc)
             summary["event_id"] = event.id
             if _event_should_schedule(event, received_at_utc):
                 _sync_event_reminders(event, received_at_utc, summary)
             else:
-                summary["scheduled_cancelled"] += _cancel_pending_event_reminders(event.id)
+                summary["scheduled_cancelled"] += _cancel_pending_event_reminders(event)
             if action == "booking_deleted" or _booking_is_cancelled(booking_payload):
                 summary["registration_id"] = _delete_event_registration_for_booking(
                     event,
@@ -144,7 +346,7 @@ def process_aoc_event_sync_payload(
             db.session.flush()
             return summary
 
-    raise AocEventSyncPayloadError(f"Unsupported AOC event action {action!r}.")
+    raise AocEventSyncPayloadError(f"Unsupported event sync action {action!r}.")
 
 
 def _organization_for_slug(organization_slug: str) -> Organization:
@@ -155,6 +357,14 @@ def _organization_for_slug(organization_slug: str) -> Organization:
         organization = Organization.query.filter_by(slug=normalized_slug).first()
     if organization is None:
         raise AocEventSyncPayloadError(f"Organization slug {normalized_slug!r} was not found.")
+    return organization
+
+
+def _organization_for_id(organization_id: int) -> Organization:
+    with without_tenant_scope():
+        organization = db.session.get(Organization, organization_id)
+    if organization is None:
+        raise AocEventSyncPayloadError(f"Organization id {organization_id!r} was not found.")
     return organization
 
 
@@ -241,6 +451,13 @@ def _upsert_booking_registration(
     registration.external_person_id = _optional_text(payload, "person_id")
     registration.external_booking_status = _optional_text(payload, "status")
     registration.booking_spaces = _optional_int(payload, "spaces")
+    selections = _optional_selections(payload, "selections")
+    registration.selections_json = (
+        json.dumps(selections, ensure_ascii=False, sort_keys=True)
+        if selections
+        else None
+    )
+    registration.booking_comment = _optional_text(payload, "comment")
     registration.external_updated_at = _optional_utc_naive_datetime(payload, "updated_at")
     registration.synced_at = received_at
 
@@ -288,8 +505,9 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
 
     for automation_kind, target, scheduled_at, message_body in reminder_specs:
         automation_key = _automation_key(event, automation_kind)
+        automation_source = _automation_source_for_event(event)
         scheduled = ScheduledMessage.query.filter_by(
-            automation_source=AOC_AUTOMATION_SOURCE,
+            automation_source=automation_source,
             automation_key=automation_key,
         ).first()
         if scheduled_at is None or scheduled_at <= received_at:
@@ -306,7 +524,7 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
                 message_body=message_body,
                 target=target,
                 event_id=event.id if target == "event" else None,
-                automation_source=AOC_AUTOMATION_SOURCE,
+                automation_source=automation_source,
                 automation_key=automation_key,
                 automation_kind=automation_kind,
             )
@@ -325,11 +543,12 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
             summary["scheduled_updated"] += 1
 
 
-def _cancel_pending_event_reminders(event_id: int) -> int:
+def _cancel_pending_event_reminders(event: Event) -> int:
+    automation_keys = [_automation_key(event, automation_kind) for automation_kind in ("invite", "seven_day", "one_day", "day_of")]
     scheduled_messages = ScheduledMessage.query.filter(
-        ScheduledMessage.automation_source == AOC_AUTOMATION_SOURCE,
+        ScheduledMessage.automation_source.in_([AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE]),
         ScheduledMessage.status == "pending",
-        ScheduledMessage.automation_key.like(f"%:{event_id}:%"),
+        ScheduledMessage.automation_key.in_(automation_keys),
     ).all()
     cancelled = 0
     for scheduled in scheduled_messages:
@@ -341,7 +560,12 @@ def _cancel_pending_event_reminders(event_id: int) -> int:
 
 def _automation_key(event: Event, automation_kind: str) -> str:
     external_event_id = event.external_event_id or str(event.id)
-    return f"{AOC_EXTERNAL_SOURCE}:{external_event_id}:{event.id}:{automation_kind}"
+    external_source = event.external_source or AOC_EXTERNAL_SOURCE
+    return f"{external_source}:{external_event_id}:{event.id}:{automation_kind}"
+
+
+def _automation_source_for_event(event: Event) -> str:
+    return AOC_AUTOMATION_SOURCE if event.external_source == AOC_EXTERNAL_SOURCE else EVENT_SYNC_AUTOMATION_SOURCE
 
 
 def _event_should_schedule(event: Event, received_at: datetime) -> bool:
@@ -360,6 +584,23 @@ def _booking_is_cancelled(payload: dict[str, Any]) -> bool:
         return False
     active = _optional_bool(payload, "active")
     return active is False
+
+
+def _booking_payload_for_source(payload: dict[str, Any], source: str) -> dict[str, Any]:
+    copied = dict(payload)
+    if _optional_text(copied, "provider") or _optional_text(copied, "source_type"):
+        return copied
+    if source == WORDPRESS_WPFORMS_SOURCE:
+        copied["provider"] = "wpforms"
+    else:
+        copied["provider"] = "events_manager"
+    return copied
+
+
+def _event_source_for_booking_source(source: str) -> str:
+    if source == WORDPRESS_WPFORMS_SOURCE:
+        return WORDPRESS_EVENTS_MANAGER_SOURCE
+    return source
 
 
 def _invite_scheduled_at(event: Event, received_at: datetime) -> datetime | None:
@@ -400,8 +641,12 @@ def _before_event_message(event: Event, timing_label: str) -> str:
 
 
 def _day_of_message(event: Event) -> str:
+    location_sentence = ""
+    if event.sms_location_note:
+        location_sentence = f" Meet at {event.sms_location_note.strip()}"
     return normalize_sms_body(
-        f"Today: {event.title} starts at {_event_time_label(event)}. "
+        f"Armenians of Colorado: Today, {event.title} starts at {_event_time_label(event)}."
+        f"{location_sentence} "
         f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 
@@ -547,5 +792,62 @@ def _optional_int(payload: dict[str, Any], key: str) -> int | None:
         raise AocEventSyncPayloadError(f"AOC payload field {key!r} must be an integer.") from exc
 
 
+def _optional_selections(payload: dict[str, Any], key: str) -> list[dict[str, str | int]]:
+    value = payload.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise AocEventSyncPayloadError(f"AOC payload field {key!r} must be an array.")
+
+    selections: list[dict[str, str | int]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise AocEventSyncPayloadError(
+                f"AOC payload field {key!r} item {index} must be an object."
+            )
+        label = _required_text(item, "label")
+        quantity = _optional_int(item, "quantity")
+        if quantity is None or quantity <= 0:
+            raise AocEventSyncPayloadError(
+                f"AOC payload field {key!r} item {index} quantity must be positive."
+            )
+        selections.append({"label": label[:200], "quantity": quantity})
+    return selections
+
+
 def utc_now_for_aoc_sync() -> datetime:
     return utc_now().replace(tzinfo=None)
+
+
+def _event_sync_webhook_url(base_url: str, organization_slug: str) -> str:
+    normalized_base_url = base_url.rstrip("/")
+    return f"{normalized_base_url}/webhooks/event-sync/{organization_slug}/wordpress"
+
+
+def _wordpress_setup_block(endpoint: str, has_secret: bool) -> str:
+    secret_value = "PASTE_GENERATED_SECRET_HERE" if has_secret else "GENERATE_AND_PASTE_SECRET_HERE"
+    return "\n".join(
+        [
+            "define('TWINEVIA_EVENT_SYNC_ENABLED', true);",
+            f"define('TWINEVIA_EVENT_SYNC_WEBHOOK_URL', '{endpoint}');",
+            f"define('TWINEVIA_EVENT_SYNC_WEBHOOK_SECRET', '{secret_value}');",
+        ]
+    )
+
+
+def _record_event_sync_audit(
+    organization_id: int,
+    actor_user_id: int,
+    action: str,
+    metadata: dict[str, Any],
+) -> None:
+    from app.models import OrganizationSettingsAuditLog
+
+    entry = OrganizationSettingsAuditLog(
+        organization_id=organization_id,
+        actor_user_id=actor_user_id,
+        category="event_sync",
+        action=action,
+        metadata_json=json.dumps(metadata, sort_keys=True),
+    )
+    db.session.add(entry)

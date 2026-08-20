@@ -70,7 +70,7 @@ class TestLoginHardeningConfig(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Too many failed attempts", response.data)
 
-    def test_account_limit_from_config_is_applied(self) -> None:
+    def test_account_global_limit_does_not_block_a_correct_password_from_another_source(self) -> None:
         os.environ["AUTH_MAX_ATTEMPTS_ACCOUNT"] = "1"
         os.environ["AUTH_MAX_ATTEMPTS_IP"] = "30"
         import importlib
@@ -80,11 +80,22 @@ class TestLoginHardeningConfig(unittest.TestCase):
         self.app.config["AUTH_MAX_ATTEMPTS_ACCOUNT"] = 1
         self.app.config["AUTH_MAX_ATTEMPTS_IP"] = 30
 
-        self._post_login("admin", "wrong-pass")
-        response = self._post_login("admin", "wrong-pass")
+        self.client.post(
+            "/login",
+            data={"username": "admin", "password": "wrong-pass"},
+            environ_overrides={"REMOTE_ADDR": "10.10.1.1"},
+            follow_redirects=True,
+        )
+        response = self.client.post(
+            "/login",
+            data={"username": "admin", "password": "correct-password-123"},
+            environ_overrides={"REMOTE_ADDR": "10.10.1.2"},
+            follow_redirects=True,
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Too many failed attempts", response.data)
+        self.assertNotIn(b"Too many failed attempts", response.data)
+        self.assertNotIn(b"Invalid email, username, or password", response.data)
 
     def test_successful_login_marks_session_permanent(self) -> None:
         response = self._post_login("admin", "correct-password-123")

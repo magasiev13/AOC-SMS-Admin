@@ -1,0 +1,25 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}SMS & A2P Policy — Twinevia{% endblock %}
+{% block meta_description %}Twinevia requirements for SMS consent, sender identity, opt-out handling, registration, compliant messaging, provider review, and customer responsibility.{% endblock %}
+
+{% block content %}
+  <div class="policy-layout">
+    <aside class="policy-index"><p>SMS &amp; A2P</p><time datetime="2026-08-19">Effective August 19, 2026</time><nav aria-label="SMS and A2P sections"><a href="#scope">Scope</a><a href="#optin">Opt-in</a><a href="#content">Message content</a><a href="#optout">STOP and HELP</a><a href="#registration">Registration</a><a href="#costs">Costs and approval</a></nav></aside>
+    <article class="policy-document">
+      <header><h1>SMS &amp; A2P Policy</h1><p>This policy describes the minimum operating requirements for application-to-person SMS sent or received through Twinevia. Customers must also follow applicable law, carrier rules, registry requirements, and provider policies.</p></header>
+
+      <section id="scope"><h2>Approved sender and use case</h2><p>Each messaging program must belong to the identified customer organization and use the approved sender, number, campaign, audience, and purpose. Material changes to brand, traffic type, volume, opt-in path, sample messages, links, or support details must be reviewed before use.</p></section>
+
+      <section id="optin"><h2>Consent and opt-in records</h2><p>The customer must use an appropriate opt-in method for the traffic and preserve evidence sufficient to show what the recipient agreed to, when, how, for which sender, for what purpose, and at what expected frequency. Public forms must present accurate terms and privacy information. Consent for one sender or purpose may not be treated as blanket consent for unrelated messages.</p><p>Where required, disclosures should explain that message and data rates may apply, how to stop, how to get help, and whether messages are recurring or automated.</p></section>
+
+      <section id="content"><h2>Message requirements</h2><ul><li>Identify the organization clearly, especially in the first message or when context may be unclear.</li><li>Use content consistent with the registered campaign and recipient expectation.</li><li>Keep links and phone numbers attributable to the sender and avoid deceptive redirects.</li><li>Do not share one approved number or campaign across unrelated businesses.</li><li>Observe applicable quiet hours, frequency limits, content restrictions, and industry-specific rules.</li><li>Review tests and automations as real messages; suppression and opt-out protections still apply.</li></ul></section>
+
+      <section id="optout"><h2>STOP, HELP, and suppression</h2><p>Recognized opt-out requests, including STOP and equivalent clear language, must be honored promptly. Twinevia maintains suppression controls for supported paths, but the customer is responsible for making sure revocation is respected across all systems and providers it uses. Customers may not re-add a suppressed recipient without a valid new opt-in.</p><p>HELP or support responses must provide accurate sender and assistance information appropriate to the program.</p></section>
+
+      <section id="registration"><h2>Registration and review</h2><p>Customers must provide complete, truthful, current business, contact, campaign, content, volume, opt-in, policy, and support information. Twinevia may submit this information to Twilio, registries, vetting providers, and carriers as needed. Reviewers may request changes, documents, or new submissions. A saved draft, submitted form, charged fee, or prior approval does not guarantee acceptance or continued delivery.</p></section>
+
+      <section id="costs"><h2>Costs, rejection, and provider decisions</h2><p>Twinevia absorbs the normal first Low Volume Standard registration for an approved managed pilot. Customers pay rejected resubmissions, appeals, customer-caused retries, high-volume or Standard upgrades, special vetting, and requested additional numbers as described in the <a href="{{ url_for('main.billing_policy') }}">Billing Policy</a>. Provider, registry, and carrier approval is never promised, and those parties may change fees, rules, throughput, filtering, or status.</p><p>If a program is rejected or suspended, the customer must correct the underlying information or behavior before another attempt. Twinevia may decline to resubmit traffic that presents legal, provider, abuse, or reputation risk.</p></section>
+    </article>
+  </div>
+{% endblock %}

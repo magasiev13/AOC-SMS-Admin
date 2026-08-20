@@ -1,11 +1,13 @@
 import csv
+import hashlib
+import hmac
 import io
 import json
 import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -24,9 +26,10 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required, login_user, logout_user
-from sqlalchemy import DateTime, Integer, String, Text, func, select, text
+from sqlalchemy import DateTime, Integer, String, Text, func, or_, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
+from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
 from app.auth import home_endpoint_for_user, require_roles
@@ -37,17 +40,20 @@ from app.models import (
     CommunityMember,
     Event,
     EventRegistration,
+    ExternalWebhookDelivery,
     InboxMessage,
     InboxThread,
     KeywordAutomationRule,
     MessageLog,
     Organization,
     OrganizationA2POnboarding,
+    OrganizationEventSyncIntegration,
     OrganizationInvitation,
     OrganizationMembership,
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationSubscription,
+    PilotApplication,
     ScheduledMessage,
     SuppressedContact,
     SurveyFlow,
@@ -76,13 +82,22 @@ from app.services.billing_service import (
     subscription_status_allows_sending,
     subscription_status_is_complimentary,
     sync_checkout_session_by_id,
+    update_organization_billing_offer,
 )
 from app.services.aoc_event_sync_service import (
     AocEventSyncPayloadError,
     AocWebhookAuthError,
+    configure_event_sync_integration,
+    decrypted_event_sync_secret,
+    event_sync_integration_for_webhook,
+    event_sync_setup_view,
     parse_aoc_webhook_json,
+    process_event_sync_payload,
     process_aoc_event_sync_payload,
+    record_event_sync_error,
+    rotate_event_sync_secret,
     utc_now_for_aoc_sync,
+    verify_event_sync_webhook_signature,
     verify_aoc_webhook_signature,
 )
 from app.services.billing_plans import (
@@ -106,11 +121,27 @@ from app.services.inbox_service import (
     parse_survey_questions,
     process_inbound_sms,
     send_thread_reply,
+    send_thread_reply_with_key,
     update_thread_contact_name,
 )
 from app.services.platform_operations_service import (
     enqueue_platform_service_restart_request,
     latest_platform_service_restart_request,
+)
+from app.services.policy_acceptance_service import (
+    PolicyAcceptanceError,
+    accept_required_policies,
+    missing_required_policy_acceptances,
+    required_policy_versions,
+)
+from app.services.readiness_service import run_readiness_checks
+from app.services.pilot_application_service import (
+    PilotApplicationError,
+    PilotApplicationRateLimitError,
+    PilotApplicationSubmission,
+    approve_pilot_application,
+    create_pilot_application,
+    decline_pilot_application,
 )
 from app.services.outbound_idempotency_service import (
     BLAST_IDEMPOTENCY_TTL_SECONDS,
@@ -126,6 +157,7 @@ from app.services.recipient_service import (
     dedupe_recipients_by_phone as dedupe_recipients_by_phone_service,
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
+    get_suppressed_phone_set,
     get_unsubscribed_phone_set,
 )
 from app.services.test_recipient_service import (
@@ -175,7 +207,7 @@ from app.services.twilio_service import (
     resolve_number_strategy,
     resolve_messaging_profile,
     resume_org,
-    send_operational_test_message,
+    send_operational_test_message_with_key,
     save_service_address_from_app_input,
     save_customer_managed_profile,
     suspend_org,
@@ -202,6 +234,19 @@ from app.utils import (
 
 bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
+
+
+@bp.before_app_request
+def enforce_webhook_request_size_limit():
+    if request.method != 'POST' or not request.path.startswith('/webhooks/'):
+        return None
+    max_bytes = int(current_app.config.get('WEBHOOK_MAX_BYTES', 256 * 1024) or 256 * 1024)
+    if request.content_length is not None and request.content_length > max_bytes:
+        abort(413, description=f'Webhook body exceeds the {max_bytes}-byte limit.')
+    payload = request.get_data(cache=True)
+    if len(payload) > max_bytes:
+        abort(413, description=f'Webhook body exceeds the {max_bytes}-byte limit.')
+    return None
 BLAST_QUEUE_UNAVAILABLE_FLASH = (
     'Background queue is unavailable right now. The blast was not queued. Check Redis/worker health and try again.'
 )
@@ -586,7 +631,12 @@ def _find_username_conflict(username: str, *, exclude_user_id: int | None = None
     if not normalized_username:
         return None
 
-    query = AppUser.query.filter(func.lower(AppUser.username) == normalized_username)
+    query = AppUser.query.filter(
+        or_(
+            func.lower(AppUser.username) == normalized_username,
+            func.lower(AppUser.email) == normalized_username,
+        )
+    )
     if exclude_user_id is not None:
         query = query.filter(AppUser.id != exclude_user_id)
     return query.first()
@@ -618,6 +668,11 @@ def _organization_email_account_status(email: str) -> tuple[AppUser | None, str 
 
     existing_user = AppUser.query.filter(func.lower(AppUser.email) == normalized_email).first()
     if existing_user is None:
+        username_collision = AppUser.query.filter(
+            func.lower(AppUser.username) == normalized_email
+        ).first()
+        if username_collision is not None:
+            return username_collision, 'That email conflicts with an existing login identifier.'
         return None, None
     if existing_user.is_platform_admin:
         return existing_user, 'Platform admin accounts cannot be assigned to an organization. Use a separate owner or staff email.'
@@ -1466,6 +1521,8 @@ def _public_organization_by_slug_or_404(organization_slug: str) -> Organization:
 
 
 def _tenant_get_or_404(model, entity_id: int):
+    if saas_mode_enabled() and current_user.is_platform_admin:
+        abort(403)
     query = model.query.filter_by(id=entity_id)
     if (
         saas_mode_enabled()
@@ -1572,7 +1629,11 @@ def _tenant_bulk_filter(query, model):
 
 
 def _saas_base_url() -> str:
-    configured = (current_app.config.get('SAAS_BASE_URL') or '').strip().rstrip('/')
+    configured = (
+        current_app.config.get('APP_BASE_URL')
+        or current_app.config.get('SAAS_BASE_URL')
+        or ''
+    ).strip().rstrip('/')
     if configured:
         return configured
     return request.host_url.rstrip('/')
@@ -1733,6 +1794,19 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             title='Billing setup needed',
             summary='Your business is not active yet.',
             next_step='Complete checkout to unlock sending and staff invites.',
+        )
+
+    if (
+        normalized_status in {'trialing', 'active'}
+        and organization is not None
+        and not organization_can_send(organization)
+    ):
+        view.update(
+            badge='warning',
+            title='Setup payment verification pending',
+            summary='The subscription is active, but the one-time setup payment has not been verified.',
+            next_step='Complete or reconcile Checkout before sending messages.',
+            can_send=False,
         )
 
     if subscription is not None and subscription.current_period_end:
@@ -2080,9 +2154,9 @@ def _platform_organization_access_context(
             'summary': (
                 'This organization is annual-only because of a server config override. Save the offer here to move it into admin-managed settings.'
                 if config_annual_only_billing_offer
-                else 'This organization will only see the $600/year upfront plan plus the $150 setup fee at checkout.'
+                else 'This organization will only see the $600/year upfront plan plus the $149 setup fee at checkout.'
                 if annual_only_billing_offer
-                else 'This organization can choose either $59.99/month or $600/year upfront, plus the $150 setup fee.'
+                else 'This organization can choose either $59.99/month or $600/year upfront, plus the $149 setup fee.'
             ),
             'next_code': 'standard' if persisted_annual_only_billing_offer else 'annual_only',
             'toggle_label': (
@@ -2368,6 +2442,8 @@ def _event_detail_surface_view(
     event: Event,
     *,
     registration_count: int,
+    attendee_count: int,
+    sendable_count: int,
     unsubscribed_count: int,
 ) -> dict:
     return _surface_view(
@@ -2382,7 +2458,9 @@ def _event_detail_surface_view(
             ),
         ],
         stats=[
-            _surface_stat('Registrations', registration_count, 'Saved attendees'),
+            _surface_stat('Booking contacts', registration_count, 'Unique phone registrations'),
+            _surface_stat('Attendees', attendee_count, 'Total party size'),
+            _surface_stat('Sendable', sendable_count, 'Eligible event SMS recipients'),
             _surface_stat('Suppressed', unsubscribed_count, 'Registrants blocked from sends'),
         ],
     )
@@ -2443,7 +2521,7 @@ def _survey_flows_surface_view(surveys: list[SurveyFlow], *, search: str) -> dic
     active_count = sum(1 for survey in surveys if survey.is_active)
     return _surface_view(
         eyebrow='Automations',
-        title='Survey flows',
+        title='Survey automation overview',
         copy='Review survey triggers, question counts, and submission paths from one list.',
         meta=_organization_meta_items(_current_organization()),
         stats=[
@@ -2550,6 +2628,91 @@ def _test_recipients_surface_view(
             _surface_stat('Recent changes', recent_change_count, 'Latest audit entries shown'),
         ],
     )
+
+
+def _event_sync_surface_view(
+    organization: Organization,
+    integration_view: dict,
+) -> dict:
+    enabled_label = 'Enabled' if integration_view['enabled'] else 'Disabled'
+    last_activity = (
+        integration_view['last_event_synced_at']
+        or integration_view['last_signup_synced_at']
+        or integration_view['last_reconcile_synced_at']
+    )
+    return _surface_view(
+        eyebrow='Integrations',
+        title='Event sync',
+        copy='Connect a WordPress event site once and let future events and signups update automatically.',
+        meta=_organization_meta_items(organization),
+        stats=[
+            _surface_stat('Status', enabled_label, 'WordPress webhook'),
+            _surface_stat(
+                'Secret',
+                'Ready' if integration_view['has_secret'] else 'Not generated',
+                'Webhook signing',
+            ),
+            _surface_stat(
+                'Last activity',
+                last_activity.strftime('%b %d, %Y %H:%M') if last_activity else 'None yet',
+                'UTC timestamp',
+            ),
+        ],
+    )
+
+
+def _settings_surface_view(organization: Organization) -> dict:
+    return _surface_view(
+        eyebrow='Admin',
+        title='Workspace controls',
+        copy='Manage integrations, team access, test recipients, and security from one place.',
+        meta=_organization_meta_items(organization),
+    )
+
+
+def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
+    cards = [
+        {
+            'title': 'Event Sync',
+            'description': 'Find the WordPress webhook endpoint, rotate the signing secret, and review sync health.',
+            'icon': 'bi-arrow-repeat',
+            'href': url_for('main.event_sync_settings'),
+            'action': 'Open Event Sync',
+        },
+        {
+            'title': 'Test Recipients',
+            'description': 'Control the internal phone numbers used for owner-approved dashboard test sends.',
+            'icon': 'bi-phone-vibrate',
+            'href': url_for('main.test_recipients_settings'),
+            'action': 'Manage Test List',
+        },
+        {
+            'title': 'Team Access',
+            'description': 'Invite owners or staff, update workspace roles, and remove access when needed.',
+            'icon': 'bi-person-gear',
+            'href': url_for('main.users_list'),
+            'action': 'Manage Users',
+        },
+        {
+            'title': 'Security Events',
+            'description': 'Review recent sign-in, password, and account security activity for the workspace.',
+            'icon': 'bi-shield-lock',
+            'href': url_for('main.security_events'),
+            'action': 'Review Security',
+        },
+    ]
+    if include_billing:
+        cards.insert(
+            3,
+            {
+                'title': 'Billing',
+                'description': 'Review subscription status, checkout state, and billing portal actions for this workspace.',
+                'icon': 'bi-credit-card',
+                'href': url_for('main.billing_overview'),
+                'action': 'Open Billing',
+            },
+        )
+    return cards
 
 
 def _user_form_surface_view(user: AppUser | None) -> dict:
@@ -3322,7 +3485,10 @@ def _iter_survey_submission_export_rows(survey: SurveyFlow) -> object:
 def _stream_csv_rows(rows: object) -> object:
     output = io.StringIO()
     writer = csv.writer(output)
-    for row in rows:
+    max_rows = int(current_app.config.get('CSV_EXPORT_MAX_ROWS', 25000) or 25000)
+    for row_index, row in enumerate(rows):
+        if row_index > max_rows:
+            raise RuntimeError(f'CSV export exceeds the {max_rows}-row limit.')
         output.seek(0)
         output.truncate(0)
         writer.writerow([sanitize_csv_cell(cell) for cell in row])
@@ -3369,7 +3535,24 @@ def _read_uploaded_csv_text(
             redirect_values=redirect_values,
         )
 
-    return uploaded_file, uploaded_file.read().decode('utf-8'), None
+    max_bytes = int(current_app.config.get('CSV_IMPORT_MAX_BYTES', 1024 * 1024) or 1024 * 1024)
+    payload = uploaded_file.read(max_bytes + 1)
+    if len(payload) > max_bytes:
+        raise ValueError(f'CSV upload exceeds the {max_bytes}-byte limit.')
+    try:
+        content = payload.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        raise ValueError('CSV upload must be UTF-8 encoded.') from exc
+    return uploaded_file, content, None
+
+
+def _parse_uploaded_recipients_csv(content: str) -> list[dict[str, str | None]]:
+    return parse_recipients_csv(
+        content,
+        int(current_app.config.get('CSV_IMPORT_MAX_ROWS', 5000) or 5000),
+        int(current_app.config.get('CSV_IMPORT_MAX_COLUMNS', 25) or 25),
+        int(current_app.config.get('CSV_IMPORT_MAX_CELL_CHARS', 2000) or 2000),
+    )
 
 
 def _dedupe_recipients_by_phone(parsed: list[dict]) -> tuple[list[dict], int]:
@@ -3441,10 +3624,41 @@ def _format_blast_estimate_summary(estimate: dict[str, object]) -> str:
     )
 
 
+def _blast_limit_error(estimate: dict[str, object]) -> str | None:
+    recipient_count = int(estimate.get('unique_recipients') or 0)
+    recipient_limit = int(current_app.config.get('SEND_MAX_RECIPIENTS', 5000) or 5000)
+    if recipient_count > recipient_limit:
+        return f'This send has {recipient_count} recipients; the limit is {recipient_limit}.'
+    segment_count = int(estimate.get('total_segments') or 0)
+    segment_limit = int(current_app.config.get('SEND_MAX_SEGMENTS', 15000) or 15000)
+    if segment_count > segment_limit:
+        return f'This send is estimated at {segment_count} SMS segments; the limit is {segment_limit}.'
+    return None
+
+
+def _bounded_recipient_snapshot_json(recipient_data: list[dict]) -> str:
+    payload = json.dumps(recipient_data, sort_keys=True)
+    payload_bytes = len(payload.encode('utf-8'))
+    max_bytes = int(current_app.config.get('RECIPIENT_SNAPSHOT_MAX_BYTES', 1024 * 1024) or 1024 * 1024)
+    if payload_bytes > max_bytes:
+        raise ValueError(
+            f'Recipient snapshot is {payload_bytes} bytes; the limit is {max_bytes} bytes.'
+        )
+    return payload
+
+
 def _csv_download_response(filename: str, rows: object) -> Response:
     response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
     response.headers['Content-Disposition'] = f'attachment; filename={filename}'
     return response
+
+
+def _bounded_export_query_all(query, resource_label: str) -> list:
+    max_rows = int(current_app.config.get('CSV_EXPORT_MAX_ROWS', 25000) or 25000)
+    records = query.limit(max_rows + 1).all()
+    if len(records) > max_rows:
+        abort(413, description=f'{resource_label} export exceeds the {max_rows}-row limit.')
+    return records
 
 
 def _parse_message_log_details(raw_details: str | None) -> list[dict]:
@@ -3568,16 +3782,154 @@ def health():
     return 'OK', 200
 
 
+@bp.route('/ready')
+def readiness():
+    expected_token = str(current_app.config.get('READINESS_TOKEN') or '')
+    supplied_token = str(request.headers.get('X-Twinevia-Readiness-Token') or '')
+    remote_address = str(request.remote_addr or '')
+    if expected_token:
+        if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
+            abort(404)
+    elif remote_address not in {'127.0.0.1', '::1'}:
+        abort(404)
+
+    report = run_readiness_checks(
+        current_app._get_current_object(),
+        require_worker=True,
+        require_launch_artifacts=True,
+    )
+    body = 'READY' if report.ready else 'NOT READY'
+    return body, 200 if report.ready else 503, {'Cache-Control': 'no-store'}
+
+
 @bp.route('/favicon.ico')
 def favicon():
     return redirect(url_for('static', filename='favicon.svg'), code=302)
 
 
-# Redirect root to dashboard
 @bp.route('/')
-@login_required
 def index():
-    return redirect(url_for(home_endpoint_for_user(current_user)))
+    if current_user.is_authenticated:
+        return redirect(url_for(home_endpoint_for_user(current_user)))
+
+    application_host = (
+        urlsplit(str(current_app.config.get('APP_BASE_URL') or '')).hostname or ''
+    ).lower()
+    public_host = (
+        urlsplit(str(current_app.config.get('PUBLIC_BASE_URL') or '')).hostname or ''
+    ).lower()
+    request_host = request.host.partition(':')[0].lower()
+    if application_host and application_host != public_host and request_host == application_host:
+        return redirect(url_for('auth.login'))
+    return render_template('marketing/home.html')
+
+
+@bp.route('/features')
+def features():
+    return render_template('marketing/features.html')
+
+
+@bp.route('/pricing')
+def pricing():
+    return render_template('marketing/pricing.html')
+
+
+@bp.route('/security')
+def security_marketing():
+    return render_template('marketing/security.html')
+
+
+@bp.route('/request-a-pilot', methods=['GET', 'POST'])
+def request_pilot():
+    form_data = {
+        'business_name': str(request.form.get('business_name') or ''),
+        'contact_name': str(request.form.get('contact_name') or ''),
+        'email': str(request.form.get('email') or ''),
+        'phone': str(request.form.get('phone') or ''),
+        'website_url': str(request.form.get('website_url') or ''),
+        'use_case': str(request.form.get('use_case') or ''),
+        'expected_monthly_segments': str(
+            request.form.get('expected_monthly_segments') or ''
+        ),
+        'twilio_account_status': str(
+            request.form.get('twilio_account_status') or ''
+        ),
+    }
+    if request.method == 'POST':
+        submission = PilotApplicationSubmission(
+            business_name=form_data['business_name'],
+            contact_name=form_data['contact_name'],
+            email=form_data['email'],
+            phone=form_data['phone'],
+            website_url=form_data['website_url'],
+            use_case=form_data['use_case'],
+            expected_monthly_segments=form_data['expected_monthly_segments'],
+            twilio_account_status=form_data['twilio_account_status'],
+            honeypot=str(request.form.get('company_fax') or ''),
+        )
+        try:
+            create_pilot_application(
+                submission=submission,
+                source_ip=str(request.remote_addr or 'unknown'),
+                user_agent=request.user_agent.string,
+            )
+        except PilotApplicationRateLimitError as exc:
+            flash(str(exc), 'error')
+            return (
+                render_template(
+                    'marketing/request_pilot.html',
+                    form_data=form_data,
+                    submitted=False,
+                ),
+                429,
+            )
+        except PilotApplicationError as exc:
+            flash(str(exc), 'error')
+            return (
+                render_template(
+                    'marketing/request_pilot.html',
+                    form_data=form_data,
+                    submitted=False,
+                ),
+                400,
+            )
+        return redirect(url_for('main.request_pilot', submitted='1'), code=303)
+
+    return render_template(
+        'marketing/request_pilot.html',
+        form_data=form_data,
+        submitted=request.args.get('submitted') == '1',
+    )
+
+
+@bp.route('/contact')
+def contact():
+    return render_template('marketing/contact.html')
+
+
+@bp.route('/privacy')
+def privacy_policy():
+    return render_template('marketing/privacy.html')
+
+
+@bp.route('/terms')
+def terms_of_service():
+    return render_template('marketing/terms.html')
+
+
+@bp.route('/acceptable-use')
+def acceptable_use_policy():
+    return render_template('marketing/acceptable_use.html')
+
+
+@bp.route('/sms-a2p-policy')
+def sms_a2p_policy():
+    return render_template('marketing/sms_a2p_policy.html')
+
+
+@bp.route('/billing-cancellation-refund-policy')
+def billing_policy():
+    return render_template('marketing/billing_policy.html')
 
 
 @bp.route('/platform')
@@ -3981,7 +4333,7 @@ def dashboard():
                 )
                 snapshot_recipient_data, schedule_counts = _prepare_sendable_blast_recipients(
                     snapshot_recipient_data,
-                    apply_opt_out_filters=not test_mode,
+                    apply_opt_out_filters=True,
                 )
                 _flash_blast_recipient_adjustments(schedule_counts)
                 if not snapshot_recipient_data:
@@ -3992,6 +4344,24 @@ def dashboard():
                     return render_dashboard()
 
                 scheduled_estimate = analyze_personalized_sms_blast(final_message, snapshot_recipient_data)
+                limit_error = _blast_limit_error(scheduled_estimate)
+                if limit_error:
+                    flash(limit_error, 'error')
+                    return render_dashboard()
+                pending_schedule_limit = int(
+                    current_app.config.get('SCHEDULED_MAX_PENDING_PER_ORGANIZATION', 25) or 25
+                )
+                pending_schedule_count = ScheduledMessage.query.filter(
+                    ScheduledMessage.status.in_(['pending', 'processing'])
+                ).count()
+                if pending_schedule_count >= pending_schedule_limit:
+                    flash(
+                        f'This workspace already has {pending_schedule_count} pending scheduled sends; '
+                        f'the limit is {pending_schedule_limit}.',
+                        'error',
+                    )
+                    return render_dashboard()
+                recipient_snapshot_json = _bounded_recipient_snapshot_json(snapshot_recipient_data)
                 
                 scheduled = ScheduledMessage(
                     message_body=final_message,
@@ -4002,7 +4372,7 @@ def dashboard():
                     test_recipient_selection_mode=(
                         test_recipient_selection_mode if test_mode else None
                     ),
-                    test_recipient_snapshot_json=json.dumps(snapshot_recipient_data, sort_keys=True),
+                    test_recipient_snapshot_json=recipient_snapshot_json,
                 )
                 db.session.add(scheduled)
                 db.session.commit()
@@ -4036,7 +4406,7 @@ def dashboard():
         )
         recipient_data, recipient_counts = _prepare_sendable_blast_recipients(
             raw_recipient_data,
-            apply_opt_out_filters=not test_mode,
+            apply_opt_out_filters=True,
         )
         _flash_blast_recipient_adjustments(recipient_counts)
 
@@ -4048,6 +4418,21 @@ def dashboard():
             return render_dashboard()
 
         blast_estimate = analyze_personalized_sms_blast(final_message, recipient_data)
+        limit_error = _blast_limit_error(blast_estimate)
+        if limit_error:
+            flash(limit_error, 'error')
+            return render_dashboard()
+        active_job_limit = int(
+            current_app.config.get('TENANT_MAX_PROCESSING_MESSAGE_LOGS', 5) or 5
+        )
+        active_job_count = MessageLog.query.filter_by(status='processing').count()
+        if active_job_count >= active_job_limit:
+            flash(
+                f'This workspace already has {active_job_count} active send jobs; '
+                f'the limit is {active_job_limit}.',
+                'error',
+            )
+            return render_dashboard()
 
         send_fingerprint = build_blast_send_fingerprint(
             organization_id=_current_organization_id() if saas_mode_enabled() else None,
@@ -4308,7 +4693,12 @@ def users_add():
         if existing:
             flash('A user with this username already exists.', 'error')
             return _render_user_form(user=None)
-        if email and AppUser.query.filter(func.lower(AppUser.email) == email).first():
+        if email and AppUser.query.filter(
+            or_(
+                func.lower(AppUser.email) == email,
+                func.lower(AppUser.username) == email,
+            )
+        ).first():
             flash('A user with this email already exists.', 'error')
             return _render_user_form(user=None)
 
@@ -4392,7 +4782,10 @@ def users_edit(user_id):
             return _render_user_form(user=user)
         if email:
             email_conflict = AppUser.query.filter(
-                func.lower(AppUser.email) == email,
+                or_(
+                    func.lower(AppUser.email) == email,
+                    func.lower(AppUser.username) == email,
+                ),
                 AppUser.id != user_id,
             ).first()
             if email_conflict:
@@ -4719,14 +5112,31 @@ def security_contact():
     return render_template('auth/security_contact.html')
 
 
+@bp.route('/settings')
+@login_required
+@require_roles('admin')
+def settings_home():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    return render_template(
+        'settings/index.html',
+        organization=organization,
+        surface_view=_settings_surface_view(organization),
+        settings_cards=_settings_cards(_current_user_is_workspace_owner()),
+    )
+
+
 @bp.route('/settings/test-recipients', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
 def test_recipients_settings():
     if not saas_mode_enabled() or current_user.is_platform_admin:
         abort(404)
-    if not _current_user_is_workspace_owner():
-        abort(403)
 
     organization = _current_organization()
     if organization is None:
@@ -4793,6 +5203,109 @@ def test_recipients_settings():
     return render_page()
 
 
+@bp.route('/settings/event-sync', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def event_sync_settings():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    generated_secret = None
+
+    def render_page(*, one_time_secret: str | None = None):
+        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'))
+        return render_template(
+            'settings/event_sync.html',
+            organization=organization,
+            integration_view=integration_view,
+            generated_secret=one_time_secret,
+            surface_view=_event_sync_surface_view(organization, integration_view),
+        )
+
+    if request.method == 'POST':
+        enabled = request.form.get('enabled') == 'on'
+        try:
+            integration, new_secret = configure_event_sync_integration(
+                organization.id,
+                enabled,
+                current_user.id,
+            )
+            db.session.commit()
+        except (RuntimeError, ValueError) as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+        else:
+            if new_secret:
+                flash('Event sync settings updated.', 'success')
+                return render_page(one_time_secret=new_secret)
+            flash('Event sync settings updated.', 'success')
+            return redirect(url_for('main.event_sync_settings'))
+
+    return render_page(one_time_secret=generated_secret)
+
+
+@bp.route('/settings/event-sync/rotate-secret', methods=['POST'])
+@login_required
+@require_roles('admin')
+def event_sync_rotate_secret():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    try:
+        _, generated_secret = rotate_event_sync_secret(organization.id, current_user.id)
+        db.session.commit()
+    except (RuntimeError, ValueError) as exc:
+        db.session.rollback()
+        flash(str(exc), 'error')
+    else:
+        flash('Event sync secret rotated. Update WordPress with the new secret before the next event change.', 'success')
+        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'))
+        return render_template(
+            'settings/event_sync.html',
+            organization=organization,
+            integration_view=integration_view,
+            generated_secret=generated_secret,
+            surface_view=_event_sync_surface_view(organization, integration_view),
+        )
+    return redirect(url_for('main.event_sync_settings'))
+
+
+@bp.route('/settings/event-sync/status')
+@login_required
+@require_roles('admin')
+def event_sync_status():
+    if not saas_mode_enabled() or current_user.is_platform_admin:
+        abort(404)
+
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    integration = OrganizationEventSyncIntegration.query.filter_by(
+        organization_id=organization.id,
+        provider='wordpress',
+    ).first()
+    return jsonify(
+        {
+            'enabled': integration.enabled if integration is not None else False,
+            'provider': 'wordpress',
+            'last_event_synced_at': integration.last_event_synced_at.isoformat() if integration is not None and integration.last_event_synced_at else None,
+            'last_signup_synced_at': integration.last_signup_synced_at.isoformat() if integration is not None and integration.last_signup_synced_at else None,
+            'last_reconcile_synced_at': integration.last_reconcile_synced_at.isoformat() if integration is not None and integration.last_reconcile_synced_at else None,
+            'last_error_at': integration.last_error_at.isoformat() if integration is not None and integration.last_error_at else None,
+            'last_error_message': integration.last_error_message if integration is not None else None,
+        }
+    )
+
+
 @bp.route('/platform/organizations')
 @login_required
 def platform_organizations_list():
@@ -4800,6 +5313,68 @@ def platform_organizations_list():
         abort(403)
     organization_rows = _platform_organization_rows()
     return render_template('platform/organizations_list.html', organization_rows=organization_rows)
+
+
+@bp.route('/platform/pilot-applications')
+@login_required
+def platform_pilot_applications():
+    if not _can_manage_platform():
+        abort(403)
+    applications = (
+        PilotApplication.query
+        .order_by(PilotApplication.created_at.desc(), PilotApplication.id.desc())
+        .limit(250)
+        .all()
+    )
+    invitation_urls = {
+        application.id: _invitation_absolute_url(application.owner_invitation)
+        for application in applications
+        if application.owner_invitation is not None
+    }
+    return render_template(
+        'platform/pilot_applications.html',
+        applications=applications,
+        invitation_urls=invitation_urls,
+    )
+
+
+@bp.route('/platform/pilot-applications/<int:application_id>/approve', methods=['POST'])
+@login_required
+def platform_pilot_application_approve(application_id):
+    if not _can_manage_platform():
+        abort(403)
+    try:
+        result = approve_pilot_application(
+            application_id,
+            current_user,
+            request.form.get('review_note'),
+        )
+    except PilotApplicationError as exc:
+        flash(str(exc), 'error')
+    else:
+        flash(
+            f'Pilot approved for {result.organization.name}; a single-use owner invitation is ready.',
+            'success',
+        )
+    return redirect(url_for('main.platform_pilot_applications'))
+
+
+@bp.route('/platform/pilot-applications/<int:application_id>/decline', methods=['POST'])
+@login_required
+def platform_pilot_application_decline(application_id):
+    if not _can_manage_platform():
+        abort(403)
+    try:
+        decline_pilot_application(
+            application_id,
+            current_user,
+            request.form.get('review_note', ''),
+        )
+    except PilotApplicationError as exc:
+        flash(str(exc), 'error')
+    else:
+        flash('Pilot application declined.', 'success')
+    return redirect(url_for('main.platform_pilot_applications'))
 
 
 @bp.route('/platform/organizations/add', methods=['GET', 'POST'])
@@ -4965,7 +5540,18 @@ def platform_organizations_update_billing(organization_id):
     organization = db.get_or_404(Organization, organization_id)
     action = (request.form.get('action') or '').strip().lower()
     if action == 'grant_complimentary':
-        mark_subscription_complimentary(organization)
+        try:
+            mark_subscription_complimentary(organization)
+        except RuntimeError as exc:
+            _record_platform_organization_access_event(
+                'platform_organization_billing_update',
+                organization=organization,
+                target_email=None,
+                outcome='failed',
+                reason='complimentary_conflicts_with_stripe',
+            )
+            flash(str(exc), 'error')
+            return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
         _record_platform_organization_access_event(
             'platform_organization_billing_update',
             organization=organization,
@@ -4997,14 +5583,18 @@ def platform_organizations_update_billing(organization_id):
             flash('Choose a valid checkout offer.', 'error')
             return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
 
-        organization.billing_offer = billing_offer
-        subscription = ensure_subscription_record(organization)
-        if not subscription_activation_paid(subscription):
-            plan_code = 'annual' if billing_offer == 'annual_only' else 'monthly'
-            plan = billing_plan_for_code(plan_code)
-            if plan is not None:
-                subscription.stripe_price_id = plan.price_id
-        db.session.commit()
+        try:
+            update_organization_billing_offer(organization, billing_offer)
+        except RuntimeError as exc:
+            _record_platform_organization_access_event(
+                'platform_organization_billing_update',
+                organization=organization,
+                target_email=None,
+                outcome='failed',
+                reason='checkout_session_expiration_failed',
+            )
+            flash(str(exc), 'error')
+            return redirect(url_for('main.platform_organizations_access', organization_id=organization.id))
 
         reason = f"set_billing_offer_{billing_offer}"
         _record_platform_organization_access_event(
@@ -5456,11 +6046,12 @@ def platform_organizations_messaging_edit(organization_id):
                     flash('An identical platform test send was already submitted. The duplicate request was ignored.', 'warning')
                     return redirect(url_for('main.platform_organizations_messaging_edit', organization_id=organization.id))
                 try:
-                    send_operational_test_message(
+                    send_operational_test_message_with_key(
                         organization.id,
-                        to_number=to_number,
-                        body=body,
-                        actor_user_id=current_user.id,
+                        to_number,
+                        body,
+                        current_user.id,
+                        f"platform-test:{send_fingerprint}",
                     )
                 except Exception:
                     release_outbound_idempotency(idempotency_claim.redis_key)
@@ -5784,13 +6375,16 @@ def invitation_accept(token):
         if not validate_phone(normalized_phone):
             flash('Phone number must be a valid E.164 number.', 'error')
             return render_template('auth/accept_invitation.html', invitation=invitation)
-        if _find_username_conflict(username):
-            flash('That username is already taken.', 'error')
-            return render_template('auth/accept_invitation.html', invitation=invitation)
 
         existing_user, invitation_email_error = _organization_email_account_status(invitation.email)
         if invitation_email_error:
             flash(invitation_email_error, 'error')
+            return render_template('auth/accept_invitation.html', invitation=invitation)
+        if _find_username_conflict(
+            username,
+            exclude_user_id=existing_user.id if existing_user is not None else None,
+        ):
+            flash('That username is already taken.', 'error')
             return render_template('auth/accept_invitation.html', invitation=invitation)
         phone_conflict = _find_phone_conflict(
             normalized_phone,
@@ -5815,6 +6409,7 @@ def invitation_accept(token):
         user.phone = normalized_phone
         user.role = 'admin' if invitation.role == 'owner' else 'social_manager'
         user.set_password(password)
+        user.rotate_session_nonce()
         if existing_user is None:
             db.session.add(user)
             db.session.flush()
@@ -5830,6 +6425,19 @@ def invitation_accept(token):
         if invitation.role == 'owner':
             seed_owner_test_recipient(invitation.organization_id, user)
         db.session.commit()
+
+        record_auth_event(
+            'invitation_accepted',
+            outcome='success',
+            user=user,
+            username=user.username,
+            client_ip=request.remote_addr,
+            metadata={
+                'organization_id': invitation.organization_id,
+                'invitation_id': invitation.id,
+                'role': invitation.role,
+            },
+        )
 
         session.clear()
         login_user(user)
@@ -6092,6 +6700,8 @@ def setup_billing_checkout():
         abort(404)
     if organization_can_send(organization):
         return redirect(url_for('main.setup'))
+    if missing_required_policy_acceptances(organization, current_user):
+        return redirect(url_for('main.policy_acceptance', return_to='setup'))
 
     success_url = f"{_absolute_url('main.setup')}?step=billing&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{_absolute_url('main.setup')}?step=billing"
@@ -6148,6 +6758,8 @@ def billing_checkout():
 
     if request.method != 'POST':
         return redirect(url_for('main.billing_overview'))
+    if missing_required_policy_acceptances(organization, current_user):
+        return redirect(url_for('main.policy_acceptance', return_to='billing'))
 
     success_url = f"{_absolute_url('main.setup')}?step=billing&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{_absolute_url('main.setup')}?step=billing"
@@ -6164,6 +6776,49 @@ def billing_checkout():
         flash(str(exc), 'error')
         return redirect(url_for('main.billing_overview'))
     return redirect(checkout_session.url, code=303)
+
+
+@bp.route('/policies/accept', methods=['GET', 'POST'])
+@login_required
+def policy_acceptance():
+    if _can_manage_platform():
+        abort(403)
+    if getattr(current_user, 'organization_role', None) != 'owner':
+        abort(403)
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+
+    return_to = request.values.get('return_to', 'setup').strip().lower()
+    if return_to not in {'setup', 'billing'}:
+        return_to = 'setup'
+    required = required_policy_versions()
+    missing = missing_required_policy_acceptances(organization, current_user)
+    if request.method == 'POST':
+        accepted_names = set(request.form.getlist('accepted_policy'))
+        try:
+            accept_required_policies(
+                organization,
+                current_user,
+                accepted_names,
+                request.remote_addr,
+                request.user_agent.string,
+            )
+        except PolicyAcceptanceError as exc:
+            flash(str(exc), 'error')
+        else:
+            flash('Policy acceptance recorded.', 'success')
+            if return_to == 'billing':
+                return redirect(url_for('main.billing_overview'))
+            return redirect(url_for('main.setup', step='billing'))
+
+    return render_template(
+        'policies/accept.html',
+        organization=organization,
+        required_policy_versions=required,
+        missing_policy_names=set(missing),
+        return_to=return_to,
+    )
 
 
 @bp.route('/billing/portal', methods=['POST'])
@@ -6219,6 +6874,64 @@ def stripe_webhook():
     return '', 200
 
 
+@bp.route('/webhooks/event-sync/<organization_slug>/<provider>', methods=['POST'])
+@csrf.exempt
+def event_sync_webhook(organization_slug, provider):
+    body = request.get_data(cache=True)
+    delivery_id = request.headers.get('X-Twinevia-Delivery-ID') or request.headers.get('X-AOC-Delivery-ID')
+    received_at = utc_now_for_aoc_sync()
+    integration = None
+    try:
+        integration = event_sync_integration_for_webhook(organization_slug, provider)
+        verify_event_sync_webhook_signature(
+            body=body,
+            timestamp_header=request.headers.get('X-Twinevia-Timestamp') or request.headers.get('X-AOC-Timestamp'),
+            signature_header=request.headers.get('X-Twinevia-Signature') or request.headers.get('X-AOC-Signature'),
+            secret=decrypted_event_sync_secret(integration),
+            tolerance_seconds=int(current_app.config.get('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS') or 300),
+            now_timestamp=int(utc_now().timestamp()),
+        )
+        payload = parse_aoc_webhook_json(body)
+        summary = process_event_sync_payload(
+            payload=payload,
+            integration=integration,
+            received_at=received_at,
+        )
+        db.session.commit()
+    except AocWebhookAuthError as exc:
+        db.session.rollback()
+        if integration is not None:
+            record_event_sync_error(integration, str(exc), received_at)
+            db.session.commit()
+        current_app.logger.warning(
+            'Rejected event sync webhook authentication.',
+            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
+        )
+        return 'Forbidden', 403
+    except AocEventSyncPayloadError as exc:
+        db.session.rollback()
+        if integration is not None:
+            record_event_sync_error(integration, str(exc), received_at)
+            db.session.commit()
+        current_app.logger.warning(
+            'Rejected event sync webhook payload.',
+            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider, 'reason': str(exc)},
+        )
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        db.session.rollback()
+        if integration is not None:
+            record_event_sync_error(integration, str(exc), received_at)
+            db.session.commit()
+        current_app.logger.exception(
+            'Failed to process event sync webhook.',
+            extra={'delivery_id': delivery_id, 'organization_slug': organization_slug, 'provider': provider},
+        )
+        return 'Webhook processing failed', 500
+
+    return jsonify(summary), 200
+
+
 @bp.route('/webhooks/aoc/events', methods=['POST'])
 @csrf.exempt
 def aoc_events_webhook():
@@ -6226,7 +6939,10 @@ def aoc_events_webhook():
         abort(404)
 
     body = request.get_data(cache=True)
-    delivery_id = request.headers.get('X-AOC-Delivery-ID')
+    delivery_id = (request.headers.get('X-AOC-Delivery-ID') or '').strip()
+    if not delivery_id or len(delivery_id) > 160 or not re.fullmatch(r'[A-Za-z0-9._:-]+', delivery_id):
+        return 'Invalid delivery id', 400
+    delivery_record = None
     try:
         verify_aoc_webhook_signature(
             body=body,
@@ -6237,11 +6953,97 @@ def aoc_events_webhook():
             now_timestamp=int(utc_now().timestamp()),
         )
         payload = parse_aoc_webhook_json(body)
+        organization_slug = current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG') or ''
+        organization = Organization.query.filter_by(slug=organization_slug).first()
+        if organization is None:
+            raise AocEventSyncPayloadError(
+                f"AOC organization slug {organization_slug!r} was not found."
+            )
+        payload_digest = hashlib.sha256(body).hexdigest()
+        existing_delivery = ExternalWebhookDelivery.query.filter_by(
+            provider='aoc_events',
+            delivery_id=delivery_id,
+        ).first()
+        if existing_delivery is not None:
+            if existing_delivery.payload_digest != payload_digest:
+                return 'Delivery id payload conflict', 409
+            if existing_delivery.status in {'processed', 'ignored'}:
+                stored_response = json.loads(existing_delivery.response_json or '{}')
+                return jsonify(stored_response), 200
+            if existing_delivery.status == 'processing':
+                return jsonify({'status': 'processing', 'delivery_id': delivery_id}), 202
+            delivery_record = existing_delivery
+            delivery_record.status = 'processing'
+            delivery_record.last_error = None
+        else:
+            event_payload = payload.get('event') if isinstance(payload.get('event'), dict) else {}
+            booking_payload = payload.get('booking') if isinstance(payload.get('booking'), dict) else {}
+            action = str(payload.get('action') or '').strip().lower()
+            if action.startswith('booking_'):
+                provider = str(booking_payload.get('provider') or 'events_manager').strip().lower()
+                external_id = str(booking_payload.get('booking_id') or '').strip()
+                resource_key = f'booking:{provider}:{external_id}' if external_id else None
+                revision_value = booking_payload.get('updated_at')
+            elif action.startswith('event_'):
+                external_id = str(event_payload.get('event_id') or '').strip()
+                resource_key = f'event:{external_id}' if external_id else None
+                revision_value = event_payload.get('modified_at')
+            else:
+                resource_key = action or None
+                revision_value = None
+            source_revision_at = None
+            if revision_value:
+                try:
+                    source_revision_at = datetime.fromisoformat(
+                        str(revision_value).replace('Z', '+00:00')
+                    )
+                    if source_revision_at.tzinfo is not None:
+                        source_revision_at = source_revision_at.astimezone(timezone.utc).replace(tzinfo=None)
+                except ValueError as exc:
+                    raise AocEventSyncPayloadError(
+                        'AOC source revision timestamp must be ISO-8601.'
+                    ) from exc
+            delivery_record = ExternalWebhookDelivery(
+                provider='aoc_events',
+                delivery_id=delivery_id,
+                organization_id=organization.id,
+                resource_key=resource_key,
+                payload_digest=payload_digest,
+                source_revision_at=source_revision_at,
+                status='processing',
+            )
+            db.session.add(delivery_record)
+        db.session.commit()
+
+        if delivery_record.resource_key and delivery_record.source_revision_at is not None:
+            newer_delivery = ExternalWebhookDelivery.query.filter(
+                ExternalWebhookDelivery.provider == 'aoc_events',
+                ExternalWebhookDelivery.organization_id == organization.id,
+                ExternalWebhookDelivery.resource_key == delivery_record.resource_key,
+                ExternalWebhookDelivery.status == 'processed',
+                ExternalWebhookDelivery.source_revision_at >= delivery_record.source_revision_at,
+                ExternalWebhookDelivery.id != delivery_record.id,
+            ).order_by(ExternalWebhookDelivery.source_revision_at.desc()).first()
+            if newer_delivery is not None:
+                summary = {
+                    'ignored': True,
+                    'reason': 'stale_source_revision',
+                    'delivery_id': delivery_id,
+                }
+                delivery_record.status = 'ignored'
+                delivery_record.response_json = json.dumps(summary, sort_keys=True)
+                delivery_record.processed_at = utc_now()
+                db.session.commit()
+                return jsonify(summary), 200
+
         summary = process_aoc_event_sync_payload(
             payload=payload,
-            organization_slug=current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG') or '',
+            organization_slug=organization_slug,
             received_at=utc_now_for_aoc_sync(),
         )
+        delivery_record.status = 'processed'
+        delivery_record.response_json = json.dumps(summary, sort_keys=True)
+        delivery_record.processed_at = utc_now()
         db.session.commit()
     except AocWebhookAuthError as exc:
         db.session.rollback()
@@ -6252,6 +7054,12 @@ def aoc_events_webhook():
         return 'Forbidden', 403
     except AocEventSyncPayloadError as exc:
         db.session.rollback()
+        if delivery_record is not None:
+            failed_delivery = db.session.get(ExternalWebhookDelivery, delivery_record.id)
+            if failed_delivery is not None:
+                failed_delivery.status = 'failed'
+                failed_delivery.last_error = str(exc)[:2000]
+                db.session.commit()
         current_app.logger.warning(
             'Rejected AOC event webhook payload.',
             extra={'delivery_id': delivery_id, 'reason': str(exc)},
@@ -6259,6 +7067,12 @@ def aoc_events_webhook():
         return jsonify({'error': str(exc)}), 400
     except Exception:
         db.session.rollback()
+        if delivery_record is not None:
+            failed_delivery = db.session.get(ExternalWebhookDelivery, delivery_record.id)
+            if failed_delivery is not None:
+                failed_delivery.status = 'failed'
+                failed_delivery.last_error = 'Unhandled AOC webhook processing failure.'
+                db.session.commit()
         current_app.logger.exception(
             'Failed to process AOC event webhook.',
             extra={'delivery_id': delivery_id},
@@ -6466,7 +7280,10 @@ def community_delete(member_id):
 @login_required
 @require_roles('admin')
 def community_export():
-    members = CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone).all()
+    members = _bounded_export_query_all(
+        CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone),
+        'Community member',
+    )
 
     def rows():
         yield ['name', 'phone', 'created_at']
@@ -6519,7 +7336,7 @@ def community_import():
             )
             if error_response is not None:
                 return error_response
-            parsed = parse_recipients_csv(content)
+            parsed = _parse_uploaded_recipients_csv(content)
 
             if not parsed:
                 flash('No valid members found in CSV.', 'error')
@@ -6547,6 +7364,9 @@ def community_import():
             flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.community_list'))
 
+        except HTTPException:
+            db.session.rollback()
+            raise
         except Exception:
             current_app.logger.exception(
                 'Community CSV import failed (filename=%r, user_id=%s).',
@@ -6607,6 +7427,7 @@ def event_add():
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
         date_str = request.form.get('date', '').strip()
+        sms_location_note = request.form.get('sms_location_note', '').strip() or None
         
         if not title:
             flash('Event title is required.', 'error')
@@ -6621,7 +7442,7 @@ def event_add():
                 flash('Invalid date format.', 'error')
                 return _render_event_form(event=None)
         
-        event = Event(title=title, date=event_date)
+        event = Event(title=title, date=event_date, sms_location_note=sms_location_note)
         db.session.add(event)
         db.session.commit()
         
@@ -6635,17 +7456,26 @@ def event_add():
 @login_required
 def event_detail(event_id):
     event = _tenant_get_or_404(Event, event_id)
-    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
+    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(
+        EventRegistration.name,
+        EventRegistration.phone,
+    ).all()
     unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
+    suppressed_phones = get_suppressed_phone_set([reg.phone for reg in registrations])
+    blocked_phones = unsubscribed_phones | suppressed_phones
+    attendee_count = sum(max(reg.booking_spaces or 1, 1) for reg in registrations)
     return render_template(
         'events/detail.html',
         event=event,
         registrations=registrations,
         unsubscribed_phones=unsubscribed_phones,
+        suppressed_phones=suppressed_phones,
         surface_view=_event_detail_surface_view(
             event,
             registration_count=len(registrations),
-            unsubscribed_count=len(unsubscribed_phones),
+            attendee_count=attendee_count,
+            sendable_count=len({reg.phone for reg in registrations} - blocked_phones),
+            unsubscribed_count=len(blocked_phones),
         ),
     )
 
@@ -6658,6 +7488,7 @@ def event_edit(event_id):
     if request.method == 'POST':
         title = request.form.get('title', '').strip()
         date_str = request.form.get('date', '').strip()
+        sms_location_note = request.form.get('sms_location_note', '').strip() or None
         
         if not title:
             flash('Event title is required.', 'error')
@@ -6674,6 +7505,7 @@ def event_edit(event_id):
         
         event.title = title
         event.date = event_date
+        event.sms_location_note = sms_location_note
         db.session.commit()
         
         flash('Event updated successfully.', 'success')
@@ -6806,7 +7638,7 @@ def event_import_registrations(event_id):
         )
         if error_response is not None:
             return error_response
-        parsed = parse_recipients_csv(content)
+        parsed = _parse_uploaded_recipients_csv(content)
 
         if not parsed:
             flash('No valid entries found in CSV.', 'error')
@@ -6836,6 +7668,9 @@ def event_import_registrations(event_id):
 
         flash(msg, 'success' if added > 0 else 'warning')
 
+    except HTTPException:
+        db.session.rollback()
+        raise
     except Exception:
         current_app.logger.exception(
             'Event CSV import failed (event_id=%s, filename=%r, user_id=%s).',
@@ -6853,15 +7688,40 @@ def event_import_registrations(event_id):
 @login_required
 def event_export_registrations(event_id):
     event = _tenant_get_or_404(Event, event_id)
-    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(EventRegistration.name, EventRegistration.phone).all()
+    registrations = _bounded_export_query_all(
+        EventRegistration.query.filter_by(event_id=event_id).order_by(
+            EventRegistration.name,
+            EventRegistration.phone,
+        ),
+        'Event registration',
+    )
+
+    phones = [registration.phone for registration in registrations]
+    blocked_phones = get_unsubscribed_phone_set(phones) | get_suppressed_phone_set(phones)
 
     def rows():
-        yield ['name', 'phone', 'created_at']
+        yield [
+            'name',
+            'phone',
+            'party_size',
+            'potluck_selections',
+            'booking_comment',
+            'booking_status',
+            'sms_eligibility',
+            'external_booking_id',
+            'synced_at',
+        ]
         for reg in registrations:
             yield [
                 reg.name or '',
                 reg.phone,
-                reg.created_at.isoformat() if reg.created_at else '',
+                reg.booking_spaces or 1,
+                reg.selection_summary,
+                reg.booking_comment or '',
+                reg.external_booking_status or '',
+                'blocked' if reg.phone in blocked_phones else 'sendable',
+                reg.external_booking_id or '',
+                reg.synced_at.isoformat() if reg.synced_at else '',
             ]
 
     return _csv_download_response(f'event_{event.id}_registrations.csv', rows())
@@ -7446,9 +8306,12 @@ def unsubscribed_list():
 @login_required
 @require_roles('admin')
 def unsubscribed_backfill():
+    organization_id = _current_organization_id()
+    if organization_id is None:
+        abort(403)
     try:
         queue = _get_queue_with_preflight()
-        job = queue.enqueue('app.tasks.backfill_suppressions_job')
+        job = queue.enqueue('app.tasks.backfill_suppressions_job', organization_id)
         message = f"Backfill queued (job {job.id}). Results will appear shortly."
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return jsonify({'message': message, 'job_id': job.id})
@@ -7513,7 +8376,7 @@ def unsubscribed_import():
             )
             if error_response is not None:
                 return error_response
-            parsed = parse_recipients_csv(content)
+            parsed = _parse_uploaded_recipients_csv(content)
 
             if not parsed:
                 flash('No valid entries found in CSV.', 'error')
@@ -7542,6 +8405,9 @@ def unsubscribed_import():
             flash(f'Imported {added} unsubscribed contact(s). {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.unsubscribed_list'))
 
+        except HTTPException:
+            db.session.rollback()
+            raise
         except Exception:
             current_app.logger.exception(
                 'Unsubscribed CSV import failed (filename=%r, user_id=%s).',
@@ -7558,7 +8424,10 @@ def unsubscribed_import():
 @login_required
 @require_roles('admin')
 def unsubscribed_export():
-    entries = UnsubscribedContact.query.order_by(UnsubscribedContact.created_at.desc()).all()
+    entries = _bounded_export_query_all(
+        UnsubscribedContact.query.order_by(UnsubscribedContact.created_at.desc()),
+        'Unsubscribed contact',
+    )
 
     def rows():
         yield ['name', 'phone', 'reason', 'source', 'created_at']
@@ -7690,25 +8559,21 @@ def twilio_a2p_event_stream_webhook():
     bearer_valid = bool(expected_token) and authorization == f'Bearer {expected_token}'
 
     organization_id = request.args.get('organization_id', type=int)
-    messaging_profile = None
-    if organization_id:
-        organization = db.session.get(Organization, organization_id)
-        messaging_profile = organization.messaging_profile if organization is not None else None
+    if organization_id is None:
+        return 'Forbidden', 403
+    organization = db.session.get(Organization, organization_id)
+    messaging_profile = organization.messaging_profile if organization is not None else None
+    if organization is None or messaging_profile is None:
+        return 'Forbidden', 403
 
     signature = request.headers.get('X-Twilio-Signature')
     validation = None
-    if messaging_profile is not None and signature:
+    if signature:
         validation = validate_inbound_signature_detailed(
             request.url,
             request.get_data(cache=True, as_text=True),
             signature,
             messaging_profile=messaging_profile,
-        )
-    elif signature:
-        validation = validate_inbound_signature_detailed(
-            request.url,
-            request.get_data(cache=True, as_text=True),
-            signature,
         )
 
     if validation is not None and validation.is_valid:
@@ -7728,7 +8593,7 @@ def twilio_a2p_event_stream_webhook():
         return jsonify({'error': 'Expected JSON payload.'}), 400
 
     try:
-        summary = ingest_a2p_event_stream_payload(payload)
+        summary = ingest_a2p_event_stream_payload(payload, organization_id)
         db.session.commit()
     except ProviderProvisioningError as exc:
         db.session.rollback()
@@ -7829,6 +8694,10 @@ def inbox_reply(thread_id):
     normalized_body = normalize_sms_body(body)
 
     thread = _tenant_get_or_404(InboxThread, thread_id)
+    organization = _current_organization()
+    if saas_mode_enabled() and not organization_can_transmit_messages(organization):
+        flash('Reply blocked: organization billing and messaging must both be active.', 'warning')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
     if get_unsubscribed_phone_set([thread.phone]):
         flash('Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.', 'warning')
         return redirect(url_for('main.inbox_list', thread=thread_id))
@@ -7863,7 +8732,12 @@ def inbox_reply(thread_id):
         return redirect(url_for('main.inbox_list', thread=thread_id))
 
     try:
-        result = send_thread_reply(thread_id, body, actor=current_user.username)
+        result = send_thread_reply_with_key(
+            thread_id,
+            body,
+            current_user.username,
+            f"manual-reply:{send_fingerprint}",
+        )
     except Exception:
         release_outbound_idempotency(idempotency_claim.redis_key)
         db.session.rollback()
@@ -8129,6 +9003,13 @@ def survey_flow_submissions(survey_id):
 @require_roles('admin', 'social_manager')
 def survey_flow_submissions_export(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    max_rows = int(current_app.config.get('CSV_EXPORT_MAX_ROWS', 25000) or 25000)
+    completed_count = SurveySession.query.filter_by(
+        survey_id=survey.id,
+        status='completed',
+    ).count()
+    if completed_count > max_rows:
+        abort(413, description=f'Survey submission export exceeds the {max_rows}-row limit.')
     rows = _iter_survey_submission_export_rows(survey)
     response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
     response.headers['Content-Disposition'] = f'attachment; filename="survey_{survey.id}_submissions.csv"'

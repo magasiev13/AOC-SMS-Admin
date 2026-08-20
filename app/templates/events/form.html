@@ -33,10 +33,16 @@
                                    placeholder="Community Meeting">
                         </div>
 
-                        <div class="mb-0">
+                        <div class="mb-3">
                             <label for="date" class="form-label">Date (optional)</label>
                             <input type="date" class="form-control" id="date" name="date"
                                    value="{{ event.date.strftime('%Y-%m-%d') if event and event.date else '' }}">
+                        </div>
+                        <div class="mb-0">
+                            <label for="sms_location_note" class="form-label">SMS location note (optional)</label>
+                            <textarea class="form-control" id="sms_location_note" name="sms_location_note" rows="3"
+                                      placeholder="West Side Pavilion next to the nature center">{{ event.sms_location_note if event and event.sms_location_note else '' }}</textarea>
+                            <div class="form-text">Included in the automated day-of event reminder.</div>
                         </div>
                     </div>
                     <div class="workspace-panel__footer">

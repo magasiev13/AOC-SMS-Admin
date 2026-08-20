@@ -36,6 +36,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.Organization = Organization
         self.ScheduledMessage = ScheduledMessage
         self.secret = "test-aoc-secret"
+        self.delivery_counter = 0
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
@@ -85,8 +86,8 @@ class TestAocEventSyncWebhook(unittest.TestCase):
             "slug": "vardavar-2026",
             "permalink": "https://armeniansofcolorado.org/events/vardavar-2026/",
             "status": "publish",
-            "start_at": "2026-07-12T10:00:00-06:00",
-            "end_at": "2026-07-12T14:00:00-06:00",
+            "start_at": "2027-07-12T10:00:00-06:00",
+            "end_at": "2027-07-12T14:00:00-06:00",
             "timezone": "America/Denver",
             "modified_at": "2026-06-23T12:00:00-06:00",
             "location": {
@@ -130,6 +131,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
             str(request_timestamp).encode("utf-8") + b"." + body,
             hashlib.sha256,
         ).hexdigest()
+        self.delivery_counter += 1
         return self.client.post(
             "/webhooks/aoc/events",
             data=body,
@@ -137,7 +139,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
                 "Content-Type": "application/json",
                 "X-AOC-Timestamp": str(request_timestamp),
                 "X-AOC-Signature": f"sha256={signature}",
-                "X-AOC-Delivery-ID": "test-delivery",
+                "X-AOC-Delivery-ID": f"test-delivery-{self.delivery_counter}",
             },
         )
 
@@ -171,6 +173,17 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.Event.query.count(), 0)
 
+    def test_reconcile_complete_is_idempotent(self) -> None:
+        payload = {"action": "reconcile_complete", "source": "aoc-wordpress"}
+        first_response = self._signed_post(payload, secret=None, timestamp=None)
+        second_response = self._signed_post(payload, secret=None, timestamp=None)
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertTrue(first_response.get_json()["reconciled"])
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(second_response.get_json()["reconciled"])
+        self.assertEqual(self.Event.query.count(), 0)
+
     def test_event_upsert_creates_event_and_auto_reminders(self) -> None:
         response = self._signed_post(
             {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()},
@@ -185,7 +198,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(event.external_event_id, "54")
         self.assertEqual(event.external_post_id, "100009085")
         self.assertEqual(event.title, "Vardavar 2026")
-        self.assertEqual(event.date.isoformat(), "2026-07-12")
+        self.assertEqual(event.date.isoformat(), "2027-07-12")
         self.assertEqual(event.location_name, "Aurora Reservoir")
 
         scheduled = self.ScheduledMessage.query.order_by(self.ScheduledMessage.automation_kind.asc()).all()
@@ -206,6 +219,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
 
         updated_event = self._event_payload()
         updated_event["title"] = "Vardavar Festival 2026"
+        updated_event["modified_at"] = "2026-06-23T12:01:00-06:00"
         second_response = self._signed_post(
             {"action": "event_upsert", "source": "aoc-wordpress", "event": updated_event},
             secret=None,
@@ -218,12 +232,18 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(self.ScheduledMessage.query.count(), 4)
 
     def test_booking_upsert_creates_registration_and_community_member(self) -> None:
+        booking = self._booking_payload("22", "+1 (720) 555-0123")
+        booking["selections"] = [
+            {"label": "Fruits and Drinks", "quantity": 1},
+            {"label": "Desserts", "quantity": 1},
+        ]
+        booking["comment"] = "Bringing watermelon"
         response = self._signed_post(
             {
                 "action": "booking_upsert",
                 "source": "aoc-wordpress",
                 "event": self._event_payload(),
-                "booking": self._booking_payload("22", "+1 (720) 555-0123"),
+                "booking": booking,
             },
             secret=None,
             timestamp=None,
@@ -235,6 +255,12 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(registration.external_booking_id, "events_manager:22")
         self.assertEqual(registration.external_booking_status, "pending")
         self.assertEqual(registration.phone, "+17205550123")
+        self.assertEqual(registration.booking_spaces, 2)
+        self.assertEqual(
+            registration.selection_summary,
+            "Fruits and Drinks (1); Desserts (1)",
+        )
+        self.assertEqual(registration.booking_comment, "Bringing watermelon")
         member = self.CommunityMember.query.one()
         self.assertEqual(member.organization_id, self.organization.id)
         self.assertEqual(member.phone, "+17205550123")
@@ -255,6 +281,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         cancel_booking = self._booking_payload("23", "+17205550124")
         cancel_booking["status"] = "cancelled"
         cancel_booking["active"] = False
+        cancel_booking["updated_at"] = "2026-06-23T12:06:00-06:00"
 
         cancel_response = self._signed_post(
             {
@@ -288,6 +315,23 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(self.EventRegistration.query.count(), 0)
         self.assertEqual(self.CommunityMember.query.count(), 0)
 
+    def test_invalid_selection_payload_is_rejected(self) -> None:
+        booking = self._booking_payload("25", "+17205550125")
+        booking["selections"] = [{"label": "Food to Share", "quantity": 0}]
+        response = self._signed_post(
+            {
+                "action": "booking_upsert",
+                "source": "aoc-wordpress",
+                "event": self._event_payload(),
+                "booking": booking,
+            },
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.EventRegistration.query.count(), 0)
+
     def test_wpforms_booking_ids_are_namespaced_and_require_sms_consent(self) -> None:
         booking = self._booking_payload("45", "+17205550145")
         booking["provider"] = "wpforms"
@@ -311,6 +355,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(self.CommunityMember.query.count(), 0)
 
         booking["sms_consent"] = True
+        booking["updated_at"] = "2026-06-23T12:06:00-06:00"
         consent_response = self._signed_post(
             {
                 "action": "booking_upsert",
@@ -326,4 +371,3 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         registration = self.EventRegistration.query.one()
         self.assertEqual(registration.external_booking_id, "wpforms:45")
         self.assertEqual(self.CommunityMember.query.count(), 1)
-

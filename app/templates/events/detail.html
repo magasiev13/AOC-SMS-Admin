@@ -32,7 +32,7 @@
                 <div class="collection-panel__header">
                     <div>
                         <h2 class="collection-panel__title">Registrations</h2>
-                        <p class="collection-panel__meta">Review saved attendees and remove or suppress them when needed.</p>
+                        <p class="collection-panel__meta">Review booking contacts, party sizes, potluck commitments, and SMS eligibility.</p>
                     </div>
                 </div>
                 <div class="table-responsive d-none d-lg-block">
@@ -51,6 +51,9 @@
                                         <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
                                 </th>
+                                <th data-sort-type="number"><span>Party</span></th>
+                                <th data-sort-type="string"><span>Bringing</span></th>
+                                <th data-sort-type="string"><span>Comment</span></th>
                                 <th data-sort-type="enum">
                                     <button type="button" class="sort-button" data-sort-key="status">
                                         <span>Status</span>
@@ -64,14 +67,20 @@
                             {% if registrations %}
                             {% for reg in registrations %}
                             {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
+                            {% set is_suppressed = reg.phone in suppressed_phones %}
                             <tr>
                                 <td data-sort-value="{{ reg.name or '' }}">{{ reg.name or '-' }}</td>
                                 <td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>
-                                <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else 'Active' }}">
+                                <td data-sort-value="{{ reg.booking_spaces or 1 }}">{{ reg.booking_spaces or 1 }}</td>
+                                <td data-sort-value="{{ reg.selection_summary }}">{{ reg.selection_summary or '-' }}</td>
+                                <td data-sort-value="{{ reg.booking_comment or '' }}">{{ reg.booking_comment or '-' }}</td>
+                                <td data-sort-value="{{ 'Blocked' if is_unsubscribed or is_suppressed else 'Sendable' }}">
                                     {% if is_unsubscribed %}
                                     <span class="badge bg-secondary">Unsubscribed</span>
+                                    {% elif is_suppressed %}
+                                    <span class="badge bg-secondary">Suppressed</span>
                                     {% else %}
-                                    <span class="badge bg-success">Active</span>
+                                    <span class="badge bg-success">Sendable</span>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -101,7 +110,7 @@
                             {% endfor %}
                             {% else %}
                             <tr>
-                                <td colspan="4" class="py-5">
+                                <td colspan="7" class="py-5">
                                     {{ ui.empty_state(
                                         'bi-people',
                                         'No registrations yet',
@@ -117,16 +126,22 @@
                     {% if registrations %}
                         {% for reg in registrations %}
                         {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
+                        {% set is_suppressed = reg.phone in suppressed_phones %}
                         <div class="card-list-item">
                             <div class="d-flex justify-content-between align-items-start gap-2">
                                 <div>
                                     <h6 class="mb-1">{{ reg.name or '-' }}</h6>
                                     <div class="text-muted small"><code>{{ reg.phone }}</code></div>
+                                    <div class="text-muted small">Party size: {{ reg.booking_spaces or 1 }}</div>
+                                    <div class="text-muted small">Bringing: {{ reg.selection_summary or '-' }}</div>
+                                    {% if reg.booking_comment %}<div class="text-muted small">Comment: {{ reg.booking_comment }}</div>{% endif %}
                                     <div class="mt-2">
                                         {% if is_unsubscribed %}
                                         <span class="badge bg-secondary">Unsubscribed</span>
+                                        {% elif is_suppressed %}
+                                        <span class="badge bg-secondary">Suppressed</span>
                                         {% else %}
-                                        <span class="badge bg-success">Active</span>
+                                        <span class="badge bg-success">Sendable</span>
                                         {% endif %}
                                     </div>
                                 </div>

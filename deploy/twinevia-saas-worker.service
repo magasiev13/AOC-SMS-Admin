@@ -5,9 +5,11 @@ After=network.target redis.service
 [Service]
 User=__APP_USER__
 Group=__APP_GROUP__
-WorkingDirectory=__APP_ROOT__
+WorkingDirectory=__APP_ROOT__/current
 EnvironmentFile=__APP_ROOT__/.env
-Environment="APP_ROOT=__APP_ROOT__"
+EnvironmentFile=__APP_ROOT__/current/.release.env
+Environment="APP_ROOT=__APP_ROOT__/current"
+Environment="TWINEVIA_ENV_FILE=__APP_ROOT__/.env"
 Environment="SAAS_MODE=1"
 Environment="SCHEDULER_ENABLED=0"
 Environment="FLASK_ENV=production"
@@ -26,9 +28,9 @@ SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
-ExecStartPre=__APP_ROOT__/deploy/check_python_runtime.sh
+ExecStartPre=__APP_ROOT__/current/deploy/check_python_runtime.sh
 ExecStartPre=__TWINEVIA_SAAS_DBDOCTOR_DEST__ --apply
-ExecStart=/bin/bash __APP_ROOT__/deploy/run_worker.sh
+ExecStart=/bin/bash __APP_ROOT__/current/deploy/run_worker.sh
 Restart=on-failure
 RestartSec=5
 

@@ -302,7 +302,12 @@ def _looks_like_phone(value: str) -> bool:
     return len(digits) >= 7
 
 
-def parse_recipients_csv(file_content: str) -> list:
+def parse_recipients_csv(
+    file_content: str,
+    max_rows: int,
+    max_columns: int,
+    max_cell_chars: int,
+) -> list[dict[str, str | None]]:
     """
     Parse CSV content for recipients.
     Supports formats:
@@ -312,11 +317,26 @@ def parse_recipients_csv(file_content: str) -> list:
     
     Returns list of dicts with 'name' and 'phone' keys.
     """
-    recipients = []
+    if max_rows < 1 or max_columns < 1 or max_cell_chars < 1:
+        raise ValueError("CSV limits must all be positive integers.")
+    recipients: list[dict[str, str | None]] = []
     
     # Try to parse as CSV
     reader = csv.reader(io.StringIO(file_content))
-    rows = list(reader)
+    rows: list[list[str]] = []
+    for row_number, row in enumerate(reader, start=1):
+        if row_number > max_rows + 1:
+            raise ValueError(f"CSV exceeds the maximum of {max_rows} data rows.")
+        if len(row) > max_columns:
+            raise ValueError(
+                f"CSV row {row_number} has {len(row)} columns; the limit is {max_columns}."
+            )
+        oversized_cell = next((cell for cell in row if len(cell) > max_cell_chars), None)
+        if oversized_cell is not None:
+            raise ValueError(
+                f"CSV row {row_number} contains a cell longer than {max_cell_chars} characters."
+            )
+        rows.append(row)
     
     if not rows:
         return recipients
@@ -331,6 +351,8 @@ def parse_recipients_csv(file_content: str) -> list:
             has_header = True
     
     start_idx = 1 if has_header else 0
+    if len(rows) - start_idx > max_rows:
+        raise ValueError(f"CSV exceeds the maximum of {max_rows} data rows.")
     
     for row in rows[start_idx:]:
         if not row or not any(cell.strip() for cell in row):

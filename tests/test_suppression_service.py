@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.services.recipient_service import (
     filter_suppressed_recipients,
@@ -204,6 +205,61 @@ class TestSuppressionService(unittest.TestCase):
 
         self.assertEqual(UnsubscribedContact.query.count(), 0)
         self.assertEqual(SuppressedContact.query.count(), 0)
+
+    @patch(
+        "app.services.suppression_backfill.backfill_usage_record_failure_suppressions",
+        return_value={
+            "records_seen": 0,
+            "records_checked": 0,
+            "suppression_actions": 0,
+            "errors": 0,
+        },
+    )
+    def test_suppression_backfill_is_scoped_to_one_organization(self, mock_usage_backfill) -> None:
+        from app.models import MessageLog, Organization, SuppressedContact
+        from app.services.suppression_backfill import backfill_suppressions
+
+        first_organization = Organization(name="First", slug="first")
+        second_organization = Organization(name="Second", slug="second")
+        self._db.session.add_all([first_organization, second_organization])
+        self._db.session.flush()
+        self._db.session.add_all(
+            [
+                MessageLog(
+                    organization_id=first_organization.id,
+                    message_body="First",
+                    target="community",
+                    details='[{"phone":"+17205550111","status":"failed","error":"Invalid number"}]',
+                ),
+                MessageLog(
+                    organization_id=second_organization.id,
+                    message_body="Second",
+                    target="community",
+                    details='[{"phone":"+17205550112","status":"failed","error":"Invalid number"}]',
+                ),
+            ]
+        )
+        self._db.session.commit()
+
+        result = backfill_suppressions(first_organization.id)
+
+        self.assertEqual(result["logs"], 1)
+        self.assertIsNotNone(
+            SuppressedContact.query.filter_by(
+                organization_id=first_organization.id,
+                phone="+17205550111",
+            ).first()
+        )
+        self.assertIsNone(
+            SuppressedContact.query.filter_by(
+                organization_id=second_organization.id,
+                phone="+17205550112",
+            ).first()
+        )
+        mock_usage_backfill.assert_called_once_with(
+            organization_id=first_organization.id,
+            logger=self._app.logger,
+        )
 
 
 if __name__ == "__main__":

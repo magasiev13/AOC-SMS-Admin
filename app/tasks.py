@@ -150,7 +150,7 @@ def send_bulk_job(
             start_index = len(existing_details)
             remaining_recipients = recipient_data[start_index:]
 
-            if not remaining_recipients:
+            if not remaining_recipients and not current_app.config.get("SAAS_MODE"):
                 log.total_recipients = len(recipient_data)
                 log.success_count = existing_success
                 log.failure_count = existing_failure
@@ -166,14 +166,28 @@ def send_bulk_job(
 
             try:
                 twilio = get_twilio_service(organization_id)
-                result = twilio.send_bulk(
-                    remaining_recipients,
-                    final_message,
-                    delay=delay,
-                    raise_on_transient=True,
-                    send_kind='blast',
-                )
-                combined_details = existing_details + result['details']
+                if current_app.config.get("SAAS_MODE"):
+                    result = twilio.send_bulk_with_attempts(
+                        recipient_data,
+                        final_message,
+                        f"blast-log:{log.id}",
+                        log.id,
+                        None,
+                        delay,
+                        "blast",
+                    )
+                    combined_details = result['details']
+                    existing_success = 0
+                    existing_failure = 0
+                else:
+                    result = twilio.send_bulk(
+                        remaining_recipients,
+                        final_message,
+                        delay=delay,
+                        raise_on_transient=True,
+                        send_kind='blast',
+                    )
+                    combined_details = existing_details + result['details']
                 log.total_recipients = len(recipient_data)
                 log.success_count = existing_success + result['success_count']
                 log.failure_count = existing_failure + result['failure_count']
@@ -276,11 +290,12 @@ def send_bulk_job(
                 )
 
 
-def backfill_suppressions_job() -> dict:
-    """Run suppression backfill as a background job."""
+def backfill_suppressions_job(organization_id: int) -> dict:
+    """Run one organization's suppression backfill as a background job."""
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
-        return backfill_suppressions()
+        with organization_context(organization_id):
+            return backfill_suppressions(organization_id)
 
 
 def process_a2p_onboarding_job(organization_id: int, actor_user_id: int | None = None) -> dict:

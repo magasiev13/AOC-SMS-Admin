@@ -1,0 +1,77 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Pricing — Twinevia{% endblock %}
+{% block meta_description %}Twinevia managed-pilot pricing: $149 setup, $59.99 monthly or $600 annual, with 1,000 outbound SMS segments included each calendar month.{% endblock %}
+
+{% block content %}
+  <header class="page-hero page-hero--pricing">
+    <h1>Clear pricing for a deliberately managed start.</h1>
+    <p>Every approved pilot begins with the same setup work and monthly usage allowance. Pick monthly flexibility or annual simplicity.</p>
+  </header>
+
+  <section class="pricing-sheet" aria-labelledby="pricing-sheet-title">
+    <div class="pricing-sheet__setup">
+      <h2 id="pricing-sheet-title">Setup</h2>
+      <p class="price"><span>$</span>149</p>
+      <p>One-time fee collected with the selected subscription.</p>
+      <ul>
+        <li>Managed workspace onboarding</li>
+        <li>Normal first Low Volume Standard registration</li>
+        <li>Protected first-flow setup and verification</li>
+      </ul>
+    </div>
+    <article class="pricing-plan">
+      <h2>Monthly</h2>
+      <p class="price"><span>$</span>59.99 <small>/ month</small></p>
+      <p>For organizations that want month-to-month billing.</p>
+      <a class="button button--primary" href="{{ url_for('main.request_pilot', plan='monthly') }}">Request monthly pilot</a>
+    </article>
+    <article class="pricing-plan pricing-plan--annual">
+      <h2>Annual</h2>
+      <p class="price"><span>$</span>600 <small>/ year</small></p>
+      <p>For organizations ready to commit to a full year.</p>
+      <a class="button button--primary" href="{{ url_for('main.request_pilot', plan='annual') }}">Request annual pilot</a>
+    </article>
+  </section>
+
+  <section class="usage-rule" aria-labelledby="usage-title">
+    <div>
+      <h2 id="usage-title">1,000 outbound SMS segments are included each calendar month.</h2>
+      <p>Monthly and annual subscribers receive the same monthly segment allowance.</p>
+    </div>
+    <dl>
+      <div><dt>Included</dt><dd>1,000 segments / month</dd></div>
+      <div><dt>Additional usage</dt><dd>$0.03 / segment</dd></div>
+      <div><dt>Settlement</dt><dd>Automatically charged monthly</dd></div>
+      <div><dt>Late-finalized usage</dt><dd>Carried into the next settlement</dd></div>
+    </dl>
+  </section>
+
+  <section class="cost-boundary" aria-labelledby="cost-boundary-title">
+    <h2 id="cost-boundary-title">What Twinevia absorbs—and what can become customer-paid.</h2>
+    <div>
+      <article>
+        <h3>Included in the managed pilot</h3>
+        <ul>
+          <li>Normal first-time Low Volume Standard registration</li>
+          <li>Routine platform-managed provider usage within the offer</li>
+          <li>One configured sending number when included in the approved setup</li>
+        </ul>
+      </article>
+      <article>
+        <h3>Customer-paid when applicable</h3>
+        <ul>
+          <li>Rejected resubmissions, appeals, or customer-caused retries</li>
+          <li>High-volume or Standard registration upgrades</li>
+          <li>Special vetting and requested additional numbers</li>
+        </ul>
+      </article>
+    </div>
+    <p>Provider and carrier approval is never guaranteed. Any unusual third-party cost will be identified before Twinevia asks the customer to proceed whenever practical.</p>
+  </section>
+
+  <section class="page-cta" aria-labelledby="pricing-cta-title">
+    <h2 id="pricing-cta-title">Choose the cadence after we confirm the pilot is a fit.</h2>
+    <a class="button button--light button--large" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+  </section>
+{% endblock %}

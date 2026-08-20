@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="{% block meta_description %}Managed business texting with accountable delivery, replies, and compliance support.{% endblock %}">
+    <title>{% block title %}Twinevia{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='brand-mark.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/marketing.css') }}">
+    {% block head %}{% endblock %}
+  </head>
+  <body class="marketing-page {% block body_class %}{% endblock %}">
+    <!--
+    THESIS: A human reply is the payoff; a recipient-level dispatch record proves how it got there, refusing the generic SaaS hero-and-bento arrangement.
+    OWN-WORLD: Cool-white dockets over a #001839 navy field, #1550ee actions, #1547d3 routes, and #bf2e1b annotations; condensed campaign-scale display type, compact utility labels, fine ledger rules, and square corners.
+    STORY: Visitors see the managed SMS outcome, inspect accountable handoffs, understand exact pricing and limits, then request a pilot.
+    FIRST VIEWPORT: A 72px navy nav tops three zones: 27% promise rail with CTA, 46% dispatch ledger with stages and recipient attempts, and 27% reply margin linked by one vermilion annotation; the verified offer docket closes the fold.
+    FORM: Reply in the Margin, third composition in The Dispatch Ledger direction; seed 2657d4f1.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+    -->
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header">
+      <a class="site-brand" href="{{ url_for('main.index') }}" aria-label="Twinevia home">
+        <span class="site-brand__mark" aria-hidden="true">
+          <img src="{{ url_for('static', filename='brand-mark.svg') }}" alt="" width="24" height="24">
+        </span>
+        <span>Twinevia</span>
+      </a>
+
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="{{ url_for('main.features') }}"{% if request.endpoint == 'main.features' %} aria-current="page"{% endif %}>Features</a>
+        <a href="{{ url_for('main.pricing') }}"{% if request.endpoint == 'main.pricing' %} aria-current="page"{% endif %}>Pricing</a>
+        <a href="{{ url_for('main.security_marketing') }}"{% if request.endpoint == 'main.security_marketing' %} aria-current="page"{% endif %}>Security</a>
+        <a href="{{ url_for('main.terms_of_service') }}"{% if request.endpoint in ['main.terms_of_service', 'main.privacy_policy', 'main.acceptable_use_policy', 'main.sms_a2p_policy', 'main.billing_policy'] %} aria-current="page"{% endif %}>Policies</a>
+      </nav>
+
+      <div class="desktop-actions">
+        <a class="text-link text-link--light" href="{{ url_for('auth.login') }}">Sign in</a>
+        <a class="button button--primary" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+      </div>
+
+      <details class="mobile-menu">
+        <summary aria-label="Open navigation"><i class="bi bi-list" aria-hidden="true"></i><span>Menu</span></summary>
+        <nav aria-label="Mobile navigation">
+          <a href="{{ url_for('main.features') }}">Features</a>
+          <a href="{{ url_for('main.pricing') }}">Pricing</a>
+          <a href="{{ url_for('main.security_marketing') }}">Security</a>
+          <a href="{{ url_for('main.terms_of_service') }}">Policies</a>
+          <a href="{{ url_for('auth.login') }}">Sign in</a>
+          <a class="button button--primary" href="{{ url_for('main.request_pilot') }}">Request a pilot</a>
+        </nav>
+      </details>
+    </header>
+
+    <main id="main-content" tabindex="-1">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="flash-stack" aria-label="Notices">
+            {% for category, message in messages %}
+              <div class="flash flash--{{ category }}" role="{% if category == 'error' %}alert{% else %}status{% endif %}">{{ message }}</div>
+            {% endfor %}
+          </section>
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="site-footer">
+      <div class="site-footer__identity">
+        <a class="site-brand site-brand--footer" href="{{ url_for('main.index') }}">
+          <img src="{{ url_for('static', filename='brand-mark.svg') }}" alt="" width="20" height="20">
+          <span>Twinevia</span>
+        </a>
+        <p>A service of IT Wingman LLC.</p>
+      </div>
+      <nav class="site-footer__links" aria-label="Product and company">
+        <a href="{{ url_for('main.features') }}">Features</a>
+        <a href="{{ url_for('main.pricing') }}">Pricing</a>
+        <a href="{{ url_for('main.security_marketing') }}">Security</a>
+        <a href="{{ url_for('main.contact') }}">Contact</a>
+      </nav>
+      <nav class="site-footer__links" aria-label="Policies">
+        <a href="{{ url_for('main.privacy_policy') }}">Privacy</a>
+        <a href="{{ url_for('main.terms_of_service') }}">Terms</a>
+        <a href="{{ url_for('main.acceptable_use_policy') }}">Acceptable use</a>
+        <a href="{{ url_for('main.sms_a2p_policy') }}">SMS &amp; A2P</a>
+        <a href="{{ url_for('main.billing_policy') }}">Billing &amp; refunds</a>
+      </nav>
+      <div class="site-footer__action">
+        <p>Managed access for approved pilot customers.</p>
+        <a class="text-link text-link--light" href="{{ url_for('main.request_pilot') }}">Request a pilot <i class="bi bi-arrow-up-right" aria-hidden="true"></i></a>
+      </div>
+      <p class="site-footer__legal">&copy; {{ current_year }} IT Wingman LLC. All rights reserved.</p>
+    </footer>
+  </body>
+</html>

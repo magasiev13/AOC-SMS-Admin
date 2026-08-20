@@ -88,3 +88,17 @@ class TestDemoSeed(unittest.TestCase):
             self.assertIn("incomplete", subscription_statuses)
             self.assertIn("past_due", subscription_statuses)
             db.session.remove()
+
+    def test_demo_seed_refuses_postgresql_targets_and_live_senders(self) -> None:
+        from app.demo_seed import seed_demo_database
+
+        with self.assertRaisesRegex(RuntimeError, "file-backed local SQLite"):
+            seed_demo_database(
+                database_url="postgresql://user:password@database.example/twinevia",
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "cannot attach a live Twilio sender"):
+            seed_demo_database(
+                database_url=self.database_url,
+                live_from_number="+15550001111",
+            )

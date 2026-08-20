@@ -177,18 +177,16 @@ def check_login_limited(client_ip: str, username: str) -> tuple[bool, int | None
     normalized_username = normalize_login_username(username)
 
     ip_record = _load_attempt(client_ip, IP_SCOPE_USERNAME)
-    account_record = _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
     ip_account_record = _load_attempt(client_ip, normalized_username) if normalized_username else None
 
     mutated = False
-    for record in (ip_record, account_record, ip_account_record):
+    for record in (ip_record, ip_account_record):
         if record and _remove_expired_attempt(record, now, window_seconds):
             mutated = True
 
     if mutated:
         db.session.commit()
         ip_record = _load_attempt(client_ip, IP_SCOPE_USERNAME)
-        account_record = _load_attempt(ACCOUNT_SCOPE_IP, normalized_username)
         ip_account_record = _load_attempt(client_ip, normalized_username) if normalized_username else None
 
     limited_seconds: int | None = None
@@ -199,12 +197,6 @@ def check_login_limited(client_ip: str, username: str) -> tuple[bool, int | None
         if remaining > 0:
             limited_seconds = remaining
             scope = "ip"
-
-    if account_record and account_record.locked_until:
-        remaining = int((account_record.locked_until.replace(tzinfo=timezone.utc) - now).total_seconds())
-        if remaining > 0 and (limited_seconds is None or remaining > limited_seconds):
-            limited_seconds = remaining
-            scope = "account"
 
     if ip_account_record and ip_account_record.locked_until:
         remaining = int((ip_account_record.locked_until.replace(tzinfo=timezone.utc) - now).total_seconds())
@@ -260,16 +252,14 @@ def record_failed_login(client_ip: str, username: str) -> dict[str, bool]:
     now = utc_now()
     normalized_username = normalize_login_username(username)
     ip_locked_now = _record_failed_attempt(client_ip, IP_SCOPE_USERNAME, now, "ip")
-    account_locked_now = False
     ip_account_locked_now = False
     if normalized_username:
-        account_locked_now = _record_failed_attempt(ACCOUNT_SCOPE_IP, normalized_username, now, "account")
         ip_account_locked_now = _record_failed_attempt(client_ip, normalized_username, now, "ip_account")
 
     db.session.commit()
     return {
         "ip_locked_now": ip_locked_now,
-        "account_locked_now": account_locked_now,
+        "account_locked_now": False,
         "ip_account_locked_now": ip_account_locked_now,
     }
 

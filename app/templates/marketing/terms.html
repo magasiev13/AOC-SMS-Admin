@@ -1,0 +1,33 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Terms of Service — Twinevia{% endblock %}
+{% block meta_description %}Terms governing approved customer access to Twinevia, a managed business messaging service of IT Wingman LLC.{% endblock %}
+
+{% block content %}
+  <div class="policy-layout">
+    <aside class="policy-index">
+      <p>Terms of Service</p>
+      <time datetime="2026-08-19">Effective August 19, 2026</time>
+      <nav aria-label="Terms sections"><a href="#agreement">Agreement</a><a href="#access">Pilot access</a><a href="#customer">Customer duties</a><a href="#providers">Providers</a><a href="#fees">Fees</a><a href="#suspension">Suspension</a><a href="#warranty">Service terms</a><a href="#contact">Contact</a></nav>
+    </aside>
+    <article class="policy-document">
+      <header><h1>Terms of Service</h1><p>These Terms govern access to Twinevia, a service of IT Wingman LLC. By accepting them for an organization, you represent that you have authority to bind that organization.</p></header>
+
+      <section id="agreement"><h2>Agreement and incorporated policies</h2><p>These Terms include the <a href="{{ url_for('main.privacy_policy') }}">Privacy Policy</a>, <a href="{{ url_for('main.acceptable_use_policy') }}">Acceptable Use Policy</a>, <a href="{{ url_for('main.sms_a2p_policy') }}">SMS &amp; A2P Policy</a>, and <a href="{{ url_for('main.billing_policy') }}">Billing, Cancellation &amp; Refund Policy</a>. The current accepted versions form the service agreement between the customer organization and IT Wingman LLC.</p></section>
+
+      <section id="access"><h2>Managed-pilot access</h2><p>Submitting a pilot request does not create an account or entitle an applicant to service. Twinevia may approve or decline applications based on fit, risk, capacity, provider requirements, and lawful-use considerations. Approved owners enter through a single-use invitation and must accept required policies and complete verified billing before chargeable setup or messaging actions.</p><p>You must provide accurate account and registration information, protect credentials, limit access to authorized users, and notify Twinevia promptly of suspected misuse. Accounts and invitations may not be sold or transferred without written approval.</p></section>
+
+      <section id="customer"><h2>Customer responsibilities</h2><p>The customer decides whom to message and what to say. The customer is responsible for:</p><ul><li>Having a lawful basis and any required consent for every recipient and message.</li><li>Maintaining accurate sender identity, disclosures, terms, privacy notice, and opt-in records.</li><li>Honoring STOP, revocation, suppression, quiet-hour, frequency, and content requirements.</li><li>Keeping registration and campaign information complete and current.</li><li>Training authorized users and reviewing automated rules before activation.</li><li>Following applicable laws, carrier rules, provider policies, and Twinevia policies.</li></ul></section>
+
+      <section id="providers"><h2>Providers, registration, and delivery</h2><p>Twinevia depends on third-party services, including Stripe, Twilio, carriers, registries, networks, hosting, and customer systems. Provider or carrier approval is not guaranteed. Submission, approval, number availability, throughput, filtering, routing, delivery, replies, and timing may change or fail for reasons outside Twinevia’s control.</p><p>Twinevia may assist with registration and provider setup, but the customer remains responsible for truthful information and requested supporting materials. The customer authorizes Twinevia to submit and maintain that information as needed to provide the approved service.</p></section>
+
+      <section id="fees"><h2>Fees and taxes</h2><p>Fees, included usage, overages, unusual provider costs, cancellation, and refunds are governed by the <a href="{{ url_for('main.billing_policy') }}">Billing, Cancellation &amp; Refund Policy</a> and the offer shown during verified Checkout. Customers are responsible for applicable taxes unless a valid exemption is accepted.</p></section>
+
+      <section id="suspension"><h2>Suspension and termination</h2><p>Twinevia may restrict or suspend access or sending to address nonpayment, legal or provider requirements, security risk, abuse, invalid registration, excessive failure or complaint patterns, or policy violations. When practical, Twinevia will provide notice and a reasonable path to cure. Immediate action may be necessary to protect recipients, systems, providers, or the service.</p><p>On termination, chargeable use stops according to the billing policy. Access to data may be limited after offboarding, subject to export, retention, legal, security, backup, and provider obligations.</p></section>
+
+      <section id="warranty"><h2>Service terms and responsibility</h2><p>Twinevia is provided on an “as available” basis during the managed pilot. To the extent permitted by law, IT Wingman LLC disclaims implied warranties and does not promise uninterrupted service, provider approval, message delivery, or a particular business outcome. Each party remains responsible for losses caused by its own unlawful conduct, willful misconduct, or obligations that cannot legally be limited. Any additional allocation of risk should be reviewed in the customer’s written pilot agreement.</p></section>
+
+      <section id="contact"><h2>Changes and contact</h2><p>We may change these Terms to reflect service, provider, security, or legal requirements. Material updates may require renewed acceptance before chargeable actions. Use the <a href="{{ url_for('main.contact') }}">Contact page</a> for questions.</p></section>
+    </article>
+  </div>
+{% endblock %}

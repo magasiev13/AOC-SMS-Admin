@@ -17,8 +17,12 @@
     {% set automation_active = request.endpoint and (request.endpoint.startswith('main.keyword_rule') or request.endpoint.startswith('main.keyword_rules') or request.endpoint.startswith('main.survey_flow') or request.endpoint.startswith('main.survey_flows')) %}
     {% set security_active = request.endpoint and request.endpoint.startswith('main.security_events') %}
     {% set platform_user = current_user.is_authenticated and current_user.is_platform_admin %}
+    {% set workspace_settings_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and config.SAAS_MODE %}
+    {% set legacy_admin_tools_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and not config.SAAS_MODE %}
+    {% set settings_active = request.endpoint and (request.endpoint == 'main.settings_home' or request.endpoint.startswith('main.event_sync') or request.endpoint.startswith('main.test_recipients') or request.endpoint.startswith('main.billing') or 'users' in request.endpoint or security_active) %}
     {% set platform_home_active = request.endpoint == 'main.platform_home' %}
     {% set platform_orgs_active = request.endpoint and request.endpoint.startswith('main.platform_organizations') %}
+    {% set platform_pilots_active = request.endpoint and request.endpoint.startswith('main.platform_pilot_application') %}
     {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.dashboard') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
@@ -54,6 +58,9 @@
                 <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
                     <i class="bi bi-buildings me-2"></i>Organizations
                 </a>
+                <a class="app-nav-link {% if platform_pilots_active %}active{% endif %}" href="{{ url_for('main.platform_pilot_applications') }}">
+                    <i class="bi bi-inbox me-2"></i>Pilot Requests
+                </a>
                 <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
                     <i class="bi bi-person-gear me-2"></i>Users
                 </a>
@@ -85,7 +92,12 @@
                 <a class="app-nav-link {% if logs_active %}active{% endif %}" href="{{ url_for('main.logs_list') }}">
                     <i class="bi bi-journal-text me-2"></i>Logs
                 </a>
-                {% if current_user.is_authenticated and current_user.is_admin %}
+                {% if workspace_settings_visible %}
+                <a class="app-nav-link {% if settings_active %}active{% endif %}" href="{{ url_for('main.settings_home') }}">
+                    <i class="bi bi-gear me-2"></i>Settings
+                </a>
+                {% endif %}
+                {% if legacy_admin_tools_visible %}
                 <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
                     <i class="bi bi-person-gear me-2"></i>Users
                 </a>
@@ -146,6 +158,9 @@
                             <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
                                 <i class="bi bi-buildings me-2"></i>Organizations
                             </a>
+                            <a class="app-nav-link {% if platform_pilots_active %}active{% endif %}" href="{{ url_for('main.platform_pilot_applications') }}">
+                                <i class="bi bi-inbox me-2"></i>Pilot Requests
+                            </a>
                             <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
                                 <i class="bi bi-person-gear me-2"></i>Users
                             </a>
@@ -177,7 +192,12 @@
                             <a class="app-nav-link {% if logs_active %}active{% endif %}" href="{{ url_for('main.logs_list') }}">
                                 <i class="bi bi-journal-text me-2"></i>Logs
                             </a>
-                            {% if current_user.is_authenticated and current_user.is_admin %}
+                            {% if workspace_settings_visible %}
+                            <a class="app-nav-link {% if settings_active %}active{% endif %}" href="{{ url_for('main.settings_home') }}">
+                                <i class="bi bi-gear me-2"></i>Settings
+                            </a>
+                            {% endif %}
+                            {% if legacy_admin_tools_visible %}
                             <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
                                 <i class="bi bi-person-gear me-2"></i>Users
                             </a>

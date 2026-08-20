@@ -305,4 +305,6 @@ def load_test_recipient_snapshot(snapshot_json: str | None) -> list[dict[str, st
         missing_message="This scheduled test message predates saved test-recipient snapshots. Recreate it to continue.",
         invalid_message="This scheduled test message has an invalid recipient snapshot. Recreate it to continue.",
         unusable_message="This scheduled test message does not have a usable recipient snapshot. Recreate it to continue.",
+        max_rows=TEST_RECIPIENT_MAX_COUNT,
+        max_bytes=64 * 1024,
     )
