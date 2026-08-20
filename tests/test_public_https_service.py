@@ -1,9 +1,11 @@
 import socket
+import ssl
 import unittest
 from unittest.mock import patch
 
 from app.services.public_https_service import (
     PublicHttpsFetchError,
+    _secure_tls_context,
     fetch_public_https_text,
     resolve_public_https_target,
 )
@@ -14,6 +16,13 @@ def _address_record(address: str) -> tuple[object, ...]:
 
 
 class TestPublicHttpsService(unittest.TestCase):
+    def test_tls_context_rejects_tls_versions_older_than_1_2(self) -> None:
+        context = _secure_tls_context()
+
+        self.assertGreaterEqual(context.minimum_version, ssl.TLSVersion.TLSv1_2)
+        self.assertTrue(context.check_hostname)
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+
     def test_private_and_link_local_addresses_are_rejected(self) -> None:
         for address in ("127.0.0.1", "10.0.0.8", "169.254.169.254"):
             with self.subTest(address=address):

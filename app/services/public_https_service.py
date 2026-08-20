@@ -16,6 +16,12 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 
+def _secure_tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 class PublicHttpsFetchError(RuntimeError):
     """Raised when a URL cannot be fetched without crossing a private boundary."""
 
@@ -119,7 +125,7 @@ def _read_response(
         tls_socket: ssl.SSLSocket | None = None
         try:
             raw_socket = socket.create_connection((address, target.port), timeout=timeout_seconds)
-            tls_socket = ssl.create_default_context().wrap_socket(
+            tls_socket = _secure_tls_context().wrap_socket(
                 raw_socket,
                 server_hostname=target.hostname,
             )

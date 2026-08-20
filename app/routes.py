@@ -7130,12 +7130,21 @@ def event_sync_webhook(organization_slug, provider):
         )
         _complete_external_webhook_delivery(delivery_record, summary)
         db.session.commit()
-    except ValueError as exc:
+    except ValueError:
         db.session.rollback()
-        return jsonify({'error': str(exc)}), 400
+        return jsonify({'error': 'Invalid delivery id.'}), 400
     except ExternalWebhookDeliveryConflict as exc:
         db.session.rollback()
-        return jsonify({'error': str(exc)}), 409
+        current_app.logger.warning(
+            'Rejected conflicting event-sync delivery.',
+            extra={
+                'delivery_id': raw_delivery_id,
+                'exception_type': type(exc).__name__,
+                'organization_slug': organization_slug,
+                'provider': provider,
+            },
+        )
+        return jsonify({'error': 'Conflicting event-sync delivery.'}), 409
     except AocWebhookAuthError as exc:
         db.session.rollback()
         current_app.logger.warning(
@@ -7229,7 +7238,14 @@ def aoc_events_webhook():
         return 'Forbidden', 403
     except ExternalWebhookDeliveryConflict as exc:
         db.session.rollback()
-        return str(exc), 409
+        current_app.logger.warning(
+            'Rejected conflicting AOC event delivery.',
+            extra={
+                'delivery_id': delivery_id,
+                'exception_type': type(exc).__name__,
+            },
+        )
+        return 'Conflicting event delivery', 409
     except AocEventSyncPayloadError as exc:
         db.session.rollback()
         current_app.logger.warning(
