@@ -303,7 +303,12 @@ jobs:
             sudo grep -q "^${key}=" "${APP_ROOT}/.env" || fail "Missing ${key} in ${APP_ROOT}/.env"
           done
 
-          sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${APP_ROOT}\"; set -a; source .env; set +a; \"${ACTIVE_DBDOCTOR_BIN}\" --doctor" >/dev/null
+          DBDOCTOR_APP_ROOT="${APP_ROOT}/current"
+          if [ ! -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ]; then
+            DBDOCTOR_APP_ROOT="${APP_ROOT}"
+          fi
+          [ -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ] || fail "Python is missing from both the active release and the legacy bootstrap root."
+          sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${DBDOCTOR_APP_ROOT}\"; set -a; source \"${APP_ROOT}/.env\"; set +a; TWINEVIA_SAAS_APP_ROOT=\"${DBDOCTOR_APP_ROOT}\" \"${ACTIVE_DBDOCTOR_BIN}\" --doctor" >/dev/null
 
           echo "==> Refresh deploy tooling from repo"
           sudo -u "${APP_USER}" bash -lc "cd \"${APP_ROOT}\" && git pull --ff-only"
