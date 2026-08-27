@@ -117,7 +117,6 @@ class TestSaasPilotFoundation(unittest.TestCase):
             STRIPE_MONTHLY_PRICE_ID="price_test_123",
             STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
-            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
         )
@@ -464,7 +463,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Request a pilot", homepage.data)
 
         pricing = self.client.get("/pricing")
-        self.assertIn(b"$149", pricing.data)
+        self.assertIn(b"$149.99", pricing.data)
         self.assertIn(b"$59.99", pricing.data)
         self.assertIn(b"$600", pricing.data)
         self.assertIn(b"1,000 outbound SMS segments", pricing.data)
@@ -959,7 +958,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Activate billing", response.data)
         self.assertIn(b"$59.99/mo", response.data)
         self.assertIn(b"Annual upfront", response.data)
-        self.assertIn(b"$149 setup fee", response.data)
+        self.assertIn(b"$149.99 setup fee", response.data)
 
     def test_customer_managed_invalid_setup_step_falls_back_to_provider(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(
@@ -1500,7 +1499,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNone(self.organization.subscription.stripe_subscription_id)
         self.assertEqual(
             self.organization.subscription.activation_price_id,
-            "price_staged_activation_123",
+            "price_activation_123",
         )
         next_step = self.client.get("/setup")
         self.assertIn(b'data-current-step="compliance"', next_step.data)
@@ -2391,7 +2390,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Annual upfront-only checkout enabled", response.data)
         self.assertIn(b"Checkout offer: Annual upfront only", response.data)
-        self.assertIn(b"$600/year upfront plan plus the $149 setup fee", response.data)
+        self.assertIn(b"$600/year upfront plan plus the $149.99 setup fee", response.data)
         self.db.session.refresh(self.organization)
         self.db.session.refresh(self.subscription)
         self.assertEqual(self.organization.billing_offer, "annual_only")
@@ -2416,7 +2415,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Staged annual checkout enabled", response.data)
         self.assertIn(b"Checkout offer: Staged annual", response.data)
-        self.assertIn(b"$150 for setup first", response.data)
+        self.assertIn(b"$149.99 for setup first", response.data)
         self.db.session.refresh(self.organization)
         self.db.session.refresh(self.subscription)
         self.assertEqual(self.organization.billing_offer, "staged_annual")
@@ -2426,7 +2425,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self._login_owner()
         setup_response = self.client.get("/setup?step=billing")
         self.assertEqual(setup_response.status_code, 200)
-        self.assertIn(b"Pay $150 setup fee", setup_response.data)
+        self.assertIn(b"Pay $149.99 setup fee", setup_response.data)
         self.assertIn(b"not charged until provider approval", setup_response.data)
         self.assertNotIn(b"$59.99/mo", setup_response.data)
 

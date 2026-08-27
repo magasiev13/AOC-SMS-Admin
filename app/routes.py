@@ -2206,17 +2206,17 @@ def _platform_organization_access_context(
         (
             'standard',
             'Standard monthly or annual',
-            'The owner can choose $59.99 monthly or $600 annual, plus the $149 setup fee in the same Checkout.',
+            'The owner can choose $59.99 monthly or $600 annual, plus the $149.99 setup fee in the same Checkout.',
         ),
         (
             'annual_only',
             'Annual upfront only',
-            'This organization will only see the $600/year upfront plan plus the $149 setup fee at checkout.',
+            'This organization will only see the $600/year upfront plan plus the $149.99 setup fee at checkout.',
         ),
         (
             'staged_annual',
             'Staged annual',
-            'The owner pays $150 for setup first, then $600 annually only after provider approval.',
+            'The owner pays $149.99 for setup first, then $600 annually only after provider approval.',
         ),
     )
     return {
@@ -5753,7 +5753,7 @@ def platform_organizations_update_billing(organization_id):
             flash('Annual upfront-only checkout enabled for this organization.', 'success')
         elif billing_offer == 'staged_annual':
             flash(
-                'Staged annual checkout enabled: $150 setup now and $600 annually after provider approval.',
+                'Staged annual checkout enabled: $149.99 setup now and $600 annually after provider approval.',
                 'success',
             )
         else:

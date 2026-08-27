@@ -160,11 +160,6 @@ def _validate_saas_billing_config(app: Flask) -> None:
             "STRIPE_MONTHLY_PRICE_ID": app.config.get("STRIPE_EXPECTED_MONTHLY_PRICE_ID"),
             "STRIPE_ANNUAL_PRICE_ID": app.config.get("STRIPE_EXPECTED_ANNUAL_PRICE_ID"),
         }
-        staged_expected_price_id = str(
-            app.config.get("STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID") or ""
-        ).strip()
-        if staged_expected_price_id:
-            expected_price_ids["STRIPE_STAGED_ACTIVATION_PRICE_ID"] = staged_expected_price_id
         mismatched.extend(
             f"{name} must equal {expected_value}."
             for name, expected_value in expected_price_ids.items()
@@ -181,8 +176,7 @@ def _validate_saas_billing_config(app: Flask) -> None:
             raise RuntimeError(f"SaaS live billing configuration is invalid:\n - {details}")
 
     commercial_values = {
-        "BILLING_ACTIVATION_FEE_USD": "149.00",
-        "BILLING_STAGED_ACTIVATION_FEE_USD": "150.00",
+        "BILLING_ACTIVATION_FEE_USD": "149.99",
         "BILLING_MONTHLY_PRICE_USD": "59.99",
         "BILLING_ANNUAL_PRICE_USD": "600.00",
         "BILLING_OUTBOUND_SEGMENT_RATE_USD": "0.0300",
@@ -297,14 +291,12 @@ def _validate_production_operations_config(app: Flask) -> None:
         "SCHEDULED_MAX_PENDING_PER_ORGANIZATION",
         "STRIPE_EXPECTED_ACCOUNT_ID",
         "STRIPE_ACTIVATION_PRICE_ID",
-        "STRIPE_STAGED_ACTIVATION_PRICE_ID",
         "STRIPE_MONTHLY_PRICE_ID",
         "STRIPE_ANNUAL_PRICE_ID",
         "STRIPE_WEBHOOK_ENDPOINT_ID",
         "STRIPE_PORTAL_CONFIGURATION_ID",
         "BILLING_OFFER_VERSION",
         "BILLING_ACTIVATION_FEE_USD",
-        "BILLING_STAGED_ACTIVATION_FEE_USD",
         "BILLING_MONTHLY_PRICE_USD",
         "BILLING_ANNUAL_PRICE_USD",
         "BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS",

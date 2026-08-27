@@ -128,7 +128,7 @@ The target comes from `RESTORE_DRILL_DATABASE_URL` and is matched against `RESTO
 
 1. Do not promise payment state from the browser return URL. Use verified webhook, Checkout Session, Invoice, and PaymentIntent records.
 2. Inspect the organization subscription, `stripe_checkout_sessions`, and webhook delivery ledger before replaying anything.
-3. Confirm the live account is `acct_1TCY8xEksbf3Q3Fg`, the setup price is `price_1TPq4KEksbf3Q3FgwATaTJ7h`, monthly is `price_1TYtNuEksbf3Q3FgN2B1VqGN`, and annual is `price_1TYtO4Eksbf3Q3FgHzXB9S5b`.
+3. Confirm the live account is `acct_1TCY8xEksbf3Q3Fg`, the setup price is `price_1U9Bl6Eksbf3Q3FgcJ0YRJ05`, monthly is `price_1TYtNuEksbf3Q3FgN2B1VqGN`, and annual is `price_1TYtO4Eksbf3Q3FgHzXB9S5b`.
 4. Confirm the dedicated endpoint URL is `https://app.twinevia.com/webhooks/stripe`, its required events are enabled, and its signing secret matches production.
 5. Re-deliver the exact Stripe event only after checking its event ID and creation timestamp. Idempotency and ordering prevent stale events from overwriting newer state.
 6. For payment failure, leave entitlement blocked and let Stripe’s subscription/invoice state reconcile. Do not manually mark the setup fee paid.

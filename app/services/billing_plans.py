@@ -245,10 +245,6 @@ def activation_price_id() -> str:
 
 
 def activation_price_id_for_organization(organization) -> str:
-    if staged_annual_offer_enabled_for_organization(organization):
-        return str(
-            current_app.config.get("STRIPE_STAGED_ACTIVATION_PRICE_ID") or ""
-        ).strip()
     return activation_price_id()
 
 
@@ -261,11 +257,6 @@ def activation_fee_label() -> str:
 
 
 def activation_fee_label_for_organization(organization) -> str:
-    if staged_annual_offer_enabled_for_organization(organization):
-        return _money_label(
-            current_app.config.get("BILLING_STAGED_ACTIVATION_FEE_USD"),
-            minimum_places=0,
-        )
     return activation_fee_label()
 
 

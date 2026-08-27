@@ -371,14 +371,10 @@ class Config:
     BILLING_OUTBOUND_SEGMENT_RATE_USD = os.environ.get('BILLING_OUTBOUND_SEGMENT_RATE_USD', '0.0300').strip() or '0.0300'
     BILLING_MONTHLY_PRICE_USD = os.environ.get('BILLING_MONTHLY_PRICE_USD', '59.99').strip() or '59.99'
     BILLING_ANNUAL_PRICE_USD = os.environ.get('BILLING_ANNUAL_PRICE_USD', '600.00').strip() or '600.00'
-    BILLING_ACTIVATION_FEE_USD = os.environ.get('BILLING_ACTIVATION_FEE_USD', '149.00').strip() or '149.00'
-    BILLING_STAGED_ACTIVATION_FEE_USD = (
-        os.environ.get('BILLING_STAGED_ACTIVATION_FEE_USD', '150.00').strip()
-        or '150.00'
-    )
+    BILLING_ACTIVATION_FEE_USD = os.environ.get('BILLING_ACTIVATION_FEE_USD', '149.99').strip() or '149.99'
     BILLING_OFFER_VERSION = (
-        os.environ.get('BILLING_OFFER_VERSION', '2026-08-managed-pilot-v1').strip()
-        or '2026-08-managed-pilot-v1'
+        os.environ.get('BILLING_OFFER_VERSION', '2026-08-managed-pilot-v2').strip()
+        or '2026-08-managed-pilot-v2'
     )
     BILLING_USAGE_SETTLEMENT_GRACE_HOURS = _env_int(
         'BILLING_USAGE_SETTLEMENT_GRACE_HOURS',
@@ -399,7 +395,6 @@ class Config:
     STRIPE_MONTHLY_PRICE_ID = os.environ.get('STRIPE_MONTHLY_PRICE_ID') or STRIPE_PRICE_ID
     STRIPE_ANNUAL_PRICE_ID = os.environ.get('STRIPE_ANNUAL_PRICE_ID')
     STRIPE_ACTIVATION_PRICE_ID = os.environ.get('STRIPE_ACTIVATION_PRICE_ID')
-    STRIPE_STAGED_ACTIVATION_PRICE_ID = os.environ.get('STRIPE_STAGED_ACTIVATION_PRICE_ID')
     STRIPE_GROWTH_PRICE_ID = os.environ.get('STRIPE_GROWTH_PRICE_ID')
     STRIPE_SCALE_PRICE_ID = os.environ.get('STRIPE_SCALE_PRICE_ID')
     STRIPE_EXPECTED_ACCOUNT_ID = (
@@ -407,13 +402,9 @@ class Config:
         or 'acct_1TCY8xEksbf3Q3Fg'
     )
     STRIPE_EXPECTED_ACTIVATION_PRICE_ID = (
-        os.environ.get('STRIPE_EXPECTED_ACTIVATION_PRICE_ID', 'price_1TPq4KEksbf3Q3FgwATaTJ7h').strip()
-        or 'price_1TPq4KEksbf3Q3FgwATaTJ7h'
+        os.environ.get('STRIPE_EXPECTED_ACTIVATION_PRICE_ID', 'price_1U9Bl6Eksbf3Q3FgcJ0YRJ05').strip()
+        or 'price_1U9Bl6Eksbf3Q3FgcJ0YRJ05'
     )
-    STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID = os.environ.get(
-        'STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID',
-        '',
-    ).strip()
     STRIPE_EXPECTED_MONTHLY_PRICE_ID = (
         os.environ.get('STRIPE_EXPECTED_MONTHLY_PRICE_ID', 'price_1TYtNuEksbf3Q3FgN2B1VqGN').strip()
         or 'price_1TYtNuEksbf3Q3FgN2B1VqGN'

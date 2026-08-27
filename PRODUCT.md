@@ -34,7 +34,7 @@ Twinevia launches as a managed service rather than unrestricted self-service sof
 - Twinevia is multi-tenant. Organization data, provider resources, webhooks, replies, suppressions, billing, and outbound actions must remain tenant-bound.
 - Launch access is a controlled pilot for a small number of approved customers. Anonymous pilot requests must not create organizations, Stripe customers, Twilio numbers, or provider resources.
 - Chargeable actions require an active paid entitlement and verified setup-fee state unless the organization is explicitly complimentary.
-- Launch pricing is a one-time $149 setup fee plus either $59.99 monthly or $600 annually. Each plan includes 1,000 outbound SMS segments per calendar month; additional segments are billed at $0.03 each through monthly settlement.
+- Launch pricing is a one-time $149.99 setup fee plus either $59.99 monthly or $600 annually. Each plan includes 1,000 outbound SMS segments per calendar month; additional segments are billed at $0.03 each through monthly settlement.
 - Twinevia absorbs normal first-time Low Volume Standard registration and routine usage costs within the stated commercial model. Rejected resubmissions, appeals, customer-caused retries, higher-volume upgrades, special vetting, and requested additional numbers may be customer-paid.
 - Provider registration and message delivery depend on external systems and cannot be promised. Ambiguous provider outcomes must not be blindly retried.
 - Public marketing and policy content must not fabricate customers, testimonials, awards, usage metrics, certifications, or provider endorsements.

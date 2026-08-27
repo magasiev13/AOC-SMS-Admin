@@ -236,7 +236,6 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
             STRIPE_MONTHLY_PRICE_ID="price_monthly",
             STRIPE_ANNUAL_PRICE_ID="price_annual",
             STRIPE_ACTIVATION_PRICE_ID="price_activation",
-            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation",
             STRIPE_GROWTH_PRICE_ID="price_growth",
             STRIPE_SCALE_PRICE_ID="price_scale",
             BILLING_TRIAL_DAYS=0,
@@ -432,7 +431,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
         self.assertEqual(params["mode"], "payment")
         self.assertEqual(
             params["line_items"],
-            [{"price": "price_staged_activation", "quantity": 1}],
+            [{"price": "price_activation", "quantity": 1}],
         )
         self.assertEqual(params["metadata"]["billing_checkout_kind"], "setup_only")
         self.assertEqual(params["metadata"]["billing_plan_code"], "setup_only")
@@ -445,7 +444,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
         organization, subscription = self._create_subscription()
         organization.billing_offer = "staged_annual"
         subscription.activation_fee_paid_at = datetime.now(timezone.utc)
-        subscription.activation_price_id = "price_staged_activation"
+        subscription.activation_price_id = "price_activation"
         subscription.activation_payment_intent_id = "pi_staged_setup"
         self.db.session.commit()
 

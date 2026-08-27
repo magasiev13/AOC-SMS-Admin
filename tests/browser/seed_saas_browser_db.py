@@ -612,7 +612,7 @@ def main() -> None:
             name="A2P Application Bakery",
             slug="a2p-application-bakery",
             status="active",
-            billing_offer_version="2026-08-managed-pilot-v1",
+            billing_offer_version="2026-08-managed-pilot-v2",
             created_at=now - timedelta(days=30),
         )
         a2p_application_subscription = OrganizationSubscription(
@@ -622,7 +622,7 @@ def main() -> None:
             activation_price_id="price_browser_activation",
             activation_payment_intent_id="pi_browser_a2p_setup",
             activation_invoice_id="in_browser_a2p_setup",
-            offer_version="2026-08-managed-pilot-v1",
+            offer_version="2026-08-managed-pilot-v2",
             status="active",
         )
         a2p_application_messaging = OrganizationMessagingProfile(

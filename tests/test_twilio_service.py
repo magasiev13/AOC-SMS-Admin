@@ -226,7 +226,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         )
         organization.billing_offer = "staged_annual"
         organization.subscription.activation_fee_paid_at = datetime.now(timezone.utc)
-        organization.subscription.activation_price_id = "price_staged_activation"
+        organization.subscription.activation_price_id = "price_activation"
         organization.subscription.activation_payment_intent_id = "pi_staged_setup"
         self.db.session.commit()
 

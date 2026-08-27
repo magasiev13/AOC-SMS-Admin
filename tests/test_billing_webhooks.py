@@ -67,7 +67,6 @@ class TestStripeWebhookHardening(unittest.TestCase):
             STRIPE_PRICE_ID="price_test_123",
             STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
-            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
         )
@@ -228,7 +227,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
                 stripe_checkout_session_id="cs_test_staged_setup",
                 billing_plan_code="setup_only",
                 recurring_price_id="price_annual_123",
-                activation_price_id="price_staged_activation_123",
+                activation_price_id="price_activation_123",
                 offer_version=offer_version,
                 status="open",
             )
@@ -240,7 +239,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             "payment_status": "paid",
             "mode": "payment",
             "currency": "usd",
-            "amount_total": 15000,
+            "amount_total": 14999,
             "customer": "cus_test_staged",
             "payment_intent": "pi_test_staged_setup",
             "subscription": None,
@@ -256,7 +255,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
         mock_stripe.checkout.Session.list_line_items.return_value = SimpleNamespace(
             data=[
                 {
-                    "price": {"id": "price_staged_activation_123"},
+                    "price": {"id": "price_activation_123"},
                     "quantity": 1,
                 }
             ]
@@ -265,7 +264,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             "id": "pi_test_staged_setup",
             "status": "succeeded",
             "currency": "usd",
-            "amount_received": 15000,
+            "amount_received": 14999,
         }
         mock_stripe_module.return_value = mock_stripe
         event = {
@@ -282,7 +281,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertIsNone(self.subscription.stripe_subscription_id)
         self.assertEqual(
             self.subscription.activation_price_id,
-            "price_staged_activation_123",
+            "price_activation_123",
         )
         self.assertEqual(
             self.subscription.activation_payment_intent_id,

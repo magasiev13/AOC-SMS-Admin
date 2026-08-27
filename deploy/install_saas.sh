@@ -238,6 +238,17 @@ upsert_env_key() {
   echo "✓ Set ${key}"
 }
 
+remove_env_key() {
+  local key="$1"
+  local tmp_file
+
+  tmp_file="$(mktemp)"
+  sudo awk -v key="${key}" '$0 !~ ("^" key "=") { print }' "${ENV_FILE}" > "${tmp_file}"
+  sudo install -o root -g "${APP_GROUP}" -m 0640 "${tmp_file}" "${ENV_FILE}"
+  rm -f "${tmp_file}"
+  echo "✓ Removed obsolete key ${key}"
+}
+
 validate_saas_runtime_env() {
   local flask_env
   local flask_debug
@@ -369,24 +380,24 @@ ensure_env_key "SECURITY_HSTS_MAX_AGE" "31536000"
 ensure_env_key "STRIPE_FAKE_CHECKOUT_ENABLED" "0"
 ensure_env_key "BILLING_TRIAL_DAYS" "0"
 upsert_env_key "STRIPE_EXPECTED_ACCOUNT_ID" "acct_1TCY8xEksbf3Q3Fg"
-upsert_env_key "STRIPE_EXPECTED_ACTIVATION_PRICE_ID" "price_1TPq4KEksbf3Q3FgwATaTJ7h"
-upsert_env_key "STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID" "price_1TYtOAEksbf3Q3Fg0gCPD4nN"
+upsert_env_key "STRIPE_EXPECTED_ACTIVATION_PRICE_ID" "price_1U9Bl6Eksbf3Q3FgcJ0YRJ05"
 upsert_env_key "STRIPE_EXPECTED_MONTHLY_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
 upsert_env_key "STRIPE_EXPECTED_ANNUAL_PRICE_ID" "price_1TYtO4Eksbf3Q3FgHzXB9S5b"
 upsert_env_key "STRIPE_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
 upsert_env_key "STRIPE_MONTHLY_PRICE_ID" "price_1TYtNuEksbf3Q3FgN2B1VqGN"
 upsert_env_key "STRIPE_ANNUAL_PRICE_ID" "price_1TYtO4Eksbf3Q3FgHzXB9S5b"
-upsert_env_key "STRIPE_ACTIVATION_PRICE_ID" "price_1TPq4KEksbf3Q3FgwATaTJ7h"
-upsert_env_key "STRIPE_STAGED_ACTIVATION_PRICE_ID" "price_1TYtOAEksbf3Q3Fg0gCPD4nN"
+upsert_env_key "STRIPE_ACTIVATION_PRICE_ID" "price_1U9Bl6Eksbf3Q3FgcJ0YRJ05"
 upsert_env_key "STRIPE_LIVE_CONFIGURATION_REQUIRED" "1"
-upsert_env_key "BILLING_ACTIVATION_FEE_USD" "149.00"
-upsert_env_key "BILLING_STAGED_ACTIVATION_FEE_USD" "150.00"
+upsert_env_key "BILLING_ACTIVATION_FEE_USD" "149.99"
 upsert_env_key "BILLING_MONTHLY_PRICE_USD" "59.99"
 upsert_env_key "BILLING_ANNUAL_PRICE_USD" "600.00"
 upsert_env_key "BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS" "1000"
 upsert_env_key "BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS" "1000"
 upsert_env_key "BILLING_OUTBOUND_SEGMENT_RATE_USD" "0.0300"
-ensure_env_key "BILLING_OFFER_VERSION" "2026-08-managed-pilot-v1"
+upsert_env_key "BILLING_OFFER_VERSION" "2026-08-managed-pilot-v2"
+remove_env_key "STRIPE_STAGED_ACTIVATION_PRICE_ID"
+remove_env_key "STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID"
+remove_env_key "BILLING_STAGED_ACTIVATION_FEE_USD"
 ensure_env_key "TWILIO_BROWSER_FAKE_SENDS" "0"
 ensure_env_key "TWILIO_A2P_FAKE_QUEUE" "0"
 ensure_env_key "TWILIO_VALIDATE_INBOUND_SIGNATURE" "1"
@@ -420,7 +431,6 @@ required_keys=(
   STRIPE_MONTHLY_PRICE_ID
   STRIPE_ANNUAL_PRICE_ID
   STRIPE_ACTIVATION_PRICE_ID
-  STRIPE_STAGED_ACTIVATION_PRICE_ID
   TWILIO_ACCOUNT_SID
   TWILIO_AUTH_TOKEN
   TWILIO_CREDENTIAL_ENCRYPTION_KEY

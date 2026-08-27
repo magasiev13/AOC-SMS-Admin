@@ -69,10 +69,10 @@ This preserves monthly checkout for future customers while keeping the first cli
 
 For a customer who must pay setup before provider review and the annual subscription only after approval:
 
-1. Confirm `STRIPE_STAGED_ACTIVATION_PRICE_ID` is the validated live `$150` one-time Price.
+1. Confirm `STRIPE_ACTIVATION_PRICE_ID` is the validated live `$149.99` one-time Price.
 2. Open `/platform/organizations/<id>/access`.
 3. In Billing State, select `Staged annual` before the owner starts Checkout.
-4. The first Checkout collects only `$150` and leaves the subscription `incomplete`.
+4. The first Checkout collects only `$149.99` and leaves the subscription `incomplete`.
 5. The setup payment permits provider provisioning and A2P submission, but number purchase, sender finalization, and all messaging remain blocked.
 6. After the campaign reaches `approved` or `verified`, the owner sees a second Checkout for the `$600/year` subscription. The setup price is not charged again.
 

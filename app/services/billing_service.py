@@ -81,8 +81,7 @@ class StripePriceExpectation:
 
 
 LIVE_PRICE_EXPECTATIONS = (
-    StripePriceExpectation("STRIPE_ACTIVATION_PRICE_ID", 14900, None),
-    StripePriceExpectation("STRIPE_STAGED_ACTIVATION_PRICE_ID", 15000, None),
+    StripePriceExpectation("STRIPE_ACTIVATION_PRICE_ID", 14999, None),
     StripePriceExpectation("STRIPE_MONTHLY_PRICE_ID", 5999, "month"),
     StripePriceExpectation("STRIPE_ANNUAL_PRICE_ID", 60000, "year"),
 )
@@ -425,8 +424,6 @@ def validate_live_stripe_configuration() -> dict[str, str]:
     validated_price_ids: dict[str, str] = {}
     for expectation in LIVE_PRICE_EXPECTATIONS:
         price_id = str(current_app.config.get(expectation.config_key) or "").strip()
-        if not price_id and expectation.config_key == "STRIPE_STAGED_ACTIVATION_PRICE_ID":
-            continue
         price = _stripe_object_to_dict(
             _retry_stripe_operation(
                 f"price.retrieve:{price_id}",
@@ -870,9 +867,7 @@ def _create_staged_setup_payment_checkout_session(
 ):
     setup_price_id = activation_price_id_for_organization(organization)
     if not setup_price_id:
-        raise RuntimeError(
-            "STRIPE_STAGED_ACTIVATION_PRICE_ID is not configured for the staged annual offer."
-        )
+        raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
     subscription.stripe_price_id = annual_price_id
 
     if fake_checkout_enabled():
@@ -1285,9 +1280,12 @@ def _verified_invoice_payment_intent(
         raise StripePaymentProofError(f"Stripe invoice {invoice_id} is not paid.")
     if current_app.config.get("STRIPE_LIVE_CONFIGURATION_REQUIRED") and invoice.get("livemode") is not True:
         raise StripePaymentProofError(f"Stripe invoice {invoice_id} is not live mode.")
-    if int(invoice.get("amount_paid") or 0) < 14900:
+    expected_amount_cents = _decimal_to_cents(
+        current_app.config.get("BILLING_ACTIVATION_FEE_USD") or "149.99"
+    )
+    if int(invoice.get("amount_paid") or 0) < expected_amount_cents:
         raise StripePaymentProofError(
-            f"Stripe invoice {invoice_id} does not prove the $149 setup payment."
+            f"Stripe invoice {invoice_id} does not prove the $149.99 setup payment."
         )
 
     invoice_line_items = invoice.get("lines", {}).get("data", []) or []
@@ -1329,9 +1327,9 @@ def _verified_invoice_payment_intent(
         raise StripePaymentProofError(
             f"Stripe PaymentIntent {payment_intent_id} is not live mode."
         )
-    if int(payment_intent.get("amount_received") or 0) < 14900:
+    if int(payment_intent.get("amount_received") or 0) < expected_amount_cents:
         raise StripePaymentProofError(
-            f"Stripe PaymentIntent {payment_intent_id} does not prove the $149 setup payment."
+            f"Stripe PaymentIntent {payment_intent_id} does not prove the $149.99 setup payment."
         )
     return payment_intent_id, invoice
 
@@ -1345,8 +1343,8 @@ def _verified_staged_setup_payment_intent(
         (
             Decimal(
                 str(
-                    current_app.config.get("BILLING_STAGED_ACTIVATION_FEE_USD")
-                    or "150.00"
+                    current_app.config.get("BILLING_ACTIVATION_FEE_USD")
+                    or "149.99"
                 )
             )
             * Decimal("100")

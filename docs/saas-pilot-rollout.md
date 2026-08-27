@@ -28,7 +28,6 @@ Minimum runtime values:
 - `STRIPE_PRICE_ID=...` or `STRIPE_MONTHLY_PRICE_ID=...`
 - `STRIPE_ANNUAL_PRICE_ID=...`
 - `STRIPE_ACTIVATION_PRICE_ID=...`
-- `STRIPE_STAGED_ACTIVATION_PRICE_ID=...` for staged annual customers
 - `TWILIO_ACCOUNT_SID=...`
 - `TWILIO_AUTH_TOKEN=...`
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY=...`
@@ -55,7 +54,7 @@ Use the platform admin UI before inviting or sending the first client to checkou
 3. In Billing State, enable annual-only checkout.
 4. Confirm the owner checkout page shows `First-client upfront pricing` and no `$59.99/mo` option.
 
-Do not use manual payment tracking for this path. Stripe Checkout should charge the `$149` setup fee plus the `$600/year` subscription.
+Do not use manual payment tracking for this path. Stripe Checkout should charge the `$149.99` setup fee plus the `$600/year` subscription.
 
 ## Platform-Managed Messaging Strategy
 
