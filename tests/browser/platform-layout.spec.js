@@ -5,6 +5,7 @@ async function login(page, username, password) {
   await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: /Sign in to/i }).click();
+  await page.waitForLoadState('networkidle');
 }
 
 async function elementHeight(locator) {

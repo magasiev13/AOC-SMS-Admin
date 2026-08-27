@@ -69,6 +69,7 @@ async function login(page, username, password, path = '/login') {
   await page.getByLabel('Email or username').fill(username);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: /Sign in to/i }).click();
+  await page.waitForLoadState('networkidle');
 }
 
 function organizationRow(page, organizationName) {
