@@ -52,6 +52,9 @@ AUTH_LOCKOUT_SECONDS=900
 AUTH_MAX_ATTEMPTS_IP_ACCOUNT=5
 AUTH_MAX_ATTEMPTS_ACCOUNT=8
 AUTH_MAX_ATTEMPTS_IP=30
+AUTH_TRUSTED_BROWSER_COOKIE_NAME=twinevia_trusted_browser
+AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS=2592000
+AUTH_ALERT_COOLDOWN_SECONDS=900
 SESSION_IDLE_TIMEOUT_MINUTES=30
 REMEMBER_COOKIE_DURATION_DAYS=7
 AUTH_PASSWORD_MIN_LENGTH=12
@@ -70,6 +73,7 @@ When `SAAS_MODE=1`, production should treat these as required:
 - `STRIPE_MONTHLY_PRICE_ID` or legacy `STRIPE_PRICE_ID`
 - `STRIPE_ANNUAL_PRICE_ID`
 - `STRIPE_ACTIVATION_PRICE_ID`
+- `STRIPE_STAGED_ACTIVATION_PRICE_ID`
 - `SAAS_BASE_URL`
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
 
@@ -82,7 +86,7 @@ And conditionally:
 
 - Stripe webhook verification depends on `STRIPE_WEBHOOK_SECRET`
 - inbound Twilio signature verification is required in production with `TWILIO_VALIDATE_INBOUND_SIGNATURE=1`
-- optional Twilio A2P Event Streams should use `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN`
+- optional Twilio A2P Event Streams require an organization-bound Twilio signature; no global bearer fallback is accepted
 
 ## Platform Restart Safety
 

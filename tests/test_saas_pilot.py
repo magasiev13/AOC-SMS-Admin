@@ -117,6 +117,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             STRIPE_MONTHLY_PRICE_ID="price_test_123",
             STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
+            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
         )
@@ -1464,6 +1465,46 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(self.organization.subscription.status, "trialing")
         self.assertIsNotNone(self.organization.subscription.current_period_end)
 
+    def test_staged_annual_fake_checkout_collects_setup_then_waits_for_approval(self) -> None:
+        self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
+        self.organization.billing_offer = "staged_annual"
+        self.db.session.commit()
+        self._login_owner()
+
+        checkout = self.client.post(
+            "/setup/billing/checkout",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(checkout.status_code, 303)
+        self.assertIn(
+            f"/_test/stripe/checkout/cs_fake_setup_org_{self.organization.id}",
+            checkout.headers.get("Location", ""),
+        )
+        completed = self.client.post(
+            f"/_test/stripe/checkout/cs_fake_setup_org_{self.organization.id}",
+            data={
+                "organization_id": str(self.organization.id),
+                "success_url": "http://localhost/setup?step=billing&session_id={CHECKOUT_SESSION_ID}",
+                "cancel_url": "http://localhost/setup?step=billing",
+                "action": "complete",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertEqual(completed.status_code, 200)
+        self.assertIn(b"Provider review in progress", completed.data)
+        self.assertIn(b"$600 annual subscription remains", completed.data)
+        self.assertEqual(self.organization.subscription.status, "incomplete")
+        self.assertIsNotNone(self.organization.subscription.activation_fee_paid_at)
+        self.assertIsNone(self.organization.subscription.stripe_subscription_id)
+        self.assertEqual(
+            self.organization.subscription.activation_price_id,
+            "price_staged_activation_123",
+        )
+        next_step = self.client.get("/setup")
+        self.assertIn(b'data-current-step="compliance"', next_step.data)
+
     def test_cross_tenant_event_detail_is_not_accessible(self) -> None:
         second_org = self.Organization(name="Second Org", slug="second-org", status="active")
         second_subscription = self.OrganizationSubscription(
@@ -2361,6 +2402,32 @@ class TestSaasPilotFoundation(unittest.TestCase):
         setup_response = self.client.get("/setup?step=billing")
         self.assertEqual(setup_response.status_code, 200)
         self.assertIn(b"First-client upfront pricing", setup_response.data)
+        self.assertNotIn(b"$59.99/mo", setup_response.data)
+
+    def test_platform_admin_can_enable_staged_annual_checkout_offer(self) -> None:
+        self._login_platform_admin()
+
+        response = self.client.post(
+            f"/platform/organizations/{self.organization.id}/access/billing",
+            data={"action": "set_billing_offer", "billing_offer": "staged_annual"},
+            follow_redirects=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Staged annual checkout enabled", response.data)
+        self.assertIn(b"Checkout offer: Staged annual", response.data)
+        self.assertIn(b"$150 for setup first", response.data)
+        self.db.session.refresh(self.organization)
+        self.db.session.refresh(self.subscription)
+        self.assertEqual(self.organization.billing_offer, "staged_annual")
+        self.assertEqual(self.subscription.stripe_price_id, "price_annual_123")
+
+        self._logout()
+        self._login_owner()
+        setup_response = self.client.get("/setup?step=billing")
+        self.assertEqual(setup_response.status_code, 200)
+        self.assertIn(b"Pay $150 setup fee", setup_response.data)
+        self.assertIn(b"not charged until provider approval", setup_response.data)
         self.assertNotIn(b"$59.99/mo", setup_response.data)
 
     def test_platform_admin_can_restore_standard_checkout_offer(self) -> None:

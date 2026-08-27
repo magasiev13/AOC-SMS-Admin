@@ -154,8 +154,20 @@ def annual_only_offer_enabled_for_organization(organization) -> bool:
     return bool((slug and slug in annual_only_slugs) or (org_id and org_id in annual_only_ids))
 
 
+def staged_annual_offer_enabled_for_organization(organization) -> bool:
+    if organization is None:
+        return False
+    return (
+        str(getattr(organization, "billing_offer", "") or "").strip().lower()
+        == "staged_annual"
+    )
+
+
 def eligible_billing_plan_codes_for_organization(organization) -> tuple[str, ...]:
-    if annual_only_offer_enabled_for_organization(organization):
+    if (
+        annual_only_offer_enabled_for_organization(organization)
+        or staged_annual_offer_enabled_for_organization(organization)
+    ):
         return ("annual",)
     return ("monthly", "annual")
 
@@ -232,12 +244,29 @@ def activation_price_id() -> str:
     return str(current_app.config.get("STRIPE_ACTIVATION_PRICE_ID") or "").strip()
 
 
+def activation_price_id_for_organization(organization) -> str:
+    if staged_annual_offer_enabled_for_organization(organization):
+        return str(
+            current_app.config.get("STRIPE_STAGED_ACTIVATION_PRICE_ID") or ""
+        ).strip()
+    return activation_price_id()
+
+
 def overage_rate_label() -> str:
     return _money_label(current_app.config.get("BILLING_OUTBOUND_SEGMENT_RATE_USD"), minimum_places=2)
 
 
 def activation_fee_label() -> str:
     return _money_label(current_app.config.get("BILLING_ACTIVATION_FEE_USD"), minimum_places=0)
+
+
+def activation_fee_label_for_organization(organization) -> str:
+    if staged_annual_offer_enabled_for_organization(organization):
+        return _money_label(
+            current_app.config.get("BILLING_STAGED_ACTIVATION_FEE_USD"),
+            minimum_places=0,
+        )
+    return activation_fee_label()
 
 
 def segment_count_label(value: int) -> str:

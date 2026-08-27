@@ -106,7 +106,7 @@
                     <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         {% include "includes/billing_plan_options.html" %}
-                        <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
+                        <button type="submit" class="btn btn-primary">{{ subscription_view.checkout_button_label }}</button>
                     </form>
                     {% endif %}
                     {% if subscription_view.show_portal %}
@@ -264,7 +264,7 @@
                     <form method="POST" action="{{ url_for('main.setup_billing_checkout') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         {% include "includes/billing_plan_options.html" %}
-                        <button type="submit" class="btn btn-primary">{{ 'Update subscription' if subscription_view.can_send else 'Start subscription' }}</button>
+                        <button type="submit" class="btn btn-primary">{{ subscription_view.checkout_button_label }}</button>
                     </form>
                     {% endif %}
                     {% if subscription_view.show_portal %}

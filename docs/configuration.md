@@ -66,6 +66,9 @@ Hard-coded secure defaults:
 | `AUTH_MAX_ATTEMPTS_IP_ACCOUNT` | `5` |
 | `AUTH_MAX_ATTEMPTS_ACCOUNT` | `8` |
 | `AUTH_MAX_ATTEMPTS_IP` | `30` |
+| `AUTH_TRUSTED_BROWSER_COOKIE_NAME` | `twinevia_trusted_browser` |
+| `AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS` | `2592000` |
+| `AUTH_ALERT_COOLDOWN_SECONDS` | `900` |
 | `AUTH_PASSWORD_MIN_LENGTH` | `12` |
 | `AUTH_PASSWORD_POLICY_ENFORCE` | `1` |
 | `PASSWORD_HISTORY_COUNT` | `3` |
@@ -193,8 +196,7 @@ Important runtime distinction:
 | `TWILIO_PRIMARY_CUSTOMER_PROFILE_SID` | unset | Required when A2P automation is enabled. Must be a `BU...` primary customer profile. |
 | `TWILIO_A2P_NUMBER_COUNTRY` | `US` | Auto-buy country code. |
 | `TWILIO_A2P_FAKE_QUEUE` | `0` | Test/development A2P queueing aid. |
-| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables `/webhooks/twilio/a2p-events`. |
-| `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` | unset | Bearer token expected on the A2P Event Streams sink. |
+| `TWILIO_A2P_EVENT_STREAMS_ENABLED` | `0` | Enables `/webhooks/twilio/a2p-events`; every request requires the organization-bound Twilio signature. |
 
 Operational note:
 
@@ -216,6 +218,8 @@ Operational note:
 | `STRIPE_MONTHLY_PRICE_ID` | `STRIPE_PRICE_ID` | Monthly recurring price ID for the `$59.99/mo` option. Required unless `STRIPE_PRICE_ID` is set. |
 | `STRIPE_ANNUAL_PRICE_ID` | unset | Annual recurring price ID for the `$600/year upfront` option. Required for SaaS billing validation. |
 | `STRIPE_ACTIVATION_PRICE_ID` | unset | Required one-time activation price charged on first paid signup. |
+| `STRIPE_STAGED_ACTIVATION_PRICE_ID` | unset | Optional live one-time `$150` setup price used by organizations assigned the staged annual offer. The staged offer cannot open Checkout until this is configured. |
+| `STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID` | unset | Optional expected live `$150` Price ID. When set, production startup requires `STRIPE_STAGED_ACTIVATION_PRICE_ID` to match it. |
 | `STRIPE_GROWTH_PRICE_ID` | unset | Optional Growth recurring price ID for plan allowance mapping. |
 | `STRIPE_SCALE_PRICE_ID` | unset | Optional Scale recurring price ID for plan allowance mapping. |
 | `STRIPE_FAKE_CHECKOUT_ENABLED` | `0` | Enables `/_test/stripe/checkout/<session_id>`. |
@@ -230,6 +234,7 @@ Operational note:
 | `BILLING_MONTHLY_PRICE_USD` | `59.99` | Display amount for the monthly option. Stripe price amount remains authoritative. |
 | `BILLING_ANNUAL_PRICE_USD` | `600.00` | Display amount for the annual upfront option. Stripe price amount remains authoritative. |
 | `BILLING_ACTIVATION_FEE_USD` | `149.00` | Display amount for the one-time setup fee. Stripe price amount remains authoritative. |
+| `BILLING_STAGED_ACTIVATION_FEE_USD` | `150.00` | Display and verification amount for the setup-only payment in the staged annual offer. |
 | `BILLING_OFFER_VERSION` | `2026-08-managed-pilot-v1` | Stored with organizations and Checkout sessions so incompatible open sessions can expire. |
 | `BILLING_ANNUAL_ONLY_ORG_SLUGS` | unset | Break-glass comma-separated organization slugs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
 | `BILLING_ANNUAL_ONLY_ORG_IDS` | unset | Break-glass comma-separated organization IDs that should only see the annual upfront checkout offer. Prefer the platform admin billing-offer toggle for normal setup. |
@@ -284,6 +289,7 @@ Startup requires:
 - `STRIPE_MONTHLY_PRICE_ID` or legacy `STRIPE_PRICE_ID`
 - `STRIPE_ANNUAL_PRICE_ID`
 - `STRIPE_ACTIVATION_PRICE_ID`
+- `STRIPE_STAGED_ACTIVATION_PRICE_ID` before assigning any organization the staged annual offer
 - `SAAS_BASE_URL`
 - `TWILIO_CREDENTIAL_ENCRYPTION_KEY`
 

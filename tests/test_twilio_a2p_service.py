@@ -1562,7 +1562,6 @@ class TestTwilioA2PService(unittest.TestCase):
     @patch("app.routes.ingest_a2p_event_stream_payload", return_value={"events_seen": 1, "events_applied": 1, "events_ignored": 0, "events_duplicate": 0, "events_out_of_order": 0})
     def test_a2p_event_stream_webhook_validates_signed_json_body(self, mock_ingest, mock_validate) -> None:
         self.app.config["TWILIO_A2P_EVENT_STREAMS_ENABLED"] = True
-        self.app.config["TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN"] = "secret-token"
         mock_validate.side_effect = [
             MagicMock(is_valid=True, reason="valid"),
             MagicMock(is_valid=False, reason="invalid_signature"),
@@ -1596,9 +1595,8 @@ class TestTwilioA2PService(unittest.TestCase):
             self.organization.id,
         )
 
-    def test_a2p_event_stream_webhook_requires_an_existing_organization_profile(self) -> None:
+    def test_a2p_event_stream_webhook_rejects_global_bearer_and_unknown_scope(self) -> None:
         self.app.config["TWILIO_A2P_EVENT_STREAMS_ENABLED"] = True
-        self.app.config["TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN"] = "secret-token"
 
         missing_scope = self.client.post(
             "/webhooks/twilio/a2p-events",

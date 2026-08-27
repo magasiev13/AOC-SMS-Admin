@@ -70,7 +70,7 @@ class TestLoginHardeningConfig(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Too many failed attempts", response.data)
 
-    def test_account_global_limit_blocks_a_correct_password_from_another_source(self) -> None:
+    def test_account_global_limit_blocks_an_untrusted_correct_password_from_another_source(self) -> None:
         os.environ["AUTH_MAX_ATTEMPTS_ACCOUNT"] = "1"
         os.environ["AUTH_MAX_ATTEMPTS_IP"] = "30"
         import importlib
@@ -96,6 +96,37 @@ class TestLoginHardeningConfig(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Too many failed attempts", response.data)
         self.assertNotIn(b"Invalid email, username, or password", response.data)
+
+    def test_trusted_browser_can_recover_from_distributed_account_lock(self) -> None:
+        self.app.config["AUTH_MAX_ATTEMPTS_ACCOUNT"] = 1
+        self.app.config["AUTH_MAX_ATTEMPTS_IP"] = 30
+
+        trusted_client = self.app.test_client()
+        initial = trusted_client.post(
+            "/login",
+            data={"username": "admin", "password": "correct-password-123"},
+            environ_overrides={"REMOTE_ADDR": "10.10.2.1"},
+            follow_redirects=False,
+        )
+        self.assertEqual(initial.status_code, 302)
+        trusted_client.get("/logout", follow_redirects=False)
+
+        attacker_client = self.app.test_client()
+        attacker_client.post(
+            "/login",
+            data={"username": "admin", "password": "wrong-pass"},
+            environ_overrides={"REMOTE_ADDR": "10.10.2.2"},
+            follow_redirects=True,
+        )
+
+        recovered = trusted_client.post(
+            "/login",
+            data={"username": "admin", "password": "correct-password-123"},
+            environ_overrides={"REMOTE_ADDR": "10.10.2.3"},
+            follow_redirects=False,
+        )
+        self.assertEqual(recovered.status_code, 302)
+        self.assertNotIn(b"Too many failed attempts", recovered.data)
 
     def test_successful_login_marks_session_permanent(self) -> None:
         response = self._post_login("admin", "correct-password-123")

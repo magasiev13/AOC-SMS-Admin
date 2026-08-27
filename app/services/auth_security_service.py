@@ -5,16 +5,18 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from flask import current_app
+from itsdangerous import BadData, URLSafeTimedSerializer
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import check_password_hash
 
 from app import db
 from app.config import Config as AppConfig
-from app.models import AuthEvent, LoginAttempt, UserPasswordHistory
+from app.models import AppUser, AuthEvent, LoginAttempt, UserPasswordHistory
 
 
 ACCOUNT_SCOPE_IP = "__account__"
 IP_SCOPE_USERNAME = ""
+TRUSTED_BROWSER_TOKEN_SALT = "twinevia-trusted-browser-v1"
 
 _LAST_PRUNE_DATE: date | None = None
 
@@ -25,6 +27,52 @@ def utc_now() -> datetime:
 
 def normalize_login_username(username: str | None) -> str:
     return (username or "").strip().lower()
+
+
+def _trusted_browser_serializer() -> URLSafeTimedSerializer:
+    secret_key = str(current_app.config.get("SECRET_KEY") or "").strip()
+    if not secret_key:
+        raise RuntimeError("SECRET_KEY is required to issue trusted-browser login tokens.")
+    return URLSafeTimedSerializer(secret_key=secret_key, salt=TRUSTED_BROWSER_TOKEN_SALT)
+
+
+def build_trusted_browser_token(user_id: int, session_nonce: str) -> str:
+    normalized_nonce = str(session_nonce or "").strip()
+    if user_id <= 0 or not normalized_nonce:
+        raise ValueError("A user id and session nonce are required for a trusted-browser token.")
+    return _trusted_browser_serializer().dumps(
+        {
+            "purpose": "account_lock_recovery",
+            "user_id": user_id,
+            "session_nonce": normalized_nonce,
+        }
+    )
+
+
+def trusted_browser_token_matches(
+    token: str | None,
+    user_id: int,
+    session_nonce: str,
+    max_age_seconds: int,
+) -> bool:
+    normalized_token = str(token or "").strip()
+    normalized_nonce = str(session_nonce or "").strip()
+    if not normalized_token or user_id <= 0 or not normalized_nonce or max_age_seconds <= 0:
+        return False
+    try:
+        payload = _trusted_browser_serializer().loads(
+            normalized_token,
+            max_age=max_age_seconds,
+        )
+    except BadData:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(
+        payload.get("purpose") == "account_lock_recovery"
+        and payload.get("user_id") == user_id
+        and payload.get("session_nonce") == normalized_nonce
+    )
 
 
 def password_policy_errors(password: str, username: str | None = None) -> list[str]:
@@ -294,6 +342,68 @@ def clear_failed_logins(client_ip: str, username: str) -> None:
         LoginAttempt.query.filter_by(client_ip=ACCOUNT_SCOPE_IP, username=normalized_username).delete()
         LoginAttempt.query.filter_by(client_ip=client_ip, username=normalized_username).delete()
     db.session.commit()
+
+
+def clear_account_failed_logins(username: str) -> None:
+    normalized_username = normalize_login_username(username)
+    if not normalized_username:
+        raise ValueError("A username is required to clear account login failures.")
+    LoginAttempt.query.filter_by(username=normalized_username).delete(
+        synchronize_session=False
+    )
+    db.session.commit()
+
+
+def claim_security_alert_delivery(
+    user_id: int,
+    event_type: str,
+    client_ip: str,
+    cooldown_seconds: int,
+) -> bool:
+    normalized_event_type = str(event_type or "").strip().lower()
+    if user_id <= 0 or not normalized_event_type:
+        raise ValueError("A user id and event type are required to claim a security alert.")
+    if cooldown_seconds <= 0:
+        raise ValueError("Security alert cooldown must be greater than zero.")
+
+    locked_user = (
+        AppUser.query
+        .filter(AppUser.id == user_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if locked_user is None:
+        raise ValueError(f"User {user_id} does not exist.")
+
+    claim_event_type = f"alert_claim_{normalized_event_type}"[:50]
+    cutoff = utc_now() - timedelta(seconds=cooldown_seconds)
+    recent_claim = (
+        AuthEvent.query
+        .filter(
+            AuthEvent.user_id == user_id,
+            AuthEvent.event_type == claim_event_type,
+            AuthEvent.created_at >= cutoff,
+        )
+        .order_by(AuthEvent.created_at.desc(), AuthEvent.id.desc())
+        .first()
+    )
+    if recent_claim is not None:
+        db.session.commit()
+        return False
+
+    claim = AuthEvent(
+        event_type=claim_event_type,
+        outcome="claimed",
+        organization_id=getattr(locked_user, "organization_id", None),
+        user_id=locked_user.id,
+        username=locked_user.username,
+        client_ip=client_ip,
+        created_at=utc_now(),
+    )
+    claim.set_metadata({"alert_event_type": normalized_event_type})
+    db.session.add(claim)
+    db.session.commit()
+    return True
 
 
 def prune_auth_events(retention_days: int) -> None:

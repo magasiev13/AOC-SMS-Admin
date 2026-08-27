@@ -213,7 +213,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import Organization, OrganizationSubscription
+        from app.models import Organization, OrganizationA2POnboarding, OrganizationSubscription
         from app.services.billing_plans import (
             billing_plan_catalog,
             included_segments_for_subscription,
@@ -222,6 +222,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
 
         self.db = db
         self.Organization = Organization
+        self.OrganizationA2POnboarding = OrganizationA2POnboarding
         self.OrganizationSubscription = OrganizationSubscription
         self.billing_plan_catalog = billing_plan_catalog
         self.included_segments_for_subscription = included_segments_for_subscription
@@ -235,6 +236,7 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
             STRIPE_MONTHLY_PRICE_ID="price_monthly",
             STRIPE_ANNUAL_PRICE_ID="price_annual",
             STRIPE_ACTIVATION_PRICE_ID="price_activation",
+            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation",
             STRIPE_GROWTH_PRICE_ID="price_growth",
             STRIPE_SCALE_PRICE_ID="price_scale",
             BILLING_TRIAL_DAYS=0,
@@ -406,6 +408,84 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
                 "https://app.example.com/cancel",
                 plan_code="monthly",
             )
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_staged_annual_collects_setup_only_before_provider_approval(self, mock_stripe_module) -> None:
+        organization, subscription = self._create_subscription()
+        organization.billing_offer = "staged_annual"
+        self.db.session.commit()
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_staged_setup",
+            url="https://checkout.stripe.test/staged-setup",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(params["mode"], "payment")
+        self.assertEqual(
+            params["line_items"],
+            [{"price": "price_staged_activation", "quantity": 1}],
+        )
+        self.assertEqual(params["metadata"]["billing_checkout_kind"], "setup_only")
+        self.assertEqual(params["metadata"]["billing_plan_code"], "setup_only")
+        self.assertEqual(params["customer_creation"], "always")
+        self.assertNotIn("subscription_data", params)
+        self.assertEqual(subscription.stripe_price_id, "price_annual")
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_staged_annual_unlocks_annual_checkout_only_after_provider_approval(self, mock_stripe_module) -> None:
+        organization, subscription = self._create_subscription()
+        organization.billing_offer = "staged_annual"
+        subscription.activation_fee_paid_at = datetime.now(timezone.utc)
+        subscription.activation_price_id = "price_staged_activation"
+        subscription.activation_payment_intent_id = "pi_staged_setup"
+        self.db.session.commit()
+
+        with self.assertRaisesRegex(RuntimeError, "after provider approval"):
+            self.create_checkout_session(
+                organization,
+                "owner@example.com",
+                "https://app.example.com/success",
+                "https://app.example.com/cancel",
+            )
+
+        self.db.session.add(
+            self.OrganizationA2POnboarding(
+                organization_id=organization.id,
+                onboarding_status="pending",
+                campaign_status="verified",
+            )
+        )
+        self.db.session.commit()
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.create.return_value = SimpleNamespace(
+            id="cs_test_staged_annual",
+            url="https://checkout.stripe.test/staged-annual",
+        )
+        mock_stripe_module.return_value = mock_stripe
+
+        self.create_checkout_session(
+            organization,
+            "owner@example.com",
+            "https://app.example.com/success",
+            "https://app.example.com/cancel",
+        )
+
+        params = mock_stripe.checkout.Session.create.call_args.kwargs
+        self.assertEqual(params["mode"], "subscription")
+        self.assertEqual(
+            params["line_items"],
+            [{"price": "price_annual", "quantity": 1}],
+        )
+        self.assertEqual(params["metadata"]["billing_plan_code"], "annual")
 
     @patch("app.services.billing_service._stripe_module")
     def test_annual_only_config_override_still_defaults_to_annual(self, mock_stripe_module) -> None:

@@ -187,17 +187,19 @@
                         <div class="platform-note__title">Checkout offer: {{ billing_offer.title }}</div>
                         <div class="platform-note__copy">{{ billing_offer.summary }}</div>
                     </div>
-                    <form method="POST" action="{{ url_for('main.platform_organizations_update_billing', organization_id=organization.id) }}" class="mb-3">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="action" value="set_billing_offer">
-                        <input type="hidden" name="billing_offer" value="{{ billing_offer.next_code }}">
-                        <button type="submit" class="btn {{ billing_offer.toggle_button_style }}">
-                            {{ billing_offer.toggle_label }}
-                        </button>
-                        <div class="small text-muted mt-2">
-                            Use annual-only before checkout when this client should only see the $600/year upfront plan plus the $149 setup fee.
-                        </div>
-                    </form>
+                    <div class="d-grid gap-2 mb-3" aria-label="Checkout offers">
+                        {% for offer in billing_offer.options %}
+                        <form method="POST" action="{{ url_for('main.platform_organizations_update_billing', organization_id=organization.id) }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="action" value="set_billing_offer">
+                            <input type="hidden" name="billing_offer" value="{{ offer.code }}">
+                            <button type="submit" class="btn {{ 'btn-primary' if offer.active else 'btn-outline-secondary' }} w-100" {% if offer.active %}disabled{% endif %}>
+                                {{ offer.title }}{{ ' · Active' if offer.active else '' }}
+                            </button>
+                            <div class="small text-muted mt-1">{{ offer.summary }}</div>
+                        </form>
+                        {% endfor %}
+                    </div>
                     <form method="POST" action="{{ url_for('main.platform_organizations_update_billing', organization_id=organization.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="action" value="{{ 'clear_complimentary' if billing.is_complimentary else 'grant_complimentary' }}">

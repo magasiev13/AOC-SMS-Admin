@@ -158,6 +158,18 @@ class Config:
     # Recommended: 30 failures per IP across all accounts.
     # Too high allows broad credential-stuffing from one host.
     AUTH_MAX_ATTEMPTS_IP = _env_int('AUTH_MAX_ATTEMPTS_IP', '30')
+    # A signed, HttpOnly trusted-browser token lets a legitimate user prove
+    # possession of a previously authenticated browser during an account-wide
+    # distributed-guess lock. Rotating the user's session nonce invalidates it.
+    AUTH_TRUSTED_BROWSER_COOKIE_NAME = (
+        os.environ.get('AUTH_TRUSTED_BROWSER_COOKIE_NAME', 'twinevia_trusted_browser').strip()
+        or 'twinevia_trusted_browser'
+    )
+    AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS = _env_int(
+        'AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS',
+        str(30 * 24 * 60 * 60),
+    )
+    AUTH_ALERT_COOLDOWN_SECONDS = _env_int('AUTH_ALERT_COOLDOWN_SECONDS', '900')
 
     # Password Policy
     # Recommended: minimum 12 characters for new/updated passwords.
@@ -319,7 +331,6 @@ class Config:
     TWILIO_A2P_FAKE_QUEUE = _env_bool('TWILIO_A2P_FAKE_QUEUE', '0')
     TWILIO_BROWSER_FAKE_SENDS = _env_bool('TWILIO_BROWSER_FAKE_SENDS', '0')
     TWILIO_A2P_EVENT_STREAMS_ENABLED = _env_bool('TWILIO_A2P_EVENT_STREAMS_ENABLED', '0')
-    TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN = os.environ.get('TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN')
     TWILIO_A2P_URL_VALIDATION_TIMEOUT = _env_int('TWILIO_A2P_URL_VALIDATION_TIMEOUT', '5')
     TWILIO_A2P_URL_VALIDATION_MAX_BYTES = _env_int(
         'TWILIO_A2P_URL_VALIDATION_MAX_BYTES',
@@ -361,6 +372,10 @@ class Config:
     BILLING_MONTHLY_PRICE_USD = os.environ.get('BILLING_MONTHLY_PRICE_USD', '59.99').strip() or '59.99'
     BILLING_ANNUAL_PRICE_USD = os.environ.get('BILLING_ANNUAL_PRICE_USD', '600.00').strip() or '600.00'
     BILLING_ACTIVATION_FEE_USD = os.environ.get('BILLING_ACTIVATION_FEE_USD', '149.00').strip() or '149.00'
+    BILLING_STAGED_ACTIVATION_FEE_USD = (
+        os.environ.get('BILLING_STAGED_ACTIVATION_FEE_USD', '150.00').strip()
+        or '150.00'
+    )
     BILLING_OFFER_VERSION = (
         os.environ.get('BILLING_OFFER_VERSION', '2026-08-managed-pilot-v1').strip()
         or '2026-08-managed-pilot-v1'
@@ -384,6 +399,7 @@ class Config:
     STRIPE_MONTHLY_PRICE_ID = os.environ.get('STRIPE_MONTHLY_PRICE_ID') or STRIPE_PRICE_ID
     STRIPE_ANNUAL_PRICE_ID = os.environ.get('STRIPE_ANNUAL_PRICE_ID')
     STRIPE_ACTIVATION_PRICE_ID = os.environ.get('STRIPE_ACTIVATION_PRICE_ID')
+    STRIPE_STAGED_ACTIVATION_PRICE_ID = os.environ.get('STRIPE_STAGED_ACTIVATION_PRICE_ID')
     STRIPE_GROWTH_PRICE_ID = os.environ.get('STRIPE_GROWTH_PRICE_ID')
     STRIPE_SCALE_PRICE_ID = os.environ.get('STRIPE_SCALE_PRICE_ID')
     STRIPE_EXPECTED_ACCOUNT_ID = (
@@ -394,6 +410,10 @@ class Config:
         os.environ.get('STRIPE_EXPECTED_ACTIVATION_PRICE_ID', 'price_1TPq4KEksbf3Q3FgwATaTJ7h').strip()
         or 'price_1TPq4KEksbf3Q3FgwATaTJ7h'
     )
+    STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID = os.environ.get(
+        'STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID',
+        '',
+    ).strip()
     STRIPE_EXPECTED_MONTHLY_PRICE_ID = (
         os.environ.get('STRIPE_EXPECTED_MONTHLY_PRICE_ID', 'price_1TYtNuEksbf3Q3FgN2B1VqGN').strip()
         or 'price_1TYtNuEksbf3Q3FgN2B1VqGN'

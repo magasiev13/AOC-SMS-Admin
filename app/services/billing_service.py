@@ -23,11 +23,12 @@ from app.models import (
     utc_now,
 )
 from app.services.billing_plans import (
-    activation_price_id,
+    activation_price_id_for_organization,
     billing_plan_for_code,
     billing_plan_for_price_id,
     billing_plan_options_for_organization,
     recurring_price_id_for_subscription,
+    staged_annual_offer_enabled_for_organization,
     subscription_activation_paid,
 )
 from app.services.twilio_service import previous_billing_period_window, reconcile_messaging_usage
@@ -56,6 +57,7 @@ WEBHOOK_PROCESSING_STALE_AFTER = timedelta(minutes=5)
 USAGE_SETTLEMENT_LEASE = timedelta(minutes=15)
 CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE = timedelta(minutes=5)
 FAKE_CHECKOUT_SESSION_PREFIX = "cs_fake_org_"
+FAKE_SETUP_CHECKOUT_SESSION_PREFIX = "cs_fake_setup_org_"
 REQUIRED_STRIPE_WEBHOOK_EVENTS = frozenset(RELEVANT_STRIPE_EVENT_TYPES)
 
 
@@ -80,6 +82,7 @@ class StripePriceExpectation:
 
 LIVE_PRICE_EXPECTATIONS = (
     StripePriceExpectation("STRIPE_ACTIVATION_PRICE_ID", 14900, None),
+    StripePriceExpectation("STRIPE_STAGED_ACTIVATION_PRICE_ID", 15000, None),
     StripePriceExpectation("STRIPE_MONTHLY_PRICE_ID", 5999, "month"),
     StripePriceExpectation("STRIPE_ANNUAL_PRICE_ID", 60000, "year"),
 )
@@ -118,6 +121,27 @@ def organization_can_send(organization: Organization | None) -> bool:
     if subscription_requires_verified_setup_payment(subscription):
         return subscription_activation_paid(subscription)
     return True
+
+
+def organization_can_prepare_provider(organization: Organization | None) -> bool:
+    if not organization_is_active(organization):
+        return False
+    if organization_can_send(organization):
+        return True
+    if organization is None or not staged_annual_offer_enabled_for_organization(organization):
+        return False
+    return subscription_activation_paid(organization.subscription)
+
+
+def staged_annual_provider_approval_complete(organization: Organization | None) -> bool:
+    if organization is None or not staged_annual_offer_enabled_for_organization(organization):
+        return False
+    onboarding = organization.a2p_onboarding
+    if onboarding is None:
+        return False
+    onboarding_status = str(onboarding.onboarding_status or "").strip().lower()
+    campaign_status = str(onboarding.campaign_status or "").strip().lower()
+    return onboarding_status == "approved" or campaign_status in {"approved", "verified"}
 
 
 def organization_is_active(organization: Organization | None) -> bool:
@@ -206,19 +230,33 @@ def fake_checkout_enabled() -> bool:
 
 def is_fake_checkout_session_id(session_id: str | None) -> bool:
     normalized = (session_id or "").strip()
-    return fake_checkout_enabled() and normalized.startswith(FAKE_CHECKOUT_SESSION_PREFIX)
+    return fake_checkout_enabled() and normalized.startswith(
+        (FAKE_CHECKOUT_SESSION_PREFIX, FAKE_SETUP_CHECKOUT_SESSION_PREFIX)
+    )
 
 
 def _fake_checkout_session_id(organization: Organization) -> str:
     return f"{FAKE_CHECKOUT_SESSION_PREFIX}{organization.id}"
 
 
+def _fake_setup_checkout_session_id(organization: Organization) -> str:
+    return f"{FAKE_SETUP_CHECKOUT_SESSION_PREFIX}{organization.id}"
+
+
 def _fake_checkout_organization_id(session_id: str) -> int:
     normalized = (session_id or "").strip()
-    if not normalized.startswith(FAKE_CHECKOUT_SESSION_PREFIX):
+    matched_prefix = next(
+        (
+            prefix
+            for prefix in (FAKE_SETUP_CHECKOUT_SESSION_PREFIX, FAKE_CHECKOUT_SESSION_PREFIX)
+            if normalized.startswith(prefix)
+        ),
+        None,
+    )
+    if matched_prefix is None:
         raise RuntimeError("Unsupported fake checkout session id.")
     try:
-        return int(normalized[len(FAKE_CHECKOUT_SESSION_PREFIX):])
+        return int(normalized[len(matched_prefix):])
     except ValueError as exc:
         raise RuntimeError("Invalid fake checkout session id.") from exc
 
@@ -261,6 +299,28 @@ def _apply_fake_checkout_session(
         raise RuntimeError("Fake checkout session does not belong to this organization.")
 
     subscription = ensure_subscription_record(target_organization)
+    checkout_record = StripeCheckoutSession.query.filter_by(
+        stripe_checkout_session_id=session_id,
+        organization_id=target_organization.id,
+    ).first()
+    if (
+        checkout_record is None
+        and session_id.startswith(FAKE_SETUP_CHECKOUT_SESSION_PREFIX)
+    ):
+        raise RuntimeError("Fake checkout session was not issued by Twinevia.")
+    if checkout_record is not None and checkout_record.billing_plan_code == "setup_only":
+        subscription.status = "incomplete"
+        subscription.stripe_customer_id = f"cus_fake_org_{target_organization.id}"
+        subscription.activation_fee_paid_at = subscription.activation_fee_paid_at or utc_now()
+        subscription.activation_price_id = checkout_record.activation_price_id
+        subscription.activation_payment_intent_id = f"pi_fake_setup_org_{target_organization.id}"
+        subscription.activation_invoice_id = None
+        checkout_record.status = "completed"
+        checkout_record.completed_at = utc_now()
+        checkout_record.stripe_customer_id = subscription.stripe_customer_id
+        db.session.commit()
+        return subscription
+
     fake_period_end = _fake_checkout_period_end()
     subscription.status = "trialing" if fake_period_end is not None else "active"
     subscription.current_period_end = fake_period_end
@@ -365,6 +425,8 @@ def validate_live_stripe_configuration() -> dict[str, str]:
     validated_price_ids: dict[str, str] = {}
     for expectation in LIVE_PRICE_EXPECTATIONS:
         price_id = str(current_app.config.get(expectation.config_key) or "").strip()
+        if not price_id and expectation.config_key == "STRIPE_STAGED_ACTIVATION_PRICE_ID":
+            continue
         price = _stripe_object_to_dict(
             _retry_stripe_operation(
                 f"price.retrieve:{price_id}",
@@ -720,7 +782,7 @@ def update_organization_billing_offer(
     billing_offer: str,
 ) -> OrganizationSubscription:
     normalized_offer = str(billing_offer or "").strip().lower()
-    if normalized_offer not in {"standard", "annual_only"}:
+    if normalized_offer not in {"standard", "annual_only", "staged_annual"}:
         raise RuntimeError("Choose a valid checkout offer.")
     target_version = (
         f"{str(current_app.config.get('BILLING_OFFER_VERSION') or '').strip()}:{normalized_offer}"
@@ -732,7 +794,7 @@ def update_organization_billing_offer(
     organization.billing_offer_version = target_version
     subscription = ensure_subscription_record(organization)
     if not subscription_activation_paid(subscription):
-        plan_code = "annual" if normalized_offer == "annual_only" else "monthly"
+        plan_code = "annual" if normalized_offer in {"annual_only", "staged_annual"} else "monthly"
         plan = billing_plan_for_code(plan_code)
         if plan is not None:
             subscription.stripe_price_id = plan.price_id
@@ -797,6 +859,154 @@ def _record_issued_checkout_session(
     return record
 
 
+def _create_staged_setup_payment_checkout_session(
+    organization: Organization,
+    subscription: OrganizationSubscription,
+    annual_price_id: str,
+    user_email: str,
+    success_url: str,
+    cancel_url: str,
+    offer_version: str,
+):
+    setup_price_id = activation_price_id_for_organization(organization)
+    if not setup_price_id:
+        raise RuntimeError(
+            "STRIPE_STAGED_ACTIVATION_PRICE_ID is not configured for the staged annual offer."
+        )
+    subscription.stripe_price_id = annual_price_id
+
+    if fake_checkout_enabled():
+        session_id = _fake_setup_checkout_session_id(organization)
+        session = SimpleNamespace(
+            id=session_id,
+            url=_fake_checkout_url(
+                organization,
+                session_id=session_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            ),
+        )
+        _record_issued_checkout_session(
+            session,
+            organization,
+            "setup_only",
+            annual_price_id,
+            setup_price_id,
+            offer_version,
+        )
+        return session
+
+    stripe = _stripe_module()
+    compatible_open_sessions = (
+        StripeCheckoutSession.query
+        .filter_by(
+            organization_id=organization.id,
+            billing_plan_code="setup_only",
+            recurring_price_id=annual_price_id,
+            activation_price_id=setup_price_id,
+            offer_version=offer_version,
+            status="open",
+        )
+        .order_by(StripeCheckoutSession.id.desc())
+        .all()
+    )
+    for record in compatible_open_sessions:
+        existing_session = _retry_stripe_operation(
+            f"checkout.session.retrieve:{record.stripe_checkout_session_id}",
+            lambda: stripe.checkout.Session.retrieve(record.stripe_checkout_session_id),
+        )
+        existing_data = _stripe_object_to_dict(existing_session)
+        existing_status = str(existing_data.get("status") or "").strip().lower()
+        existing_url = str(
+            existing_data.get("url") or getattr(existing_session, "url", "") or ""
+        ).strip()
+        if existing_status == "open" and existing_url:
+            db.session.commit()
+            return existing_session
+        if existing_status == "complete":
+            db.session.commit()
+            raise RuntimeError(
+                "The setup Checkout is complete and its payment is being reconciled."
+            )
+        record.status = "expired"
+        record.expired_at = utc_now()
+
+    checkout_metadata = {
+        "organization_id": str(organization.id),
+        "billing_plan_code": "setup_only",
+        "billing_offer_version": offer_version,
+        "billing_checkout_kind": "setup_only",
+    }
+    params: dict[str, Any] = {
+        "mode": "payment",
+        "line_items": [{"price": setup_price_id, "quantity": 1}],
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "client_reference_id": str(organization.id),
+        "metadata": checkout_metadata,
+        "payment_intent_data": {"metadata": checkout_metadata},
+    }
+    if subscription.stripe_customer_id:
+        params["customer"] = subscription.stripe_customer_id
+    else:
+        params["customer_creation"] = "always"
+        if user_email:
+            params["customer_email"] = user_email
+
+    checkout_attempt = (
+        StripeCheckoutSession.query
+        .filter_by(
+            organization_id=organization.id,
+            billing_plan_code="setup_only",
+            offer_version=offer_version,
+        )
+        .count()
+        + 1
+    )
+    request_seed = "|".join(
+        (
+            str(organization.id),
+            offer_version,
+            "setup_only",
+            setup_price_id,
+            str(checkout_attempt),
+        )
+    )
+    request_key = (
+        "twinevia-setup-checkout-"
+        + hashlib.sha256(request_seed.encode("utf-8")).hexdigest()
+    )
+    session = _retry_stripe_operation(
+        f"checkout.session.create:{organization.id}:{offer_version}:setup_only",
+        lambda: stripe.checkout.Session.create(
+            **params,
+            idempotency_key=request_key,
+        ),
+    )
+    try:
+        _record_issued_checkout_session(
+            session,
+            organization,
+            "setup_only",
+            annual_price_id,
+            setup_price_id,
+            offer_version,
+        )
+    except Exception:
+        db.session.rollback()
+        session_data = _stripe_object_to_dict(session)
+        session_id = str(
+            session_data.get("id") or getattr(session, "id", "") or ""
+        ).strip()
+        if session_id:
+            _retry_stripe_operation(
+                f"checkout.session.expire:{session_id}",
+                lambda: stripe.checkout.Session.expire(session_id),
+            )
+        raise
+    return session
+
+
 def create_checkout_session(
     organization: Organization,
     user_email: str,
@@ -835,9 +1045,31 @@ def create_checkout_session(
         raise RuntimeError("The subscription price is not part of the current Twinevia offer.")
 
     offer_version = _organization_offer_version(organization)
-    setup_price_id = None if subscription_activation_paid(subscription) else activation_price_id()
+    if staged_annual_offer_enabled_for_organization(organization):
+        if resolved_plan.code != "annual":
+            raise RuntimeError("The staged annual offer only supports the annual plan.")
+        if not subscription_activation_paid(subscription):
+            return _create_staged_setup_payment_checkout_session(
+                organization,
+                subscription,
+                price_id,
+                user_email,
+                success_url,
+                cancel_url,
+                offer_version,
+            )
+        if not staged_annual_provider_approval_complete(organization):
+            raise RuntimeError(
+                "The $600 annual payment becomes available after provider approval."
+            )
+
+    setup_price_id = (
+        None
+        if subscription_activation_paid(subscription)
+        else activation_price_id_for_organization(organization)
+    )
     if not setup_price_id and not subscription_activation_paid(subscription):
-        raise RuntimeError("STRIPE_ACTIVATION_PRICE_ID is not configured.")
+        raise RuntimeError("The Stripe setup price is not configured.")
 
     if fake_checkout_enabled():
         session_id = _fake_checkout_session_id(organization)
@@ -1104,6 +1336,74 @@ def _verified_invoice_payment_intent(
     return payment_intent_id, invoice
 
 
+def _verified_staged_setup_payment_intent(
+    stripe: Any,
+    checkout_session: dict[str, Any],
+) -> str:
+    session_id = str(checkout_session.get("id") or "").strip()
+    expected_amount_cents = int(
+        (
+            Decimal(
+                str(
+                    current_app.config.get("BILLING_STAGED_ACTIVATION_FEE_USD")
+                    or "150.00"
+                )
+            )
+            * Decimal("100")
+        ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
+    if str(checkout_session.get("currency") or "").strip().lower() != "usd":
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} setup payment is not in USD."
+        )
+    if int(checkout_session.get("amount_total") or -1) != expected_amount_cents:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} does not prove the expected setup amount."
+        )
+
+    raw_payment_intent = checkout_session.get("payment_intent")
+    if isinstance(raw_payment_intent, dict):
+        payment_intent = raw_payment_intent
+    else:
+        payment_intent_id = str(raw_payment_intent or "").strip()
+        if not payment_intent_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} does not reference a PaymentIntent."
+            )
+        payment_intent = _stripe_object_to_dict(
+            _retry_stripe_operation(
+                f"payment_intent.retrieve:{payment_intent_id}",
+                lambda: stripe.PaymentIntent.retrieve(payment_intent_id),
+            )
+        )
+
+    payment_intent_id = str(payment_intent.get("id") or "").strip()
+    if not payment_intent_id:
+        raise StripePaymentProofError(
+            f"Checkout session {session_id} has an invalid PaymentIntent."
+        )
+    if str(payment_intent.get("status") or "").strip().lower() != "succeeded":
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} has not succeeded."
+        )
+    if str(payment_intent.get("currency") or "").strip().lower() != "usd":
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} is not in USD."
+        )
+    if int(payment_intent.get("amount_received") or -1) != expected_amount_cents:
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} does not prove the expected setup amount."
+        )
+    if (
+        current_app.config.get("STRIPE_LIVE_CONFIGURATION_REQUIRED")
+        and payment_intent.get("livemode") is not True
+    ):
+        raise StripePaymentProofError(
+            f"Stripe PaymentIntent {payment_intent_id} is not live mode."
+        )
+    return payment_intent_id
+
+
 def _verify_checkout_session_payment(
     session_id: str,
 ) -> tuple[OrganizationSubscription, dict[str, Any], StripeCheckoutSession]:
@@ -1142,15 +1442,51 @@ def _verify_checkout_session_payment(
         raise StripePaymentProofError(f"Checkout session {session_id} is not paid.")
 
     actual_quantities = _checkout_line_item_quantities(stripe, session_id)
-    expected_quantities = {record.recurring_price_id: 1}
-    if record.activation_price_id:
-        expected_quantities[record.activation_price_id] = 1
+    if record.billing_plan_code == "setup_only":
+        if str(metadata.get("billing_checkout_kind") or "") != "setup_only":
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} setup metadata does not match its issuance record."
+            )
+        if not record.activation_price_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} does not identify its setup price."
+            )
+        expected_quantities = {record.activation_price_id: 1}
+    else:
+        expected_quantities = {record.recurring_price_id: 1}
+        if record.activation_price_id:
+            expected_quantities[record.activation_price_id] = 1
     if actual_quantities != expected_quantities:
         raise StripePaymentProofError(
             f"Checkout session {session_id} line items do not match the issued offer."
         )
 
     subscription = ensure_subscription_record(organization)
+    if record.billing_plan_code == "setup_only":
+        customer_id = str(data_object.get("customer") or "").strip()
+        if not customer_id:
+            raise StripePaymentProofError(
+                f"Checkout session {session_id} did not create a Stripe customer."
+            )
+        payment_intent_id = _verified_staged_setup_payment_intent(
+            stripe,
+            data_object,
+        )
+        subscription.stripe_customer_id = customer_id
+        subscription.stripe_price_id = record.recurring_price_id
+        subscription.status = "incomplete"
+        subscription.activation_fee_paid_at = utc_now()
+        subscription.activation_price_id = record.activation_price_id
+        subscription.activation_payment_intent_id = payment_intent_id
+        subscription.activation_invoice_id = None
+        subscription.offer_version = record.offer_version
+        record.status = "completed"
+        record.completed_at = utc_now()
+        record.stripe_customer_id = customer_id
+        record.stripe_subscription_id = None
+        db.session.commit()
+        return subscription, data_object, record
+
     if record.activation_price_id:
         invoice_id = str(data_object.get("invoice") or "").strip()
         if not invoice_id:
@@ -1310,7 +1646,9 @@ def _apply_stripe_event_to_billing_state(
         session_id = str(data_object.get("id") or "").strip()
         if not session_id:
             raise StripePaymentProofError("Checkout event is missing a session id.")
-        subscription, verified_session, _record = _verify_checkout_session_payment(session_id)
+        subscription, verified_session, record = _verify_checkout_session_payment(session_id)
+        if record.billing_plan_code == "setup_only":
+            return subscription
         stripe_subscription_id = str(verified_session.get("subscription") or "").strip()
         if not stripe_subscription_id:
             raise StripePaymentProofError(

@@ -215,6 +215,30 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.db.session.commit()
         return onboarding
 
+    def test_staged_setup_payment_allows_registration_but_blocks_number_purchase(self) -> None:
+        from app.services.twilio_service import (
+            ProviderProvisioningError,
+            require_chargeable_provider_entitlement,
+        )
+
+        organization, _profile = self._create_org_with_profile(
+            subscription_status="incomplete"
+        )
+        organization.billing_offer = "staged_annual"
+        organization.subscription.activation_fee_paid_at = datetime.now(timezone.utc)
+        organization.subscription.activation_price_id = "price_staged_activation"
+        organization.subscription.activation_payment_intent_id = "pi_staged_setup"
+        self.db.session.commit()
+
+        require_chargeable_provider_entitlement(organization, "a2p_submission")
+        require_chargeable_provider_entitlement(organization, "a2p_processing")
+
+        with self.assertRaisesRegex(ProviderProvisioningError, "billing stage"):
+            require_chargeable_provider_entitlement(
+                organization,
+                "phone_number_purchase",
+            )
+
     def test_seed_service_address_from_onboarding_marks_app_input_and_clears_stale_twilio_state(self) -> None:
         from app.models import utc_now
         from app.services.twilio_service import seed_service_address_from_onboarding

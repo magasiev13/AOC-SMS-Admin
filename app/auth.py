@@ -1,6 +1,6 @@
 from functools import wraps
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from sqlalchemy import func, or_
 
@@ -17,12 +17,15 @@ from app.models import (
 from app.tenant import clear_current_organization_id, set_current_organization_id
 from app.utils import normalize_phone, safe_redirect_path, validate_phone
 from app.services.auth_security_service import (
+    build_trusted_browser_token,
     check_login_limited,
     clear_failed_logins,
+    claim_security_alert_delivery,
     normalize_login_username,
     password_policy_errors,
     record_auth_event,
     record_failed_login,
+    trusted_browser_token_matches,
 )
 from app.services.billing_service import organization_can_send
 from app.services.security_alert_service import send_security_alert
@@ -296,7 +299,7 @@ def _lookup_login_user(username_input: str, normalized_username: str):
     return matches[0]
 
 
-def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
+def _complete_login(user: AppUser, *, remember: bool, client_ip: str) -> Response:
     session.clear()
     login_user(user, remember=remember)
     clear_failed_logins(client_ip, normalize_login_username(user.username))
@@ -310,13 +313,77 @@ def _complete_login(user: AppUser, *, remember: bool, client_ip: str):
     )
 
     if user.must_change_password:
-        return redirect(url_for("main.change_password"))
+        response = redirect(url_for("main.change_password"))
+    else:
+        next_page = request.args.get("next")
+        safe_next_page = safe_redirect_path(next_page, request.host_url)
+        response = (
+            redirect(safe_next_page)
+            if safe_next_page is not None
+            else redirect(url_for(home_endpoint_for_user(user)))
+        )
+    return attach_trusted_browser_cookie(response, user)
 
-    next_page = request.args.get("next")
-    safe_next_page = safe_redirect_path(next_page, request.host_url)
-    if safe_next_page is not None:
-        return redirect(safe_next_page)
-    return redirect(url_for(home_endpoint_for_user(user)))
+
+def attach_trusted_browser_cookie(response: Response, user: AppUser) -> Response:
+    cookie_name = str(
+        current_app.config.get("AUTH_TRUSTED_BROWSER_COOKIE_NAME")
+        or "twinevia_trusted_browser"
+    )
+    max_age_seconds = int(
+        current_app.config.get("AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS")
+        or 30 * 24 * 60 * 60
+    )
+    response.set_cookie(
+        cookie_name,
+        build_trusted_browser_token(user.id, user.session_nonce),
+        max_age=max_age_seconds,
+        secure=bool(current_app.config.get("SESSION_COOKIE_SECURE")),
+        httponly=True,
+        samesite=str(current_app.config.get("SESSION_COOKIE_SAMESITE") or "Lax"),
+    )
+    return response
+
+
+def _trusted_browser_allows_account_lock_recovery(user: AppUser) -> bool:
+    cookie_name = str(
+        current_app.config.get("AUTH_TRUSTED_BROWSER_COOKIE_NAME")
+        or "twinevia_trusted_browser"
+    )
+    max_age_seconds = int(
+        current_app.config.get("AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS")
+        or 30 * 24 * 60 * 60
+    )
+    return trusted_browser_token_matches(
+        request.cookies.get(cookie_name),
+        user.id,
+        user.session_nonce,
+        max_age_seconds,
+    )
+
+
+def _complete_verified_login(
+    user: AppUser,
+    surface: str,
+    remember: bool,
+    client_ip: str,
+):
+    if surface == "platform" and not getattr(user, "is_platform_admin", False):
+        flash("Use the workspace login to access your organization account.", "error")
+        return _render_login(surface)
+    if current_app.config.get("SAAS_MODE") and not getattr(user, "is_platform_admin", False):
+        if _organization_status_for_user(user) == "suspended":
+            record_auth_event(
+                "login_denied",
+                outcome="blocked",
+                user=user,
+                username=user.username,
+                client_ip=client_ip,
+                metadata={"reason": "organization_suspended"},
+            )
+            flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
+            return _render_login(surface)
+    return _complete_login(user, remember=remember, client_ip=client_ip)
 
 
 def _handle_login(surface: str):
@@ -329,6 +396,30 @@ def _handle_login(surface: str):
 
         limited, remaining_seconds, scope = check_login_limited(client_ip, normalized_username)
         if limited:
+            locked_user = (
+                _lookup_login_user(username_input, normalized_username)
+                if scope == "account"
+                else None
+            )
+            if (
+                locked_user is not None
+                and _trusted_browser_allows_account_lock_recovery(locked_user)
+                and locked_user.check_password(password)
+            ):
+                record_auth_event(
+                    "login_lock_recovered",
+                    outcome="success",
+                    user=locked_user,
+                    username=locked_user.username,
+                    client_ip=client_ip,
+                    metadata={"scope": scope},
+                )
+                return _complete_verified_login(
+                    locked_user,
+                    surface,
+                    remember,
+                    client_ip,
+                )
             minutes = max(1, int(((remaining_seconds or 0) + 59) // 60))
             record_auth_event(
                 "login_blocked",
@@ -346,22 +437,7 @@ def _handle_login(surface: str):
         user = _lookup_login_user(username_input, normalized_username)
 
         if user and user.check_password(password):
-            if surface == "platform" and not getattr(user, "is_platform_admin", False):
-                flash("Use the workspace login to access your organization account.", "error")
-                return _render_login(surface)
-            if current_app.config.get("SAAS_MODE") and not getattr(user, "is_platform_admin", False):
-                if _organization_status_for_user(user) == "suspended":
-                    record_auth_event(
-                        "login_denied",
-                        outcome="blocked",
-                        user=user,
-                        username=user.username,
-                        client_ip=client_ip,
-                        metadata={"reason": "organization_suspended"},
-                    )
-                    flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
-                    return _render_login(surface)
-            return _complete_login(user, remember=remember, client_ip=client_ip)
+            return _complete_verified_login(user, surface, remember, client_ip)
 
         lock_result = record_failed_login(client_ip, normalized_username)
         record_auth_event(
@@ -373,7 +449,17 @@ def _handle_login(surface: str):
         )
 
         if user and lock_result.get("account_locked_now"):
-            alert_result = send_security_alert(user, "account_lockout")
+            alert_claimed = claim_security_alert_delivery(
+                user.id,
+                "account_lockout",
+                client_ip,
+                int(current_app.config.get("AUTH_ALERT_COOLDOWN_SECONDS") or 900),
+            )
+            alert_result = (
+                send_security_alert(user, "account_lockout")
+                if alert_claimed
+                else {"success": False, "skipped": True, "reason": "alert_cooldown"}
+            )
             if not alert_result.get("success"):
                 record_auth_event(
                     "alert_sms_failed",

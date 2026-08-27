@@ -56,7 +56,7 @@ Bootstrap-only values:
 
 Once the first platform admin exists, `ADMIN_PASSWORD` is no longer required for routine deploys.
 
-## First-Client Checkout Offer
+## Customer Checkout Offers
 
 For a client who should only see the `$600/year` upfront offer, use the platform admin organization Access page:
 
@@ -66,6 +66,15 @@ For a client who should only see the `$600/year` upfront offer, use the platform
 4. Send the client through checkout after the toggle is enabled.
 
 This preserves monthly checkout for future customers while keeping the first client's checkout self-serve and Stripe-backed.
+
+For a customer who must pay setup before provider review and the annual subscription only after approval:
+
+1. Confirm `STRIPE_STAGED_ACTIVATION_PRICE_ID` is the validated live `$150` one-time Price.
+2. Open `/platform/organizations/<id>/access`.
+3. In Billing State, select `Staged annual` before the owner starts Checkout.
+4. The first Checkout collects only `$150` and leaves the subscription `incomplete`.
+5. The setup payment permits provider provisioning and A2P submission, but number purchase, sender finalization, and all messaging remain blocked.
+6. After the campaign reaches `approved` or `verified`, the owner sees a second Checkout for the `$600/year` subscription. The setup price is not charged again.
 
 ## Core Operational Commands
 
@@ -100,7 +109,7 @@ Platform-admin accounts are control-plane only. Use a separate email for each or
 
 If you change Twilio or other runtime values in `/opt/twinevia-saas/.env`, restart the SaaS services before testing provisioning or outbound messaging. The `/platform` restart control stays hidden until `PLATFORM_SERVICE_RESTART_ENABLED=1`.
 
-If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, the app provisions org-specific Twilio Event Streams webhook destinations at `/webhooks/twilio/a2p-events?organization_id=<id>`. Twilio signature validation over the raw JSON body is the primary trust check. `TWILIO_A2P_EVENT_STREAM_AUTH_TOKEN` is only an optional secondary bearer fallback.
+If you enable `TWILIO_A2P_EVENT_STREAMS_ENABLED=1`, the app provisions org-specific Twilio Event Streams webhook destinations at `/webhooks/twilio/a2p-events?organization_id=<id>`. Every request must pass Twilio signature validation with the credentials bound to that organization; the endpoint has no global bearer fallback.
 
 Organizations without their own public website can use the tenant-hosted compliance pages generated under `/compliance/<organization-slug>/sms/privacy`, `/terms`, and `/opt-in`. The SaaS onboarding flow now creates this hosted package for every org and automatically falls back to it whenever tenant-supplied public website/privacy/terms/CTA URLs are incomplete or fail validation.
 

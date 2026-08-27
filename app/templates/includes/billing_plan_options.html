@@ -11,7 +11,13 @@
                 <span>{{ option.price_label }}</span>
             </span>
             <span class="billing-plan-option__meta">
+                {% if subscription_view.staged_setup_pending %}
+                This Checkout collects only the {{ subscription_view.activation_fee_label }} setup fee. The $600 annual subscription is charged only after provider approval.
+                {% elif subscription_view.staged_annual %}
+                Provider approval is recorded. This Checkout starts the $600 annual subscription; the setup fee is already paid.
+                {% else %}
                 First-client upfront pricing. {{ option.included_segments_label }} included SMS segments per month. {{ subscription_view.activation_fee_label }} setup fee is charged once at checkout.
+                {% endif %}
             </span>
         </span>
     </div>

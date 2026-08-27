@@ -67,6 +67,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             STRIPE_PRICE_ID="price_test_123",
             STRIPE_ANNUAL_PRICE_ID="price_annual_123",
             STRIPE_ACTIVATION_PRICE_ID="price_activation_123",
+            STRIPE_STAGED_ACTIVATION_PRICE_ID="price_staged_activation_123",
             STRIPE_WEBHOOK_SECRET="whsec_test_123",
             SAAS_BASE_URL="https://app.example.com",
         )
@@ -213,6 +214,82 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(self.subscription.stripe_customer_id, "cus_test_123")
         self.assertEqual(self.subscription.stripe_subscription_id, "sub_test_123")
         mock_stripe.Subscription.retrieve.assert_called_once_with("sub_test_123")
+
+    @patch("app.services.billing_service._stripe_module")
+    def test_staged_setup_checkout_records_payment_without_activating_subscription(self, mock_stripe_module) -> None:
+        offer_version = f"{self.app.config['BILLING_OFFER_VERSION']}:staged_annual"
+        self.organization.billing_offer = "staged_annual"
+        self.organization.billing_offer_version = offer_version
+        self.subscription.offer_version = offer_version
+        self.subscription.stripe_price_id = "price_annual_123"
+        self.db.session.add(
+            self.StripeCheckoutSession(
+                organization_id=self.organization.id,
+                stripe_checkout_session_id="cs_test_staged_setup",
+                billing_plan_code="setup_only",
+                recurring_price_id="price_annual_123",
+                activation_price_id="price_staged_activation_123",
+                offer_version=offer_version,
+                status="open",
+            )
+        )
+        self.db.session.commit()
+        checkout_session = {
+            "id": "cs_test_staged_setup",
+            "status": "complete",
+            "payment_status": "paid",
+            "mode": "payment",
+            "currency": "usd",
+            "amount_total": 15000,
+            "customer": "cus_test_staged",
+            "payment_intent": "pi_test_staged_setup",
+            "subscription": None,
+            "client_reference_id": str(self.organization.id),
+            "metadata": {
+                "organization_id": str(self.organization.id),
+                "billing_offer_version": offer_version,
+                "billing_checkout_kind": "setup_only",
+            },
+        }
+        mock_stripe = MagicMock()
+        mock_stripe.checkout.Session.retrieve.return_value = checkout_session
+        mock_stripe.checkout.Session.list_line_items.return_value = SimpleNamespace(
+            data=[
+                {
+                    "price": {"id": "price_staged_activation_123"},
+                    "quantity": 1,
+                }
+            ]
+        )
+        mock_stripe.PaymentIntent.retrieve.return_value = {
+            "id": "pi_test_staged_setup",
+            "status": "succeeded",
+            "currency": "usd",
+            "amount_received": 15000,
+        }
+        mock_stripe_module.return_value = mock_stripe
+        event = {
+            "id": "evt_test_staged_setup",
+            "type": "checkout.session.completed",
+            "created": 1773898071,
+            "data": {"object": checkout_session},
+        }
+
+        self.process_stripe_webhook_event(event)
+
+        self.assertEqual(self.subscription.status, "incomplete")
+        self.assertEqual(self.subscription.stripe_customer_id, "cus_test_staged")
+        self.assertIsNone(self.subscription.stripe_subscription_id)
+        self.assertEqual(
+            self.subscription.activation_price_id,
+            "price_staged_activation_123",
+        )
+        self.assertEqual(
+            self.subscription.activation_payment_intent_id,
+            "pi_test_staged_setup",
+        )
+        self.assertIsNotNone(self.subscription.activation_fee_paid_at)
+        mock_stripe.Subscription.retrieve.assert_not_called()
 
     @patch("app.services.billing_service._stripe_module")
     def test_paid_stripe_event_fails_for_complimentary_organization(self, mock_stripe_module) -> None:

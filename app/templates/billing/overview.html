@@ -23,7 +23,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% include "includes/billing_plan_options.html" %}
         <button type="submit" class="btn btn-primary">
-            {{ 'Start Subscription' if not subscription_view.can_send else 'Update Subscription' }}
+            {{ subscription_view.checkout_button_label }}
         </button>
     </form>
     {% endif %}

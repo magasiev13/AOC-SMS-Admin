@@ -43,6 +43,8 @@ def _validate_production_security_config(app: Flask) -> None:
     expect_int_range("AUTH_MAX_ATTEMPTS_IP_ACCOUNT", 1, 100)
     expect_int_range("AUTH_MAX_ATTEMPTS_ACCOUNT", 1, 200)
     expect_int_range("AUTH_MAX_ATTEMPTS_IP", 1, 500)
+    expect_int_range("AUTH_TRUSTED_BROWSER_MAX_AGE_SECONDS", 3600, 90 * 24 * 60 * 60)
+    expect_int_range("AUTH_ALERT_COOLDOWN_SECONDS", 60, 86400)
     expect_int_range("SESSION_IDLE_TIMEOUT_MINUTES", 5, 1440)
     expect_int_range("REMEMBER_COOKIE_DURATION_DAYS", 1, 30)
     expect_int_range("AUTH_PASSWORD_MIN_LENGTH", 12, 128)
@@ -72,6 +74,14 @@ def _validate_production_security_config(app: Flask) -> None:
         errors.append("SECURITY_HSTS_ENABLED must be enabled (1) in production.")
     if not str(app.config.get("SECURITY_CONTENT_SECURITY_POLICY") or "").strip():
         errors.append("SECURITY_CONTENT_SECURITY_POLICY must not be empty in production.")
+
+    trusted_browser_cookie_name = str(
+        app.config.get("AUTH_TRUSTED_BROWSER_COOKIE_NAME") or ""
+    )
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", trusted_browser_cookie_name):
+        errors.append(
+            "AUTH_TRUSTED_BROWSER_COOKIE_NAME must contain 1-64 letters, digits, underscores, or hyphens."
+        )
 
     ip_account_limit = app.config.get("AUTH_MAX_ATTEMPTS_IP_ACCOUNT")
     account_limit = app.config.get("AUTH_MAX_ATTEMPTS_ACCOUNT")
@@ -150,6 +160,11 @@ def _validate_saas_billing_config(app: Flask) -> None:
             "STRIPE_MONTHLY_PRICE_ID": app.config.get("STRIPE_EXPECTED_MONTHLY_PRICE_ID"),
             "STRIPE_ANNUAL_PRICE_ID": app.config.get("STRIPE_EXPECTED_ANNUAL_PRICE_ID"),
         }
+        staged_expected_price_id = str(
+            app.config.get("STRIPE_EXPECTED_STAGED_ACTIVATION_PRICE_ID") or ""
+        ).strip()
+        if staged_expected_price_id:
+            expected_price_ids["STRIPE_STAGED_ACTIVATION_PRICE_ID"] = staged_expected_price_id
         mismatched.extend(
             f"{name} must equal {expected_value}."
             for name, expected_value in expected_price_ids.items()
@@ -167,6 +182,7 @@ def _validate_saas_billing_config(app: Flask) -> None:
 
     commercial_values = {
         "BILLING_ACTIVATION_FEE_USD": "149.00",
+        "BILLING_STAGED_ACTIVATION_FEE_USD": "150.00",
         "BILLING_MONTHLY_PRICE_USD": "59.99",
         "BILLING_ANNUAL_PRICE_USD": "600.00",
         "BILLING_OUTBOUND_SEGMENT_RATE_USD": "0.0300",
@@ -281,12 +297,14 @@ def _validate_production_operations_config(app: Flask) -> None:
         "SCHEDULED_MAX_PENDING_PER_ORGANIZATION",
         "STRIPE_EXPECTED_ACCOUNT_ID",
         "STRIPE_ACTIVATION_PRICE_ID",
+        "STRIPE_STAGED_ACTIVATION_PRICE_ID",
         "STRIPE_MONTHLY_PRICE_ID",
         "STRIPE_ANNUAL_PRICE_ID",
         "STRIPE_WEBHOOK_ENDPOINT_ID",
         "STRIPE_PORTAL_CONFIGURATION_ID",
         "BILLING_OFFER_VERSION",
         "BILLING_ACTIVATION_FEE_USD",
+        "BILLING_STAGED_ACTIVATION_FEE_USD",
         "BILLING_MONTHLY_PRICE_USD",
         "BILLING_ANNUAL_PRICE_USD",
         "BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS",

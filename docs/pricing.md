@@ -23,6 +23,7 @@ Live Stripe product created/used for launch:
 - Monthly recurring: `price_1TYtNuEksbf3Q3FgN2B1VqGN` (`$59.99/mo`)
 - Annual recurring: `price_1TYtO4Eksbf3Q3FgHzXB9S5b` (`$600/year`)
 - One-time setup fee: `price_1TPq4KEksbf3Q3FgwATaTJ7h` (`$149`)
+- Staged one-time setup fee: `price_1TYtOAEksbf3Q3Fg0gCPD4nN` (`$150`)
 
 Create these Stripe prices:
 
@@ -34,6 +35,7 @@ Configure production with:
 
 ```env
 STRIPE_ACTIVATION_PRICE_ID=price_1TPq4KEksbf3Q3FgwATaTJ7h
+STRIPE_STAGED_ACTIVATION_PRICE_ID=price_1TYtOAEksbf3Q3Fg0gCPD4nN
 STRIPE_MONTHLY_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
 STRIPE_ANNUAL_PRICE_ID=price_1TYtO4Eksbf3Q3FgHzXB9S5b
 STRIPE_PRICE_ID=price_1TYtNuEksbf3Q3FgN2B1VqGN
@@ -42,6 +44,7 @@ BILLING_MONTHLY_INCLUDED_OUTBOUND_SEGMENTS=1000
 BILLING_ANNUAL_INCLUDED_OUTBOUND_SEGMENTS=1000
 BILLING_OUTBOUND_SEGMENT_RATE_USD=0.0300
 BILLING_ACTIVATION_FEE_USD=149.00
+BILLING_STAGED_ACTIVATION_FEE_USD=150.00
 ```
 
 `STRIPE_PRICE_ID` remains the default monthly recurring price for backward compatibility. `BILLING_INCLUDED_OUTBOUND_SEGMENTS` remains only as the fallback allowance when a subscription has an unknown Stripe price ID.

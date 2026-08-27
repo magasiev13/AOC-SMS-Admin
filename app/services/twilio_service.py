@@ -81,6 +81,16 @@ TWILIO_MAGIC_TEST_WARNING_NUMBERS = {
     "+15550004001",
 }
 PROVIDER_OPERATION_LEASE = timedelta(minutes=15)
+SETUP_PAYMENT_PROVIDER_ACTIONS = frozenset(
+    {
+        "provider_provisioning",
+        "a2p_event_stream_subscription",
+        "a2p_submission",
+        "a2p_campaign_creation",
+        "a2p_provider_resources",
+        "a2p_processing",
+    }
+)
 
 
 class TwilioTransientError(Exception):
@@ -391,20 +401,29 @@ def _provider_ready(profile: OrganizationMessagingProfile | None) -> bool:
 
 
 def require_chargeable_provider_entitlement(organization: Organization, action: str) -> None:
-    from app.services.billing_service import organization_can_send, organization_is_active
+    from app.services.billing_service import (
+        organization_can_prepare_provider,
+        organization_can_send,
+        organization_is_active,
+    )
 
     if organization_is_active(organization) and organization_can_send(organization):
+        return
+    if (
+        action in SETUP_PAYMENT_PROVIDER_ACTIONS
+        and organization_can_prepare_provider(organization)
+    ):
         return
     _record_provider_audit(
         organization.id,
         "provider_entitlement_blocked",
         status="blocked",
-        message="Chargeable provider work was blocked because billing or organization access is inactive.",
+        message="Provider work was blocked because the required billing stage or organization access is inactive.",
         metadata={"action": action},
     )
     db.session.commit()
     raise ProviderProvisioningError(
-        "Active billing is required before Twinevia can perform chargeable provider work."
+        "The required billing stage must be complete before Twinevia can perform this provider work."
     )
 
 

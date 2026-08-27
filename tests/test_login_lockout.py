@@ -17,11 +17,13 @@ class TestLoginLockout(unittest.TestCase):
         importlib.reload(app.config)
         from app import create_app, db
         from app.models import AppUser, AuthEvent, LoginAttempt
+        from app.services.auth_security_service import claim_security_alert_delivery
 
         self.db = db
         self.AppUser = AppUser
         self.AuthEvent = AuthEvent
         self.LoginAttempt = LoginAttempt
+        self.claim_security_alert_delivery = claim_security_alert_delivery
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
         self.app.config.update(
             TESTING=True,
@@ -141,6 +143,32 @@ class TestLoginLockout(unittest.TestCase):
             username="caseuser",
         ).first()
         self.assertIsNone(source_scope_after_success)
+
+    def test_security_alert_claim_is_deduplicated_per_user(self) -> None:
+        user = self.AppUser.query.filter_by(username="lockuser").one()
+
+        first_claim = self.claim_security_alert_delivery(
+            user.id,
+            "account_lockout",
+            "10.3.3.1",
+            900,
+        )
+        second_claim = self.claim_security_alert_delivery(
+            user.id,
+            "account_lockout",
+            "10.3.3.2",
+            900,
+        )
+
+        self.assertTrue(first_claim)
+        self.assertFalse(second_claim)
+        self.assertEqual(
+            self.AuthEvent.query.filter_by(
+                user_id=user.id,
+                event_type="alert_claim_account_lockout",
+            ).count(),
+            1,
+        )
 
 
 if __name__ == "__main__":

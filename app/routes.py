@@ -33,7 +33,7 @@ from sqlalchemy.orm import selectinload
 from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
-from app.auth import home_endpoint_for_user, require_roles
+from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, require_roles
 
 from app.models import (
     AuthEvent,
@@ -64,6 +64,7 @@ from app.models import (
     utc_now,
 )
 from app.services.auth_security_service import (
+    clear_account_failed_logins,
     is_password_reused,
     password_policy_errors,
     record_auth_event,
@@ -75,6 +76,7 @@ from app.services.billing_service import (
     create_checkout_session,
     ensure_subscription_record,
     is_fake_checkout_session_id,
+    organization_can_prepare_provider,
     organization_can_transmit_messages,
     mark_subscription_complimentary,
     organization_can_send,
@@ -82,6 +84,7 @@ from app.services.billing_service import (
     refresh_subscription_from_stripe,
     subscription_status_allows_sending,
     subscription_status_is_complimentary,
+    staged_annual_provider_approval_complete,
     sync_checkout_session_by_id,
     update_organization_billing_offer,
 )
@@ -102,7 +105,7 @@ from app.services.aoc_event_sync_service import (
     verify_aoc_webhook_signature,
 )
 from app.services.billing_plans import (
-    activation_fee_label,
+    activation_fee_label_for_organization,
     annual_only_offer_enabled_for_organization,
     billing_plan_catalog,
     billing_plan_for_code,
@@ -111,6 +114,7 @@ from app.services.billing_plans import (
     included_segments_for_subscription,
     overage_rate_label,
     segment_count_label,
+    staged_annual_offer_enabled_for_organization,
     subscription_activation_paid,
 )
 from app.services.provider_secret_service import decrypt_provider_secret
@@ -1088,9 +1092,23 @@ def _launch_readiness_view(
         },
     ]
 
-    if provider_active and smoke_test_complete:
+    if provider_active and smoke_test_complete and billing_active:
         heading = "Workspace is live"
         summary = "Billing, approval, sender sync, and the first controlled smoke test are complete."
+    elif (
+        staged_annual_offer_enabled_for_organization(organization)
+        and subscription_activation_paid(organization.subscription)
+        and not a2p_approved
+    ):
+        heading = "Await provider review"
+        summary = "The setup payment is complete. The $600 annual subscription remains locked until provider approval."
+    elif (
+        staged_annual_offer_enabled_for_organization(organization)
+        and a2p_approved
+        and not billing_active
+    ):
+        heading = "Annual payment ready"
+        summary = "Provider approval is recorded. Complete the $600 annual payment before sender activation."
     elif awaiting_sender_assignment:
         heading = "Await sender assignment"
         summary = "Twilio approved the packet. Finish service-address validation and sender finalization before live sending unlocks."
@@ -1234,7 +1252,13 @@ def _setup_current_step(organization: Organization) -> str:
     subscription_view = _subscription_view(organization.subscription)
     if _organization_setup_complete(organization):
         return "launch"
-    if not subscription_view["can_send"]:
+    if not organization_can_prepare_provider(organization):
+        return "billing"
+    if (
+        staged_annual_offer_enabled_for_organization(organization)
+        and staged_annual_provider_approval_complete(organization)
+        and not subscription_view["can_send"]
+    ):
         return "billing"
     if _organization_uses_customer_managed_messaging(organization):
         return "provider"
@@ -1262,7 +1286,7 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
                 else "Platform support is validating the customer-managed Twilio account, sender, and external A2P status."
             )
         )
-        launch_label = "Live in workspace" if messaging_profile and messaging_profile.can_send else "Await external activation"
+        launch_label = "Live in workspace" if _organization_setup_complete(organization) else "Await external activation"
         step_rows = [
             {
                 "key": "account",
@@ -1293,7 +1317,7 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
                     if messaging_profile and messaging_profile.from_number
                     else "The workspace unlocks as soon as the customer-managed sender is active."
                 ),
-                "complete": messaging_profile is not None and messaging_profile.can_send,
+                "complete": _organization_setup_complete(organization),
             },
         ]
         for step in step_rows:
@@ -1307,7 +1331,7 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
         subscription_view=subscription_view,
         a2p_status=_a2p_status_view(onboarding, messaging_profile),
     )
-    if messaging_profile and messaging_profile.can_send:
+    if _organization_setup_complete(organization):
         launch_label = "Live in workspace"
     elif bool(launch_readiness["awaiting_sender_assignment"]):
         launch_label = "Await sender assignment"
@@ -1342,7 +1366,7 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
             "key": "launch",
             "label": launch_label,
             "detail": str(launch_readiness["summary"]),
-            "complete": messaging_profile is not None and messaging_profile.can_send,
+            "complete": _organization_setup_complete(organization),
         },
     ]
     for step in step_rows:
@@ -1707,6 +1731,9 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         else [option for option in billing_plan_catalog() if option.code in {'monthly', 'annual'}]
     )
     activation_paid = subscription_activation_paid(subscription)
+    staged_annual = staged_annual_offer_enabled_for_organization(organization)
+    staged_provider_approved = staged_annual_provider_approval_complete(organization)
+    resolved_activation_fee_label = activation_fee_label_for_organization(organization)
     if (
         not activation_paid
         and len(eligible_plan_models) == 1
@@ -1739,15 +1766,19 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         'included_segments': included_segments,
         'included_segments_label': segment_count_label(included_segments),
         'overage_rate_label': overage_rate_label(),
-        'activation_fee_label': activation_fee_label(),
+        'activation_fee_label': resolved_activation_fee_label,
         'activation_paid': activation_paid,
-        'activation_label': 'Paid' if activation_paid else f"{activation_fee_label()} setup fee due at checkout",
+        'activation_label': 'Paid' if activation_paid else f"{resolved_activation_fee_label} setup fee due at checkout",
         'period_label': None,
         'period_value': None,
         'can_send': False,
         'is_complimentary': False,
         'show_checkout': True,
         'show_portal': True,
+        'checkout_button_label': 'Start subscription',
+        'staged_annual': staged_annual,
+        'staged_setup_pending': staged_annual and not activation_paid,
+        'staged_provider_approved': staged_provider_approved,
     }
 
     if normalized_status == 'trialing':
@@ -1757,6 +1788,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             summary='Billing is active and sending is unlocked during the trial.',
             next_step='Keep onboarding your business and add a payment method before the trial ends.',
             can_send=True,
+            checkout_button_label='Update Subscription',
         )
     elif normalized_status == 'active':
         view.update(
@@ -1765,6 +1797,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             summary='Billing is active and your business can keep sending messages.',
             next_step='Use the billing portal anytime to update payment details.',
             can_send=True,
+            checkout_button_label='Update Subscription',
         )
     elif normalized_status == 'complimentary':
         view.update(
@@ -1813,6 +1846,48 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
             next_step='Complete or reconcile Checkout before sending messages.',
             can_send=False,
         )
+
+    if staged_annual and normalized_status == 'incomplete':
+        if not activation_paid:
+            view.update(
+                badge='warning',
+                title='Setup payment needed',
+                summary=(
+                    f'Pay the {resolved_activation_fee_label} setup fee now. '
+                    'The $600 annual subscription is not charged until provider approval.'
+                ),
+                next_step='Complete the setup payment to begin the provider application.',
+                activation_label=f'{resolved_activation_fee_label} due now',
+                show_checkout=True,
+                show_portal=False,
+                checkout_button_label=f'Pay {resolved_activation_fee_label} setup fee',
+            )
+        elif not staged_provider_approved:
+            view.update(
+                badge='info',
+                title='Provider review in progress',
+                summary=(
+                    'The setup payment is complete. The $600 annual subscription remains '
+                    'locked while the provider reviews the application.'
+                ),
+                next_step='Complete the compliance packet and wait for provider approval.',
+                show_checkout=False,
+                show_portal=False,
+                checkout_button_label='Annual payment locked',
+            )
+        else:
+            view.update(
+                badge='warning',
+                title='Annual payment ready',
+                summary=(
+                    'Provider approval is recorded. Complete the $600 annual payment to '
+                    'finish sender setup and unlock live messaging.'
+                ),
+                next_step='Start the annual subscription; the setup fee will not be charged again.',
+                show_checkout=True,
+                show_portal=False,
+                checkout_button_label='Pay $600 annual subscription',
+            )
 
     if subscription is not None and subscription.current_period_end:
         view['period_label'] = 'Trial ends' if normalized_status == 'trialing' else 'Current period ends'
@@ -2126,9 +2201,24 @@ def _platform_organization_access_context(
         None,
     )
     billing_offer_code = (organization.billing_offer or 'standard').strip().lower()
-    persisted_annual_only_billing_offer = billing_offer_code == 'annual_only'
     annual_only_billing_offer = annual_only_offer_enabled_for_organization(organization)
-    config_annual_only_billing_offer = annual_only_billing_offer and not persisted_annual_only_billing_offer
+    offer_definitions = (
+        (
+            'standard',
+            'Standard monthly or annual',
+            'The owner can choose $59.99 monthly or $600 annual, plus the $149 setup fee in the same Checkout.',
+        ),
+        (
+            'annual_only',
+            'Annual upfront only',
+            'This organization will only see the $600/year upfront plan plus the $149 setup fee at checkout.',
+        ),
+        (
+            'staged_annual',
+            'Staged annual',
+            'The owner pays $150 for setup first, then $600 annually only after provider approval.',
+        ),
+    )
     return {
         'organization': organization,
         'joined_memberships': joined_memberships,
@@ -2149,33 +2239,25 @@ def _platform_organization_access_context(
         'billing_offer': {
             'code': billing_offer_code,
             'annual_only': annual_only_billing_offer,
-            'title': (
-                'Annual upfront only via config'
-                if config_annual_only_billing_offer
-                else 'Annual upfront only'
-                if annual_only_billing_offer
-                else 'Standard monthly or annual'
+            'title': next(
+                title
+                for code, title, _summary in offer_definitions
+                if code == billing_offer_code
             ),
-            'summary': (
-                'This organization is annual-only because of a server config override. Save the offer here to move it into admin-managed settings.'
-                if config_annual_only_billing_offer
-                else 'This organization will only see the $600/year upfront plan plus the $149 setup fee at checkout.'
-                if annual_only_billing_offer
-                else 'This organization can choose either $59.99/month or $600/year upfront, plus the $149 setup fee.'
+            'summary': next(
+                summary
+                for code, _title, summary in offer_definitions
+                if code == billing_offer_code
             ),
-            'next_code': 'standard' if persisted_annual_only_billing_offer else 'annual_only',
-            'toggle_label': (
-                'Disable annual-only checkout'
-                if persisted_annual_only_billing_offer
-                else 'Save annual-only offer'
-                if config_annual_only_billing_offer
-                else 'Enable annual-only checkout'
-            ),
-            'toggle_button_style': (
-                'btn-outline-secondary'
-                if persisted_annual_only_billing_offer
-                else 'btn-outline-primary'
-            ),
+            'options': [
+                {
+                    'code': code,
+                    'title': title,
+                    'summary': summary,
+                    'active': code == billing_offer_code,
+                }
+                for code, title, summary in offer_definitions
+            ],
         },
     }
 
@@ -4921,6 +5003,7 @@ def users_edit(user_id):
         db.session.commit()
 
         if performed_admin_reset:
+            clear_account_failed_logins(user.username)
             record_auth_event(
                 'admin_password_reset',
                 outcome='success',
@@ -5634,7 +5717,7 @@ def platform_organizations_update_billing(organization_id):
         flash('Complimentary billing cleared. Stripe-managed billing is required again.', 'success')
     elif action == 'set_billing_offer':
         billing_offer = (request.form.get('billing_offer') or '').strip().lower()
-        if billing_offer not in {'standard', 'annual_only'}:
+        if billing_offer not in {'standard', 'annual_only', 'staged_annual'}:
             _record_platform_organization_access_event(
                 'platform_organization_billing_update',
                 organization=organization,
@@ -5668,6 +5751,11 @@ def platform_organizations_update_billing(organization_id):
         )
         if billing_offer == 'annual_only':
             flash('Annual upfront-only checkout enabled for this organization.', 'success')
+        elif billing_offer == 'staged_annual':
+            flash(
+                'Staged annual checkout enabled: $150 setup now and $600 annually after provider approval.',
+                'success',
+            )
         else:
             flash('Standard monthly and annual checkout options enabled for this organization.', 'success')
     else:
@@ -6504,9 +6592,11 @@ def invitation_accept(token):
         session.clear()
         login_user(user)
         if invitation.role == 'owner':
-            return redirect(url_for('main.setup'))
-        flash('Invitation accepted.', 'success')
-        return redirect(url_for(home_endpoint_for_user(user)))
+            response = redirect(url_for('main.setup'))
+        else:
+            flash('Invitation accepted.', 'success')
+            response = redirect(url_for(home_endpoint_for_user(user)))
+        return attach_trusted_browser_cookie(response, user)
 
     return render_template('auth/accept_invitation.html', invitation=invitation)
 

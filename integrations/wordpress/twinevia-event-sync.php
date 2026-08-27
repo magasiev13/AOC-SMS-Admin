@@ -14,6 +14,8 @@ const TWINEVIA_EVENT_SYNC_OPTION_ENABLED = 'twinevia_event_sync_enabled';
 const TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_URL = 'twinevia_event_sync_webhook_url';
 const TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_SECRET = 'twinevia_event_sync_webhook_secret';
 const TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP = 'twinevia_event_sync_wpforms_event_map';
+const TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CONSENT_MAP = 'twinevia_event_sync_wpforms_consent_map';
+const TWINEVIA_EVENT_SYNC_OPTION_CONSENT_TEXT_VERSION = 'twinevia_event_sync_consent_text_version';
 const TWINEVIA_EVENT_SYNC_CRON_HOOK = 'twinevia_event_sync_reconcile_future_events';
 const TWINEVIA_EVENT_SYNC_DELIVERY_HOOK = 'twinevia_event_sync_deliver_payload';
 const TWINEVIA_EVENT_SYNC_DELIVERY_ATTEMPTS = 3;
@@ -53,6 +55,14 @@ function twinevia_event_sync_ready(): bool {
 	return twinevia_event_sync_enabled()
 		&& '' !== twinevia_event_sync_webhook_url()
 		&& '' !== twinevia_event_sync_webhook_secret();
+}
+
+function twinevia_event_sync_consent_text_version(): string {
+	if ( defined( 'TWINEVIA_EVENT_SYNC_CONSENT_TEXT_VERSION' ) ) {
+		return trim( (string) TWINEVIA_EVENT_SYNC_CONSENT_TEXT_VERSION );
+	}
+
+	return trim( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_CONSENT_TEXT_VERSION, '' ) );
 }
 
 function twinevia_event_sync_log_warning( string $message, array $context ): void {
@@ -445,7 +455,8 @@ function twinevia_event_sync_booking_sms_consent( object $booking ): bool {
 		$booking,
 		[ 'twinevia_sms_consent', 'sms_consent', 'text_message_consent' ]
 	);
-	return twinevia_event_sync_affirmative_value( $value );
+	return '' !== twinevia_event_sync_consent_text_version()
+		&& twinevia_event_sync_affirmative_value( $value );
 }
 
 function twinevia_event_sync_booking_payload( object $booking ): array {
@@ -473,6 +484,9 @@ function twinevia_event_sync_booking_payload( object $booking ): array {
 			'name'       => twinevia_event_sync_booking_name( $booking, $user_id ),
 			'phone'      => twinevia_event_sync_booking_phone( $booking, $user_id ),
 			'sms_consent' => twinevia_event_sync_booking_sms_consent( $booking ),
+			'sms_consent_source' => 'events_manager:booking_meta',
+			'sms_consent_text_version' => twinevia_event_sync_consent_text_version(),
+			'sms_consent_captured_at' => current_time( DATE_ATOM ),
 			'spaces'     => isset( $booking->booking_spaces ) ? (int) $booking->booking_spaces : 1,
 			'updated_at' => current_time( DATE_ATOM ),
 		],
@@ -512,6 +526,32 @@ function twinevia_event_sync_wpforms_event_map(): array {
 	}
 	$decoded = json_decode( $raw, true );
 	return is_array( $decoded ) ? $decoded : [];
+}
+
+function twinevia_event_sync_wpforms_consent_field_map(): array {
+	$raw = trim( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CONSENT_MAP, '' ) );
+	if ( '' === $raw ) {
+		return [];
+	}
+	$decoded = json_decode( $raw, true );
+	if ( ! is_array( $decoded ) ) {
+		return [];
+	}
+
+	$normalized = [];
+	foreach ( $decoded as $form_id => $field_id ) {
+		$normalized_form_id = absint( (string) $form_id );
+		$normalized_field_id = absint( (string) $field_id );
+		if ( 0 < $normalized_form_id && 0 < $normalized_field_id ) {
+			$normalized[ $normalized_form_id ] = $normalized_field_id;
+		}
+	}
+	return $normalized;
+}
+
+function twinevia_event_sync_wpforms_consent_field_id( int $form_id ): int {
+	$map = twinevia_event_sync_wpforms_consent_field_map();
+	return isset( $map[ $form_id ] ) ? absint( (string) $map[ $form_id ] ) : 0;
 }
 
 function twinevia_event_sync_wpforms_event_post_id( int $form_id ): int {
@@ -668,16 +708,19 @@ function twinevia_event_sync_wpforms_submission_phone( array $fields ): string {
 	return '';
 }
 
-function twinevia_event_sync_wpforms_submission_sms_consent( array $fields ): bool {
+function twinevia_event_sync_wpforms_submission_sms_consent( array $fields, int $consent_field_id ): bool {
+	if ( 0 >= $consent_field_id || '' === twinevia_event_sync_consent_text_version() ) {
+		return false;
+	}
 	foreach ( $fields as $field ) {
 		if ( ! is_array( $field ) ) {
 			continue;
 		}
-		$label = strtolower( twinevia_event_sync_wpforms_field_label( $field ) );
-		$mentions_sms = false !== strpos( $label, 'sms' ) || false !== strpos( $label, 'text message' );
-		$mentions_consent = false !== strpos( $label, 'consent' ) || false !== strpos( $label, 'agree' ) || false !== strpos( $label, 'permission' );
-		if ( $mentions_sms && $mentions_consent ) {
-			return twinevia_event_sync_affirmative_value( twinevia_event_sync_wpforms_field_value( $field ) );
+		$field_id = isset( $field['id'] ) ? absint( (string) $field['id'] ) : 0;
+		if ( $field_id === $consent_field_id ) {
+			return twinevia_event_sync_affirmative_value(
+				twinevia_event_sync_wpforms_field_value( $field )
+			);
 		}
 	}
 	return false;
@@ -700,6 +743,7 @@ function twinevia_event_sync_wpforms_process_complete( array $fields, array $ent
 
 function twinevia_event_sync_sync_wpforms_entry( int $entry_id, int $form_id, array $fields, array $entry, int $post_id ): void {
 	try {
+		$consent_field_id = twinevia_event_sync_wpforms_consent_field_id( $form_id );
 		twinevia_event_sync_send_payload(
 			[
 				'action'  => 'booking_upsert',
@@ -715,7 +759,10 @@ function twinevia_event_sync_sync_wpforms_entry( int $entry_id, int $form_id, ar
 					'phone'       => twinevia_event_sync_wpforms_submission_phone( $fields ),
 					'spaces'      => 1,
 					'updated_at'  => current_time( DATE_ATOM ),
-					'sms_consent' => twinevia_event_sync_wpforms_submission_sms_consent( $fields ),
+					'sms_consent' => twinevia_event_sync_wpforms_submission_sms_consent( $fields, $consent_field_id ),
+					'sms_consent_source' => 0 < $consent_field_id ? 'wpforms:field:' . $consent_field_id : '',
+					'sms_consent_text_version' => twinevia_event_sync_consent_text_version(),
+					'sms_consent_captured_at' => (string) ( $entry['date_modified'] ?? current_time( DATE_ATOM ) ),
 				],
 			]
 		);
@@ -953,6 +1000,8 @@ function twinevia_event_sync_register_settings(): void {
 	register_setting( 'twinevia_event_sync', TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_URL );
 	register_setting( 'twinevia_event_sync', TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_SECRET );
 	register_setting( 'twinevia_event_sync', TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP );
+	register_setting( 'twinevia_event_sync', TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CONSENT_MAP );
+	register_setting( 'twinevia_event_sync', TWINEVIA_EVENT_SYNC_OPTION_CONSENT_TEXT_VERSION );
 }
 
 add_action( 'admin_init', 'twinevia_event_sync_register_settings' );
@@ -984,6 +1033,20 @@ function twinevia_event_sync_admin_page(): void {
 					<td>
 						<textarea class="large-text code" id="twinevia_event_sync_wpforms_event_map" name="<?php echo esc_attr( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP ); ?>" rows="5"><?php echo esc_textarea( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP, '' ) ); ?></textarea>
 						<p class="description">Optional JSON map of form ID to event post ID, for example {"123":"456"}.</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="twinevia_event_sync_wpforms_consent_map">WPForms SMS Consent Field Map</label></th>
+					<td>
+						<textarea class="large-text code" id="twinevia_event_sync_wpforms_consent_map" name="<?php echo esc_attr( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CONSENT_MAP ); ?>" rows="5"><?php echo esc_textarea( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_CONSENT_MAP, '' ) ); ?></textarea>
+						<p class="description">Required JSON map of WPForms form ID to the exact affirmative SMS consent field ID, for example {"123":"9"}. Missing mappings fail closed.</p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="twinevia_event_sync_consent_text_version">SMS Consent Text Version</label></th>
+					<td>
+						<input class="regular-text" id="twinevia_event_sync_consent_text_version" name="<?php echo esc_attr( TWINEVIA_EVENT_SYNC_OPTION_CONSENT_TEXT_VERSION ); ?>" type="text" value="<?php echo esc_attr( twinevia_event_sync_consent_text_version() ); ?>">
+						<p class="description">Required immutable version label for the exact SMS disclosure shown to registrants. Missing versions fail closed.</p>
 					</td>
 				</tr>
 			</table>

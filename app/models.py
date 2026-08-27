@@ -207,8 +207,10 @@ class Organization(db.Model):
     @validates("billing_offer")
     def _normalize_billing_offer(self, key, value):
         normalized = (value or "standard").strip().lower()
-        if normalized not in {"standard", "annual_only"}:
-            raise ValueError("Organization billing offer must be standard or annual_only.")
+        if normalized not in {"standard", "annual_only", "staged_annual"}:
+            raise ValueError(
+                "Organization billing offer must be standard, annual_only, or staged_annual."
+            )
         return normalized
 
     def __repr__(self):
