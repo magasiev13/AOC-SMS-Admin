@@ -416,6 +416,15 @@ class TestRecipientPermissions(unittest.TestCase):
         self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 1)
         self.assertTrue(self.status().allowed)
 
+    def test_review_success_uses_canonical_local_destination_ignoring_external_next(self):
+        _user, member, event, registration = self.review_fixture()
+        for path in [f'/community/{member.id}/permission', f'/events/{event.id}/registrations/{registration.id}/permission']:
+            with self.subTest(path=path):
+                data = self.review_form(path)
+                response = self.client.post(path + '?next=https://external.invalid/recovery', data=data)
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.headers['Location'], path)
+
     def test_review_uses_evidence_time_instead_of_review_time_to_override_denial(self):
         _user, member, _event, _registration = self.review_fixture()
         self.record(decision='denied', source='booking_refusal', at=2)

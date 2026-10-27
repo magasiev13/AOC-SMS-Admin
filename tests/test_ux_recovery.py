@@ -288,6 +288,26 @@ def review_fields(**changes):
         'require_review': '1', 'request_idempotency_key': 'review-original-key'}, **changes)
 
 
+@pytest.mark.parametrize('error', [ValueError('synthetic internal exception detail'), RuntimeError('synthetic internal exception detail')])
+def test_unexpected_send_review_error_returns_retry_feedback_without_internal_details(ux, monkeypatch, error):
+    login(ux)
+    def fail(_form):
+        raise error
+    monkeypatch.setattr('app.routes._create_send_review', fail)
+    response = ux.client.post('/dashboard/review', data=review_fields())
+    assert response.status_code == 503
+    assert response.get_json() == {'error': 'The send review is temporarily unavailable. Your message has been kept. Try again.'}
+    assert b'synthetic internal exception detail' not in response.data
+    assert ux.models.OutboundRequest.query.count() == 0
+
+
+def test_send_review_public_validation_retains_actionable_message(ux):
+    login(ux)
+    response = ux.client.post('/dashboard/review', data=review_fields(message_body=''))
+    assert response.status_code == 400
+    assert response.get_json() == {'error': 'Message body is required.'}
+
+
 def test_send_review_freezes_audience_before_new_directory_additions(ux, monkeypatch):
     from unittest.mock import MagicMock
     original = permitted_contact(ux)

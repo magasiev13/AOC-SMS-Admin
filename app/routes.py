@@ -33,6 +33,7 @@ from sqlalchemy.orm import selectinload
 from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
+from app.services.send_review_service import SendReviewInputError
 from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, require_roles
 
 from app.models import (
@@ -3817,7 +3818,7 @@ def _bounded_recipient_snapshot_json(recipient_data: list[dict]) -> str:
     payload_bytes = len(payload.encode('utf-8'))
     max_bytes = int(current_app.config.get('RECIPIENT_SNAPSHOT_MAX_BYTES', 1024 * 1024) or 1024 * 1024)
     if payload_bytes > max_bytes:
-        raise ValueError(
+        raise SendReviewInputError(
             f'Recipient snapshot is {payload_bytes} bytes; the limit is {max_bytes} bytes.'
         )
     return payload
@@ -4183,21 +4184,21 @@ def platform_restart_services():
 def _send_review_intent(form):
     body = normalize_sms_body(form.get('message_body', '').strip())
     if not body:
-        raise ValueError('Message body is required.')
+        raise SendReviewInputError('Message body is required.')
     if len(body) > 1600:
-        raise ValueError('Use at most 1,600 characters for the message.')
+        raise SendReviewInputError('Use at most 1,600 characters for the message.')
     invalid = find_invalid_template_tokens(body)
     if invalid:
-        raise ValueError('Correct unsupported personalization tokens before reviewing this send.')
+        raise SendReviewInputError('Correct unsupported personalization tokens before reviewing this send.')
     target = form.get('target', 'community')
     if target not in {'community', 'event'}:
-        raise ValueError('Choose a community or event audience.')
+        raise SendReviewInputError('Choose a community or event audience.')
     try:
         event_id = int(form.get('event_id') or 0) if target == 'event' else None
     except (TypeError, ValueError) as exc:
-        raise ValueError('Choose a valid event.') from exc
+        raise SendReviewInputError('Choose a valid event.') from exc
     if target == 'event' and not event_id:
-        raise ValueError('Please select an event.')
+        raise SendReviewInputError('Please select an event.')
     test_mode = form.get('test_mode') == 'on'
     schedule = form.get('schedule_later') == 'on'
     return {
@@ -4217,22 +4218,25 @@ def _create_send_review(form):
     from app.utils import render_message_template
 
     if saas_mode_enabled() and not organization_can_transmit_messages(_current_organization()):
-        raise ValueError('Workspace billing and messaging must both be active before reviewing a send.')
+        raise SendReviewInputError('Workspace billing and messaging must both be active before reviewing a send.')
     intent = _send_review_intent(form)
     event = _tenant_get_or_404(Event, intent['event_id']) if intent['target'] == 'event' else None
     test_data = None
     if intent['test_mode']:
-        _, _, test_data = build_test_recipient_snapshot(
-            _current_organization_id(), selection_mode=intent['test_recipient_selection_mode'], selected_phone=intent['test_recipient_phone'],
-        )
+        try:
+            _, _, test_data = build_test_recipient_snapshot(
+                _current_organization_id(), selection_mode=intent['test_recipient_selection_mode'], selected_phone=intent['test_recipient_phone'],
+            )
+        except ValueError as exc:
+            raise SendReviewInputError('Choose valid saved test recipients for this workspace before reviewing the send.') from exc
     rows = _load_blast_target_recipients(target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'], test_recipient_data=test_data)
     recipients, counts = _prepare_sendable_blast_recipients(rows, apply_opt_out_filters=True, target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'])
     if not recipients:
-        raise ValueError('No eligible recipients were found. Review the audience and its opt-out or permission records.')
+        raise SendReviewInputError('No eligible recipients were found. Review the audience and its opt-out or permission records.')
     estimate = analyze_personalized_sms_blast(intent['message_body'], recipients)
     error = _blast_limit_error(estimate)
     if error:
-        raise ValueError(error)
+        raise SendReviewInputError(error)
     _bounded_recipient_snapshot_json(recipients)
     timing = 'Send now'
     if intent['schedule_later']:
@@ -4245,9 +4249,9 @@ def _create_send_review(form):
         try:
             local = datetime.strptime(f"{intent['schedule_date']} {intent['schedule_time']}", '%Y-%m-%d %H:%M').replace(tzinfo=zone)
         except (TypeError, ValueError) as exc:
-            raise ValueError('Choose a valid schedule date and time.') from exc
+            raise SendReviewInputError('Choose a valid schedule date and time.') from exc
         if local.astimezone(timezone.utc) <= utc_now():
-            raise ValueError('Scheduled time must be in the future.')
+            raise SendReviewInputError('Scheduled time must be in the future.')
         timing = f'{local.isoformat(timespec="minutes")} ({tz_name})'
     key = normalize_request_key(form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'), kind='blast', intent=intent)
     profile = _current_organization().messaging_profile if _current_organization() is not None else None
@@ -4271,8 +4275,14 @@ def _create_send_review(form):
 def dashboard_send_review():
     try:
         return jsonify(_create_send_review(request.form))
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
+    except SendReviewInputError as exc:
+        return jsonify({'error': exc.public_message}), 400
+    except HTTPException:
+        raise
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Send review unavailable for organization_id=%s actor_user_id=%s.', _current_organization_id(), current_user.id)
+        return jsonify({'error': 'The send review is temporarily unavailable. Your message has been kept. Try again.'}), 503
 
 
 @bp.route('/dashboard/audience-preview')
@@ -7752,6 +7762,7 @@ def _review_recipient_permission(subject, *, purpose, event=None):
     scope_key = f'event:{event_id}' if event is not None else ''
     scope_label = f'updates for {event.title}' if event is not None else 'general community messages'
     back_url = url_for('main.event_detail', event_id=event.id) if event is not None else url_for('main.community_list')
+    review_url = (url_for('main.event_registration_permission_review', event_id=event.id, registration_id=subject.id) if event is not None else url_for('main.community_permission_review', member_id=subject.id))
     form_values = {
         'decision': 'unknown', 'source_label': '', 'proof': '',
         'occurred_at': '', 'verified': '',
@@ -7805,7 +7816,7 @@ def _review_recipient_permission(subject, *, purpose, event=None):
             else:
                 status = recipient_permission_status(organization_id, subject.phone, purpose=purpose, event_id=event_id)
                 flash(f'Permission review saved. Current permission status: {status.decision}.', 'success')
-                return redirect(request.path)
+                return redirect(review_url)
     else:
         token = _permission_review_token(subject, purpose, event_id, uuid4().hex)
 
