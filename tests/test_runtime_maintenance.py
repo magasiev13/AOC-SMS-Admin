@@ -392,6 +392,22 @@ def test_completed_resume_request_cannot_remove_a_later_independent_pause(runtim
     assert _state(runtime)['provider_calls'] == calls_before
 
 
+def test_fresh_resume_without_declared_hold_cannot_report_success_or_mutate_runtime(runtime):
+    before = _operating_state(runtime)
+    assert runtime.controller.receipt() is None
+    with pytest.raises(runtime.module.RuntimeControlError):
+        runtime.controller.resume([BILLING], reason='A fresh request has no held operation to review',
+                                  expected_sha=runtime.sha, request_id='no-hold-review')
+    assert _operating_state(runtime) == before
+    assert all(call['verb'] == 'show' for call in _state(runtime)['calls'])
+    assert _state(runtime)['provider_calls'] == []
+    assert not (runtime.state_root / 'resume-requests').exists()
+    runtime.controller.pause([BILLING], reason='Later independent incident requires its own review', expected_sha=runtime.sha)
+    assert _state(runtime)['units'][BILLING]['ActiveState'] == 'inactive'
+    assert runtime.controller.receipt()['reason'] == 'Later independent incident requires its own review'
+    assert _state(runtime)['provider_calls'] == []
+
+
 def test_uncertain_resume_start_acknowledgement_recontains_current_unit(runtime, readiness):
     runtime.controller.pause([BILLING], reason='Hold before verified repair', expected_sha=runtime.sha)
     receipt = runtime.controller.receipt()
@@ -889,3 +905,53 @@ def test_real_systemd_harness_refuses_local_or_untrusted_environment(tmp_path):
     assert result.returncode != 0
     assert 'Refusing systemd tests' in result.stderr
     assert not (tmp_path / 'systemctl-transcript.json').exists()
+
+
+@pytest.mark.parametrize('command,code,stdout,stderr,accepted', [
+    ('list-unit-files', 0, '', '', True),
+    ('list-unit-files', 1, '', '', True),
+    ('list-unit-files', 2, '', '', False),
+    ('list-unit-files', 127, '', '', False),
+    ('list-unit-files', 1, '', 'Failed to connect to bus: Host is down', False),
+    ('list-unit-files', 0, '', 'Failed to list unit files', False),
+    ('list-unit-files', 1, 'Unexpected inventory diagnostic', '', False),
+    ('list-unit-files', 0, 'twinevia-saas.service enabled enabled', '', False),
+    ('list-unit-files', 1, 'twinevia-saas-backup.timer masked enabled', '', False),
+    ('list-units', 1, '', '', False),
+    ('list-units', 0, '', 'Failed to connect to bus: No such file or directory', False),
+    ('list-units', 0, 'twinevia-saas-worker.service loaded active running', '', False),
+])
+def test_real_systemd_inventory_guard_handles_clean_no_matches_but_rejects_uncertainty(
+        tmp_path, monkeypatch, command, code, stdout, stderr, accepted):
+    spec = importlib.util.spec_from_file_location('owned_systemd_harness_under_test', SYSTEMD_HARNESS)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    responses = {name: {'code': 0, 'stdout': '', 'stderr': ''} for name in ['list-unit-files', 'list-units']}
+    responses[command] = {'code': code, 'stdout': stdout, 'stderr': stderr}
+    configuration = tmp_path / 'responses.json'
+    configuration.write_text(json.dumps(responses))
+    calls = tmp_path / 'calls.jsonl'
+    binary = tmp_path / 'systemctl'
+    binary.write_text('#!' + sys.executable + '''
+import json,os,sys
+from pathlib import Path
+with Path(os.environ['OWNED_INVENTORY_CALLS']).open('a') as output:
+    output.write(json.dumps(sys.argv[1:])+'\\n')
+result=json.loads(Path(os.environ['OWNED_INVENTORY_RESPONSES']).read_text())[sys.argv[1]]
+sys.stdout.write(result['stdout']);sys.stderr.write(result['stderr'])
+raise SystemExit(result['code'])
+''')
+    binary.chmod(0o755)
+    monkeypatch.setenv('OWNED_INVENTORY_RESPONSES', str(configuration))
+    monkeypatch.setenv('OWNED_INVENTORY_CALLS', str(calls))
+    if accepted:
+        harness.require_empty_systemd_inventory(binary)
+    else:
+        with pytest.raises(RuntimeError, match='Refusing systemd tests'):
+            harness.require_empty_systemd_inventory(binary)
+    arguments = [json.loads(line) for line in calls.read_text().splitlines()]
+    assert arguments
+    assert all(row[0] in {'list-unit-files', 'list-units'} for row in arguments)
+    assert all(row[1:] == ['--all', '--no-legend', '--no-pager', 'twinevia-saas*'] for row in arguments)
+    if accepted:
+        assert [row[0] for row in arguments] == ['list-unit-files', 'list-units']

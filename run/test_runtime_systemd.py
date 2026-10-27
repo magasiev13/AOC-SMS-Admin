@@ -52,6 +52,20 @@ def run(command, *, check=True, timeout=30, **kwargs):
     return completed
 
 
+def require_empty_systemd_inventory(systemctl):
+    for command in ['list-unit-files', 'list-units']:
+        result = run([str(systemctl), command, '--all', '--no-legend', '--no-pager', 'twinevia-saas*'], check=False)
+        if 'twinevia-saas' in result.stdout:
+            raise RuntimeError('Refusing systemd tests: pre-existing Twinevia units were found.')
+        # Clean Ubuntu returns 1 for list-unit-files when the name filter has
+        # no matches. That exact empty result is safe; diagnostics, unexpected
+        # output and other failures cannot establish an empty inventory.
+        allowed_codes = {0, 1} if command == 'list-unit-files' else {0}
+        if result.returncode not in allowed_codes or result.stdout.strip() or result.stderr.strip():
+            raise RuntimeError(f'Refusing systemd tests: cannot establish an empty {command} inventory '
+                               f'(exit {result.returncode}).\n{result.stdout}\n{result.stderr}')
+
+
 def require_owned_github_vm():
     expected = {'GITHUB_ACTIONS': 'true', 'CI': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}
     if sys.platform != 'linux' or os.geteuid() != 0:
@@ -70,10 +84,7 @@ def require_owned_github_vm():
     systemctl = Path('/usr/bin/systemctl')
     if not systemctl.is_file():
         raise RuntimeError('Refusing systemd tests: /usr/bin/systemctl is unavailable.')
-    for command in ['list-unit-files', 'list-units']:
-        output = run([str(systemctl), command, '--all', '--no-legend', '--no-pager', 'twinevia-saas*']).stdout
-        if any('twinevia-saas' in line for line in output.splitlines()):
-            raise RuntimeError('Refusing systemd tests: pre-existing Twinevia units were found.')
+    require_empty_systemd_inventory(systemctl)
     for root in ['/etc/systemd/system', '/run/systemd/system', '/usr/lib/systemd/system', '/lib/systemd/system', '/usr/local/lib/systemd/system']:
         directory = Path(root)
         if directory.is_dir() and any(directory.glob('twinevia-saas*')):

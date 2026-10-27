@@ -4327,9 +4327,15 @@ def dashboard():
     if selected_event_id and selected_event_id not in {event.id for event in events}:
         # Past audiences remain available through an explicit history/follow-up
         # action. Event dates do not withdraw permission or rewrite a saved send.
-        selected_event = _tenant_get_or_404(Event, selected_event_id)
-        events.append(selected_event)
-        selected_past_event = selected_event
+        selected_event = events_query(current_only=False).filter(Event.id == selected_event_id).first()
+        if selected_event is None:
+            # A direct history link must remain tenant-bound. Invalid POST
+            # selections belong to the normal lossless form/review validation.
+            if request.method == 'GET':
+                abort(404)
+        else:
+            events.append(selected_event)
+            selected_past_event = selected_event
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""

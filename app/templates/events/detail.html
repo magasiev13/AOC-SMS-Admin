@@ -16,7 +16,7 @@
 <a href="{{ url_for('main.dashboard', target='event', event_id=event.id) }}" class="btn btn-primary page-action-primary">
     <i class="bi bi-chat-dots me-1"></i>{{ 'Message attendees' if event_is_current else 'Send follow-up / feedback' }}
 </a>
-<a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-primary page-action-primary">
+<a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-pencil me-1"></i>Edit
 </a>
 <a href="{{ url_for('main.event_export_registrations', event_id=event.id) }}" class="btn btn-outline-secondary page-action-secondary">

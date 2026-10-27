@@ -466,8 +466,6 @@ class RuntimeController:
                     raise RuntimeControlError('A prior resume acknowledgement is incomplete. Review its actual timer/job state before authorizing a new request; it will not be replayed automatically.')
         receipt = self.receipt(identity)
         if receipt is None:
-            if all(self.systemctl.inspect(unit)['active_state'] == 'active' for unit in units):
-                return {'status': 'already_active', 'release_sha': expected_sha}
             raise RuntimeControlError('No valid maintenance receipt authorizes this resume.')
         if not set(units) <= set(receipt['held_units']):
             raise RuntimeControlError('Requested resume includes work outside the declared hold.')
