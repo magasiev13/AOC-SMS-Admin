@@ -157,6 +157,10 @@ def run_pending_migrations(engine: Engine, logger) -> list[str]:
 
                 module = _load_migration(migration)
                 logger.info("Applying migration %s (%s).", migration.version, migration.name)
+                if migration.name == "010_add_auth_hardening_tables_and_columns":
+                    from app.migrations.auth_attempt_preflight import prepare_pending_auth_hardening
+
+                    prepare_pending_auth_hardening(connection, logger)
                 module.apply(connection, logger)
                 connection.execute(
                     text(

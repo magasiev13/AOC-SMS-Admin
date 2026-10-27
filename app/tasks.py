@@ -221,8 +221,8 @@ def send_bulk_job(
             if not isinstance(existing_details, list):
                 existing_details = []
 
-            existing_success = sum(1 for detail in existing_details if detail.get('success') is True)
-            existing_failure = sum(1 for detail in existing_details if detail.get('success') is False)
+            existing_success = sum(1 for detail in existing_details if isinstance(detail, dict) and detail.get('success') is True)
+            existing_failure = sum(1 for detail in existing_details if isinstance(detail, dict) and detail.get('success') is False)
 
             if current_app.config.get("SAAS_MODE"):
                 organization = db.session.get(Organization, organization_id) if organization_id else None
@@ -247,8 +247,40 @@ def send_bulk_job(
                     )
                     return
 
-            start_index = len(existing_details)
-            remaining_recipients = recipient_data[start_index:]
+            remaining_recipients = recipient_data
+            if not current_app.config.get('SAAS_MODE'):
+                from app.utils import normalize_phone
+
+                completed_phones = set()
+                unresolved = False
+                for detail in existing_details:
+                    if not isinstance(detail, dict):
+                        unresolved = True
+                        continue
+                    phone = normalize_phone(detail.get('phone') or detail.get('to'))
+                    if not phone and detail.get('not_submitted') is True and not detail.get('sid') and detail.get('success') is not True:
+                        # New initialization failures explicitly prove that no
+                        # recipient reached a provider call. They are not a
+                        # positional checkpoint or an unknown acceptance.
+                        continue
+                    if not phone or (
+                        detail.get('success') is not True
+                        and detail.get('success') is not False
+                        and not detail.get('sid')
+                    ) or (detail.get('status') in {'sending', 'ambiguous', 'unknown'} and not detail.get('sid') and detail.get('success') is not True):
+                        unresolved = True
+                    if phone:
+                        completed_phones.add(phone)
+                if unresolved:
+                    # Old unkeyed errors cannot prove whether a provider
+                    # accepted a message. Hold them for review rather than
+                    # guessing a resume position and risking another send.
+                    log.status = 'ambiguous'
+                    log.total_recipients = len(recipient_data)
+                    log.success_count, log.failure_count = existing_success, existing_failure
+                    db.session.commit()
+                    return
+                remaining_recipients = [row for row in recipient_data if row.get('phone') not in completed_phones]
 
             if not remaining_recipients and not current_app.config.get("SAAS_MODE"):
                 log.total_recipients = len(recipient_data)
@@ -264,8 +296,10 @@ def send_bulk_job(
                 )
                 return
 
+            provider_initialized = False
             try:
                 twilio = get_twilio_service(organization_id)
+                provider_initialized = True
                 if current_app.config.get("SAAS_MODE"):
                     permission_skips = []
                     if log.test_mode:
@@ -333,6 +367,30 @@ def send_bulk_job(
                         exc,
                     )
             except TwilioTransientError as exc:
+                if not current_app.config.get('SAAS_MODE'):
+                    from twilio.base.exceptions import TwilioRestException
+
+                    cause = exc
+                    seen = set()
+                    safe_rejection = False
+                    while cause is not None and id(cause) not in seen:
+                        seen.add(id(cause))
+                        if isinstance(cause, TwilioRestException):
+                            safe_rejection = cause.status == 429
+                            break
+                        cause = cause.__cause__ or cause.__context__
+                    if not safe_rejection:
+                        progress = exc.results.get('details', []) if isinstance(exc.results, dict) else []
+                        progress = [row for row in progress if isinstance(row, dict)] if isinstance(progress, list) else []
+                        combined_details = existing_details + [row for row in progress if row not in existing_details]
+                        combined_details = _append_error_detail(combined_details, str(exc))
+                        combined_details[-1].update(status='ambiguous', not_submitted=False)
+                        log.total_recipients = len(recipient_data)
+                        log.success_count = sum(1 for row in combined_details if isinstance(row, dict) and row.get('success') is True)
+                        log.failure_count = sum(1 for row in combined_details if isinstance(row, dict) and row.get('success') is False)
+                        log.details, log.status = json.dumps(combined_details), 'ambiguous'
+                        db.session.commit()
+                        return
                 combined_details = existing_details
                 if exc.results:
                     combined_details = existing_details + exc.results.get('details', [])
@@ -387,11 +445,26 @@ def send_bulk_job(
                 raise
             except Exception as exc:
                 combined_details = _load_details(log) or existing_details
+                legacy_unknown = not current_app.config.get('SAAS_MODE') and provider_initialized
+                if legacy_unknown and isinstance(getattr(exc, 'results', None), dict):
+                    # A partial legacy batch may have committed provider SIDs
+                    # before a later acknowledgement was lost. Keep the facts
+                    # even though its unacknowledged recipient needs review.
+                    progress = exc.results.get('details', [])
+                    progress = [row for row in progress if isinstance(row, dict)] if isinstance(progress, list) else []
+                    combined_details = combined_details + [row for row in progress if row not in combined_details]
                 combined_details = _append_error_detail(combined_details, str(exc))
+                if not current_app.config.get('SAAS_MODE'):
+                    combined_details[-1].update(
+                        not_submitted=not provider_initialized,
+                        status='ambiguous' if legacy_unknown else 'initialization_failed',
+                    )
                 log.total_recipients = len(recipient_data)
-                log.success_count = max(log.success_count or 0, existing_success)
-                log.failure_count = max(log.failure_count or 0, existing_failure + 1)
-                log.status = 'failed'
+                recovered_success = sum(1 for detail in combined_details if isinstance(detail, dict) and detail.get('success') is True)
+                log.success_count = max(log.success_count or 0, existing_success, recovered_success)
+                recovered_failure = sum(1 for detail in combined_details if isinstance(detail, dict) and detail.get('success') is False)
+                log.failure_count = recovered_failure if legacy_unknown else max(log.failure_count or 0, existing_failure + 1)
+                log.status = 'ambiguous' if legacy_unknown else 'failed'
                 log.details = json.dumps(combined_details)
                 if not _finish_durable_request(log, error=str(exc)):
                     db.session.commit()

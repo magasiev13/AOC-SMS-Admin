@@ -114,6 +114,164 @@ class TestAutomationReplyOutbox(unittest.TestCase):
             if row.status in self.outbox.ACTIVE:
                 self._dispatch(row)
 
+    def _enable_foreign_key_actions(self):
+        if self.db.engine.dialect.name == 'sqlite':
+            from sqlalchemy import event, text
+            self.db.session.rollback()
+            def enable_foreign_keys(connection, _record, _proxy):
+                connection.execute('PRAGMA foreign_keys=ON')
+            event.listen(self.db.engine, 'checkout', enable_foreign_keys)
+            self.assertEqual(self.db.session.execute(text('PRAGMA foreign_keys')).scalar_one(), 1)
+
+    def _delete_survey_flow(self):
+        from app.tenant import organization_context
+        survey_id = self.survey.id
+        with organization_context(self.org_id):
+            deleted = self.inbox.delete_survey_flow_with_dependencies(survey_id)
+        self.assertEqual(deleted['surveys'], 1)
+        self.assertEqual(deleted['sessions'], 1)
+        self.db.session.expire_all()
+
+    def test_deleted_survey_flow_cancels_queued_active_question_before_provider_construction(self):
+        self._enable_foreign_key_actions()
+        self.assertEqual(self._post('SURVEY').status_code, 200)
+        intro, question = self._rows()
+        question_id, session_id = question.id, question.survey_session_id
+        self.assertIsNotNone(session_id)
+        self.assertEqual(question.survey_session_state, 'active')
+        self._dispatch(intro)
+        self.assertEqual(len(self.calls), 1)
+        self._delete_survey_flow()
+        question = self.db.session.get(self.models.AutomationReplyOutbox, question_id)
+        self.assertIsNone(question.survey_session_id)
+        self.assertEqual(question.survey_session_state, 'active')
+        self.assertIsNone(self.db.session.get(self.models.SurveySession, session_id))
+        with patch('app.services.automation_outbox_service.get_twilio_service', return_value=self.provider) as factory:
+            result = self.outbox.dispatch_automation_reply(self.org_id, question_id)
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertTrue(result['not_submitted'])
+        self.assertIsNone(result['sid'])
+        factory.assert_not_called()
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self._rows()[1].status, 'cancelled')
+        self.assertEqual(self.models.MessageDispatchAttempt.query.count(), 1)
+
+    def test_deleted_session_cancels_saved_active_reply_even_when_survey_still_exists(self):
+        self._enable_foreign_key_actions()
+        self._post('SURVEY')
+        row_id = self._rows()[0].id
+        session = self.models.SurveySession.query.one()
+        self.db.session.delete(session)
+        self.db.session.commit()
+        self.db.session.expire_all()
+        row = self.db.session.get(self.models.AutomationReplyOutbox, row_id)
+        self.assertIsNone(row.survey_session_id)
+        self.assertEqual(row.survey_session_state, 'active')
+        self.assertTrue(self.models.SurveyFlow.query.one().is_active)
+        with patch('app.services.automation_outbox_service.get_twilio_service', return_value=self.provider) as factory:
+            result = self.outbox.dispatch_automation_reply(self.org_id, row_id)
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertTrue(result['not_submitted'])
+        factory.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_survey_deleted_in_attempt_claim_gap_is_rechecked_before_provider_http(self):
+        self._enable_foreign_key_actions()
+        self._post('SURVEY')
+        intro, question = self._rows()
+        question_id = question.id
+        self._dispatch(intro)
+        guard = self.outbox.lock_automation_submission
+        def delete_before_guard(*args, **options):
+            self._delete_survey_flow()
+            return guard(*args, **options)
+        with patch('app.services.automation_outbox_service.lock_automation_submission', side_effect=delete_before_guard) as final_guard:
+            result = self._dispatch(question_id)
+        final_guard.assert_called_once()
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertTrue(result['not_submitted'])
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self._rows()[1].status, 'cancelled')
+        attempt = self.models.MessageDispatchAttempt.query.filter_by(logical_send_key=question.logical_send_key).one()
+        self.assertEqual(attempt.status, 'failed')
+        self.assertIsNone(attempt.provider_message_sid)
+
+    def test_completed_survey_reply_and_unbound_keyword_survive_flow_deletion(self):
+        self._enable_foreign_key_actions()
+        self._post('SURVEY')
+        self._drain()
+        self._post('Answer one', 'SM-delete-completion-answer-one')
+        self._drain()
+        self._post('Answer two', 'SM-delete-completion-answer-two')
+        completion = self._rows()[-1]
+        completion_id = completion.id
+        self.assertEqual((completion.body, completion.survey_session_state), ('Survey complete', 'completed'))
+        self._delete_survey_flow()
+        completion = self.db.session.get(self.models.AutomationReplyOutbox, completion_id)
+        self.assertIsNone(completion.survey_session_id)
+        self.assertEqual(self._dispatch(completion_id)['status'], 'accepted')
+        self._post('HELLO', 'SM-keyword-after-survey-delete')
+        keyword = self._rows()[-1]
+        self.assertEqual(keyword.source, 'keyword')
+        self.assertIsNone(keyword.survey_session_id)
+        self.assertIsNone(keyword.survey_session_state)
+        self.assertEqual(self._dispatch(keyword.id)['status'], 'accepted')
+        self.assertEqual([call['body'] for call in self.calls],
+                         ['Survey intro', 'Question one?', 'Question two?', 'Survey complete', 'Hello back!'])
+
+    def test_deleted_survey_preserves_committed_acceptance_and_sid_without_provider_replay(self):
+        self._enable_foreign_key_actions()
+        self._post('SURVEY')
+        intro, question = self._rows()
+        question_id = question.id
+        self._dispatch(intro)
+        with patch('app.services.automation_outbox_service._finish', side_effect=RuntimeError('interrupted before survey bubble')):
+            with self.assertRaises(RuntimeError):
+                self._dispatch(question_id)
+        self.db.session.rollback()
+        attempt = self.models.MessageDispatchAttempt.query.filter_by(logical_send_key=question.logical_send_key).one()
+        self.assertEqual(attempt.status, 'sent')
+        accepted_sid = attempt.provider_message_sid
+        self.assertTrue(accepted_sid)
+        self._delete_survey_flow()
+        with patch('app.services.automation_outbox_service.get_twilio_service', side_effect=AssertionError('Known survey acceptance must not reconstruct a provider')):
+            result = self.outbox.dispatch_automation_reply(self.org_id, question_id)
+            replay = self.outbox.dispatch_automation_reply(self.org_id, question_id)
+        self.assertEqual((result['status'], result['sid']), ('accepted', accepted_sid))
+        self.assertEqual(replay['sid'], accepted_sid)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.models.InboxMessage.query.filter_by(direction='outbound').count(), 2)
+        self.assertEqual(self.models.InboxMessage.query.filter_by(message_sid=accepted_sid).count(), 1)
+
+    def test_deleted_survey_preserves_ambiguous_history_and_later_known_sid_without_resending(self):
+        self._enable_foreign_key_actions()
+        self._post('SURVEY')
+        intro, question = self._rows()
+        question_id = question.id
+        self._dispatch(intro)
+        def unknown(**parameters):
+            self.calls.append(parameters)
+            raise TimeoutError('Survey provider acknowledgement was lost')
+        self.provider.client.messages.create.side_effect = unknown
+        self._dispatch(question_id)
+        saved = self.db.session.get(self.models.AutomationReplyOutbox, question_id)
+        self.assertEqual(saved.status, 'ambiguous')
+        bubble_id = saved.inbox_message_id
+        self._delete_survey_flow()
+        with patch('app.services.automation_outbox_service.get_twilio_service', side_effect=AssertionError('Ambiguous survey must not submit again')):
+            result = self.outbox.dispatch_automation_reply(self.org_id, question_id)
+            self.assertEqual(result['status'], 'ambiguous')
+            attempt = self.models.MessageDispatchAttempt.query.filter_by(logical_send_key=saved.logical_send_key).one()
+            attempt.status, attempt.provider_message_sid = 'sent', 'SM' + 'e' * 32
+            self.db.session.commit()
+            self.outbox.recover_automation_replies()
+        saved = self.db.session.get(self.models.AutomationReplyOutbox, question_id)
+        self.assertEqual((saved.status, saved.inbox_message_id), ('accepted', bubble_id))
+        self.assertEqual(json.loads(saved.result_json)['sid'], 'SM' + 'e' * 32)
+        self.assertEqual(self.models.InboxMessage.query.filter_by(message_sid='SM' + 'e' * 32).count(), 1)
+        self.assertEqual(self.models.InboxMessage.query.filter_by(direction='outbound').count(), 2)
+        self.assertEqual(len(self.calls), 2)
+
     def test_inbound_state_and_exact_reply_intent_commit_before_any_provider_call(self):
         self.assertEqual(self._post().status_code,200)
         rows=self._rows()

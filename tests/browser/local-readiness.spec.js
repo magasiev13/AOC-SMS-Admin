@@ -47,13 +47,13 @@ test('platform admin can review onboarding progress and owner invite access', as
   await expect(page.getByText('Open Organization Directory')).toHaveCount(0);
   await expect(page.getByText('Review Users')).toHaveCount(0);
   await expect(page.getByText('Review Security Events')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Restart SaaS Services' })).toBeVisible();
-  await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
+  await expect(page.getByRole('button', { name: 'Restart active services' })).toBeVisible();
+  await page.getByRole('button', { name: 'Restart active services' }).click();
   await expect(
     page.locator('.platform-home-status').getByText('Restart request queued. Waiting for the host processor.'),
   ).toBeVisible();
   await expect(page.getByText('Last request: Queued')).toBeVisible();
-  await page.getByRole('button', { name: 'Restart SaaS Services' }).click();
+  await page.getByRole('button', { name: 'Restart active services' }).click();
   await expect(page.getByText('Last request: Queued')).toBeVisible();
 
   const organizationsNavLink = page.locator('.app-nav a[href="/platform/organizations"]').first();

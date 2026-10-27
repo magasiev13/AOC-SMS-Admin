@@ -186,8 +186,10 @@ def _submission_gate(row, thread, now):
         return 'Automatic reply expired before submission; no message was sent.', 'expired'
     if not current_app.config.get('INBOUND_AUTO_REPLY_ENABLED',True):
         return 'auto_reply_disabled', 'failed'
-    if row.survey_session_id and row.survey_session_state == 'active':
-        session = SurveySession.query.filter_by(id=row.survey_session_id,organization_id=row.organization_id).first()
+    if row.survey_session_state == 'active':
+        # Session deletion clears its FK, but the saved active-survey context
+        # still requires a live session before this question may be submitted.
+        session = SurveySession.query.filter_by(id=row.survey_session_id,organization_id=row.organization_id).first() if row.survey_session_id is not None else None
         if session is None or session.status != 'active':
             return 'The original survey session ended before this reply was submitted.', 'cancelled'
     from app.services.twilio_service import _consent_send_block_reason

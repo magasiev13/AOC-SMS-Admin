@@ -26,7 +26,7 @@ from flask import (
     stream_with_context,
     url_for,
 )
-from flask_login import current_user, login_required, login_user, logout_user
+from flask_login import current_user, login_required, login_user
 from sqlalchemy import BigInteger, String, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
@@ -34,7 +34,11 @@ from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
 from app.services.send_review_service import SendReviewInputError
-from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, require_roles
+from app.services.audience_service import (
+    community_query, current_audience_counts, current_event_predicate, event_is_current,
+    event_registrations_query, events_query,
+)
+from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, logout_and_clear_session, require_roles
 
 from app.models import (
     AuthEvent,
@@ -143,7 +147,7 @@ from app.services.policy_acceptance_service import (
     missing_required_policy_acceptances,
     required_policy_versions,
 )
-from app.services.readiness_service import run_readiness_checks
+from app.services.readiness_service import platform_maintenance_view, run_readiness_checks
 from app.services.outbound_request_service import (
     OutboundRequestConflict, claim_reply_request, complete_request,
     enqueue_outbound_request, existing_outbound_request, normalize_request_key,
@@ -2520,6 +2524,7 @@ def _platform_home_context() -> dict:
             'enabled': bool(current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED')),
             'last_result': _platform_restart_status_view(),
         },
+        'maintenance': platform_maintenance_view(current_app._get_current_object()),
     }
 
 
@@ -2607,11 +2612,13 @@ def _event_detail_surface_view(
     attendee_count: int,
     sendable_count: int,
     unsubscribed_count: int,
+    is_current: bool = True,
 ) -> dict:
     return _surface_view(
         eyebrow='Events',
         title=event.title,
-        copy='Review registrations, add attendees, and import CSV updates from one page.',
+        copy=('Review registrations, add attendees, and import CSV updates from one page.' if is_current
+              else 'Review retained attendance and eligible contacts for an intentional follow-up or feedback request.'),
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(
@@ -2622,7 +2629,8 @@ def _event_detail_surface_view(
         stats=[
             _surface_stat('Booking contacts', registration_count, 'Unique phone registrations'),
             _surface_stat('Attendees', attendee_count, 'Total party size'),
-            _surface_stat('Sendable', sendable_count, 'Eligible event SMS recipients'),
+            _surface_stat('Sendable' if is_current else 'Follow-up eligible', sendable_count,
+                          'Eligible event SMS recipients' if is_current else 'Eligible for an explicit event follow-up'),
             _surface_stat('Not eligible', unsubscribed_count, 'Opt-outs, suppressions, or missing permission'),
         ],
     )
@@ -3161,7 +3169,8 @@ def _normalized_keyword_sql(column):
         normalized = func.replace(normalized, token, ' ')
     for _ in range(6):
         normalized = func.replace(normalized, '  ', ' ')
-    return normalized
+    # Edge control whitespace becomes spaces above, so trim after replacement.
+    return func.trim(normalized)
 
 
 def _keyword_conflicts_with_survey(trigger_keyword: str, *, exclude_survey_id: int | None = None) -> bool:
@@ -4311,7 +4320,23 @@ def dashboard():
     client_timezone_raw = request.cookies.get('client_timezone', '')
     client_timezone = unquote(client_timezone_raw).strip() if client_timezone_raw else ''
     dashboard_timezone = client_timezone or app_timezone
-    events = Event.query.order_by(Event.date.desc()).all()
+    events = events_query().order_by(Event.date.asc(), Event.title.asc()).all()
+    selection = request.form if request.method == 'POST' else request.args
+    selected_target = selection.get('target', 'community')
+    selected_event_id = selection.get('event_id', type=int) if selected_target == 'event' else None
+    selected_past_event = None
+    if selected_event_id and selected_event_id not in {event.id for event in events}:
+        # Past audiences remain available through an explicit history/follow-up
+        # action. Event dates do not withdraw permission or rewrite a saved send.
+        selected_event = events_query(current_only=False).filter(Event.id == selected_event_id).first()
+        if selected_event is None:
+            # A direct history link must remain tenant-bound. Invalid POST
+            # selections belong to the normal lossless form/review validation.
+            if request.method == 'GET':
+                abort(404)
+        else:
+            events.append(selected_event)
+            selected_past_event = selected_event
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""
@@ -4356,6 +4381,7 @@ def dashboard():
                 MessageLog.created_at < range_end,
             ).all()
         except OperationalError:
+            db.session.rollback()
             logs = []
 
         for log in logs:
@@ -4396,17 +4422,18 @@ def dashboard():
         event_recipient_counts = {
             int(row[0]): int(row[1] or 0)
             for row in (
-                db.session.query(EventRegistration.event_id, db.func.count(EventRegistration.id))
+                event_registrations_query(current_only=False).with_entities(EventRegistration.event_id, db.func.count(EventRegistration.id))
                 .group_by(EventRegistration.event_id)
                 .all()
             )
         }
-        community_count = CommunityMember.query.count()
-        event_registration_count = EventRegistration.query.count()
+        audience_counts = current_audience_counts()
+        community_count = audience_counts['community']
+        event_registration_count = audience_counts['event_registrations']
         keyword_rule_count = KeywordAutomationRule.query.count()
         survey_flow_count = SurveyFlow.query.count()
         event_count = len(events)
-        total_recipients = community_count + event_registration_count
+        total_recipients = audience_counts['unique_contacts']
         unsubscribed_count = UnsubscribedContact.query.count()
         inbound_count_7d = 0
         unread_threads_count = 0
@@ -4512,6 +4539,9 @@ def dashboard():
                 survey_flow_count=survey_flow_count,
             ),
             'event_recipient_counts': event_recipient_counts,
+            'selected_target': selected_target,
+            'selected_event_id': selected_event_id,
+            'selected_past_event': selected_past_event,
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
@@ -5496,8 +5526,7 @@ def change_password():
                 },
             )
 
-        logout_user()
-        session.clear()
+        logout_and_clear_session()
         flash('Password updated successfully. Please sign in again.', 'success')
         return redirect(url_for('auth.login'))
 
@@ -7868,7 +7897,8 @@ def community_list():
         allowed_keys={'name', 'phone', 'added'}, default_key='name', default_dir='asc',
     )
     
-    query = CommunityMember.query
+    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
+    query = community_query(contactable_only=audience_view != 'all')
     
     if search:
         escaped = escape_like(search)
@@ -7907,6 +7937,7 @@ def community_list():
         confirmed_signup_consent=organization_has_confirmed_signup_consent(_current_organization_id()),
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
         sort_key=sort_key, sort_dir=sort_dir,
+        audience_view=audience_view,
     )
 
 
@@ -8006,8 +8037,9 @@ def community_delete(member_id):
 @login_required
 @require_roles('admin')
 def community_export():
+    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
     members = _bounded_export_query_all(
-        CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone),
+        community_query(contactable_only=audience_view != 'all').order_by(CommunityMember.name, CommunityMember.phone),
         'Community member',
     )
 
@@ -8131,7 +8163,10 @@ def community_unsubscribe(member_id):
 @login_required
 def events_list():
     search = request.args.get('search', '').strip()
-    query = Event.query
+    event_view = 'past' if request.args.get('view') == 'past' else 'current'
+    query = events_query(current_only=False)
+    predicate = current_event_predicate()
+    query = query.filter(~predicate if event_view == 'past' else predicate)
 
     if search:
         escaped = escape_like(search)
@@ -8144,7 +8179,7 @@ def events_list():
         )
 
     events = query.order_by(Event.date.desc()).all()
-    return render_template('events/list.html', events=events, search=search)
+    return render_template('events/list.html', events=events, search=search, event_view=event_view)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
@@ -8182,6 +8217,7 @@ def event_add():
 @login_required
 def event_detail(event_id):
     event = _tenant_get_or_404(Event, event_id)
+    is_current = event_is_current(event)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(
         EventRegistration.name,
         EventRegistration.phone,
@@ -8202,12 +8238,14 @@ def event_detail(event_id):
         suppressed_phones=suppressed_phones,
         permission_statuses=permission_statuses,
         can_review_permission=_current_user_is_workspace_owner(),
+        event_is_current=is_current,
         surface_view=_event_detail_surface_view(
             event,
             registration_count=len(registrations),
             attendee_count=attendee_count,
             sendable_count=len({reg.phone for reg in registrations} - blocked_phones),
             unsubscribed_count=len(blocked_phones),
+            is_current=is_current,
         ),
     )
 
@@ -9557,7 +9595,7 @@ def inbox_list():
 
     messages = []
     active_sessions = []
-    active_trigger_keywords: set[str] = set()
+    message_keyword_origins: dict[int, str] = {}
     selected_thread_is_unsubscribed = False
     older_messages_url = newer_messages_url = None
     acknowledged_reply_key = None
@@ -9603,7 +9641,31 @@ def inbox_list():
                 acknowledged_reply_key = submitted.get('form_key')
                 submitted_drafts.pop(str(selected_thread.id), None)
                 session['reply_draft_submissions'] = submitted_drafts
-        active_trigger_keywords = _active_trigger_keywords_set()
+        current_origins = {}
+        for source, model, keyword_field in (
+            ('keyword', KeywordAutomationRule, 'keyword'),
+            ('survey', SurveyFlow, 'trigger_keyword'),
+        ):
+            origin_ids = {message.automation_source_id for message in messages
+                          if message.matched_keyword and message.automation_source == source
+                          and message.automation_source_id is not None}
+            if origin_ids:
+                for origin in model.query.filter(model.id.in_(origin_ids), model.is_active.is_(True)).all():
+                    current_origins[(source, origin.id)] = (
+                        normalize_keyword(getattr(origin, keyword_field)), as_utc_datetime(origin.created_at),
+                    )
+        for message in messages:
+            if not message.matched_keyword:
+                continue
+            key = (message.automation_source, message.automation_source_id)
+            known_origin = key[0] in {'keyword', 'survey'} and key[1] is not None
+            state = 'historical' if known_origin else 'unknown'
+            current = current_origins.get(key)
+            received_at = as_utc_datetime(message.created_at)
+            if (current is not None and current[0] == normalize_keyword(message.matched_keyword)
+                    and current[1] is not None and received_at is not None and current[1] <= received_at):
+                state = 'current'
+            message_keyword_origins[message.id] = state
         active_sessions = SurveySession.query.filter_by(
             thread_id=selected_thread.id,
             status='active',
@@ -9621,7 +9683,7 @@ def inbox_list():
         selected_thread=selected_thread,
         messages=messages,
         active_sessions=active_sessions,
-        active_trigger_keywords=active_trigger_keywords,
+        message_keyword_origins=message_keyword_origins,
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
         inbox_status_latest_message_id=activity['latest_message_id'],
@@ -9915,14 +9977,19 @@ def keyword_rule_edit(rule_id):
             flash('Auto-reply message is required.', 'error')
             return _render_keyword_form(rule=rule, form_data=None)
 
-        if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
-            flash('That keyword already exists.', 'error')
-            return _render_keyword_form(rule=rule, form_data=None)
-        if _keyword_conflicts_with_survey(normalized_keyword):
-            flash('That keyword is already used as a survey trigger.', 'error')
-            return _render_keyword_form(rule=rule, form_data=None)
+        keyword_changed = normalized_keyword != normalize_keyword(rule.keyword)
+        # Existing imports may overlap a survey trigger. Updating a response or
+        # disabling that rule does not introduce a new trigger; reactivation does.
+        if keyword_changed or (is_active and not rule.is_active):
+            if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
+                flash('That keyword already exists.', 'error')
+                return _render_keyword_form(rule=rule, form_data=None)
+            if _keyword_conflicts_with_survey(normalized_keyword):
+                flash('That keyword is already used as a survey trigger.', 'error')
+                return _render_keyword_form(rule=rule, form_data=None)
 
-        rule.keyword = normalized_keyword
+        if keyword_changed:
+            rule.keyword = normalized_keyword
         rule.response_body = response_body
         rule.is_active = is_active
         db.session.commit()
@@ -10221,12 +10288,14 @@ def survey_flow_edit(survey_id):
             flash('A survey with this name already exists.', 'error')
             return _render_survey_form(survey=survey, form_data=form_data)
 
-        if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
-            flash('That survey trigger keyword already exists.', 'error')
-            return _render_survey_form(survey=survey, form_data=form_data)
-        if _keyword_conflicts_with_rule(trigger_keyword):
-            flash('That survey trigger keyword is already used by a keyword automation.', 'error')
-            return _render_survey_form(survey=survey, form_data=form_data)
+        keyword_changed = trigger_keyword != normalize_keyword(survey.trigger_keyword)
+        if keyword_changed or (is_active and not survey.is_active):
+            if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
+                flash('That survey trigger keyword already exists.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
+            if _keyword_conflicts_with_rule(trigger_keyword):
+                flash('That survey trigger keyword is already used by a keyword automation.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
 
         if event_link_mode == 'new':
             linked_event = Event(title=new_event_title, date=new_event_date)
@@ -10235,7 +10304,8 @@ def survey_flow_edit(survey_id):
             linked_event_id = linked_event.id
 
         survey.name = name
-        survey.trigger_keyword = trigger_keyword
+        if keyword_changed:
+            survey.trigger_keyword = trigger_keyword
         survey.intro_message = intro_message
         survey.completion_message = completion_message
         survey.linked_event_id = linked_event_id

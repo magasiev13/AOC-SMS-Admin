@@ -41,7 +41,9 @@
             'Search inbox',
             'Find the right conversation quickly.'
         ) %}
-        {% if selected_thread and not show_thread_list_only %}
+        {% if show_thread_list_only %}
+        <input type="hidden" name="view" value="threads">
+        {% elif selected_thread %}
         <input type="hidden" name="thread" value="{{ selected_thread.id }}">
         {% endif %}
         {% endcall %}
@@ -207,15 +209,23 @@
                                     <div class="small inbox-message-meta {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
                                         {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
                                         {% if message.matched_keyword %}
-                                            {% if message.matched_keyword in active_trigger_keywords %}
+                                            {% set keyword_origin = message_keyword_origins.get(message.id, 'unknown') %}
+                                            {% if keyword_origin == 'current' %}
                                                 • keyword: <code>{{ message.matched_keyword }}</code>
                                             {% else %}
                                                 • keyword hidden
-                                                <span class="badge rounded-pill text-bg-secondary">inactive</span>
+                                                <span class="badge rounded-pill text-bg-secondary">historical</span>
                                                 <details class="mt-1">
                                                     <summary class="small">Show historical keyword</summary>
                                                     <div class="small">
                                                         Historical keyword: <code>{{ message.matched_keyword }}</code>
+                                                        <div class="mt-1">
+                                                            {% if keyword_origin == 'unknown' %}
+                                                                The original automation is unknown.
+                                                            {% else %}
+                                                                The original automation is inactive, changed, or no longer available.
+                                                            {% endif %}
+                                                        </div>
                                                     </div>
                                                 </details>
                                             {% endif %}

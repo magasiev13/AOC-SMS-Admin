@@ -421,7 +421,9 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn('upsert_env_key "RQ_QUEUE_NAME" "twinevia-saas"', install_script)
         self.assertIn('ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"', install_script)
         self.assertIn("release_twinevia_saas.sh", install_script)
-        self.assertIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
+        self.assertIn('runtime_ctl activate "${activation_options[@]}"', release_script)
+        self.assertIn('TWINEVIA_INITIALIZE_RUNTIME', release_script)
+        self.assertNotIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
         runtime_units = release_script.split("RUNTIME_UNITS=(", 1)[1].split(")", 1)[0]
         self.assertIn("twinevia-saas-platform-restart-queue.timer", runtime_units)
 
@@ -455,7 +457,9 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("systemctl daemon-reload", deploy_script)
         self.assertIn("visudo", deploy_script)
         self.assertIn('bash "${APP_ROOT}/deploy/release_twinevia_saas.sh"', deploy_script)
-        self.assertIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
+        self.assertIn('runtime_ctl activate "${activation_options[@]}"', release_script)
+        self.assertIn('TWINEVIA_INITIALIZE_RUNTIME', release_script)
+        self.assertNotIn('systemctl enable --now "${RUNTIME_UNITS[@]}"', release_script)
         self.assertIn('sudo -n "${RESTART_HELPER_DEST}" --check', deploy_script)
         self.assertIn('"twinevia-saas-platform-restart-queue.timer"', runtime_units)
 
@@ -535,7 +539,9 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertIn("default: main", workflow)
         self.assertIn("default: origin/main", workflow)
         self.assertNotIn("codex/saas-pilot-v2", workflow)
-        self.assertIn("sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer", workflow)
+        self.assertIn("runtime_control.py check", workflow)
+        self.assertIn("runtime_readiness_proof", workflow)
+        self.assertIn("needs: [validate, runtime_systemd]", workflow)
         self.assertIn("restart-twinevia-saas-services --check", workflow)
         self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", workflow)
         self.assertIn("deploy_branch:", workflow)

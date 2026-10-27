@@ -154,10 +154,23 @@ def _unique_org_slug(name: str) -> str:
     return candidate
 
 
-def _deny_suspended_organization_access():
+def logout_and_clear_session(*, revoke_sessions=False):
+    """Clear browser credentials and optionally revoke the account's sessions."""
+    if revoke_sessions and current_user.is_authenticated:
+        # A late authenticated response can restore an earlier signed cookie
+        # after logout. Revoking its nonce makes that cookie unusable as well.
+        current_user.rotate_session_nonce()
+        db.session.commit()
     logout_user()
     session.clear()
+    # Flask-Login consumes this marker in its response hook. Clearing it after
+    # logout_user() leaves the persistent login cookie in the browser.
+    session['_remember'] = 'clear'
     clear_current_organization_id()
+
+
+def _deny_suspended_organization_access():
+    logout_and_clear_session()
     flash(SUSPENDED_ORGANIZATION_MESSAGE, "error")
     return redirect(url_for("auth.login"))
 
@@ -199,8 +212,7 @@ def enforce_account_security():
     if current_app.config.get("SAAS_MODE") and not getattr(current_user, "is_platform_admin", False):
         organization_id = getattr(current_user, "organization_id", None)
         if not organization_id:
-            logout_user()
-            session.clear()
+            logout_and_clear_session()
             flash("Your account is not assigned to an organization.", "error")
             return redirect(url_for("auth.login"))
         set_current_organization_id(organization_id)
@@ -592,7 +604,6 @@ def signup():
 @bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
-    logout_user()
-    session.clear()
-    flash("You have been logged out.", "success")
+    logout_and_clear_session(revoke_sessions=True)
+    flash("You have been logged out on all devices.", "success")
     return redirect(url_for("auth.login"))

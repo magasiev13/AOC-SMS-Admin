@@ -16,6 +16,15 @@
 
 {% block content %}
 <div class="platform-home-shell">
+    {% if platform_home.maintenance %}
+    <div class="alert alert-warning text-break mb-3" role="status">
+        <strong>{{ platform_home.maintenance.title }}.</strong>
+        {% if platform_home.maintenance.state == 'declared' %}
+        {{ platform_home.maintenance.unit_labels|join(', ') }} paused.
+        {% endif %}
+        <a href="#platform-maintenance-state" class="alert-link">Review maintenance details</a>
+    </div>
+    {% endif %}
     <section class="platform-home-summary-strip" aria-label="Platform summary">
         <div class="platform-home-summary-strip__item">
             <div class="platform-home-summary-strip__label">Organizations</div>
@@ -136,16 +145,39 @@
                     </a>
                 </div>
 
+                {% if platform_home.maintenance %}
+                {% set maintenance = platform_home.maintenance %}
+                <div id="platform-maintenance-state" class="alert alert-warning text-break mt-3" role="{{ 'alert' if maintenance.state == 'unverified' else 'status' }}" tabindex="-1" style="scroll-margin-top: 5rem;">
+                    <h3 class="h6 mb-2">{{ maintenance.title }}</h3>
+                    {% if maintenance.state == 'unverified' %}
+                    <p class="small mb-0">{{ maintenance.detail }} Host review is required before restarting services.</p>
+                    {% else %}
+                    <p class="small mb-2">Declared pause: {{ maintenance.unit_labels|join(', ') }}.</p>
+                    <p class="small mb-2">{{ maintenance.reason }}</p>
+                    <dl class="small mb-2">
+                        <dt>Declared by</dt><dd class="mb-1">{{ maintenance.actor }}</dd>
+                        <dt>Declared at</dt><dd class="mb-1"><time datetime="{{ maintenance.declared_at }}">{{ maintenance.declared_at_display }}</time></dd>
+                        <dt>Review expires</dt><dd class="mb-1"><time datetime="{{ maintenance.expires_at }}">{{ maintenance.expires_at_display }}</time></dd>
+                        <dt>Reviewed source</dt><dd class="mb-1"><code class="text-break">{{ maintenance.release_sha }}</code></dd>
+                    </dl>
+                    <p class="small mb-0">Paused work remains paused during restart. The platform remains non-ready until the reviewed resume step and its checks complete.</p>
+                    {% if maintenance.billing_reconciliation_held %}
+                    <p class="small mt-2 mb-0">Billing reconciliation is paused. Stripe renewals, webhooks, and user-initiated checkout may continue.</p>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endif %}
+
                 {% if platform_home.service_restart.enabled %}
                 <div class="platform-home-status">
                     <div class="platform-home-status__header">
                         <div>
                             <h3 class="platform-home-status__title">Service restart</h3>
-                            <p class="platform-home-status__meta">Restart the SaaS units without displacing organization work from the top of the page.</p>
+                            <p class="platform-home-status__meta">Restart active services while preserving paused work. Resuming maintenance requires the reviewed host operation.</p>
                         </div>
                         <form method="POST" action="{{ url_for('main.platform_restart_services') }}">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-outline-danger">Restart SaaS Services</button>
+                            <button type="submit" class="btn btn-outline-danger"{% if platform_home.maintenance and platform_home.maintenance.state == 'unverified' %} disabled aria-describedby="platform-maintenance-state"{% endif %}>Restart active services</button>
                         </form>
                     </div>
 

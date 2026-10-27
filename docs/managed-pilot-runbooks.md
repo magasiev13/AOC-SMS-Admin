@@ -2,20 +2,24 @@
 
 These runbooks are the production operating contract for the first 3–5 managed customers. Production changes, live Stripe changes, Twilio submissions, DNS/certificate changes, AOC cancellation, commits, and deployments remain separate approval gates.
 
+Use [maintenance and code recovery](runtime-operations.md) for the installed root supervisor, declared pauses, durable resume requests and rollback limits. Existing authorization for an operational task remains applicable; a code deployment does not authorize unrelated provider/customer-data changes.
+
 ## Required Production State
 
 - Source checkout is clean and points to the reviewed commit.
 - `/opt/twinevia-saas/current` resolves to an immutable directory under `/opt/twinevia-saas/releases`.
 - `/opt/twinevia-saas/previous` resolves to the last known-good release after the second deployment.
 - `/health` returns the exact plain-text body `OK`.
-- Token-protected `/ready` returns `READY`.
-- PostgreSQL, Redis, the RQ worker, scheduler, billing reconciliation, platform restart queue, A2P reconciliation, backup, and readiness units are active.
+- In normal operation, token-protected `/ready` returns `READY`, and PostgreSQL, Redis, the RQ worker and required timers are active.
+- During an intentional hold, public readiness remains HTTP 503/`ready:false`; authenticated JSON identifies `state:maintenance` only when the root-owned declaration matches the exact inactive timers and all independent checks pass. The installed supervisor's `check` command verifies that exception without hiding other failures. Expired or unverifiable declarations do not authorize acceptance or automatic resume.
 - The configured AOC cancellation record proves every dispatchable launch send present at maintenance time was captured and canceled.
 - A recent encrypted off-host backup and isolated restore drill are recorded.
 
 ## AOC Scheduled-Send Freeze
 
-Effect: records the message content, schedule, target, event information, automation metadata, and audience rule; then changes exactly two AOC rows from `pending` or `processing` to `cancelled`. The scheduler timer remains stopped. The scheduler sends these rows synchronously, so there is no corresponding RQ send job.
+This is the retained one-time launch cancellation procedure, not a routine deployment or audience-cleanup step. Its private record preserves message content, schedule, target, event information, automation metadata and audience rules. The historical operation canceled exactly two AOC rows and left the scheduler stopped; normal operation can later process unrelated authorized schedules. Do not rerun the historical command to clear past-event attendees or recreate the old freeze.
+
+For a new incident, declare the relevant timer hold through the installed root supervisor before reviewing tenant-specific cancellations. See [pause and resume](runtime-operations.md). The historical command below is retained for evidence of that separately authorized operation:
 
 After explicit approval:
 
@@ -43,11 +47,13 @@ sudo -u twinevia bash -lc '
 '
 ```
 
-Immediately after this explicit maintenance cancellation, the first command must report `inactive`; the guard must show the recorded rows with `cancelled` status and zero dispatchable rows. Do not restart the scheduler manually during maintenance. The `--expect-dispatchable-count 0` option is a maintenance assertion, not a permanent prohibition on future schedules.
+Immediately after that explicit maintenance cancellation, the first command had to report `inactive`; the guard had to show the recorded rows with `cancelled` status and zero dispatchable rows. Do not restart the scheduler manually during a hold. The `--expect-dispatchable-count 0` option is an incident-time assertion, not a normal-production prerequisite or a permanent prohibition on future reminders and feedback.
 
 Normal releases run the guard without a count option. They require every message in the historical cancellation record to remain present and cancelled, while leaving unrelated future reminders unchanged. A missing/invalid record or a re-enabled recorded message still blocks the release.
 
-Rollback is recreation, not an automatic status flip. Use the private record at `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` to recreate the content, target, and intended schedule only after explicit approval.
+Recreating a canceled message is a new messaging action, not code rollback or an automatic status flip. Use the private record at `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` only for a separately authorized recreation with reviewed recipients and timing.
+
+Past attendees automatically leave the Current event RSVP total without physical deletion. Past events retains attendance and an explicit follow-up/feedback composer. Community Contactable excludes actual opt-outs/suppression, while All contacts retains their records; AOC's confirmed signup consent remains unchanged. See [current audiences](current-audiences.md).
 
 ## Reconcile Local and Production Source
 
@@ -66,7 +72,7 @@ The release also compares the active runtime with its declared source commit bef
 
 ## Release
 
-Effect: archives the reviewed Git commit, checks active-source preservation, builds a per-release Python 3.11 environment, checks dependencies and expand-only migrations, runs verification, creates an encrypted pre-migration backup, restores and forward-migrates it in the isolated drill database, verifies the historical AOC cancellation record, applies production migrations, validates live Stripe configuration, switches the `current` symlink atomically, restarts services, and verifies health/readiness.
+Effect: archives the reviewed Git commit, checks active-source preservation, builds a per-release Python 3.11 environment, checks dependencies and expand-only migrations, runs verification, verifies fresh encrypted backup/isolated restore proof, verifies the historical AOC cancellation record, applies production migrations, validates configuration and switches `current` atomically. The shared root supervisor captures original unit state once, contains background work before source changes and restores the captured active/inactive and enablement states. It does not resume declared maintenance holds or unmask units. Health and source-bound readiness, including an exact valid maintenance exception, must pass.
 
 ```bash
 sudo /opt/twinevia-saas/deploy/deploy_twinevia_saas.sh
@@ -76,7 +82,15 @@ Verify:
 
 ```bash
 readlink -f /opt/twinevia-saas/current
-sudo -u twinevia /opt/twinevia-saas/current/venv/bin/python -m app.saas_db --doctor
+sudo -u twinevia /bin/bash -lc '
+  set -euo pipefail
+  set -a
+  source /opt/twinevia-saas/.env
+  source /opt/twinevia-saas/current/.release.env
+  set +a
+  cd /opt/twinevia-saas/current
+  ./venv/bin/python -m app.saas_db --doctor
+'
 curl --fail --silent --show-error -H 'Host: app.twinevia.com' http://127.0.0.1:8100/health
 sudo systemctl --no-pager --full status twinevia-saas twinevia-saas-worker
 sudo systemctl list-timers 'twinevia-saas-*' --no-pager
@@ -84,23 +98,27 @@ sudo systemctl list-timers 'twinevia-saas-*' --no-pager
 
 Expected health body: `OK`. Inspect `/opt/twinevia-saas/current/release.json` for the release ID and source SHA. Retain at least the current and previous releases.
 
+Run the authenticated supervisor `check` described in [runtime operations](runtime-operations.md) rather than accepting `/health` alone. Inactive timers need a valid declaration before install/deploy; the explicit fresh-install flag is restricted to a genuinely empty Twinevia runtime. Routine releases preserve disabled, enabled-runtime and masked states.
+
 Database changes during the pilot must be additive. `deploy/check_expand_only_migrations.sh` rejects destructive migration statements. Contract/removal migrations require a later, separately reviewed maintenance stage.
 
 ## Rollback
 
-Effect: changes only the release symlinks and service processes. Additive database changes remain in place so the previous application release must remain compatible with the expanded schema.
+Effect: changes release symlinks and service processes while preserving the captured operating state. Additive database changes remain. Use the stable installed entrypoint, which remains available after a legacy code target becomes current:
 
 ```bash
-sudo /opt/twinevia-saas/current/deploy/rollback_twinevia_saas.sh
+sudo /bin/bash /usr/local/lib/twinevia-saas/rollback_twinevia_saas.sh
 ```
 
 To select a retained release explicitly:
 
 ```bash
-sudo /opt/twinevia-saas/current/deploy/rollback_twinevia_saas.sh RELEASE_DIRECTORY_NAME
+sudo /bin/bash /usr/local/lib/twinevia-saas/rollback_twinevia_saas.sh RELEASE_DIRECTORY_NAME
 ```
 
-The command validates the target schema, atomically switches `current`, restarts units, and requires `OK` from `/health`. If target health fails, it restores the original release automatically.
+The command validates trusted ownership, the entire reviewed Git source, unexpected additions, schema compatibility and the historical observation boundary. It contains timers/jobs before the link switch and verifies process source, original unit states, health and authenticated readiness afterward. Target failure attempts contained restoration; containment/restore failure leaves explicit recovery work rather than claiming success.
+
+Modern targets require runtime contract version 1 and the schema 027 historical observation boundary. The only older-code exception is exact `ad7814b2946f3bec1c4e543e297e2e443340f619`, verified against six pinned safety files and its whole Git source. That baseline supports normal operation only: no maintenance receipt/hold, and no new declared pause. Forward-deploy a reviewed repair for maintenance support. `6d271209`, September 2 and other pre-boundary code targets are prohibited. A full matching encrypted application/database/configuration recovery is a separately reviewed alternative; the isolated restore script below must never be redirected to production. See [rollback limits and recovery](runtime-operations.md).
 
 ## Backup and Restore Drill
 

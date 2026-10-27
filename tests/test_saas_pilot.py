@@ -1022,7 +1022,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"bi-buildings", response.data)
         self.assertNotIn(b'href="/community"', response.data)
         self.assertNotIn(b"Search contacts", response.data)
-        self.assertNotIn(b"Restart SaaS Services", response.data)
+        self.assertNotIn(b"Restart active services", response.data)
 
     def test_platform_admin_sees_restart_control_only_when_enabled(self) -> None:
         self.app.config["PLATFORM_SERVICE_RESTART_ENABLED"] = True
@@ -1035,7 +1035,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"System utilities", response.data)
         self.assertNotIn(b"Platform Admin", response.data)
         self.assertNotIn(b"Manage organizations, onboarding, and provider readiness.", response.data)
-        self.assertIn(b"Restart SaaS Services", response.data)
+        self.assertIn(b"Restart active services", response.data)
         self.assertIn(b"/platform/operations/restart-services", response.data)
 
     def test_platform_home_prioritizes_billing_blocker_headline(self) -> None:
@@ -1112,7 +1112,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(b"/platform/organizations", response.data)
         self.assertIn(b"Workspace", response.data)
-        self.assertNotIn(b"Restart SaaS Services", response.data)
+        self.assertNotIn(b"Restart active services", response.data)
 
     def test_platform_admin_is_redirected_from_workspace_dashboard(self) -> None:
         self._login_platform_admin()
@@ -1585,7 +1585,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         dashboard_response = self.client.get("/dashboard")
         self.assertEqual(dashboard_response.status_code, 200)
-        self.assertNotIn(b"Restart SaaS Services", dashboard_response.data)
+        self.assertNotIn(b"Restart active services", dashboard_response.data)
         self.assertNotIn(b'href="/billing"', dashboard_response.data)
         self.assertNotIn(b"Activate Subscription", dashboard_response.data)
 

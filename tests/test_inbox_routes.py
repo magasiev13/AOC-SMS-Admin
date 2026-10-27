@@ -39,6 +39,7 @@ class FakeRedis:
 class TestInboxRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
+        self._original_database_url = os.environ.get("DATABASE_URL")
         os.environ["FLASK_DEBUG"] = "1"
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
@@ -114,7 +115,13 @@ class TestInboxRoutes(unittest.TestCase):
             os.environ.pop("FLASK_DEBUG", None)
         else:
             os.environ["FLASK_DEBUG"] = self._original_flask_debug
-        os.environ.pop("DATABASE_URL", None)
+        if self._original_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = self._original_database_url
+        import app.config
+
+        importlib.reload(app.config)
 
     def _login(self) -> None:
         self._login_as("admin", "admin-pass")
@@ -365,17 +372,19 @@ class TestInboxRoutes(unittest.TestCase):
     def test_inbox_message_shows_active_keyword_label(self) -> None:
         self._login()
         thread = self._create_thread(phone="+17205550090")
-        self._create_survey_flow(
+        survey = self._create_survey_flow(
             name="Active Keyword Survey",
             keyword="ACTIVE KEY",
             questions=["Question 1?"],
         )
-        self._create_message(
+        message = self._create_message(
             thread=thread,
             body="Trigger active keyword",
             direction="inbound",
             matched_keyword="ACTIVE KEY",
         )
+        message.automation_source = 'survey'
+        message.automation_source_id = survey.id
         self.db.session.commit()
 
         response = self.client.get(f"/inbox?thread={thread.id}")
@@ -393,12 +402,14 @@ class TestInboxRoutes(unittest.TestCase):
             questions=["Question 1?"],
         )
         survey.is_active = False
-        self._create_message(
+        message = self._create_message(
             thread=thread,
             body="Trigger inactive keyword",
             direction="inbound",
             matched_keyword="INACTIVE KEY",
         )
+        message.automation_source = 'survey'
+        message.automation_source_id = survey.id
         self.db.session.commit()
 
         response = self.client.get(f"/inbox?thread={thread.id}")

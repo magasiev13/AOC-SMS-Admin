@@ -2,6 +2,8 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from deploy.runtime_control import DEFAULT_MAINTENANCE_FILE, TIMER_UNITS
+
 
 def _env_bool(name: str, default: str) -> bool:
     raw_value = str(os.environ.get(name, default)).strip().lower()
@@ -75,6 +77,7 @@ class Config:
     PUBLIC_BASE_URL = (os.environ.get('PUBLIC_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
     APP_BASE_URL = (os.environ.get('APP_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
     APP_RELEASE_ID = os.environ.get('APP_RELEASE_ID', '').strip()
+    APP_RELEASE_SHA = os.environ.get('APP_RELEASE_SHA', '').strip()
     MANAGED_PILOT_ENABLED = _env_bool('MANAGED_PILOT_ENABLED', '1')
     PILOT_APPLICATION_RATE_LIMIT_COUNT = _env_int('PILOT_APPLICATION_RATE_LIMIT_COUNT', '5')
     PILOT_APPLICATION_RATE_LIMIT_WINDOW_SECONDS = _env_int(
@@ -257,15 +260,10 @@ class Config:
     READINESS_SYSTEMCTL_TIMEOUT_SECONDS = _env_int('READINESS_SYSTEMCTL_TIMEOUT_SECONDS', '5')
     READINESS_REQUIRED_SYSTEMD_TIMERS = os.environ.get(
         'READINESS_REQUIRED_SYSTEMD_TIMERS',
-        ','.join(
-            (
-                'twinevia-saas-scheduler.timer',
-                'twinevia-saas-billing-reconcile.timer',
-                'twinevia-saas-a2p-reconcile.timer',
-                'twinevia-saas-backup.timer',
-                'twinevia-saas-readiness.timer',
-            )
-        ),
+        ','.join(TIMER_UNITS),
+    ).strip()
+    RUNTIME_MAINTENANCE_FILE = os.environ.get(
+        'RUNTIME_MAINTENANCE_FILE', DEFAULT_MAINTENANCE_FILE,
     ).strip()
     ALERT_WEBHOOK_URL = os.environ.get('ALERT_WEBHOOK_URL', '').strip()
     UPTIME_MONITOR_HEARTBEAT_URL = os.environ.get('UPTIME_MONITOR_HEARTBEAT_URL', '').strip()

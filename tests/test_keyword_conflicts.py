@@ -6,6 +6,7 @@ import unittest
 class TestKeywordCrossTableConflicts(unittest.TestCase):
     def setUp(self) -> None:
         self._original_flask_debug = os.environ.get("FLASK_DEBUG")
+        self._original_database_url = os.environ.get("DATABASE_URL")
         os.environ["FLASK_DEBUG"] = "1"
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
@@ -48,11 +49,18 @@ class TestKeywordCrossTableConflicts(unittest.TestCase):
         self.db.engine.dispose()
         self._app_context.pop()
         self._temp_dir.cleanup()
-        os.environ.pop("DATABASE_URL", None)
+        if self._original_database_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = self._original_database_url
         if self._original_flask_debug is None:
             os.environ.pop("FLASK_DEBUG", None)
         else:
             os.environ["FLASK_DEBUG"] = self._original_flask_debug
+        import importlib
+        import app.config
+
+        importlib.reload(app.config)
 
     def _login(self) -> None:
         response = self.client.post(
