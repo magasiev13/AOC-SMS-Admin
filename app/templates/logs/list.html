@@ -12,7 +12,7 @@
 {% block page_actions %}
 {% if logs and current_user.is_admin %}
 <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
-    <i class="bi bi-trash me-1"></i>Clear All Logs
+    <i class="bi bi-trash me-1"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}
 </button>
 {% endif %}
 {% endblock %}
@@ -89,11 +89,11 @@
                     </td>
                     <td data-sort-value="{{ log.total_recipients or 0 }}">
                         <div class="mb-1">
-                            <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
-                                {{ log.status or 'sent' }}
+                            <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
+                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
                             </span>
                         </div>
-                        <span class="text-success">{{ log.success_count }} sent</span>
+                        <span class="text-success">{{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }}</span>
                         {% if log.failure_count > 0 %}
                         / <span class="text-danger">{{ log.failure_count }} failed</span>
                         {% endif %}
@@ -153,8 +153,8 @@
                             {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
                         </div>
                         <div class="mt-1">
-                            <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
-                                {{ log.status or 'sent' }}
+                            <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
+                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
                             </span>
                         </div>
                         <div class="text-muted small">{{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}</div>
@@ -199,8 +199,8 @@
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Target:</strong> {{ log.target }}</p>
-            <p class="mb-2"><strong>Status:</strong> {{ log.status or 'sent' }}</p>
-            <p class="mb-2"><strong>Sent:</strong> {{ log.success_count }} success / {{ log.failure_count }} failed</p>
+            <p class="mb-2"><strong>Status:</strong> {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent')) }}</p>
+            <p class="mb-2"><strong>Results:</strong> {{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }} / {{ log.failure_count }} failed</p>
             <p class="mb-0"><strong>Message:</strong> {{ log.message_body }}</p>
         </div>
     </div>
@@ -213,14 +213,14 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>Clear All Logs</h5>
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" action="{{ url_for('main.logs_clear') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="alert alert-warning">
-                        <strong>Warning:</strong> This will permanently delete all message logs. This action cannot be undone.
+                        <strong>Warning:</strong> {{ 'This permanently deletes logs without retained send evidence. Active logs and logs linked to saved requests or dispatch attempts are kept.' if config.SAAS_MODE else 'This will permanently delete all message logs. This action cannot be undone.' }}
                     </div>
                     <div class="mb-3">
                         <label for="admin_password" class="form-label">Enter Admin Password to confirm:</label>
@@ -230,7 +230,7 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-danger">
-                        <i class="bi bi-trash me-1"></i>Clear All Logs
+                        <i class="bi bi-trash me-1"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}
                     </button>
                 </div>
             </form>

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
+{% import "includes/permission_macros.html" as permissions %}
 
 {% block title %}{{ event.title }} - {{ product_name }}{% endblock %}
 
@@ -71,17 +72,12 @@
                             <tr>
                                 <td data-sort-value="{{ reg.name or '' }}">{{ reg.name or '-' }}</td>
                                 <td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>
-                                <td data-sort-value="{{ reg.booking_spaces or 1 }}">{{ reg.booking_spaces or 1 }}</td>
+                                <td data-sort-value="{{ reg.capacity_spaces }}">{{ reg.capacity_spaces }}</td>
                                 <td data-sort-value="{{ reg.selection_summary }}">{{ reg.selection_summary or '-' }}</td>
                                 <td data-sort-value="{{ reg.booking_comment or '' }}">{{ reg.booking_comment or '-' }}</td>
-                                <td data-sort-value="{{ 'Blocked' if is_unsubscribed or is_suppressed else 'Sendable' }}">
-                                    {% if is_unsubscribed %}
-                                    <span class="badge bg-secondary">Unsubscribed</span>
-                                    {% elif is_suppressed %}
-                                    <span class="badge bg-secondary">Suppressed</span>
-                                    {% else %}
-                                    <span class="badge bg-success">Sendable</span>
-                                    {% endif %}
+                                <td data-sort-value="{{ 'Blocked' if is_unsubscribed or is_suppressed else permission_statuses[reg.phone].decision }}">
+                                    {{ permissions.permission_badge(permission_statuses[reg.phone], is_unsubscribed, is_suppressed) }}
+                                    {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review permission</a></div>{% endif %}
                                 </td>
                                 <td>
                                     <div class="row-actions" data-row-actions>
@@ -132,17 +128,12 @@
                                 <div>
                                     <h6 class="mb-1">{{ reg.name or '-' }}</h6>
                                     <div class="text-muted small"><code>{{ reg.phone }}</code></div>
-                                    <div class="text-muted small">Party size: {{ reg.booking_spaces or 1 }}</div>
+                                    <div class="text-muted small">Capacity spaces: {{ reg.capacity_spaces }}</div>
                                     <div class="text-muted small">Bringing: {{ reg.selection_summary or '-' }}</div>
                                     {% if reg.booking_comment %}<div class="text-muted small">Comment: {{ reg.booking_comment }}</div>{% endif %}
                                     <div class="mt-2">
-                                        {% if is_unsubscribed %}
-                                        <span class="badge bg-secondary">Unsubscribed</span>
-                                        {% elif is_suppressed %}
-                                        <span class="badge bg-secondary">Suppressed</span>
-                                        {% else %}
-                                        <span class="badge bg-success">Sendable</span>
-                                        {% endif %}
+                                        Event SMS: {{ permissions.permission_badge(permission_statuses[reg.phone], is_unsubscribed, is_suppressed) }}
+                                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review permission</a></div>{% endif %}
                                     </div>
                                 </div>
                             </div>
@@ -186,9 +177,16 @@
                             <label for="registration_name" class="form-label">Name (optional)</label>
                             <input type="text" class="form-control" id="registration_name" name="name" placeholder="Board member or guest" autocomplete="name">
                         </div>
-                        <div class="mb-0">
+                        <div class="mb-3">
                             <label for="registration_phone" class="form-label">Phone number</label>
                             <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel" required>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="1" id="included_in_paid_order" name="included_in_paid_order">
+                            <label class="form-check-label" for="included_in_paid_order">
+                                Guest is already included in a paid order
+                            </label>
+                            <div class="form-text">Adds the phone to the directory without consuming another capacity space.</div>
                         </div>
                     </div>
                     <div class="workspace-panel__footer">

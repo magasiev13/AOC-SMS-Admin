@@ -17,6 +17,10 @@ from app.services.twilio_service import (
     record_usage_candidates,
 )
 from app.tenant import organization_context
+from app.services.scheduled_cancellation_service import (
+    lock_scheduled_message,
+    scheduled_dispatch_context,
+)
 
 scheduler = None
 _scheduler_initialized = False
@@ -82,6 +86,40 @@ def _count_detail_outcomes(detail_rows: list[dict]) -> tuple[int, int]:
     return success_count, failure_count
 
 
+def _finish_processing_schedule(
+    scheduled_id: int,
+    organization_id: int | None,
+    *,
+    status: str,
+    error_message: str | None,
+    sent_at,
+) -> bool:
+    """Never overwrite a concurrent cancellation or another terminal outcome."""
+    from app import db
+
+    scheduled = lock_scheduled_message(scheduled_id, organization_id)
+    if scheduled is None or scheduled.status != 'processing':
+        db.session.commit()
+        return False
+    scheduled.status = status
+    scheduled.error_message = error_message
+    scheduled.sent_at = sent_at
+    scheduled.processing_started_at = None
+    scheduled.next_retry_at = None
+    db.session.commit()
+    return True
+
+
+def _cancelled_outcome_message(log) -> str:
+    details = _load_log_detail_rows(log.details)
+    unresolved = sum(1 for detail in details if detail.get('status') in {'ambiguous', 'sending'})
+    not_submitted = max(0, int(log.total_recipients or 0) - len(details))
+    return (
+        f'Cancelled. {int(log.success_count or 0)} provider-accepted; '
+        f'{unresolved} unresolved; {not_submitted} not submitted.'
+    )
+
+
 def _record_usage_candidates_safely(
     *,
     scheduled_id: int,
@@ -139,7 +177,10 @@ def _upsert_message_log_for_scheduled_send(
         )
         db.session.add(log)
         db.session.flush()
-        log.status = 'sent' if result_failure == 0 else 'failed'
+        log.status = (
+            scheduled.status if scheduled.status in {'cancelled', 'expired', 'failed'}
+            else ('sent' if result_failure == 0 else 'failed')
+        )
         scheduled.message_log_id = log.id
         return log
 
@@ -170,7 +211,10 @@ def _upsert_message_log_for_scheduled_send(
         len(merged_rows),
     )
     log.details = json.dumps(merged_rows)
-    log.status = 'sent' if log.failure_count == 0 else 'failed'
+    log.status = (
+        scheduled.status if scheduled.status in {'cancelled', 'expired', 'failed'}
+        else ('sent' if log.failure_count == 0 else 'failed')
+    )
     db.session.flush()
     return log
 
@@ -225,12 +269,18 @@ def _handle_transient_failure(
     unique_recipient_count: int,
     duplicate_count: int,
     db,
-) -> bool:
+) -> bool | None:
     """
     Handle transient failures for scheduled sends.
 
-    Returns True when the message was re-queued for retry, False when marked failed.
+    Returns True when re-queued, False when failed, and None when another
+    terminal state (including accepted cancellation) already won.
     """
+    with db.session.no_autoflush:
+        scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
+    if scheduled is None or scheduled.status != 'processing':
+        db.session.commit()
+        return None
     attempt_count = int(scheduled.attempt_count or 0)
     retries_used = max(0, attempt_count - 1)
     retries_remaining = max_retries - retries_used
@@ -313,6 +363,11 @@ def send_scheduled_messages(app):
             load_recipient_snapshot,
         )
         from app.services.suppression_service import process_failure_details
+        from app.services.recipient_permission_service import (
+            filter_permission_recipients,
+            permission_context,
+        )
+        from app.services.test_recipient_service import list_test_recipients
         from app.utils import normalize_phone
         now = utc_now().replace(tzinfo=None)
         processing_timeout_minutes = max(
@@ -367,7 +422,7 @@ def send_scheduled_messages(app):
                 ScheduledMessage.processing_started_at,
                 ScheduledMessage.scheduled_at,
             ) <= processing_timeout
-        ).all()
+        ).populate_existing().with_for_update(skip_locked=True).all()
         
         stuck_count = len(stuck_processing)
         for scheduled in stuck_processing:
@@ -414,6 +469,12 @@ def send_scheduled_messages(app):
         retried_count = 0
         
         for scheduled in pending:
+            scheduled_id = int(scheduled.id)
+            scheduled_organization_id = scheduled.organization_id
+            scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
+            if scheduled is None or scheduled.status != 'pending':
+                db.session.commit()
+                continue
             processed_count += 1
             logger.info(
                 "[Scheduler] Processing message id=%d organization_id=%s (scheduled_at=%s, target=%s)",
@@ -485,12 +546,11 @@ def send_scheduled_messages(app):
                         organization = db.session.get(Organization, scheduled.organization_id) if scheduled.organization_id else None
                         send_block_reason = organization_transmit_block_reason(organization)
                         if send_block_reason:
-                            scheduled.status = 'failed'
-                            scheduled.error_message = send_block_reason
-                            scheduled.sent_at = now
-                            scheduled.processing_started_at = None
-                            scheduled.next_retry_at = None
-                            db.session.commit()
+                            if not _finish_processing_schedule(
+                                scheduled_id, scheduled_organization_id,
+                                status='failed', error_message=send_block_reason, sent_at=now,
+                            ):
+                                continue
                             failed_count += 1
                             logger.warning(
                                 "[Scheduler] Message id=%d organization_id=%s blocked before send: %s",
@@ -504,11 +564,11 @@ def send_scheduled_messages(app):
                         try:
                             recipient_data = _load_scheduled_snapshot(scheduled)
                         except ValueError as exc:
-                            scheduled.status = 'failed'
-                            scheduled.error_message = str(exc)
-                            scheduled.sent_at = now
-                            scheduled.next_retry_at = None
-                            db.session.commit()
+                            if not _finish_processing_schedule(
+                                scheduled_id, scheduled_organization_id,
+                                status='failed', error_message=str(exc), sent_at=now,
+                            ):
+                                continue
                             failed_count += 1
                             logger.error(
                                 "[Scheduler] Message id=%d FAILED: %s",
@@ -536,16 +596,42 @@ def send_scheduled_messages(app):
                     duplicate_skipped = 0
                     unsubscribed_skipped = 0
                     suppressed_skipped = 0
-                    if not scheduled.test_mode:
-                        recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
-                        unsubscribed_skipped = len(skipped)
-                        if skipped:
-                            logger.info("[Scheduler] Message id=%d: skipped %d unsubscribed recipient(s)", scheduled.id, len(skipped))
+                    permission_skipped = 0
+                    permission_purpose = 'event' if scheduled.target == 'event' else 'community'
+                    permission_event_id = scheduled.event_id if permission_purpose == 'event' else None
+                    if current_app.config.get("SAAS_MODE") and scheduled.test_mode:
+                        allowed_test_phones = {
+                            normalize_phone(row.phone)
+                            for row in list_test_recipients(scheduled.organization_id)
+                        }
+                        # A saved snapshot freezes the intended audience; a later
+                        # removal from the test allowlist revokes eligibility.
+                        recipient_data = [
+                            recipient for recipient in recipient_data
+                            if normalize_phone(recipient.get('phone')) in allowed_test_phones
+                        ]
 
-                        recipient_data, suppressed_rows, _ = filter_suppressed_recipients(recipient_data)
-                        suppressed_skipped = len(suppressed_rows)
-                        if suppressed_rows:
-                            logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_rows))
+                    recipient_data, skipped, _ = filter_unsubscribed_recipients(recipient_data)
+                    unsubscribed_skipped = len(skipped)
+                    if skipped:
+                        logger.info("[Scheduler] Message id=%d: skipped %d unsubscribed recipient(s)", scheduled.id, len(skipped))
+
+                    recipient_data, suppressed_rows, _ = filter_suppressed_recipients(recipient_data)
+                    suppressed_skipped = len(suppressed_rows)
+                    if suppressed_rows:
+                        logger.info("[Scheduler] Message id=%d: skipped %d suppressed recipient(s)", scheduled.id, len(suppressed_rows))
+
+                    if current_app.config.get("SAAS_MODE") and not scheduled.test_mode:
+                        recipient_data, permission_rows, _ = filter_permission_recipients(
+                            recipient_data, organization_id=scheduled.organization_id,
+                            purpose=permission_purpose, event_id=permission_event_id,
+                        )
+                        permission_skipped = len(permission_rows)
+                        if permission_skipped:
+                            logger.info(
+                                "[Scheduler] Message id=%d: skipped %d recipient(s) without current %s permission",
+                                scheduled.id, permission_skipped, permission_purpose,
+                            )
 
                     recipient_data, duplicate_rows, _ = dedupe_recipients_by_phone(recipient_data)
                     duplicate_skipped = len(duplicate_rows)
@@ -582,11 +668,11 @@ def send_scheduled_messages(app):
 
                     if not recipient_data:
                         if already_sent_skipped:
-                            scheduled.status = 'sent'
-                            scheduled.sent_at = now
-                            scheduled.error_message = None
-                            scheduled.next_retry_at = None
-                            db.session.commit()
+                            if not _finish_processing_schedule(
+                                scheduled_id, scheduled_organization_id,
+                                status='sent', error_message=None, sent_at=now,
+                            ):
+                                continue
                             sent_count += 1
                             logger.info(
                                 "[Scheduler] Message id=%d SENT: all recipients already delivered in prior attempts",
@@ -594,11 +680,16 @@ def send_scheduled_messages(app):
                             )
                             continue
 
-                        scheduled.status = 'failed'
-                        scheduled.error_message = 'No recipients found (all recipients unsubscribed or empty list)'
-                        scheduled.sent_at = now
-                        scheduled.next_retry_at = None
-                        db.session.commit()
+                        if not _finish_processing_schedule(
+                            scheduled_id, scheduled_organization_id,
+                            status='failed',
+                            error_message=(
+                                'No eligible recipients remain. Check recipient permissions, '
+                                'unsubscribes, suppressions, and the saved test allowlist.'
+                            ),
+                            sent_at=now,
+                        ):
+                            continue
                         failed_count += 1
                         logger.warning(
                             "[Scheduler] Message id=%d organization_id=%s FAILED: no recipients found unique_recipients=0 skipped_duplicates=%d skipped_unsubscribed=%d skipped_suppressed=%d skipped_already_sent=%d fingerprint=%s",
@@ -625,24 +716,31 @@ def send_scheduled_messages(app):
                         recipient_fingerprint_phones(recipient_data),
                     )
                     twilio = get_twilio_service(scheduled.organization_id)
-                    if current_app.config.get("SAAS_MODE"):
-                        result = twilio.send_bulk_with_attempts(
-                            recipient_data,
-                            scheduled.message_body,
-                            f"scheduled:{scheduled.id}",
-                            scheduled.message_log_id,
-                            scheduled.id,
-                            0.1,
-                            "blast",
-                        )
-                    else:
-                        result = twilio.send_bulk(
-                            recipient_data,
-                            scheduled.message_body,
-                            raise_on_transient=True,
-                            send_kind='blast',
-                        )
+                    send_kind = 'manual_live_test' if scheduled.test_mode else 'blast'
+                    with permission_context(permission_purpose, permission_event_id):
+                        if current_app.config.get("SAAS_MODE"):
+                            result = twilio.send_bulk_with_attempts(
+                                recipient_data,
+                                scheduled.message_body,
+                                f"scheduled:{scheduled.id}",
+                                scheduled.message_log_id,
+                                scheduled.id,
+                                0.1,
+                                send_kind,
+                            )
+                        else:
+                            with scheduled_dispatch_context(scheduled_id, scheduled_organization_id):
+                                result = twilio.send_bulk(
+                                    recipient_data,
+                                    scheduled.message_body,
+                                    raise_on_transient=True,
+                                    send_kind=send_kind,
+                                )
 
+                    scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
+                    if scheduled is None:
+                        db.session.commit()
+                        continue
                     log = _upsert_message_log_for_scheduled_send(
                         scheduled=scheduled,
                         result=result,
@@ -650,15 +748,22 @@ def send_scheduled_messages(app):
                         db=db,
                     )
 
-                    scheduled.status = 'sent' if int(result.get('failure_count') or 0) == 0 else 'failed'
-                    scheduled.sent_at = now
+                    was_cancelled = scheduled.status == 'cancelled'
+                    was_halted = scheduled.status != 'processing'
+                    if not was_halted:
+                        scheduled.status = 'sent' if int(result.get('failure_count') or 0) == 0 else 'failed'
+                        scheduled.sent_at = now
+                        scheduled.error_message = (
+                            None if scheduled.status == 'sent'
+                            else 'One or more recipients failed or have ambiguous provider acceptance.'
+                        )
+                        scheduled.processing_started_at = None
+                        scheduled.next_retry_at = None
                     scheduled.message_log_id = log.id
-                    scheduled.error_message = (
-                        None
-                        if scheduled.status == 'sent'
-                        else 'One or more recipients failed or have ambiguous provider acceptance.'
-                    )
-                    scheduled.next_retry_at = None
+                    if was_cancelled:
+                        scheduled.error_message = _cancelled_outcome_message(log)
+                        scheduled.processing_started_at = None
+                        scheduled.next_retry_at = None
                     db.session.commit()
                     _record_usage_candidates_safely(
                         scheduled_id=scheduled.id,
@@ -670,12 +775,13 @@ def send_scheduled_messages(app):
 
                     if scheduled.status == 'sent':
                         sent_count += 1
-                    else:
+                    elif scheduled.status == 'failed':
                         failed_count += 1
                     logger.info(
-                        "[Scheduler] Message id=%d organization_id=%s SENT: log_id=%d %d/%d successful skipped_duplicates=%d fingerprint=%s (status: processing -> sent)",
+                        "[Scheduler] Message id=%d organization_id=%s finalized status=%s: log_id=%d %d/%d provider-accepted skipped_duplicates=%d fingerprint=%s",
                         scheduled.id,
                         scheduled.organization_id,
+                        scheduled.status,
                         log.id,
                         log.success_count,
                         log.total_recipients,
@@ -693,6 +799,12 @@ def send_scheduled_messages(app):
                         )
                 
             except TwilioTransientError as e:
+                db.session.rollback()
+                scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
+                if scheduled is None:
+                    db.session.commit()
+                    continue
+                halted = scheduled.status != 'processing'
                 partial_result = getattr(e, 'results', None)
                 if not isinstance(partial_result, dict):
                     partial_result = {}
@@ -714,12 +826,14 @@ def send_scheduled_messages(app):
                         partial_result.get('failure_count', 0),
                         partial_fingerprint,
                     )
-                    _upsert_message_log_for_scheduled_send(
+                    partial_log = _upsert_message_log_for_scheduled_send(
                         scheduled=scheduled,
                         result=partial_result,
                         MessageLog=MessageLog,
                         db=db,
                     )
+                    if scheduled.status == 'cancelled':
+                        scheduled.error_message = _cancelled_outcome_message(partial_log)
                     db.session.commit()
                     _record_usage_candidates_safely(
                         scheduled_id=scheduled.id,
@@ -728,6 +842,10 @@ def send_scheduled_messages(app):
                         source='scheduled',
                         db=db,
                     )
+                else:
+                    db.session.commit()
+                if halted:
+                    continue
                 was_requeued = _handle_transient_failure(
                     scheduled=scheduled,
                     error=e,
@@ -740,11 +858,35 @@ def send_scheduled_messages(app):
                     duplicate_count=0,
                     db=db,
                 )
-                if was_requeued:
+                if was_requeued is True:
                     retried_count += 1
-                else:
+                elif was_requeued is False:
                     failed_count += 1
             except Exception as e:
+                db.session.rollback()
+                scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
+                if scheduled is None:
+                    db.session.commit()
+                    continue
+                partial_result = getattr(e, 'results', None)
+                if isinstance(partial_result, dict) and partial_result:
+                    partial_log = _upsert_message_log_for_scheduled_send(
+                        scheduled=scheduled, result=partial_result, MessageLog=MessageLog, db=db,
+                    )
+                    if scheduled.status == 'cancelled':
+                        scheduled.error_message = _cancelled_outcome_message(partial_log)
+                    db.session.commit()
+                    _record_usage_candidates_safely(
+                        scheduled_id=scheduled.id, organization_id=scheduled.organization_id,
+                        details=partial_result.get('details', []), source='scheduled', db=db,
+                    )
+                    scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
+                    if scheduled is None:
+                        db.session.commit()
+                        continue
+                if scheduled.status != 'processing':
+                    db.session.commit()
+                    continue
                 if _is_transient_send_error(e):
                     transient_fingerprint = build_blast_send_fingerprint(
                         organization_id=scheduled.organization_id,
@@ -766,17 +908,17 @@ def send_scheduled_messages(app):
                         duplicate_count=0,
                         db=db,
                     )
-                    if was_requeued:
+                    if was_requeued is True:
                         retried_count += 1
-                    else:
+                    elif was_requeued is False:
                         failed_count += 1
                     continue
 
-                scheduled.status = 'failed'
-                scheduled.error_message = str(e)
-                scheduled.sent_at = now
-                scheduled.next_retry_at = None
-                db.session.commit()
+                if not _finish_processing_schedule(
+                    scheduled_id, scheduled_organization_id,
+                    status='failed', error_message=str(e), sent_at=now,
+                ):
+                    continue
                 failed_count += 1
                 logger.error(
                     "[Scheduler] Message id=%d organization_id=%s FAILED: %s (status: processing -> failed)",

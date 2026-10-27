@@ -56,16 +56,19 @@ jobs:
           BACKUP_SCRIPT_REMOTE="/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh"
           PREPARE_SCRIPT_REMOTE="/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh"
           CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          APPLICATION_HELPER_REMOTE="/tmp/twinevia-release-source-${GITHUB_RUN_ID}.py"
           EXPORT_DIR_REMOTE="/tmp/twinevia-backup-export-${GITHUB_RUN_ID}"
           SSH_OPTIONS=(-p "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           SCP_OPTIONS=(-P "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
 
           scp "${SCP_OPTIONS[@]}" deploy/backup_twinevia_saas.sh "${SSH_TARGET_VALUE}:${BACKUP_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/release_source.py "${SSH_TARGET_VALUE}:${APPLICATION_HELPER_REMOTE}"
           scp "${SCP_OPTIONS[@]}" deploy/prepare_github_backup_export.sh "${SSH_TARGET_VALUE}:${PREPARE_SCRIPT_REMOTE}"
           scp "${SCP_OPTIONS[@]}" deploy/confirm_github_backup.sh "${SSH_TARGET_VALUE}:${CONFIRM_SCRIPT_REMOTE}"
           REMOTE_USER="$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" id -un)"
           ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" \
             sudo -n APP_ROOT=/opt/twinevia-saas/current \
+              BACKUP_APPLICATION_HELPER="${APPLICATION_HELPER_REMOTE}" \
               TWINEVIA_ENV_FILE=/opt/twinevia-saas/.env \
               APP_GROUP=twinevia \
               bash "${PREPARE_SCRIPT_REMOTE}" \
@@ -83,6 +86,18 @@ jobs:
           path: output/production-backup/**
           if-no-files-found: error
           retention-days: 35
+
+      - name: Download stored encrypted backup
+        uses: actions/download-artifact@v5
+        with:
+          name: twinevia-production-backup-${{ github.run_id }}
+          path: output/production-backup-downloaded
+
+      - name: Verify downloaded backup bytes and identity
+        run: |
+          python3 deploy/verify_backup_export.py \
+            --expected output/production-backup \
+            --downloaded output/production-backup-downloaded
 
       - name: Confirm off-host backup proof
         env:
@@ -124,7 +139,8 @@ jobs:
               "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
               "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \
-              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-release-source-${GITHUB_RUN_ID}.py"
 
       - name: Update backup incident
         if: always()

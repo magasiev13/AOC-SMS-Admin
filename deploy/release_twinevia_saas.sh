@@ -190,6 +190,12 @@ Path(os.environ["RELEASE_MANIFEST"]).write_text(
 sudo install -o root -g "${APP_GROUP}" -m 0440 "${release_manifest_tmp}" "${pending_release}/release.json"
 rm -f "${release_manifest_tmp}"
 
+sudo python3 "${pending_release}/deploy/release_source.py" preservation-check \
+  --source-root "${SOURCE_ROOT}" \
+  --current-root "${old_release}" \
+  --candidate-root "${pending_release}" \
+  --output "${pending_release}/source-preservation.json"
+
 sudo install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${pending_release}/venv"
 sudo -u "${APP_USER}" python3.11 -m venv "${pending_release}/venv"
 sudo -u "${APP_USER}" "${pending_release}/venv/bin/python" -m pip install --disable-pip-version-check -r "${pending_release}/requirements.txt"
@@ -237,6 +243,7 @@ case "${BACKUP_OFFSITE_MODE}" in
     APP_ROOT="${backup_application_root}" \
     APP_GROUP="${APP_GROUP}" \
     APP_RELEASE_ID="pre-migration-${release_id}" \
+    BACKUP_TARGET_SOURCE_SHA="${release_sha}" \
     TWINEVIA_ENV_FILE="${ENV_FILE}" \
     bash "${pending_release}/deploy/backup_twinevia_saas.sh"
     ;;
@@ -271,6 +278,11 @@ if age_minutes < 0 or age_minutes > 60:
     ;;
 esac
 
+python3 "${pending_release}/deploy/release_source.py" verify-backup \
+  --app-root "${old_release}" \
+  --status "${BACKUP_STATUS_FILE}" \
+  --target-source-sha "${release_sha}"
+
 backup_archive="$(BACKUP_STATUS_PATH="${BACKUP_STATUS_FILE}" python3 -c '
 import json
 import os
@@ -291,7 +303,7 @@ bash "${pending_release}/deploy/restore_twinevia_saas_backup.sh" \
   --archive "${backup_archive}" \
   --passphrase-file "${BACKUP_ENCRYPTION_PASSPHRASE_FILE}"
 
-sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; ./venv/bin/python -m app.aoc_scheduled_guard --organization-slug \"${AOC_EVENTS_ORGANIZATION_SLUG:-armenians-of-colorado}\" --expect-dispatchable-count 0"
+sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; ./venv/bin/python -m app.aoc_scheduled_guard --organization-slug \"${AOC_EVENTS_ORGANIZATION_SLUG:-armenians-of-colorado}\""
 
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; ./venv/bin/python -m app.saas_db --apply; ./venv/bin/python -m app.saas_db --ensure-platform-admin; ./venv/bin/python -m app.saas_db --doctor"
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${pending_release}\"; set -a; source \"${ENV_FILE}\"; source \"${pending_release}/.release.env\"; set +a; ./venv/bin/python - <<'PY'

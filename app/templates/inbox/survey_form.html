@@ -82,8 +82,8 @@
 
                         <div class="mb-3">
                             <label for="questions" class="form-label">Questions (one per line)</label>
-                            <textarea class="form-control" id="questions" name="questions" rows="6" required>{{ questions_value }}</textarea>
-                            <div class="form-text">Up to 10 questions. Each line is sent as one prompt.</div>
+                            <textarea class="form-control" id="questions" name="questions" rows="6" required aria-describedby="questionsHelp">{{ questions_value }}</textarea>
+                            <div class="form-text" id="questionsHelp">Up to 10 questions, at most 320 characters each. Each nonblank line is one prompt. Unsupported input is rejected without removing your text.</div>
                         </div>
 
                         <div class="mb-3">

@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,7 +22,20 @@ class TestAocEventSyncWebhook(unittest.TestCase):
 
         self._temp_dir = tempfile.TemporaryDirectory()
         db_path = os.path.join(self._temp_dir.name, "test.db")
-        os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
+        self._postgres_database = None
+        database_url = f"sqlite:///{db_path}"
+        if os.environ.get('AUDIT_PERMISSION_DATABASE_ROOT'):
+            import psycopg
+            from psycopg import sql
+            if os.environ['AUDIT_PERMISSION_DATABASE_ROOT'] != 'postgresql://audit@127.0.0.1:55432/postgres':
+                raise RuntimeError('AOC permission tests require the isolated local audit PostgreSQL cluster.')
+            self._postgres_database = 'permission_aoc_' + uuid.uuid4().hex
+            with psycopg.connect(os.environ['AUDIT_PERMISSION_DATABASE_ROOT'], autocommit=True) as connection:
+                connection.execute(sql.SQL('CREATE DATABASE {} TEMPLATE template0 ENCODING UTF8 LC_COLLATE {} LC_CTYPE {}').format(
+                    sql.Identifier(self._postgres_database), sql.Literal('C'), sql.Literal('C'),
+                ))
+            database_url = 'postgresql+psycopg://audit@127.0.0.1:55432/' + self._postgres_database
+        os.environ["DATABASE_URL"] = database_url
 
         import app.config
 
@@ -47,6 +61,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.delivery_counter = 0
 
         self.app = create_app(run_startup_tasks=False, start_scheduler=False)
+        self.assertEqual(self.app.config['SQLALCHEMY_DATABASE_URI'], database_url)
         self.app.config.update(
             TESTING=True,
             WTF_CSRF_ENABLED=False,
@@ -79,6 +94,11 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.db.engine.dispose()
         self._ctx.pop()
         self._temp_dir.cleanup()
+        if self._postgres_database:
+            import psycopg
+            from psycopg import sql
+            with psycopg.connect('postgresql://audit@127.0.0.1:55432/postgres', autocommit=True) as connection:
+                connection.execute(sql.SQL('DROP DATABASE {}').format(sql.Identifier(self._postgres_database)))
 
         for key, value in self._original_env.items():
             if value is None:
@@ -226,14 +246,54 @@ class TestAocEventSyncWebhook(unittest.TestCase):
 
         scheduled = self.ScheduledMessage.query.order_by(self.ScheduledMessage.automation_kind.asc()).all()
         self.assertEqual(len(scheduled), 4)
-        self.assertEqual({message.automation_kind for message in scheduled}, {"invite", "seven_day", "one_day", "day_of"})
-        self.assertEqual({message.organization_id for message in scheduled}, {self.organization.id})
-        self.assertIsNone(
-            next(message for message in scheduled if message.automation_kind == "invite").test_recipient_snapshot_json
+        self.assertEqual(
+            {message.automation_kind for message in scheduled},
+            {"two_week", "seven_day", "one_day", "day_of"},
         )
-        day_of = next(message for message in scheduled if message.automation_kind == "day_of")
-        self.assertEqual(day_of.target, "event")
-        self.assertEqual(day_of.event_id, event.id)
+        self.assertEqual({message.organization_id for message in scheduled}, {self.organization.id})
+        self.assertEqual({message.target for message in scheduled}, {"community"})
+        self.assertEqual({message.event_id for message in scheduled}, {None})
+        scheduled_by_kind = {message.automation_kind: message for message in scheduled}
+        self.assertEqual(scheduled_by_kind["two_week"].scheduled_at.isoformat(), "2027-06-28T15:00:00")
+        self.assertEqual(scheduled_by_kind["seven_day"].scheduled_at.isoformat(), "2027-07-05T15:00:00")
+        self.assertEqual(scheduled_by_kind["one_day"].scheduled_at.isoformat(), "2027-07-11T15:00:00")
+        self.assertEqual(scheduled_by_kind["day_of"].scheduled_at.isoformat(), "2027-07-12T14:00:00")
+        self.assertIn("Hi {first_name}, AOC reminder:", scheduled_by_kind["two_week"].message_body)
+
+    def test_event_title_html_entities_are_decoded_before_scheduling(self) -> None:
+        event = self._event_payload()
+        event["title"] = "Wine &#038; Brandy Tasting"
+        response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": event},
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.Event.query.one().title, "Wine & Brandy Tasting")
+        for scheduled in self.ScheduledMessage.query.all():
+            self.assertIn("Wine & Brandy Tasting", scheduled.message_body)
+            self.assertNotIn("&#038;", scheduled.message_body)
+
+    def test_reminders_preserve_denver_wall_clock_time_across_dst(self) -> None:
+        event = self._event_payload()
+        event["start_at"] = "2027-03-15T17:00:00-06:00"
+        event["end_at"] = "2027-03-15T20:00:00-06:00"
+        response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": event},
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        scheduled_by_kind = {
+            message.automation_kind: message
+            for message in self.ScheduledMessage.query.all()
+        }
+        self.assertEqual(scheduled_by_kind["two_week"].scheduled_at.isoformat(), "2027-03-01T16:00:00")
+        self.assertEqual(scheduled_by_kind["seven_day"].scheduled_at.isoformat(), "2027-03-08T16:00:00")
+        self.assertEqual(scheduled_by_kind["one_day"].scheduled_at.isoformat(), "2027-03-14T15:00:00")
+        self.assertEqual(scheduled_by_kind["day_of"].scheduled_at.isoformat(), "2027-03-15T14:00:00")
 
     def test_duplicate_event_delivery_updates_without_duplicate_reminders(self) -> None:
         payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
@@ -253,6 +313,30 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(self.Event.query.count(), 1)
         self.assertEqual(self.Event.query.one().title, "Vardavar Festival 2026")
         self.assertEqual(self.ScheduledMessage.query.count(), 4)
+
+    def test_cancelled_auto_reminder_is_not_recreated_by_event_update(self) -> None:
+        payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
+        first_response = self._signed_post(payload, secret=None, timestamp=None)
+        self.assertEqual(first_response.status_code, 200)
+
+        cancelled = self.ScheduledMessage.query.filter_by(automation_kind="seven_day").one()
+        cancelled.status = "cancelled"
+        cancelled_body = cancelled.message_body
+        self.db.session.commit()
+
+        updated_event = self._event_payload()
+        updated_event["title"] = "Updated Vardavar Title"
+        updated_event["modified_at"] = "2026-06-23T12:01:00-06:00"
+        second_response = self._signed_post(
+            {"action": "event_upsert", "source": "aoc-wordpress", "event": updated_event},
+            secret=None,
+            timestamp=None,
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        self.db.session.refresh(cancelled)
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(cancelled.message_body, cancelled_body)
 
     def test_delivery_replay_returns_stored_result_without_reapplying_payload(self) -> None:
         payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
@@ -421,7 +505,7 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.EventRegistration.query.count(), 0)
 
-    def test_wpforms_booking_ids_are_namespaced_and_require_sms_consent(self) -> None:
+    def test_wpforms_booking_ids_are_namespaced_and_directory_sync_is_independent_of_consent_source(self) -> None:
         booking = self._booking_payload("45", "+17205550145")
         booking["provider"] = "wpforms"
         booking["status"] = "completed"
@@ -439,9 +523,10 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         )
 
         self.assertEqual(no_consent_response.status_code, 200)
-        self.assertIn("did not include affirmative SMS consent", no_consent_response.get_json()["warnings"][0])
-        self.assertEqual(self.EventRegistration.query.count(), 0)
-        self.assertEqual(self.CommunityMember.query.count(), 0)
+        self.assertEqual(no_consent_response.get_json()["warnings"], [])
+        registration = self.EventRegistration.query.one()
+        self.assertEqual(registration.external_booking_id, "wpforms:45")
+        self.assertEqual(self.CommunityMember.query.count(), 1)
 
         booking["sms_consent"] = True
         booking["updated_at"] = "2026-06-23T12:06:00-06:00"
@@ -457,6 +542,117 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         )
 
         self.assertEqual(consent_response.status_code, 200)
+        self.assertEqual(self.EventRegistration.query.count(), 1)
         registration = self.EventRegistration.query.one()
         self.assertEqual(registration.external_booking_id, "wpforms:45")
+        self.assertEqual(self.CommunityMember.query.count(), 1)
+
+    def test_AOC_confirmed_signup_contract_is_not_revoked_by_a_synthetic_booking_flag(self) -> None:
+        from app.models import RecipientPermissionEvidence
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-false', '+17205550145')
+        booking['sms_consent'] = False
+        response = self._signed_post({'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}, None, None)
+        self.assertEqual(response.status_code, 200)
+        registration = self.EventRegistration.query.one()
+        self.assertEqual(self.CommunityMember.query.count(), 1)
+        community = recipient_permission_status(self.organization.id, registration.phone)
+        event = recipient_permission_status(self.organization.id, registration.phone, purpose='event', event_id=registration.event_id)
+        self.assertEqual((community.allowed, community.decision), (True, 'granted'))
+        self.assertEqual((event.allowed, event.decision), (True, 'granted'))
+        evidence = RecipientPermissionEvidence.query.filter_by(purpose='community').one()
+        self.assertIsNone(json.loads(evidence.metadata_json)['community_sms_consent'])
+        self.assertIs(json.loads(evidence.metadata_json)['sms_consent'], False)
+        self.assertEqual(json.loads(evidence.metadata_json)['consent_basis'], 'confirmed_community_signup')
+
+    def test_AOC_event_signups_authorize_community_communications(self) -> None:
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-event', '+17205550146')
+        response = self._signed_post({'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}, None, None)
+        self.assertEqual(response.status_code, 200)
+        registration = self.EventRegistration.query.one()
+        self.assertTrue(recipient_permission_status(self.organization.id, registration.phone, purpose='event', event_id=registration.event_id).allowed)
+        self.assertEqual(recipient_permission_status(self.organization.id, registration.phone).decision, 'granted')
+
+    def test_explicit_community_consent_and_updates_are_retained_idempotently(self) -> None:
+        from app.models import RecipientPermissionEvidence
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-update', '+17205550147')
+        booking['community_sms_consent'] = True
+        payload = {'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertEqual(RecipientPermissionEvidence.query.count(), 2)
+        booking.update(sms_consent=False, community_sms_consent=False, updated_at='2026-06-23T12:06:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
+        booking.update(sms_consent=True, community_sms_consent=True, updated_at='2026-06-23T12:07:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
+        self.assertEqual(RecipientPermissionEvidence.query.count(), 6)
+
+    def test_AOC_missing_flag_preserves_signup_consent_and_invalid_payload_loses_no_data(self) -> None:
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-missing', '+17205550148')
+        booking.pop('sms_consent')
+        payload = {'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        registration = self.EventRegistration.query.one()
+        self.assertEqual(recipient_permission_status(self.organization.id, registration.phone).decision, 'granted')
+        self.assertEqual(recipient_permission_status(self.organization.id, registration.phone, purpose='event', event_id=registration.event_id).decision, 'granted')
+        booking.update(sms_consent='not a boolean', updated_at='2026-06-23T12:06:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 400)
+        self.assertEqual(self.EventRegistration.query.count(), 1)
+        self.assertEqual(self.CommunityMember.query.count(), 1)
+
+    def test_booking_phone_change_withdraws_old_source_permission_and_preserves_contacts(self) -> None:
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        old_phone, new_phone = '+17205550149', '+17205550150'
+        booking = self._booking_payload('permission-phone', old_phone)
+        booking['community_sms_consent'] = True
+        payload = {'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        event_id = self.EventRegistration.query.one().event_id
+        booking.update(phone=new_phone, updated_at='2026-06-23T12:06:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertFalse(recipient_permission_status(self.organization.id, old_phone, purpose='event', event_id=event_id).allowed)
+        self.assertFalse(recipient_permission_status(self.organization.id, old_phone).allowed)
+        self.assertTrue(recipient_permission_status(self.organization.id, new_phone).allowed)
+        self.assertEqual(self.CommunityMember.query.count(), 2)
+
+    def test_cancelled_booking_withdraws_event_permission_not_general_permission(self) -> None:
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-cancel', '+17205550151')
+        booking['community_sms_consent'] = True
+        payload = {'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        event_id = self.EventRegistration.query.one().event_id
+        booking.update(status='cancelled', active=False, updated_at='2026-06-23T12:06:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertFalse(recipient_permission_status(self.organization.id, booking['phone'], purpose='event', event_id=event_id).allowed)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
+        self.assertEqual(self.EventRegistration.query.count(), 0)
+        self.assertEqual(self.CommunityMember.query.count(), 1)
+
+    def test_AOC_cancelled_booking_does_not_withdraw_community_consent_from_source_flags(self) -> None:
+        from app.services.recipient_permission_service import recipient_permission_status
+
+        booking = self._booking_payload('permission-cancel-update', '+17205550152')
+        booking['community_sms_consent'] = True
+        payload = {'action': 'booking_upsert', 'event': self._event_payload(), 'booking': booking}
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        booking.update(status='cancelled', active=False, updated_at='2026-06-23T12:06:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertEqual(self.EventRegistration.query.count(), 0)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
+        booking.update(community_sms_consent=False, updated_at='2026-06-23T12:07:00-06:00')
+        self.assertEqual(self._signed_post(payload, None, None).status_code, 200)
+        self.assertTrue(recipient_permission_status(self.organization.id, booking['phone']).allowed)
         self.assertEqual(self.CommunityMember.query.count(), 1)

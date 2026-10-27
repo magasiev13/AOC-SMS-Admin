@@ -215,6 +215,16 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.db.session.commit()
         return onboarding
 
+    def _grant_broadcast_permission(self, organization, phone):
+        from app.services.recipient_permission_service import record_permission_evidence
+
+        record_permission_evidence(
+            organization.id, phone, purpose="community", decision="granted",
+            source="test_fixture", evidence_key=f"fixture:{phone}", verified=True,
+            metadata={"proof": "Synthetic verified opt-in for the isolated provider test."},
+        )
+        self.db.session.commit()
+
     def test_staged_setup_payment_allows_registration_but_blocks_number_purchase(self) -> None:
         from app.services.twilio_service import (
             ProviderProvisioningError,
@@ -297,6 +307,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             from_number="+15550001111",
             phone_number_sid="PNactive0001",
         )
+        self._grant_broadcast_permission(organization, "+15550002222")
 
         result = get_twilio_service(organization.id).send_message("+15550002222", "Browser fake send")
 
@@ -317,6 +328,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             from_number="+15550001111",
             phone_number_sid="PNactive-durable-1",
         )
+        self._grant_broadcast_permission(organization, "+15550002222")
         service = get_twilio_service(organization.id)
 
         first_result = service.send_message_with_attempt(
@@ -355,6 +367,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             from_number="+15550001111",
             phone_number_sid="PNactive-durable-2",
         )
+        self._grant_broadcast_permission(organization, "+15550003333")
         service = get_twilio_service(organization.id)
         service.client = MagicMock()
         service.client.messages.create.side_effect = RuntimeError("connection ended after request write")
@@ -1382,6 +1395,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         mock_client = mock_build_subaccount_client.return_value
         mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            sid="SMusage-read-only",
             status="delivered",
             num_segments="2",
             price="-0.0400",
@@ -1423,6 +1437,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         mock_client = mock_build_subaccount_client.return_value
         mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            sid="SMusage-comped",
             status="delivered",
             num_segments="2",
             price="-0.0400",
@@ -1476,6 +1491,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         mock_client = mock_build_subaccount_client.return_value
         mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            sid="SMusage-hard-fail",
             status="undelivered",
             error_code=30003,
             error_message="Unknown subscriber",
@@ -1528,6 +1544,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         mock_client = mock_build_subaccount_client.return_value
         mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
+            sid="SMusage-soft-fail",
             status="undelivered",
             error_code=30001,
             error_message="Queue overflow",
@@ -1554,6 +1571,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-1",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
                     reconciliation_status="finalized",
@@ -1563,6 +1581,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-2",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
                     reconciliation_status="finalized",
@@ -1596,6 +1615,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-growth-1",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=2,
                     billable=True,
                     reconciliation_status="finalized",
@@ -1605,6 +1625,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-growth-2",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=3,
                     billable=True,
                     reconciliation_status="finalized",
@@ -1635,6 +1656,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-comp-1",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
                     reconciliation_status="finalized",
@@ -1644,6 +1666,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-comp-2",
+                    cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=2,
                     billable=True,
                     reconciliation_status="finalized",

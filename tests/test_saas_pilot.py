@@ -747,7 +747,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIn(b"Submitted to Twilio", response.data)
         self.assertIn(b"Hosted fallback", response.data)
 
-    def test_owner_setup_launch_marks_first_smoke_test_passed_after_successful_send(self) -> None:
+    def test_owner_setup_launch_records_submission_without_claiming_recipient_smoke_test_passed(self) -> None:
         self.subscription.status = "active"
         approved_at = datetime.utcnow() - timedelta(hours=1)
         self.messaging_profile.status = "active"
@@ -793,7 +793,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Workspace is live", response.data)
         self.assertIn(b"First smoke test", response.data)
-        self.assertIn(b"Passed", response.data)
+        self.assertIn(b"Submission recorded", response.data)
+        self.assertIn(b"Verify receipt, STOP and HELP separately", response.data)
 
     def test_owner_setup_compliance_step_surfaces_rejected_a2p_failure_details(self) -> None:
         self.subscription.status = "active"
@@ -1195,7 +1196,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Trial active", response.data)
-        self.assertIn(b"Sending enabled", response.data)
+        self.assertIn(b"Billing active", response.data)
         self.assertIn(b"Monthly", response.data)
         self.assertIn(b"$59.99/mo", response.data)
         self.assertIn(b"1,000 SMS segments", response.data)
@@ -1228,7 +1229,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Complimentary billing", response.data)
-        self.assertIn(b"Twilio charges stay on the customer-managed account.", response.data)
+        self.assertIn(b"Platform billing is covered. Messaging provider readiness is checked separately.", response.data)
         self.assertNotIn(b"Start Subscription", response.data)
         self.assertNotIn(b"Open Billing Portal", response.data)
 
@@ -1465,6 +1466,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertIsNotNone(self.organization.subscription.current_period_end)
 
     def test_staged_annual_fake_checkout_collects_setup_then_waits_for_approval(self) -> None:
+        from urllib.parse import urlsplit
         self.app.config["STRIPE_FAKE_CHECKOUT_ENABLED"] = True
         self.organization.billing_offer = "staged_annual"
         self.db.session.commit()
@@ -1481,7 +1483,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
             checkout.headers.get("Location", ""),
         )
         completed = self.client.post(
-            f"/_test/stripe/checkout/cs_fake_setup_org_{self.organization.id}",
+            urlsplit(checkout.headers["Location"]).path,
             data={
                 "organization_id": str(self.organization.id),
                 "success_url": "http://localhost/setup?step=billing&session_id={CHECKOUT_SESSION_ID}",
@@ -4339,7 +4341,8 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(organization.status, "suspended")
 
     @patch("app.queue.get_queue")
-    def test_dashboard_queue_preflight_failure_does_not_create_message_log(self, mock_get_queue) -> None:
+    def test_dashboard_queue_preflight_failure_preserves_pending_request(self, mock_get_queue) -> None:
+        self._grant_broadcast_permission('+15550001010')
         self.subscription.status = "trialing"
         self.db.session.add(
             self.CommunityMember(
@@ -4367,14 +4370,17 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            b"Background queue is unavailable right now. The blast was not queued. Check Redis/worker health and try again.",
+            b"Queue confirmation is pending; recovery will reuse this request.",
             response.data,
         )
-        self.assertEqual(self.MessageLog.query.count(), before_logs)
+        self.assertEqual(self.MessageLog.query.count(), before_logs + 1)
+        from app.models import OutboundRequest
+        self.assertEqual(OutboundRequest.query.one().status, 'pending')
         mock_queue.enqueue.assert_not_called()
 
     @patch("app.queue.get_queue")
     def test_dashboard_active_send_limit_blocks_same_tenant_queue_flood(self, mock_get_queue) -> None:
+        self._grant_broadcast_permission('+15550001011')
         self.subscription.status = "complimentary"
         self.app.config["TENANT_MAX_PROCESSING_MESSAGE_LOGS"] = 1
         self.db.session.add_all(
@@ -4416,6 +4422,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         mock_get_queue.assert_not_called()
 
     def test_dashboard_pending_schedule_limit_blocks_same_tenant_queue_flood(self) -> None:
+        self._grant_broadcast_permission('+15550001012')
         self.subscription.status = "complimentary"
         self.app.config["SCHEDULED_MAX_PENDING_PER_ORGANIZATION"] = 1
         future = datetime.utcnow() + timedelta(days=1)
@@ -4466,6 +4473,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_inbound_sms_routes_by_destination_number(self, mock_get_twilio) -> None:
+        self.subscription.status = 'trialing'
         with self.organization_context(self.organization.id):
             rule = self.KeywordAutomationRule(
                 keyword="HELP",
@@ -4498,6 +4506,97 @@ class TestSaasPilotFoundation(unittest.TestCase):
         thread = self.InboxThread.query.filter_by(phone="+15551234567").first()
         self.assertIsNotNone(thread)
         self.assertEqual(thread.organization_id, self.organization.id)
+
+
+    def _grant_broadcast_permission(self, phone):
+        from app.services.recipient_permission_service import record_permission_evidence
+        from app.models import utc_now
+        record_permission_evidence(
+            self.organization.id, phone, purpose='community', decision='granted',
+            source='test_verified_opt_in', evidence_key='fixture-community-' + phone,
+            occurred_at=utc_now(), metadata={'proof': 'Explicit synthetic positive permission fixture'}, verified=True,
+        )
+        self.db.session.commit()
+
+    def _durable_reply_fixture(self):
+        self.subscription.status = 'trialing'
+        self.app.config.update(TWILIO_ACCOUNT_SID='AClocalplatform', TWILIO_AUTH_TOKEN='local-platform-token')
+        thread = self.InboxThread(organization_id=self.organization.id, phone='+17205550147')
+        self.db.session.add(thread)
+        self.db.session.commit()
+        self._login_owner()
+        return thread
+
+    @patch('app.services.twilio_service._build_subaccount_client')
+    def test_durable_reply_repeat_refresh_and_new_intent(self, provider):
+        from app.models import InboxMessage, MessageDispatchAttempt, OutboundRequest
+        thread = self._durable_reply_fixture()
+        provider.return_value.messages.create.side_effect = [
+            SimpleNamespace(sid='SMfirst', status='queued', account_sid='ACsub_acme'),
+            SimpleNamespace(sid='SMsecond', status='queued', account_sid='ACsub_acme'),
+        ]
+        data = {'body': 'One intentional reply', 'request_idempotency_key': 'reply-browser-1'}
+        first = self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        self.assertIn(b'not a delivery receipt', first.data)
+        self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        self.assertEqual(provider.return_value.messages.create.call_count, 1)
+        self.assertEqual(OutboundRequest.query.count(), 1)
+        self.assertEqual(MessageDispatchAttempt.query.count(), 1)
+        self.assertEqual(InboxMessage.query.filter_by(direction='outbound').count(), 1)
+        # A freshly rendered form denotes a deliberate send after acceptance.
+        data['request_idempotency_key'] = 'reply-browser-2'
+        self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        self.assertEqual(provider.return_value.messages.create.call_count, 2)
+        self.assertEqual(InboxMessage.query.filter_by(direction='outbound').count(), 2)
+
+    @patch('app.services.twilio_service._build_subaccount_client')
+    def test_durable_reply_unknown_provider_response_blocks_new_form_and_replay(self, provider):
+        from app.models import InboxMessage, MessageDispatchAttempt, OutboundRequest
+        thread = self._durable_reply_fixture()
+        provider.return_value.messages.create.side_effect = TimeoutError('Provider may have accepted')
+        data = {'body': 'Uncertain reply', 'request_idempotency_key': 'uncertain-reply-1'}
+        first = self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        self.assertIn(b'acceptance is unresolved', first.data)
+        self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        data['request_idempotency_key'] = 'fresh-form-after-redis-expiry'
+        self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        self.assertEqual(provider.return_value.messages.create.call_count, 1)
+        self.assertEqual(OutboundRequest.query.one().status, 'ambiguous')
+        self.assertEqual(MessageDispatchAttempt.query.one().status, 'ambiguous')
+        self.assertEqual(InboxMessage.query.filter_by(direction='outbound').count(), 1)
+
+    @patch('app.services.twilio_service._build_subaccount_client')
+    def test_durable_reply_recovers_after_attempt_commit_before_inbox_commit(self, provider):
+        from app.models import InboxMessage, MessageDispatchAttempt, OutboundRequest
+        from app.services.inbox_service import send_thread_reply_with_key
+        thread = self._durable_reply_fixture()
+        provider.return_value.messages.create.return_value = SimpleNamespace(sid='SMsaved', status='queued', account_sid='ACsub_acme')
+        data = {'body': 'Committed attempt, interrupted page', 'request_idempotency_key': 'interrupted-reply'}
+        with patch('app.services.inbox_service._append_inbox_message', side_effect=ConnectionResetError('web interrupted')):
+            self.client.post(f'/inbox/{thread.id}/reply', data=data, follow_redirects=True)
+        saved = OutboundRequest.query.one()
+        self.assertEqual(saved.status, 'processing')
+        self.assertEqual(MessageDispatchAttempt.query.one().status, 'sent')
+        self.assertEqual(InboxMessage.query.filter_by(direction='outbound').count(), 0)
+        with self.organization_context(self.organization.id):
+            recovered = send_thread_reply_with_key(thread.id, data['body'], self.owner.username, f'reply-request:{saved.id}')
+            replay = send_thread_reply_with_key(thread.id, data['body'], self.owner.username, f'reply-request:{saved.id}')
+        self.assertEqual(recovered['sid'], 'SMsaved')
+        self.assertEqual(replay['inbox_message_id'], recovered['inbox_message_id'])
+        self.assertEqual(provider.return_value.messages.create.call_count, 1)
+        self.assertEqual(InboxMessage.query.filter_by(direction='outbound').count(), 1)
+        self.assertEqual(OutboundRequest.query.one().status, 'accepted')
+
+    @patch('app.services.twilio_service._build_subaccount_client')
+    def test_durable_reply_changed_content_conflict_does_not_send(self, provider):
+        from app.models import OutboundRequest
+        thread = self._durable_reply_fixture()
+        provider.return_value.messages.create.return_value = SimpleNamespace(sid='SMsaved', status='queued', account_sid='ACsub_acme')
+        self.client.post(f'/inbox/{thread.id}/reply', data={'body': 'Original', 'request_idempotency_key': 'bound-key'})
+        response = self.client.post(f'/inbox/{thread.id}/reply', data={'body': 'Changed', 'request_idempotency_key': 'bound-key'}, follow_redirects=True)
+        self.assertIn(b'already belongs to different content', response.data)
+        self.assertEqual(provider.return_value.messages.create.call_count, 1)
+        self.assertEqual(OutboundRequest.query.count(), 1)
 
 
 if __name__ == "__main__":

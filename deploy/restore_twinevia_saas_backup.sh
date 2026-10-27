@@ -261,6 +261,12 @@ tar --no-same-owner --no-same-permissions -xf "${decrypted_tar}" -C "${restore_d
   sha256sum -c manifest.sha256
 )
 
+if [[ -f "${restore_dir}/deployed-application.manifest.json" ]]; then
+  python3 "${SCRIPT_DIR}/release_source.py" verify-archive \
+    --archive "${restore_dir}/deployed-application.tar" \
+    --manifest "${restore_dir}/deployed-application.manifest.json"
+fi
+
 PGPASSWORD="${target_pg_password}" pg_restore \
   --exit-on-error \
   --clean \

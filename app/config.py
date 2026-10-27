@@ -315,6 +315,10 @@ class Config:
         SQLALCHEMY_ENGINE_OPTIONS['connect_args'] = {
             'timeout': _env_int('SQLITE_TIMEOUT', '30'),
         }
+    elif str(SQLALCHEMY_DATABASE_URI).startswith('postgresql'):
+        # Existing timestamp-without-time-zone columns represent UTC. Keep
+        # aware UTC values from being cast through a host/database local zone.
+        SQLALCHEMY_ENGINE_OPTIONS['connect_args'] = {'options': '-c timezone=UTC'}
     
     # Twilio
     TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -345,12 +349,27 @@ class Config:
     AOC_EVENTS_WEBHOOK_SECRET = os.environ.get('AOC_EVENTS_WEBHOOK_SECRET', '').strip()
     AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS = _env_int('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS', '300')
     AOC_EVENTS_ORGANIZATION_SLUG = os.environ.get('AOC_EVENTS_ORGANIZATION_SLUG', 'armenians-of-colorado').strip()
+    # AOC's owner confirmed that newsletter, event and in-person sign-ups all
+    # include permission for community SMS. This is a tenant-specific contract,
+    # not an inference that every organization's directory establishes consent.
+    COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS = _env_csv(
+        'COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS', AOC_EVENTS_ORGANIZATION_SLUG,
+    )
     AOC_SCHEDULED_CANCELLATION_RECORD_FILE = os.environ.get(
         'AOC_SCHEDULED_CANCELLATION_RECORD_FILE',
         '',
     ).strip()
     INBOUND_AUTO_REPLY_ENABLED = _env_bool('INBOUND_AUTO_REPLY_ENABLED', '1')
     SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS = _env_int('SURVEY_AMBIGUOUS_DUPLICATE_WINDOW_SECONDS', '3')
+    DELIVERY_RECEIPT_TIMEOUT_HOURS = _env_int('DELIVERY_RECEIPT_TIMEOUT_HOURS', '72')
+    USAGE_FACTS_TIMEOUT_DAYS = _env_int('USAGE_FACTS_TIMEOUT_DAYS', '7')
+    USAGE_RECONCILE_BATCH_SIZE = _env_int('USAGE_RECONCILE_BATCH_SIZE', '100')
+    USAGE_RECONCILE_TIME_BUDGET_SECONDS = _env_int('USAGE_RECONCILE_TIME_BUDGET_SECONDS', '30')
+    USAGE_PROVIDER_TIMEOUT_SECONDS = _env_int('USAGE_PROVIDER_TIMEOUT_SECONDS', '10')
+    TWILIO_MESSAGE_TIMEOUT_SECONDS = _env_int('TWILIO_MESSAGE_TIMEOUT_SECONDS', '30')
+    AUTOMATION_REPLY_MAX_AGE_MINUTES = _env_int('AUTOMATION_REPLY_MAX_AGE_MINUTES', '30')
+    AUTOMATION_REPLY_MAX_RETRIES = _env_int('AUTOMATION_REPLY_MAX_RETRIES', '3')
+    AUTOMATION_REPLY_LEASE_SECONDS = _env_int('AUTOMATION_REPLY_LEASE_SECONDS', '120')
     BILLING_TRIAL_DAYS = _env_int('BILLING_TRIAL_DAYS', '0')
     BILLING_INCLUDED_OUTBOUND_SEGMENTS = _env_int('BILLING_INCLUDED_OUTBOUND_SEGMENTS', '1000')
     BILLING_STARTER_INCLUDED_OUTBOUND_SEGMENTS = _env_int(

@@ -29,6 +29,20 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -63,6 +77,12 @@ jobs:
       - name: Run browser regression suite
         run: |
           ./run/test_browser.sh
+
+      - name: Run PostgreSQL concurrency and queue recovery checks
+        env:
+          TWINEVIA_TEST_POSTGRES_ROOT: postgresql://audit@127.0.0.1:55432/postgres
+        run: |
+          ./run/test_reliability_postgres.sh
 
   deploy:
     runs-on: ubuntu-latest
@@ -116,16 +136,20 @@ jobs:
           BACKUP_SCRIPT_REMOTE="/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh"
           PREPARE_SCRIPT_REMOTE="/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh"
           CONFIRM_SCRIPT_REMOTE="/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+          APPLICATION_HELPER_REMOTE="/tmp/twinevia-release-source-${GITHUB_RUN_ID}.py"
           EXPORT_DIR_REMOTE="/tmp/twinevia-backup-export-${GITHUB_RUN_ID}"
           SSH_OPTIONS=(-p "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           SCP_OPTIONS=(-P "${SSH_PORT_VALUE}" -i ~/.ssh/vps_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
 
           scp "${SCP_OPTIONS[@]}" deploy/backup_twinevia_saas.sh "${SSH_TARGET_VALUE}:${BACKUP_SCRIPT_REMOTE}"
+          scp "${SCP_OPTIONS[@]}" deploy/release_source.py "${SSH_TARGET_VALUE}:${APPLICATION_HELPER_REMOTE}"
           scp "${SCP_OPTIONS[@]}" deploy/prepare_github_backup_export.sh "${SSH_TARGET_VALUE}:${PREPARE_SCRIPT_REMOTE}"
           scp "${SCP_OPTIONS[@]}" deploy/confirm_github_backup.sh "${SSH_TARGET_VALUE}:${CONFIRM_SCRIPT_REMOTE}"
           REMOTE_USER="$(ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" id -un)"
           ssh "${SSH_OPTIONS[@]}" "${SSH_TARGET_VALUE}" \
-            sudo -n APP_ROOT=/opt/twinevia-saas \
+            sudo -n APP_ROOT=/opt/twinevia-saas/current \
+              BACKUP_APPLICATION_HELPER="${APPLICATION_HELPER_REMOTE}" \
+              BACKUP_TARGET_SOURCE_SHA="${GITHUB_SHA}" \
               TWINEVIA_ENV_FILE=/opt/twinevia-saas/.env \
               APP_GROUP=twinevia \
               bash "${PREPARE_SCRIPT_REMOTE}" \
@@ -143,6 +167,18 @@ jobs:
           path: output/production-backup/**
           if-no-files-found: error
           retention-days: 35
+
+      - name: Download stored encrypted backup
+        uses: actions/download-artifact@v5
+        with:
+          name: twinevia-production-backup-${{ github.run_id }}
+          path: output/production-backup-downloaded
+
+      - name: Verify downloaded backup bytes and identity
+        run: |
+          python3 deploy/verify_backup_export.py \
+            --expected output/production-backup \
+            --downloaded output/production-backup-downloaded
 
       - name: Confirm off-host backup proof
         env:
@@ -402,7 +438,8 @@ jobs:
               "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
               "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \
-              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh"
+              "/tmp/twinevia-confirm-backup-${GITHUB_RUN_ID}.sh" \
+              "/tmp/twinevia-release-source-${GITHUB_RUN_ID}.py"
 
       - name: Open deployment incident
         if: failure()

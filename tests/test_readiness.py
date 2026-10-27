@@ -102,6 +102,37 @@ class TestReadinessRoute(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_data(as_text=True), "NOT READY")
 
+    def test_readiness_route_returns_authenticated_json_diagnostics(self) -> None:
+        report = SimpleNamespace(
+            ready=False,
+            as_dict=lambda: {
+                "ready": False,
+                "checked_at": "2026-09-02T00:00:00+00:00",
+                "release_id": "release-test",
+                "checks": [
+                    {
+                        "name": "rq_worker",
+                        "ready": False,
+                        "detail": "no recent worker heartbeat",
+                    }
+                ],
+            },
+        )
+        with patch("app.routes.run_readiness_checks", return_value=report):
+            response = self.client.get(
+                "/ready",
+                headers={
+                    "Accept": "application/json",
+                    "X-Twinevia-Readiness-Token": "readiness-route-token-with-32-characters",
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.content_type, "application/json")
+        self.assertFalse(response.get_json()["ready"])
+        self.assertEqual(response.get_json()["checks"][0]["name"], "rq_worker")
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
 
 if __name__ == "__main__":
     unittest.main()

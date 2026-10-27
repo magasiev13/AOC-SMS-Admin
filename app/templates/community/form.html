@@ -28,16 +28,18 @@
                     <div class="workspace-panel__body">
                         <div class="mb-3">
                             <label for="name" class="form-label">Name (optional)</label>
-                            <input type="text" class="form-control" id="name" name="name" autocomplete="name"
-                                   value="{{ member.name if member and member.name else '' }}"
+                            <input type="text" class="form-control{{ ' is-invalid' if field_errors.get('name') else '' }}" id="name" name="name" autocomplete="name" maxlength="100"
+                                   value="{{ form_values.name }}" {% if field_errors.get('name') %}aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}
                                    placeholder="Enter first and last name (e.g. John Doe)">
+                            {% if field_errors.get('name') %}<div class="invalid-feedback" id="name-error" role="alert">{{ field_errors.name }}</div>{% endif %}
                         </div>
 
                         <div class="mb-0">
                             <label for="phone" class="form-label">Phone number <span class="text-danger">*</span></label>
-                            <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" required
-                                   value="{{ member.phone if member else '' }}"
+                            <input type="tel" class="form-control{{ ' is-invalid' if field_errors.get('phone') else '' }}" id="phone" name="phone" autocomplete="tel" required
+                                   value="{{ form_values.phone }}" {% if field_errors.get('phone') %}aria-invalid="true" aria-describedby="phone-error" autofocus{% endif %}
                                    placeholder="+1234567890 or (303) 555-1234">
+                            {% if field_errors.get('phone') %}<div class="invalid-feedback" id="phone-error" role="alert">{{ field_errors.phone }}</div>{% endif %}
                             <div class="form-text">Any format is accepted and stored as E.164.</div>
                         </div>
                     </div>

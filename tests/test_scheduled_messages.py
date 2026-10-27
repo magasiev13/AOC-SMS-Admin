@@ -403,7 +403,7 @@ class TestScheduledMessageProcessing(unittest.TestCase):
             [{"phone": "+15550001111", "name": "Board Chair"}],
             "Snapshot test message",
             raise_on_transient=True,
-            send_kind="blast",
+            send_kind="manual_live_test",
         )
 
     def test_test_mode_without_snapshot_fails_clearly(self):

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Review send - {{ product_name }}{% endblock %}
+{% block page_title %}Review send{% endblock %}
+{% block content %}
+<section class="workspace-panel">
+    <div class="workspace-panel__body">
+        {% include 'send/review_details.html' %}
+        <form method="POST" action="{{ url_for('main.dashboard') }}">
+            {% for name, values in submitted_fields %}{% if name not in ['review_token', 'edit_review'] %}{% for value in values %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}{% endif %}{% endfor %}
+            <input type="hidden" name="review_token" value="{{ review.review_token }}">
+            <div class="d-flex flex-wrap gap-2 mt-3">
+                <button class="btn btn-primary" type="submit">{{ review.confirmation_label }}</button>
+                <button class="btn btn-outline-secondary" name="edit_review" value="1" type="submit">Edit message</button>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

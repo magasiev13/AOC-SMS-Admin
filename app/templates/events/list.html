@@ -243,10 +243,10 @@
 
 {% if events %}
     {% for event in events %}
-    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="eventPreview{{ event.id }}">
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="eventPreview{{ event.id }}" aria-labelledby="eventPreviewTitle{{ event.id }}">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title">{{ event.title }}</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+            <h5 class="offcanvas-title" id="eventPreviewTitle{{ event.id }}">{{ event.title }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close preview"></button>
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Date:</strong> {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</p>
@@ -267,7 +267,7 @@
                 <h5 class="modal-title" id="deleteEventModalTitle">
                     <i class="bi bi-exclamation-triangle text-danger me-2"></i>Delete Event
                 </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <p class="mb-2">Delete <strong id="deleteEventName">this event</strong>?</p>
@@ -288,7 +288,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="bulkDeleteModalTitle">Delete Selected Events</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 Delete <strong id="bulkDeleteCount">0</strong> selected event(s)?

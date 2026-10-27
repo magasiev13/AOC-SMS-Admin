@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import secrets
 from datetime import date, datetime, time, timedelta, timezone
@@ -33,7 +34,9 @@ WORDPRESS_EVENT_SYNC_SOURCES = {WORDPRESS_EVENTS_MANAGER_SOURCE, WORDPRESS_WPFOR
 AOC_UNSUBSCRIBE_FOOTER = "\n\nReply STOP to unsubscribe."
 ACTIVE_BOOKING_STATUSES = {"active", "approved", "pending", "reserved", "submitted", "completed", "paid"}
 CANCELLED_BOOKING_STATUSES = {"cancelled", "canceled", "rejected", "deleted", "inactive"}
-PENDING_AUTO_STATUSES = {"pending", "cancelled"}
+PENDING_AUTO_STATUSES = {"pending"}
+EVENT_REMINDER_KINDS = ("two_week", "seven_day", "one_day", "day_of")
+LEGACY_EVENT_REMINDER_KINDS = ("invite",)
 
 
 class AocEventSyncError(Exception):
@@ -370,7 +373,7 @@ def _organization_for_id(organization_id: int) -> Organization:
 
 def _upsert_event(payload: dict[str, Any], source: str, received_at: datetime) -> Event:
     external_event_id = _required_text(payload, "event_id")
-    title = _required_text(payload, "title")
+    title = html.unescape(_required_text(payload, "title"))
     start_at = _required_datetime(payload, "start_at")
     timezone_name = _required_text(payload, "timezone")
     event_timezone = _timezone_for_name(timezone_name)
@@ -414,10 +417,6 @@ def _upsert_booking_registration(
     received_at: datetime,
 ) -> tuple[EventRegistration | None, int | None, str | None]:
     external_booking_id = _external_booking_id(payload)
-    if _optional_bool(payload, "sms_consent") is not True:
-        _delete_event_registration_for_booking(event, payload, source)
-        return None, None, f"Booking {external_booking_id} did not include affirmative SMS consent."
-
     raw_phone = _optional_text(payload, "phone")
     if not raw_phone:
         return None, None, f"Booking {external_booking_id} did not include a phone number."
@@ -443,6 +442,7 @@ def _upsert_booking_registration(
         )
         db.session.add(registration)
 
+    previous_phone = registration.phone
     registration.event_id = event.id
     registration.name = name or registration.name
     registration.phone = phone
@@ -450,7 +450,10 @@ def _upsert_booking_registration(
     registration.external_booking_id = external_booking_id
     registration.external_person_id = _optional_text(payload, "person_id")
     registration.external_booking_status = _optional_text(payload, "status")
-    registration.booking_spaces = _optional_int(payload, "spaces")
+    booking_spaces = _optional_int(payload, "spaces")
+    if booking_spaces is not None and booking_spaces < 0:
+        raise AocEventSyncPayloadError("AOC booking spaces must be zero or greater.")
+    registration.booking_spaces = booking_spaces
     selections = _optional_selections(payload, "selections")
     registration.selections_json = (
         json.dumps(selections, ensure_ascii=False, sort_keys=True)
@@ -461,15 +464,111 @@ def _upsert_booking_registration(
     registration.external_updated_at = _optional_utc_naive_datetime(payload, "updated_at")
     registration.synced_at = received_at
 
-    community_member = CommunityMember.query.filter_by(phone=phone).first()
-    if community_member is None:
-        community_member = CommunityMember(name=name, phone=phone)
-        db.session.add(community_member)
-    elif not community_member.name and name:
-        community_member.name = name
+    community_member = upsert_community_member_contact(name, phone)
+
+    _record_booking_permission(event, payload, source, phone, external_booking_id, received_at)
+    if previous_phone and previous_phone != phone:
+        _record_booking_withdrawal(
+            event, payload, source, previous_phone, external_booking_id,
+            received_at, reason='booking_phone_changed',
+        )
 
     db.session.flush()
     return registration, community_member.id, None
+
+
+def _record_booking_permission(
+    event: Event,
+    payload: dict[str, Any],
+    source: str,
+    phone: str,
+    external_booking_id: str,
+    received_at: datetime,
+    *,
+    purposes: tuple[str, ...] = ('event', 'community'),
+) -> None:
+    """Retain source signals under the organization's actual sign-up contract."""
+    from app.services.recipient_permission_service import (
+        organization_has_confirmed_signup_consent, record_permission_evidence,
+    )
+
+    occurred_at = _optional_utc_naive_datetime(payload, 'updated_at') or received_at
+    event_consent = _optional_bool(payload, 'sms_consent')
+    raw_community_consent = _optional_bool(payload, 'community_sms_consent')
+    community_consent = raw_community_consent
+    if event_consent is False and community_consent is None:
+        community_consent = False
+    evidence_source = f'event_sync:{source}:{external_booking_id}'
+    confirmed_signup = organization_has_confirmed_signup_consent(event.organization_id)
+    for purpose, flag, field in (
+        ('event', event_consent, 'sms_consent'),
+        ('community', community_consent, 'community_sms_consent'),
+    ):
+        if purpose not in purposes:
+            continue
+        if confirmed_signup:
+            flag = True
+        decision = 'granted' if flag is True else ('denied' if flag is False else 'unknown')
+        record_permission_evidence(
+            event.organization_id,
+            phone,
+            purpose=purpose,
+            event_id=event.id if purpose == 'event' else None,
+            decision=decision,
+            source=evidence_source,
+            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{decision}',
+            occurred_at=occurred_at,
+            verified=flag is True,
+            metadata={
+                'proof': (
+                    'Organization owner confirmed that newsletter, event and in-person sign-ups include community SMS permission.'
+                    if confirmed_signup else (f'Signed event booking explicitly set {field}=true.' if flag is True else None)
+                ),
+                'consent_basis': 'confirmed_community_signup' if confirmed_signup else 'source_field',
+                'event_id': event.id,
+                'external_source': source,
+                'external_booking_id': external_booking_id,
+                'sms_consent': event_consent,
+                'community_sms_consent': raw_community_consent,
+                'applied_community_decision': True if confirmed_signup else community_consent,
+            },
+        )
+
+
+def _record_booking_withdrawal(
+    event: Event, payload: dict[str, Any], source: str, phone: str,
+    external_booking_id: str, received_at: datetime, *, reason: str,
+) -> None:
+    from app.services.recipient_permission_service import record_permission_evidence
+
+    occurred_at = _optional_utc_naive_datetime(payload, 'updated_at') or received_at
+    purposes = ('event', 'community') if reason == 'booking_phone_changed' else ('event',)
+    for purpose in purposes:
+        record_permission_evidence(
+            event.organization_id, phone, purpose=purpose,
+            event_id=event.id if purpose == 'event' else None,
+            decision='denied', source=f'event_sync:{source}:{external_booking_id}',
+            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{reason}:{phone}',
+            occurred_at=occurred_at,
+            metadata={
+                'external_source': source, 'external_booking_id': external_booking_id,
+                'event_id': event.id, 'reason': reason,
+            },
+        )
+
+
+def upsert_community_member_contact(name: str | None, phone: str) -> CommunityMember:
+    normalized_phone = normalize_phone(phone)
+    if not validate_phone(normalized_phone):
+        raise AocEventSyncPayloadError(f"Community member phone {phone!r} is invalid.")
+
+    community_member = CommunityMember.query.filter_by(phone=normalized_phone).first()
+    if community_member is None:
+        community_member = CommunityMember(name=name, phone=normalized_phone)
+        db.session.add(community_member)
+    elif not community_member.name and name:
+        community_member.name = name
+    return community_member
 
 
 def _delete_event_registration_for_booking(
@@ -487,6 +586,19 @@ def _delete_event_registration_for_booking(
         phone = normalize_phone(raw_phone) if raw_phone else ""
         if phone:
             registration = EventRegistration.query.filter_by(event_id=event.id, phone=phone).first()
+    permission_phone = registration.phone if registration is not None else phone
+    if validate_phone(permission_phone):
+        # Canceling a booking withdraws event-specific eligibility. Preserve an
+        # independent community grant unless this payload also changes its signal.
+        if _optional_bool(payload, 'community_sms_consent') is not None or _optional_bool(payload, 'sms_consent') is False:
+            _record_booking_permission(
+                event, payload, source, permission_phone, external_booking_id,
+                utc_now(), purposes=('community',),
+            )
+        _record_booking_withdrawal(
+            event, payload, source, permission_phone, external_booking_id,
+            utc_now(), reason='booking_cancelled',
+        )
     if registration is None:
         return None
     registration_id = registration.id
@@ -497,13 +609,13 @@ def _delete_event_registration_for_booking(
 
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
     reminder_specs = (
-        ("invite", "community", _invite_scheduled_at(event, received_at), _invite_message(event)),
-        ("seven_day", "community", _days_before_scheduled_at(event, 7), _before_event_message(event, "one week")),
-        ("one_day", "community", _days_before_scheduled_at(event, 1), _before_event_message(event, "tomorrow")),
-        ("day_of", "event", _day_of_scheduled_at(event), _day_of_message(event)),
+        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, "two weeks away")),
+        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, "one week away")),
+        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, "tomorrow")),
+        ("day_of", _day_of_scheduled_at(event), _day_of_message(event)),
     )
 
-    for automation_kind, target, scheduled_at, message_body in reminder_specs:
+    for automation_kind, scheduled_at, message_body in reminder_specs:
         automation_key = _automation_key(event, automation_kind)
         automation_source = _automation_source_for_event(event)
         scheduled = ScheduledMessage.query.filter_by(
@@ -522,8 +634,8 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
             scheduled = ScheduledMessage(
                 scheduled_at=scheduled_at,
                 message_body=message_body,
-                target=target,
-                event_id=event.id if target == "event" else None,
+                target="community",
+                event_id=None,
                 automation_source=automation_source,
                 automation_key=automation_key,
                 automation_kind=automation_kind,
@@ -534,8 +646,8 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
             scheduled.status = "pending"
             scheduled.scheduled_at = scheduled_at
             scheduled.message_body = message_body
-            scheduled.target = target
-            scheduled.event_id = event.id if target == "event" else None
+            scheduled.target = "community"
+            scheduled.event_id = None
             scheduled.error_message = None
             scheduled.next_retry_at = None
             scheduled.processing_started_at = None
@@ -544,7 +656,10 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
 
 
 def _cancel_pending_event_reminders(event: Event) -> int:
-    automation_keys = [_automation_key(event, automation_kind) for automation_kind in ("invite", "seven_day", "one_day", "day_of")]
+    automation_keys = [
+        _automation_key(event, automation_kind)
+        for automation_kind in EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS
+    ]
     scheduled_messages = ScheduledMessage.query.filter(
         ScheduledMessage.automation_source.in_([AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE]),
         ScheduledMessage.status == "pending",
@@ -603,14 +718,6 @@ def _event_source_for_booking_source(source: str) -> str:
     return source
 
 
-def _invite_scheduled_at(event: Event, received_at: datetime) -> datetime | None:
-    if event.external_start_at is None:
-        return None
-    if event.external_start_at <= received_at + timedelta(minutes=15):
-        return None
-    return received_at + timedelta(minutes=5)
-
-
 def _days_before_scheduled_at(event: Event, days_before: int) -> datetime | None:
     local_start = _event_local_start(event)
     reminder_date = local_start.date() - timedelta(days=days_before)
@@ -620,40 +727,22 @@ def _days_before_scheduled_at(event: Event, days_before: int) -> datetime | None
 
 def _day_of_scheduled_at(event: Event) -> datetime | None:
     local_start = _event_local_start(event)
-    reminder_local = datetime.combine(local_start.date(), time(hour=9), tzinfo=local_start.tzinfo)
-    if reminder_local >= local_start:
-        reminder_local = local_start - timedelta(hours=2)
+    reminder_local = datetime.combine(local_start.date(), time(hour=8), tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
-
-
-def _invite_message(event: Event) -> str:
-    return normalize_sms_body(
-        f"Hi {{first_name}}, {event.title} is coming up on {_event_date_label(event)}. "
-        f"Sign up here: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
-    )
 
 
 def _before_event_message(event: Event, timing_label: str) -> str:
     return normalize_sms_body(
-        f"Reminder: {event.title} is {timing_label}. "
-        f"Please sign up if you have not yet: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
+        f"Hi {{first_name}}, AOC reminder: {event.title} is {timing_label}. "
+        f"Details and registration: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 
 
 def _day_of_message(event: Event) -> str:
-    location_sentence = ""
-    if event.sms_location_note:
-        location_sentence = f" Meet at {event.sms_location_note.strip()}"
     return normalize_sms_body(
-        f"Armenians of Colorado: Today, {event.title} starts at {_event_time_label(event)}."
-        f"{location_sentence} "
+        f"Hi {{first_name}}, AOC reminder: {event.title} is today at {_event_time_label(event)}. "
         f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
-
-
-def _event_date_label(event: Event) -> str:
-    local_start = _event_local_start(event)
-    return f"{local_start.strftime('%b')} {local_start.day}, {local_start.year}"
 
 
 def _event_time_label(event: Event) -> str:

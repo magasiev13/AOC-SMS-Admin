@@ -202,7 +202,21 @@ if age_hours < 0 or age_hours > int(os.environ["BACKUP_MAX_AGE"]):
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-release_id="${APP_RELEASE_ID:-$(basename "$(readlink -f "${APP_ROOT}")")}"
+payload_dir="${STAGING_DIR}/payload"
+install -d -m 0700 "${payload_dir}/database" "${payload_dir}/config" "${payload_dir}/host"
+application_helper="${BACKUP_APPLICATION_HELPER:-${SCRIPT_DIR}/release_source.py}"
+python3 "${application_helper}" archive \
+  --app-root "${APP_ROOT}" \
+  --archive "${payload_dir}/deployed-application.tar" \
+  --manifest "${payload_dir}/deployed-application.manifest.json" \
+  --metadata "${payload_dir}/application-source.json" \
+  --target-source-sha "${BACKUP_TARGET_SOURCE_SHA:-}"
+release_id="$(BACKUP_APPLICATION_METADATA="${payload_dir}/application-source.json" python3 -c '
+import json
+import os
+from pathlib import Path
+print(json.loads(Path(os.environ["BACKUP_APPLICATION_METADATA"]).read_text(encoding="utf-8"))["release_id"])
+')"
 release_id="$(printf '%s' "${release_id}" | tr -c 'A-Za-z0-9._-' '_')"
 archive_name="twinevia-${timestamp}-${release_id}.tar.enc"
 local_archive="${BACKUP_LOCAL_DIR}/${archive_name}"
@@ -213,9 +227,6 @@ if [[ "${BACKUP_OFFSITE_MODE}" == "mounted" ]]; then
   offsite_archive="${BACKUP_OFFSITE_DESTINATION}/${archive_name}"
   offsite_hmac="${offsite_archive}.hmac"
 fi
-payload_dir="${STAGING_DIR}/payload"
-install -d -m 0700 "${payload_dir}/database" "${payload_dir}/config" "${payload_dir}/host"
-
 PGPASSWORD="${pg_password}" pg_dump \
   --format=custom \
   --compress=9 \
@@ -238,22 +249,9 @@ if [[ -e "${systemd_units[0]}" ]]; then
   tar -cf "${payload_dir}/host/systemd-units.tar" -C /etc/systemd/system "${systemd_unit_names[@]}"
 fi
 
-release_root="$(readlink -f "${APP_ROOT}")"
-tar \
-  --exclude='./venv' \
-  --exclude='./.git' \
-  --exclude='./releases' \
-  --exclude='./current' \
-  --exclude='./previous' \
-  --exclude='./instance' \
-  --exclude='./node_modules' \
-  --exclude='./output' \
-  --exclude='./.env' \
-  -cf "${payload_dir}/deployed-application.tar" \
-  -C "${release_root}" .
-
 BACKUP_RELEASE_ID="${release_id}" \
 BACKUP_CREATED_AT="${timestamp}" \
+BACKUP_APPLICATION_METADATA="${payload_dir}/application-source.json" \
 BACKUP_METADATA_PATH="${payload_dir}/metadata.json" \
 python3 -c '
 import json
@@ -265,6 +263,7 @@ Path(os.environ["BACKUP_METADATA_PATH"]).write_text(
         {
             "created_at": os.environ["BACKUP_CREATED_AT"],
             "release_id": os.environ["BACKUP_RELEASE_ID"],
+            "application": json.loads(Path(os.environ["BACKUP_APPLICATION_METADATA"]).read_text(encoding="utf-8")),
             "database_format": "PostgreSQL custom",
             "provider_secrets": "encrypted values are contained in the PostgreSQL dump",
         },
@@ -353,6 +352,7 @@ BACKUP_OFFSITE_REFERENCE="${offsite_reference}" \
 BACKUP_OFFSITE_VERIFIED="${offsite_verified}" \
 BACKUP_SHA256="${encrypted_sha256}" \
 BACKUP_RELEASE_ID="${release_id}" \
+BACKUP_APPLICATION_METADATA="${payload_dir}/application-source.json" \
 BACKUP_STATUS_OUTPUT="${status_tmp}" \
 python3 -c '
 import json
@@ -372,6 +372,7 @@ Path(os.environ["BACKUP_STATUS_OUTPUT"]).write_text(
             "offsite_reference": os.environ["BACKUP_OFFSITE_REFERENCE"],
             "offsite_verified": os.environ["BACKUP_OFFSITE_VERIFIED"] == "true",
             "release_id": os.environ["BACKUP_RELEASE_ID"],
+            "application": json.loads(Path(os.environ["BACKUP_APPLICATION_METADATA"]).read_text(encoding="utf-8")),
         },
         indent=2,
         sort_keys=True,

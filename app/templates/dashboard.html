@@ -12,6 +12,8 @@
 {% block content %}
 <div class="workspace-shell">
     {% if config.SAAS_MODE and current_organization %}
+    <details class="dashboard-overview" id="workspaceOverview" open>
+    <summary class="btn btn-outline-secondary mb-2">Workspace overview</summary>
     {% call ui.workspace_summary(workspace_summary) %}
     {% if current_user_is_workspace_owner %}
     <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
@@ -26,6 +28,7 @@
     </form>
     {% endif %}
     {% endcall %}
+    </details>
     {% endif %}
 
     <div class="workspace-command-layout dashboard-layout">
@@ -43,8 +46,10 @@
                         <strong>Live SMS is paused.</strong> {{ send_disabled_reason }}
                     </div>
                     {% endif %}
-                    <form method="POST" id="sendForm">
+                    <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="require_review" value="1">
+                        <input type="hidden" name="review_token" value="">
                         <input type="hidden" name="request_idempotency_key" value="{{ scheduled_request_idempotency_key }}">
                         <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
@@ -52,7 +57,7 @@
                         <div class="mb-3">
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
-                                      placeholder="Enter your message..." required maxlength="1600"></textarea>
+                                      placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', '') }}</textarea>
                             <div class="form-text">
                                 <span><span id="charCount">0</span> / 1600 characters</span>
                                 <span class="ms-2">Encoding: <span id="messageEncoding">GSM-7</span></span>
@@ -68,23 +73,24 @@
                             <label class="form-label">Target Audience</label>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetCommunity"
-                                       value="community" checked>
+                                       value="community" {% if request.form.get('target', 'community') == 'community' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetCommunity">
                                     <i class="bi bi-people me-1"></i>Community Blast
-                                    <span class="text-muted">(all community recipients)</span>
+                                    <span class="text-muted">{{ '(community signup list)' if confirmed_community_signup_consent else '(contacts with community permission)' }}</span>
                                 </label>
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetEvent"
-                                       value="event">
+                                       value="event" {% if request.form.get('target') == 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetEvent">
                                     <i class="bi bi-calendar-event me-1"></i>Event Blast
-                                    <span class="text-muted">(registered event attendees)</span>
+                                    <span class="text-muted">(attendees with permission for this event)</span>
                                 </label>
                             </div>
                             <div class="form-text">
-                                Choose Community to reach your master list, or Event to target a single registration list.
+                                {% if confirmed_community_signup_consent %}Community signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
                             </div>
+                            <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
                         </div>
 
                         <div class="mb-3" id="eventSelectWrapper" style="display: none;">
@@ -92,8 +98,8 @@
                             <select class="form-select" id="event_id" name="event_id">
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
-                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}">
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} recipients
+                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if request.form.get('event_id', type=int) == event.id %}selected{% endif %}>
+                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} registrations
                                 </option>
                                 {% endfor %}
                             </select>
@@ -101,7 +107,7 @@
 
                         <div class="mb-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" checked>
+                                <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" {% if request.method != 'POST' or request.form.get('include_unsubscribe') == 'on' %}checked{% endif %}>
                                 <label class="form-check-label" for="includeUnsubscribe">
                                     <i class="bi bi-shield-check me-1"></i><strong>Include unsubscribe option</strong>
                                     <span class="text-muted">- Appends "Reply STOP to unsubscribe"</span>
@@ -109,14 +115,14 @@
                             </div>
                         </div>
 
-                        <details class="advanced-options mb-3">
+                        <details class="advanced-options mb-3" {% if request.form.get('schedule_later') == 'on' or request.form.get('test_mode') == 'on' %}open{% endif %}>
                             <summary class="advanced-options__summary">
                                 <i class="bi bi-sliders me-2"></i>Advanced options
                             </summary>
                             <div class="mt-3">
                                 <div class="mb-3">
                                     <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater">
+                                        <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater" {% if request.form.get('schedule_later') == 'on' %}checked{% endif %}>
                                         <label class="form-check-label" for="scheduleLater">
                                             <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
                                         </label>
@@ -131,11 +137,11 @@
                                     <div class="row">
                                         <div class="col-md-6">
                                             <label for="schedule_date" class="form-label">Date</label>
-                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date">
+                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date" value="{{ request.form.get('schedule_date', '') }}">
                                         </div>
                                         <div class="col-md-6">
                                             <label for="schedule_time" class="form-label">Time</label>
-                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time">
+                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time" value="{{ request.form.get('schedule_time', '') }}">
                                         </div>
                                     </div>
                                     <div class="form-text">
@@ -147,7 +153,7 @@
                                 <div class="mb-3">
                                     <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
                                         <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="test_mode" id="testMode">
+                                            <input class="form-check-input" type="checkbox" name="test_mode" id="testMode" {% if request.form.get('test_mode') == 'on' %}checked{% endif %}>
                                             <label class="form-check-label" for="testMode">
                                                 <i class="bi bi-bug me-1"></i><strong>Test Mode</strong>
                                             </label>
@@ -171,13 +177,13 @@
                                         <div class="mb-3">
                                             <div class="form-label mb-2">Test recipients</div>
                                             <div class="form-check">
-                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeOne" value="one" checked>
+                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeOne" value="one" {% if request.form.get('test_recipient_selection_mode', 'one') == 'one' %}checked{% endif %}>
                                                 <label class="form-check-label" for="testRecipientModeOne">
                                                     Send to one saved recipient
                                                 </label>
                                             </div>
                                             <div class="form-check">
-                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeAll" value="all">
+                                                <input class="form-check-input" type="radio" name="test_recipient_selection_mode" id="testRecipientModeAll" value="all" {% if request.form.get('test_recipient_selection_mode') == 'all' %}checked{% endif %}>
                                                 <label class="form-check-label" for="testRecipientModeAll">
                                                     Send to all saved test recipients
                                                 </label>
@@ -196,7 +202,7 @@
                                             <select class="form-select" id="testRecipientPhone" name="test_recipient_phone">
                                                 <option value="">-- Select a saved test recipient --</option>
                                                 {% for recipient in saved_test_recipients %}
-                                                <option value="{{ recipient.phone }}">
+                                                <option value="{{ recipient.phone }}" {% if request.form.get('test_recipient_phone') == recipient.phone %}selected{% endif %}>
                                                     {{ recipient.display_label }} · {{ recipient.phone }}
                                                 </option>
                                                 {% endfor %}
@@ -540,6 +546,16 @@
         </section>
         {% endif %}
 </div>
+<div class="modal fade" id="sendReviewModal" tabindex="-1" aria-labelledby="sendReviewTitle" aria-describedby="sendReviewExplanation">
+    <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
+        <div class="modal-header"><h2 class="modal-title h5" id="sendReviewTitle">Review send</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close review"></button></div>
+        <div class="modal-body">
+            <p id="sendReviewExplanation">Check the audience, timing and personalized sample before confirming.</p>
+            {% include 'send/review_details.html' %}
+        </div>
+        <div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Edit message</button><button class="btn btn-primary" type="button" id="confirmReviewedSend">Confirm send</button></div>
+    </div></div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -575,8 +591,36 @@
     const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
     const includeUnsubscribe = document.getElementById('includeUnsubscribe');
     const unsubscribeFooter = {{ blast_unsubscribe_footer|tojson }};
-    const communityRecipientCount = {{ community_count|int }};
     const savedTestRecipientCount = {{ saved_test_recipient_count|int }};
+    const audienceEligibility = document.getElementById('audienceEligibility');
+    let eligibleRecipientCount = null;
+    let audiencePreviewSequence = 0;
+
+    async function refreshAudiencePreview() {
+        const sequence = ++audiencePreviewSequence;
+        if (testMode && testMode.checked) {
+            audienceEligibility.textContent = 'Internal test recipients only. Saved-list membership and opt-outs are checked again at submission.';
+            updateMessageStats();
+            return;
+        }
+        eligibleRecipientCount = null;
+        audienceEligibility.textContent = 'Checking audience eligibility…';
+        updateMessageStats();
+        const params = new URLSearchParams({target: targetEvent.checked ? 'event' : 'community'});
+        if (targetEvent.checked && eventSelect.value) params.set('event_id', eventSelect.value);
+        try {
+            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }} + '?' + params, {headers: {Accept: 'application/json'}});
+            if (!response.ok) throw new Error('Audience preview unavailable');
+            const preview = await response.json();
+            if (sequence !== audiencePreviewSequence) return;
+            eligibleRecipientCount = preview.eligible;
+            audienceEligibility.textContent = `${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
+        } catch (error) {
+            if (sequence !== audiencePreviewSequence) return;
+            audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
+        }
+        updateMessageStats();
+    }
 
     function getCookieValue(name) {
         const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -615,10 +659,7 @@
             }
             return savedTestRecipientCount;
         }
-        if (targetEvent.checked) {
-            return Number(eventSelect?.selectedOptions?.[0]?.dataset?.recipientCount || 0);
-        }
-        return communityRecipientCount;
+        return eligibleRecipientCount || 0;
     }
 
     function updateMessageStats() {
@@ -662,7 +703,7 @@
 
     function toggleEventSelect() {
         eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';
-        updateMessageStats();
+        refreshAudiencePreview();
     }
 
     function toggleSchedule() {
@@ -697,14 +738,14 @@
         }
         testModeOptions.style.display = testMode.checked ? 'block' : 'none';
         updateTestModeRecipientControls();
-        updateMessageStats();
+        refreshAudiencePreview();
     }
 
     targetEvent.addEventListener('change', toggleEventSelect);
     targetCommunity.addEventListener('change', toggleEventSelect);
     scheduleLater.addEventListener('change', toggleSchedule);
     if (eventSelect) {
-        eventSelect.addEventListener('change', updateMessageStats);
+        eventSelect.addEventListener('change', refreshAudiencePreview);
     }
     if (includeUnsubscribe) {
         includeUnsubscribe.addEventListener('change', updateMessageStats);
@@ -949,4 +990,5 @@
         }
     }
 </script>
+<script src="{{ url_for('static', filename='js/send_review.js') }}"></script>
 {% endblock %}

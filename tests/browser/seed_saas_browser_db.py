@@ -59,6 +59,7 @@ def main() -> None:
     )
     from app.migrations.runner import run_pending_migrations
     from app.saas_migrations.runner import run_pending_saas_migrations
+    from app.services.recipient_permission_service import record_permission_evidence
 
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
@@ -759,6 +760,16 @@ def main() -> None:
         ]
         db.session.add_all(acme_members + northstar_members)
         db.session.flush()
+        # These synthetic contacts are deliberately permitted fixtures. Ordinary
+        # directory saves/imports do not create grants; review tests add their
+        # own unreviewed contacts through that real UI path.
+        for member in acme_members + northstar_members:
+            record_permission_evidence(
+                member.organization_id, member.phone,
+                purpose='community', decision='granted', source='browser_fixture',
+                evidence_key=f'community:{member.id}', occurred_at=now,
+                verified=True, metadata={'proof': 'Synthetic explicit community opt-in for the isolated browser fixture.'},
+            )
 
         acme_event = Event(
             organization_id=active_org.id,
@@ -773,23 +784,39 @@ def main() -> None:
         db.session.add_all([acme_event, northstar_event])
         db.session.flush()
 
-        db.session.add_all(
-            [
-                EventRegistration(
-                    organization_id=active_org.id,
-                    event_id=acme_event.id,
-                    name="Acme RSVP",
-                    phone="+17205550103",
-                ),
-                EventRegistration(
-                    organization_id=isolation_org.id,
-                    event_id=northstar_event.id,
-                    name="Northstar RSVP",
-                    phone="+17205550203",
-                ),
-            ]
-        )
+        event_registrations = [
+            EventRegistration(
+                organization_id=active_org.id,
+                event_id=acme_event.id,
+                name="Acme RSVP",
+                phone="+17205550103",
+            ),
+            EventRegistration(
+                organization_id=isolation_org.id,
+                event_id=northstar_event.id,
+                name="Northstar RSVP",
+                phone="+17205550203",
+            ),
+        ]
+        db.session.add_all(event_registrations)
+        db.session.flush()
+        for registration in event_registrations:
+            record_permission_evidence(
+                registration.organization_id, registration.phone,
+                purpose='event', event_id=registration.event_id, decision='granted',
+                source='browser_fixture', evidence_key=f'event:{registration.id}',
+                occurred_at=now, verified=True,
+                metadata={'proof': 'Synthetic explicit event opt-in for the isolated browser fixture.'},
+            )
 
+        from app.models import InboxThread, InboxMessage
+        reply_thread = InboxThread(organization_id=active_org.id, phone='+17205550101', contact_name='Maya Chen', last_message_at=now)
+        db.session.add(reply_thread)
+        db.session.flush()
+        db.session.add(InboxMessage(
+            organization_id=active_org.id, thread_id=reply_thread.id, phone=reply_thread.phone,
+            direction='inbound', body='Please confirm the next event.', message_sid='SMbrowserinboundseed', created_at=now,
+        ))
         db.session.commit()
 
 

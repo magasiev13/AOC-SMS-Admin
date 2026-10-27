@@ -21,7 +21,16 @@
 {% block content %}
 <div id="inboxStatusMeta" class="d-none"
      data-latest-message-id="{{ inbox_status_latest_message_id }}"
+     data-message-count="{{ inbox_status_message_count }}"
+     data-delivery-version="{{ inbox_status_delivery_version }}"
+     data-draft-context="{{ reply_draft_context }}"
+     data-thread-id="{{ selected_thread.id if selected_thread else '' }}"
+     data-acknowledged-key="{{ acknowledged_reply_key or '' }}"
      data-status-url="{{ url_for('main.inbox_status') }}"></div>
+<div class="alert alert-info d-none" id="inboxActivityNotice" role="status" aria-live="polite">
+    <span>New inbox activity is available. Your unsent reply will be kept.</span>
+    <a class="btn btn-sm btn-outline-primary ms-2" id="inboxActivityRefresh" href="{{ latest_messages_url }}">View updates</a>
+</div>
 <div class="row g-3 inbox-layout">
     <div class="col-lg-4 {% if selected_thread and not show_thread_list_only %}d-none d-lg-block{% endif %}" id="inboxThreadsPanel">
         {% call ui.collection_search_panel(
@@ -175,8 +184,8 @@
                 <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-2">
                     <div class="form-check mb-0">
                         <input class="form-check-input" type="checkbox" id="selectAllMessages"
-                               aria-label="Select all messages in thread">
-                        <label class="form-check-label small" for="selectAllMessages">Select all messages</label>
+                               aria-label="Select all messages on this page">
+                        <label class="form-check-label small" for="selectAllMessages">Select all messages on this page</label>
                     </div>
                     <button id="bulkMessageDeleteButton" class="btn btn-sm btn-soft-danger inbox-bulk-delete-btn" type="submit"
                             form="bulkMessageDeleteForm" data-confirm="Delete selected messages?"
@@ -212,7 +221,15 @@
                                             {% endif %}
                                         {% endif %}
                                         {% if message.direction == 'outbound' and message.delivery_status %}
-                                            • {{ message.delivery_status }}
+                                            {% set delivery_labels = {
+                                                'queued': 'Queued by provider', 'accepted': 'Awaiting delivery receipt',
+                                                'sending': 'Sending to carrier', 'sent': 'Sent to carrier; receipt pending',
+                                                'delivered': 'Delivered', 'read': 'Read receipt', 'undelivered': 'Undelivered',
+                                                'failed': 'Delivery failed', 'canceled': 'Provider canceled',
+                                                'pending': 'Awaiting delivery receipt', 'unknown': 'Delivery unconfirmed; receipt window expired',
+                                                'conflict': 'Conflicting delivery receipts'
+                                            } %}
+                                            • {{ delivery_labels.get(message.delivery_status, message.delivery_status) }}
                                         {% endif %}
                                     </div>
                                     {% if message.delivery_error %}
@@ -243,8 +260,19 @@
                     <div class="inbox-skeleton-line inbox-skeleton-line--short"></div>
                 </div>
 
+                <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2" aria-label="Conversation history">
+                    <span class="small text-muted">{{ messages|length }} messages on this page</span>
+                    <div class="d-flex gap-2">
+                        {% if older_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ older_messages_url }}">Older messages</a>{% endif %}
+                        {% if newer_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ newer_messages_url }}">Newer messages</a><a class="btn btn-sm btn-outline-primary" href="{{ latest_messages_url }}">Latest</a>{% endif %}
+                    </div>
+                </nav>
                 <form method="POST" action="{{ url_for('main.inbox_reply', thread_id=selected_thread.id) }}" class="mt-3 inbox-reply-form">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="request_idempotency_key" value="{{ reply_request_key }}">
+                    {% if saved_reply_request %}
+                    <div class="alert alert-warning" role="status">{{ request_status_message(saved_reply_request) }}</div>
+                    {% endif %}
                     <label for="replyBody" class="form-label">Send reply</label>
                     <div class="input-group">
                         <textarea id="replyBody" name="body" class="form-control" rows="2" maxlength="1600"
@@ -255,6 +283,8 @@
                         </button>
                     </div>
                     <div class="form-text" id="replyBodyStats" aria-live="polite"></div>
+                    <div class="form-text" id="replyDraftStatus" role="status" aria-live="polite"></div>
+                    <button class="btn btn-sm btn-link px-0" type="button" id="discardReplyDraft">Discard draft and start a new reply</button>
                 </form>
             </div>
             {% else %}
@@ -369,57 +399,6 @@
         messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
     }
 
-    const inboxStatusMeta = document.getElementById('inboxStatusMeta');
-    if (inboxStatusMeta) {
-        const statusUrl = inboxStatusMeta.dataset.statusUrl || '';
-        const baselineMessageId = Number(inboxStatusMeta.dataset.latestMessageId || 0);
-        let pollIntervalId = null;
-        let pollStartTimeoutId = null;
-        let statusCheckInFlight = false;
-        let isReloading = false;
-
-        function stopInboxPolling() {
-            if (pollStartTimeoutId) {
-                window.clearTimeout(pollStartTimeoutId);
-                pollStartTimeoutId = null;
-            }
-            if (pollIntervalId) {
-                window.clearInterval(pollIntervalId);
-                pollIntervalId = null;
-            }
-        }
-
-        async function checkInboxStatus() {
-            if (document.hidden || !statusUrl || statusCheckInFlight || isReloading) {
-                return;
-            }
-
-            statusCheckInFlight = true;
-            try {
-                const response = await fetch(statusUrl, {
-                    headers: { Accept: 'application/json' },
-                });
-                if (!response.ok) {
-                    return;
-                }
-
-                const payload = await response.json();
-                const latestMessageId = Number(payload.latest_message_id || 0);
-                if (latestMessageId !== baselineMessageId) {
-                    isReloading = true;
-                    stopInboxPolling();
-                    window.location.reload();
-                }
-            } catch (error) {
-                console.error('Inbox status check failed:', error);
-            } finally {
-                statusCheckInFlight = false;
-            }
-        }
-
-        pollStartTimeoutId = window.setTimeout(() => {
-            pollIntervalId = window.setInterval(checkInboxStatus, 3000);
-        }, 1000);
-    }
 </script>
+<script src="{{ url_for('static', filename='js/inbox_drafts.js') }}"></script>
 {% endblock %}

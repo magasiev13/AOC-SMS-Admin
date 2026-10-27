@@ -245,6 +245,14 @@ class TestSendBulkJob(unittest.TestCase):
 
         log_id = self._create_log(organization_id=organization.id, details=[])
         recipients = [{"phone": "+15550000008", "name": "Active Recipient"}]
+        from app.services.recipient_permission_service import record_permission_evidence
+
+        record_permission_evidence(
+            organization.id, recipients[0]["phone"], purpose="community", decision="granted",
+            source="owner_verified", evidence_key="active-worker-fixture", verified=True,
+            metadata={"proof": "Explicit consent for the intended permitted-send fixture"},
+        )
+        self.db.session.commit()
         mock_service = MagicMock()
         mock_service.send_bulk_with_attempts.return_value = {
             "total": 1,

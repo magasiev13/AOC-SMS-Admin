@@ -66,10 +66,12 @@
                 {% elif application.status == 'approved' %}
                     {% set invitation_url = invitation_urls.get(application.id) %}
                     <p class="mb-2"><strong>Organization:</strong> {{ application.organization.name if application.organization else 'Missing' }}</p>
+                    <p class="text-muted mb-2">{{ invitation_views[application.id].label }}</p>
                     {% if invitation_url %}
                     <a class="btn btn-outline-primary" href="{{ invitation_url }}" target="_blank" rel="noopener">Open owner invitation</a>
                     <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ invitation_url }}" data-copy-feedback="Copied">Copy invitation link</button>
                     {% endif %}
+                    {% if application.organization %}<a class="btn btn-outline-secondary" href="{{ url_for('main.platform_organizations_access', organization_id=application.organization.id) }}">Review owner access</a>{% endif %}
                 {% endif %}
             </div>
         </article>
