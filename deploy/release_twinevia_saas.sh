@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 SOURCE_ROOT="${SOURCE_ROOT:-/opt/twinevia-saas}"
 APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
@@ -22,6 +22,11 @@ RUNTIME_UNITS=(
   twinevia-saas-backup.timer
   twinevia-saas-readiness.timer
 )
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime_state.sh"
+if [[ "${BOOTSTRAP_RELEASE_ONLY}" != "1" ]]; then
+  runtime_transaction release "$0" "$@"
+fi
 
 if [[ ! "${RELEASE_RETENTION_COUNT}" =~ ^[0-9]+$ ]] || (( RELEASE_RETENTION_COUNT < 2 || RELEASE_RETENTION_COUNT > 20 )); then
   echo "RELEASE_RETENTION_COUNT must be between 2 and 20." >&2
@@ -75,6 +80,7 @@ release_id="$(date -u +%Y%m%dT%H%M%SZ)-${release_sha:0:12}"
 pending_release="${RELEASES_DIR}/.pending-${release_id}"
 release_dir="${RELEASES_DIR}/${release_id}"
 promoted=0
+runtime_quiesced=0
 
 sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
 
@@ -125,6 +131,9 @@ if [[ "${BOOTSTRAP_RELEASE_ONLY}" == "1" ]]; then
 fi
 
 old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+  runtime_ctl verify-target --target "${old_release}" >/dev/null
+fi
 if [[ -e "${pending_release}" || -e "${release_dir}" ]]; then
   echo "Release path already exists: ${release_id}" >&2
   exit 1
@@ -141,14 +150,16 @@ trap cleanup_pending EXIT
 rollback_on_error() {
   local exit_code=$?
   trap - ERR
-  if [[ "${promoted}" == "1" ]]; then
-    if [[ -n "${old_release}" && -d "${old_release}" ]]; then
-      local rollback_link="${CURRENT_LINK}.error-rollback-$$"
-      sudo ln -s "${old_release}" "${rollback_link}" || true
-      sudo mv -Tf "${rollback_link}" "${CURRENT_LINK}" || true
-      sudo systemctl restart "${RUNTIME_UNITS[@]}" || true
+  if [[ "${promoted}" == "1" || "${runtime_quiesced}" == "1" ]]; then
+    if [[ -n "${old_release}" && -d "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+      if ! runtime_restore_release "${old_release}"; then
+        echo "Release failed and safe rollback did not complete. Runtime containment is retained; explicit recovery is required." >&2
+      fi
     else
-      sudo systemctl stop "${RUNTIME_UNITS[@]}" || true
+      if ! runtime_ctl restore; then
+        echo "Fresh release cleanup failed; do not remove its source while background work may still be running." >&2
+        exit "${exit_code}"
+      fi
       if [[ -L "${CURRENT_LINK}" ]]; then
         sudo rm -- "${CURRENT_LINK}" || true
       fi
@@ -316,14 +327,17 @@ PY"
 sudo mv "${pending_release}" "${release_dir}"
 pending_release=""
 
+runtime_quiesced=1
+runtime_ctl quiesce
 if [[ -n "${old_release}" ]]; then
   atomic_link "${old_release}" "${PREVIOUS_LINK}"
 fi
 atomic_link "${release_dir}" "${CURRENT_LINK}"
 promoted=1
 sudo systemctl daemon-reload
-sudo systemctl enable --now "${RUNTIME_UNITS[@]}"
-sudo systemctl restart "${RUNTIME_UNITS[@]}"
+activation_options=()
+if [[ "${TWINEVIA_INITIALIZE_RUNTIME:-0}" == "1" ]]; then activation_options+=(--fresh-install); fi
+runtime_ctl activate "${activation_options[@]}"
 
 health_host="$(APP_URL="${APP_BASE_URL:-}" python3 -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["APP_URL"]).hostname or "")')"
 if [[ -z "${health_host}" ]]; then
@@ -340,39 +354,41 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 if [[ "${health_ready}" != "1" ]]; then
-  if [[ -n "${old_release}" ]]; then
-    atomic_link "${old_release}" "${CURRENT_LINK}"
-    sudo systemctl restart "${RUNTIME_UNITS[@]}" || true
+  if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+    runtime_restore_release "${old_release}" || { echo "Health failure: runtime rollback needs explicit recovery." >&2; exit 1; }
   else
-    sudo systemctl stop "${RUNTIME_UNITS[@]}" || true
+    runtime_ctl restore || { echo "Fresh health failure containment failed." >&2; exit 1; }
     if [[ -L "${CURRENT_LINK}" ]]; then
       sudo rm -- "${CURRENT_LINK}"
     fi
   fi
   promoted=0
+  runtime_quiesced=0
   echo "Release ${release_id} failed health verification and was rolled back." >&2
   exit 1
 fi
 
 readiness_ready=0
+readiness_proof=''
 for attempt in $(seq 1 15); do
-  if [[ "$(curl --silent --show-error --connect-timeout 2 --max-time 10 -H "Host: ${health_host}" -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN:-}" http://127.0.0.1:8100/ready || true)" == "READY" ]]; then
+  if readiness_proof="$(runtime_verify_readiness)"; then
+    printf '%s\n' "${readiness_proof}"
     readiness_ready=1
     break
   fi
   sleep 2
 done
 if [[ "${readiness_ready}" != "1" ]]; then
-  if [[ -n "${old_release}" ]]; then
-    atomic_link "${old_release}" "${CURRENT_LINK}"
-    sudo systemctl restart "${RUNTIME_UNITS[@]}" || true
+  if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+    runtime_restore_release "${old_release}" || { echo "Readiness failure: runtime rollback needs explicit recovery." >&2; exit 1; }
   else
-    sudo systemctl stop "${RUNTIME_UNITS[@]}" || true
+    runtime_ctl restore || { echo "Fresh readiness failure containment failed." >&2; exit 1; }
     if [[ -L "${CURRENT_LINK}" ]]; then
       sudo rm -- "${CURRENT_LINK}"
     fi
   fi
   promoted=0
+  runtime_quiesced=0
   echo "Release ${release_id} failed readiness verification and was rolled back." >&2
   exit 1
 fi
@@ -397,4 +413,9 @@ done
 
 trap - ERR
 trap - EXIT
-echo "Release ${release_id} is active and ready. Previous release: ${old_release:-none}."
+accepted_state="$(printf '%s' "${readiness_proof}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+if [[ "${accepted_state}" == "maintenance" ]]; then
+  echo "Release ${release_id} is active and validated with maintenance retained; public readiness remains false. Previous release: ${old_release:-none}."
+else
+  echo "Release ${release_id} is active and ready. Previous release: ${old_release:-none}."
+fi

@@ -73,7 +73,7 @@
                             <label class="form-label">Target Audience</label>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetCommunity"
-                                       value="community" {% if request.form.get('target', 'community') == 'community' %}checked{% endif %}>
+                                       value="community" {% if selected_target != 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetCommunity">
                                     <i class="bi bi-people me-1"></i>Community Blast
                                     <span class="text-muted">{{ '(community signup list)' if confirmed_community_signup_consent else '(contacts with community permission)' }}</span>
@@ -81,7 +81,7 @@
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetEvent"
-                                       value="event" {% if request.form.get('target') == 'event' %}checked{% endif %}>
+                                       value="event" {% if selected_target == 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetEvent">
                                     <i class="bi bi-calendar-event me-1"></i>Event Blast
                                     <span class="text-muted">(attendees with permission for this event)</span>
@@ -98,11 +98,13 @@
                             <select class="form-select" id="event_id" name="event_id">
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
-                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if request.form.get('event_id', type=int) == event.id %}selected{% endif %}>
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} registrations
+                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
+                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
+                            <div class="form-text">Current events appear by default. <a href="{{ url_for('main.events_list', view='past') }}">Open past events for a follow-up or feedback request.</a></div>
+                            {% if selected_past_event %}<p class="small text-info mt-2 mb-0" role="status">Past event follow-up: this sends only to the selected event's eligible contacts. Attendance history does not override opt-outs.</p>{% endif %}
                         </div>
 
                         <div class="mb-3">
@@ -283,7 +285,7 @@
                         <div class="stat-card__label">Total Recipients</div>
                         <div class="stat-card__value">{{ total_recipients }}</div>
                         <div class="stat-card__meta">
-                            {{ community_count }} community • {{ event_registration_count }} RSVPs
+                            {{ community_count }} contactable community • {{ event_registration_count }} current RSVPs
                         </div>
                     </div>
                 </div>
@@ -422,7 +424,7 @@
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #8b5cf6"></span>
-                                Event RSVPs ({{ event_registration_count }})
+                                Current event RSVPs ({{ event_registration_count }})
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #e2e8f0"></span>

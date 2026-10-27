@@ -26,7 +26,9 @@ jobs:
 
           DIAGNOSTICS_FILE="${RUNNER_TEMP}/twinevia-monitor-diagnostics.txt"
           READY_BODY_FILE="${RUNNER_TEMP}/twinevia-readiness.json"
+          READINESS_STATE_FILE="${RUNNER_TEMP}/twinevia-readiness-state.txt"
           : > "${DIAGNOSTICS_FILE}"
+          printf 'not_ready\n' > "${READINESS_STATE_FILE}"
           trap 'rm -f "${READY_BODY_FILE}"' EXIT
 
           if [ ${#TWINEVIA_READINESS_TOKEN} -lt 32 ]; then
@@ -42,7 +44,8 @@ jobs:
             --output "${READY_BODY_FILE}" \
             --write-out '%{http_code}' \
             https://app.twinevia.com/ready)"
-          python3 - "${READY_STATUS}" "${READY_BODY_FILE}" "${DIAGNOSTICS_FILE}" <<'PY'
+          readiness_ok=0
+          if python3 - "${READY_STATUS}" "${READY_BODY_FILE}" "${DIAGNOSTICS_FILE}" "${READINESS_STATE_FILE}" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -50,22 +53,43 @@ jobs:
           status = int(sys.argv[1])
           body_path = Path(sys.argv[2])
           diagnostics_path = Path(sys.argv[3])
+          state_path = Path(sys.argv[4])
+          state_path.write_text("not_ready\n", encoding="utf-8")
           try:
               payload = json.loads(body_path.read_text(encoding="utf-8"))
           except (OSError, json.JSONDecodeError) as exc:
               diagnostics_path.write_text(f"Readiness returned HTTP {status} with invalid JSON: {exc}\n", encoding="utf-8")
               raise SystemExit(1)
 
-          failed_checks = [check for check in payload.get("checks", []) if check.get("ready") is not True]
-          lines = [f"Readiness returned HTTP {status}; ready={payload.get('ready')!r}."]
+          if not isinstance(payload, dict) or not isinstance(payload.get("checks"), list) or not payload["checks"] or any(not isinstance(check, dict) for check in payload["checks"]):
+              diagnostics_path.write_text(f"Readiness returned HTTP {status} without a complete check report.\n", encoding="utf-8")
+              raise SystemExit(1)
+          failed_checks = [check for check in payload["checks"] if check.get("ready") is not True]
+          declared_state = payload.get("state") or ("ready" if payload.get("ready") is True else "not_ready")
+          maintenance = payload.get("maintenance") if isinstance(payload.get("maintenance"), dict) else {}
+          state = "not_ready"
+          if status == 200 and payload.get("ready") is True and not failed_checks and declared_state == "ready":
+              state = "ready"
+          elif status == 503 and payload.get("ready") is False and declared_state == "maintenance" and maintenance.get("held_units") and failed_checks and all(check.get("name") in {"scheduler_timers", "runtime_maintenance"} for check in failed_checks):
+              state = "maintenance"
+          state_path.write_text(state + "\n", encoding="utf-8")
+          lines = [f"Readiness returned HTTP {status}; ready={payload.get('ready')!r}; state={state}."]
+          if state == "maintenance":
+              lines.append("Reviewed maintenance is retained; normal operational readiness has not returned.")
+              for key in ("held_units", "reason", "actor", "declared_at", "expires_at", "release_sha"):
+                  value = str(maintenance.get(key) or "unknown").replace("\n", " ").replace("\r", " ")[:500]
+                  lines.append(f"- maintenance {key}: {value}")
           for check in failed_checks:
               name = str(check.get("name") or "unknown").replace("\n", " ")[:100]
               detail = str(check.get("detail") or "no detail").replace("\n", " ")[:500]
               lines.append(f"- {name}: {detail}")
           diagnostics_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-          if status != 200 or payload.get("ready") is not True or failed_checks:
+          if state != "ready":
               raise SystemExit(1)
           PY
+          then
+            readiness_ok=1
+          fi
 
           curl --fail --silent --show-error --retry 2 --max-time 20 https://twinevia.com/ \
             | grep -Fq "Automated survey flows"
@@ -79,6 +103,13 @@ jobs:
           grep -Eiq '^content-security-policy:' "${HEADER_FILE}"
           grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' "${HEADER_FILE}"
 
+          # Maintenance remains non-ready, while independent public/security
+          # checks above still run. It must not close an uptime incident.
+          if [ "${readiness_ok}" != "1" ]; then
+            cat "${DIAGNOSTICS_FILE}"
+            exit 1
+          fi
+
       - name: Update uptime incident
         if: always()
         env:
@@ -91,12 +122,17 @@ jobs:
           TITLE="Twinevia production monitor failed"
           RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           DIAGNOSTICS_FILE="${RUNNER_TEMP}/twinevia-monitor-diagnostics.txt"
+          READINESS_STATE_FILE="${RUNNER_TEMP}/twinevia-readiness-state.txt"
+          READINESS_STATE="not_ready"
+          if [ -r "${READINESS_STATE_FILE}" ]; then
+            READINESS_STATE="$(cat "${READINESS_STATE_FILE}")"
+          fi
           DIAGNOSTICS="Production health or readiness failed."
           if [ -s "${DIAGNOSTICS_FILE}" ]; then
             DIAGNOSTICS="$(cat "${DIAGNOSTICS_FILE}")"
           fi
           EXISTING_NUMBER="$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1)"
-          if [ "${JOB_STATUS}" = "success" ]; then
+          if [ "${JOB_STATUS}" = "success" ] && [ "${READINESS_STATE}" = "ready" ]; then
             if [ -n "${EXISTING_NUMBER}" ]; then
               gh issue comment "${EXISTING_NUMBER}" --body "Production monitoring recovered: ${RUN_URL}"
               gh issue close "${EXISTING_NUMBER}" --reason completed

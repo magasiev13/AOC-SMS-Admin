@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
 APP_USER="${APP_USER:-}"
@@ -115,7 +115,8 @@ render_template() {
     -e "s|__TWINEVIA_SAAS_DBDOCTOR_DEST__|${TWINEVIA_SAAS_DBDOCTOR_BIN}|g" \
     -e "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" \
     "${src}" > "${tmp_file}"
-  sudo install -m "${mode}" "${tmp_file}" "${dest}"
+  runtime_ctl render-unit --rendered "${tmp_file}" --target "${dest}" \
+    --vendor-unit-dir "${SYSTEMD_VENDOR_UNIT_DIR:-/usr/local/lib/systemd/system}"
   rm -f "${tmp_file}"
 }
 
@@ -365,6 +366,10 @@ sync_deploy_artifacts() {
   local tmp_sudoers
 
   echo "==> Syncing SaaS deploy artifacts"
+  sudo install -d -o root -g root -m 0755 /usr/local/lib/twinevia-saas
+  for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh; do
+    sudo install -o root -g root -m 0755 "${APP_ROOT}/deploy/${operation_file}" "/usr/local/lib/twinevia-saas/${operation_file}"
+  done
   sudo install -o root -g root -m 0755 "${APP_ROOT}/bin/twinevia-saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_BIN}"
   sudo install -o root -g root -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
   sudo install -o root -g root -m 0755 "${RESTART_HELPER_SRC}" "${RESTART_HELPER_DEST}"
@@ -436,6 +441,9 @@ if [[ ! -L "${APP_ROOT}/current" && "${TWINEVIA_DEPLOY_PRE_PULL_HEAD}" == "${POS
   fi
 fi
 
+source "${APP_ROOT}/deploy/runtime_state.sh"
+runtime_transaction deploy "$0" "$@"
+
 ENV_STAGE_FILE="$(mktemp)"
 ENV_ORIGINAL_FILE="$(mktemp)"
 env_installed=0
@@ -446,15 +454,25 @@ cleanup_env_stage() {
   local rollback_health_host
   trap - EXIT
   if [[ "${exit_code}" != "0" && "${env_installed}" == "1" && "${deployment_completed}" != "1" ]]; then
-    sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_ORIGINAL_FILE}" "${ENV_TARGET_FILE}" || true
+    if [[ "${release_started}" == "1" ]] && ! runtime_ctl quiesce --rollback; then
+      echo "==> Environment recovery could not contain background work. Original source/state is retained for explicit operator recovery." >&2
+      rm -f "${ENV_STAGE_FILE}" "${ENV_ORIGINAL_FILE}"
+      exit "${exit_code}"
+    fi
+    sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_ORIGINAL_FILE}" "${ENV_TARGET_FILE}"
     if [[ "${release_started}" == "1" && -L "${APP_ROOT}/current" ]]; then
-      sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+      if ! runtime_ctl restore; then
+        echo "==> Original operating state could not be restored. Required work remains contained; inspect recovery before resuming." >&2
+        rm -f "${ENV_STAGE_FILE}" "${ENV_ORIGINAL_FILE}"
+        exit "${exit_code}"
+      fi
       ENV_FILE="${ENV_TARGET_FILE}"
       rollback_health_host="$(resolve_health_host)"
       if ! check_saas_health "${rollback_health_host}" 8; then
         echo "==> Original configuration could not boot the rollback release; restoring the validated staged configuration." >&2
-        sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_STAGE_FILE}" "${ENV_TARGET_FILE}" || true
-        sudo systemctl restart "${SAAS_RUNTIME_UNITS[@]}" || true
+        runtime_ctl quiesce --rollback || { echo "==> Fallback environment containment failed." >&2; exit "${exit_code}"; }
+        sudo install -o root -g "${APP_GROUP}" -m 0640 "${ENV_STAGE_FILE}" "${ENV_TARGET_FILE}"
+        runtime_ctl restore || { echo "==> Fallback operating-state recovery failed." >&2; exit "${exit_code}"; }
         rollback_health_host="$(resolve_health_host)"
         if ! check_saas_health "${rollback_health_host}" 15; then
           echo "==> Rollback release is still unhealthy after restoring the validated staged configuration." >&2
@@ -540,7 +558,7 @@ ensure_env_key "PLATFORM_SERVICE_RESTART_ENABLED" "0"
 ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 ensure_env_key "READINESS_WORKER_MAX_AGE_SECONDS" "120"
 ensure_env_key "READINESS_SYSTEMCTL_TIMEOUT_SECONDS" "5"
-upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "twinevia-saas-scheduler.timer,twinevia-saas-billing-reconcile.timer,twinevia-saas-a2p-reconcile.timer,twinevia-saas-backup.timer,twinevia-saas-readiness.timer"
+upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "$(runtime_timer_csv)"
 upsert_env_key "OPERATIONS_MONITORING_MODE" "github_actions"
 upsert_env_key "OPERATIONS_GITHUB_REPOSITORY" "magasiev13/AOC-SMS-Admin"
 ensure_env_key "BACKUP_LOCAL_DIR" "/var/backups/twinevia-saas"

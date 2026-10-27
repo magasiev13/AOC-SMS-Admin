@@ -1778,6 +1778,13 @@ class TwilioService:
             try:
                 if scheduled_dispatch is not None:
                     scheduled = lock_scheduled_message(*scheduled_dispatch)
+                    if scheduled is not None and scheduled.status == 'processing':
+                        from app.services.audience_service import pre_event_reminder_block_reason
+
+                        reminder_block = pre_event_reminder_block_reason(scheduled)
+                        if reminder_block:
+                            scheduled.status, scheduled.error_message = 'expired', reminder_block
+                            scheduled.processing_started_at, scheduled.next_retry_at = None, None
                     if scheduled is None or scheduled.status != 'processing':
                         halted_status = scheduled.status if scheduled is not None else 'missing'
                         db.session.commit()
@@ -1991,6 +1998,20 @@ class TwilioService:
                     'logical_send_key': normalized_key,
                 }
             scheduled.processing_started_at = utc_now().replace(tzinfo=None)
+            from app.services.audience_service import pre_event_reminder_block_reason
+
+            reminder_block = pre_event_reminder_block_reason(scheduled)
+            if reminder_block:
+                # Recheck after the attempt claim commit, at the last provider
+                # boundary. Earlier accepted attempts retain their known SIDs.
+                scheduled.status, scheduled.error_message = 'expired', reminder_block
+                scheduled.processing_started_at, scheduled.next_retry_at = None, None
+                attempt.status, attempt.last_error = 'failed', 'not_submitted: ' + reminder_block
+                attempt.resolved_at = utc_now().replace(tzinfo=None)
+                db.session.commit()
+                return dict(cancellation_result(
+                    status='expired', account_sid=self.account_sid, send_kind=normalized_send_kind,
+                ), error=reminder_block, logical_send_key=normalized_key)
 
         if automation_reply_id is not None:
             from app.services.automation_outbox_service import lock_automation_submission

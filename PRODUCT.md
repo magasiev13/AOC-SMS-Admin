@@ -16,6 +16,17 @@ web
 
 Twinevia is a multi-tenant messaging workspace that lets organizations send immediate or scheduled SMS messages, manage contacts and event audiences, receive and organize replies, run keyword and survey automations, and maintain consent, suppression, delivery, and usage records. Success means an approved organization can move safely from invitation and payment through compliant provider setup to reliable day-to-day messaging without needing its own messaging engineering or compliance operations team.
 
+## Confirmed daily goals
+
+The owner has confirmed that Armenians of Colorado uses Twinevia exclusively for
+community text communication. The daily product should make it easy to notify
+people about events, parties and celebrations; gather event and community
+feedback by text; and synchronize event scheduling and audiences with WordPress.
+Actual opt-outs must leave the contactable audience immediately. Past-event
+attendees must leave current lists automatically while remaining available for
+intentional follow-up and useful historical reporting. These are priorities for
+simplicity and reliability, rather than reasons to add more setup gates.
+
 ## Positioning
 
 Twinevia launches as a managed service rather than unrestricted self-service software. Its inferred distinguishing position is a single operational relationship for the messaging workspace, customer onboarding, A2P and sender-registration assistance, provider readiness, billing, suppression enforcement, and recoverable delivery operations. The public promise is assistance and operational stewardship; external provider approval is never guaranteed.

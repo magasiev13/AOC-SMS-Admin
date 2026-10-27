@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_ROOT="${APP_ROOT:-/opt/twinevia-saas}"
@@ -60,7 +60,8 @@ render_template() {
     -e "s|__TWINEVIA_SAAS_DBDOCTOR_DEST__|${TWINEVIA_SAAS_DBDOCTOR_DEST}|g" \
     -e "s|__RESTART_HELPER_DEST__|${RESTART_HELPER_DEST}|g" \
     "${src}" > "${tmp_file}"
-  sudo install -m "${mode}" "${tmp_file}" "${dest}"
+  runtime_ctl render-unit --rendered "${tmp_file}" --target "${dest}" \
+    --vendor-unit-dir "${SYSTEMD_VENDOR_UNIT_DIR:-/usr/local/lib/systemd/system}"
   rm -f "${tmp_file}"
 }
 
@@ -133,6 +134,9 @@ echo "============================================"
 echo "  Twinevia SaaS Install Script"
 echo "============================================"
 
+source "${REPO_ROOT}/deploy/runtime_state.sh"
+runtime_transaction install "$0" "$@"
+
 APP_USER="$(resolve_app_user)"
 APP_GROUP="$(resolve_app_group "${APP_USER}")"
 
@@ -168,6 +172,10 @@ if [[ ! -f "${RESTART_SUDOERS_SRC}" ]]; then
 fi
 
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_DEST}"
+sudo install -d -o root -g root -m 0755 /usr/local/lib/twinevia-saas
+for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh; do
+  sudo install -o root -g root -m 0755 "${REPO_ROOT}/deploy/${operation_file}" "/usr/local/lib/twinevia-saas/${operation_file}"
+done
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
 echo "✓ Installed twinevia-saas-dbdoctor to ${TWINEVIA_SAAS_DBDOCTOR_DEST}"
 echo "✓ Installed saas-dbdoctor compatibility alias to ${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
@@ -406,7 +414,7 @@ ensure_env_key "PLATFORM_SERVICE_RESTART_SCRIPT" "${RESTART_HELPER_DEST}"
 ensure_env_key "TWILIO_A2P_ONBOARDING_ENABLED" "0"
 ensure_env_key "READINESS_WORKER_MAX_AGE_SECONDS" "120"
 ensure_env_key "READINESS_SYSTEMCTL_TIMEOUT_SECONDS" "5"
-upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "twinevia-saas-scheduler.timer,twinevia-saas-billing-reconcile.timer,twinevia-saas-a2p-reconcile.timer,twinevia-saas-backup.timer,twinevia-saas-readiness.timer"
+upsert_env_key "READINESS_REQUIRED_SYSTEMD_TIMERS" "$(runtime_timer_csv)"
 upsert_env_key "OPERATIONS_MONITORING_MODE" "github_actions"
 upsert_env_key "OPERATIONS_GITHUB_REPOSITORY" "magasiev13/AOC-SMS-Admin"
 ensure_env_key "BACKUP_LOCAL_DIR" "/var/backups/twinevia-saas"

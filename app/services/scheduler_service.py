@@ -17,6 +17,7 @@ from app.services.twilio_service import (
     record_usage_candidates,
 )
 from app.tenant import organization_context
+from app.services.audience_service import pre_event_reminder_block_reason
 from app.services.scheduled_cancellation_service import (
     lock_scheduled_message,
     scheduled_dispatch_context,
@@ -483,6 +484,16 @@ def send_scheduled_messages(app):
                 scheduled.scheduled_at.isoformat() if scheduled.scheduled_at else 'unknown',
                 scheduled.target
             )
+
+            reminder_block = pre_event_reminder_block_reason(scheduled, now=now)
+            if reminder_block:
+                scheduled.status = 'expired'
+                scheduled.error_message = reminder_block
+                scheduled.processing_started_at = None
+                scheduled.next_retry_at = None
+                db.session.commit()
+                failed_count += 1
+                continue
             
             # Mark as expired if too old (beyond configured max lag)
             if expiry_threshold and scheduled.scheduled_at < expiry_threshold:

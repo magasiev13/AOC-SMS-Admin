@@ -13,6 +13,31 @@ permissions:
   contents: read
 
 jobs:
+  runtime_systemd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Bootstrap isolated runtime
+        run: ./run/setup.sh
+      - name: Exercise real systemd failure paths with fake services
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS,CI,RUNNER_ENVIRONMENT,GITHUB_WORKSPACE \
+            "${GITHUB_WORKSPACE}/venv/bin/python" run/test_runtime_systemd.py
+      - name: Retain isolated systemd evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-systemd-${{ github.run_id }}
+          path: output/maintenance-recovery-2026-10-27/systemd/
+          if-no-files-found: warn
+          retention-days: 7
+
   pytest:
     runs-on: ubuntu-latest
     services:

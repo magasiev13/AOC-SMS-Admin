@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly UNITS=(
-  "twinevia-saas"
-  "twinevia-saas-worker"
-  "twinevia-saas-scheduler.timer"
-  "twinevia-saas-billing-reconcile.timer"
-  "twinevia-saas-platform-restart-queue.timer"
-  "twinevia-saas-a2p-reconcile.timer"
-)
+readonly RUNTIME_CONTROL='/usr/local/lib/twinevia-saas/runtime_control.py'
 readonly TRANSIENT_UNIT_PATTERN='^twinevia-saas-manual-restart-[A-Za-z0-9_.:@-]+(\.service)?$'
 
 emit_json() {
@@ -26,12 +19,16 @@ PY
 
 check_units() {
   local unit
-  for unit in "${UNITS[@]}"; do
-    if ! systemctl cat "${unit}" >/dev/null 2>&1; then
+  local load_state
+  local units
+  units="$(/usr/bin/python3 "${RUNTIME_CONTROL}" units)" || { echo "Reviewed runtime policy is unavailable." >&2; exit 1; }
+  while IFS= read -r unit; do
+    load_state="$(systemctl show "${unit}" --property=LoadState --value 2>/dev/null || true)"
+    if [[ "${load_state}" != "loaded" && "${load_state}" != "masked" ]]; then
       echo "Missing required systemd unit: ${unit}" >&2
       exit 1
     fi
-  done
+  done <<< "${units}"
 }
 
 queue_restart() {
@@ -45,13 +42,7 @@ queue_restart() {
   restart_unit="twinevia-saas-manual-restart-$(date +%s)-$$"
   read -r -d '' restart_command <<'EOF' || true
 sleep 2
-systemctl restart twinevia-saas twinevia-saas-worker twinevia-saas-scheduler.timer twinevia-saas-billing-reconcile.timer twinevia-saas-platform-restart-queue.timer twinevia-saas-a2p-reconcile.timer
-systemctl is-active --quiet twinevia-saas
-systemctl is-active --quiet twinevia-saas-worker
-systemctl is-active --quiet twinevia-saas-scheduler.timer
-systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
-systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer
-systemctl is-active --quiet twinevia-saas-a2p-reconcile.timer
+exec /usr/bin/python3 /usr/local/lib/twinevia-saas/runtime_control.py restart-active --app-root /opt/twinevia-saas
 EOF
 
   if ! run_output="$(systemd-run \
@@ -71,8 +62,8 @@ EOF
 
   emit_json \
     "status=queued" \
-    "summary=Restart queued. The SaaS services will recycle shortly." \
-    "detail=Queued SaaS service restart using transient unit ${restart_unit}." \
+    "summary=Active-service restart queued. Paused work will remain paused." \
+    "detail=Queued active-service restart using transient unit ${restart_unit}." \
     "transient_unit=${restart_unit}"
 }
 
@@ -146,7 +137,7 @@ status_restart() {
   if [[ "${result}" == "success" || "${exec_main_status}" == "0" ]]; then
     emit_json \
       "status=succeeded" \
-      "summary=Restart completed successfully." \
+      "summary=Active services restarted. Paused work remains paused." \
       "detail=Transient unit ${transient_unit} completed with result ${result}." \
       "transient_unit=${transient_unit}"
     exit 0

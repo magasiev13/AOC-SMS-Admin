@@ -34,6 +34,10 @@ from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
 from app.services.send_review_service import SendReviewInputError
+from app.services.audience_service import (
+    community_query, current_audience_counts, current_event_predicate, event_is_current,
+    event_registrations_query, events_query,
+)
 from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, require_roles
 
 from app.models import (
@@ -143,7 +147,7 @@ from app.services.policy_acceptance_service import (
     missing_required_policy_acceptances,
     required_policy_versions,
 )
-from app.services.readiness_service import run_readiness_checks
+from app.services.readiness_service import platform_maintenance_view, run_readiness_checks
 from app.services.outbound_request_service import (
     OutboundRequestConflict, claim_reply_request, complete_request,
     enqueue_outbound_request, existing_outbound_request, normalize_request_key,
@@ -2520,6 +2524,7 @@ def _platform_home_context() -> dict:
             'enabled': bool(current_app.config.get('PLATFORM_SERVICE_RESTART_ENABLED')),
             'last_result': _platform_restart_status_view(),
         },
+        'maintenance': platform_maintenance_view(current_app._get_current_object()),
     }
 
 
@@ -2607,11 +2612,13 @@ def _event_detail_surface_view(
     attendee_count: int,
     sendable_count: int,
     unsubscribed_count: int,
+    is_current: bool = True,
 ) -> dict:
     return _surface_view(
         eyebrow='Events',
         title=event.title,
-        copy='Review registrations, add attendees, and import CSV updates from one page.',
+        copy=('Review registrations, add attendees, and import CSV updates from one page.' if is_current
+              else 'Review retained attendance and eligible contacts for an intentional follow-up or feedback request.'),
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(
@@ -2622,7 +2629,8 @@ def _event_detail_surface_view(
         stats=[
             _surface_stat('Booking contacts', registration_count, 'Unique phone registrations'),
             _surface_stat('Attendees', attendee_count, 'Total party size'),
-            _surface_stat('Sendable', sendable_count, 'Eligible event SMS recipients'),
+            _surface_stat('Sendable' if is_current else 'Follow-up eligible', sendable_count,
+                          'Eligible event SMS recipients' if is_current else 'Eligible for an explicit event follow-up'),
             _surface_stat('Not eligible', unsubscribed_count, 'Opt-outs, suppressions, or missing permission'),
         ],
     )
@@ -4311,7 +4319,17 @@ def dashboard():
     client_timezone_raw = request.cookies.get('client_timezone', '')
     client_timezone = unquote(client_timezone_raw).strip() if client_timezone_raw else ''
     dashboard_timezone = client_timezone or app_timezone
-    events = Event.query.order_by(Event.date.desc()).all()
+    events = events_query().order_by(Event.date.asc(), Event.title.asc()).all()
+    selection = request.form if request.method == 'POST' else request.args
+    selected_target = selection.get('target', 'community')
+    selected_event_id = selection.get('event_id', type=int) if selected_target == 'event' else None
+    selected_past_event = None
+    if selected_event_id and selected_event_id not in {event.id for event in events}:
+        # Past audiences remain available through an explicit history/follow-up
+        # action. Event dates do not withdraw permission or rewrite a saved send.
+        selected_event = _tenant_get_or_404(Event, selected_event_id)
+        events.append(selected_event)
+        selected_past_event = selected_event
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""
@@ -4396,17 +4414,18 @@ def dashboard():
         event_recipient_counts = {
             int(row[0]): int(row[1] or 0)
             for row in (
-                db.session.query(EventRegistration.event_id, db.func.count(EventRegistration.id))
+                event_registrations_query(current_only=False).with_entities(EventRegistration.event_id, db.func.count(EventRegistration.id))
                 .group_by(EventRegistration.event_id)
                 .all()
             )
         }
-        community_count = CommunityMember.query.count()
-        event_registration_count = EventRegistration.query.count()
+        audience_counts = current_audience_counts()
+        community_count = audience_counts['community']
+        event_registration_count = audience_counts['event_registrations']
         keyword_rule_count = KeywordAutomationRule.query.count()
         survey_flow_count = SurveyFlow.query.count()
         event_count = len(events)
-        total_recipients = community_count + event_registration_count
+        total_recipients = audience_counts['unique_contacts']
         unsubscribed_count = UnsubscribedContact.query.count()
         inbound_count_7d = 0
         unread_threads_count = 0
@@ -4512,6 +4531,9 @@ def dashboard():
                 survey_flow_count=survey_flow_count,
             ),
             'event_recipient_counts': event_recipient_counts,
+            'selected_target': selected_target,
+            'selected_event_id': selected_event_id,
+            'selected_past_event': selected_past_event,
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
@@ -7868,7 +7890,8 @@ def community_list():
         allowed_keys={'name', 'phone', 'added'}, default_key='name', default_dir='asc',
     )
     
-    query = CommunityMember.query
+    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
+    query = community_query(contactable_only=audience_view != 'all')
     
     if search:
         escaped = escape_like(search)
@@ -7907,6 +7930,7 @@ def community_list():
         confirmed_signup_consent=organization_has_confirmed_signup_consent(_current_organization_id()),
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
         sort_key=sort_key, sort_dir=sort_dir,
+        audience_view=audience_view,
     )
 
 
@@ -8006,8 +8030,9 @@ def community_delete(member_id):
 @login_required
 @require_roles('admin')
 def community_export():
+    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
     members = _bounded_export_query_all(
-        CommunityMember.query.order_by(CommunityMember.name, CommunityMember.phone),
+        community_query(contactable_only=audience_view != 'all').order_by(CommunityMember.name, CommunityMember.phone),
         'Community member',
     )
 
@@ -8131,7 +8156,10 @@ def community_unsubscribe(member_id):
 @login_required
 def events_list():
     search = request.args.get('search', '').strip()
-    query = Event.query
+    event_view = 'past' if request.args.get('view') == 'past' else 'current'
+    query = events_query(current_only=False)
+    predicate = current_event_predicate()
+    query = query.filter(~predicate if event_view == 'past' else predicate)
 
     if search:
         escaped = escape_like(search)
@@ -8144,7 +8172,7 @@ def events_list():
         )
 
     events = query.order_by(Event.date.desc()).all()
-    return render_template('events/list.html', events=events, search=search)
+    return render_template('events/list.html', events=events, search=search, event_view=event_view)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
@@ -8182,6 +8210,7 @@ def event_add():
 @login_required
 def event_detail(event_id):
     event = _tenant_get_or_404(Event, event_id)
+    is_current = event_is_current(event)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(
         EventRegistration.name,
         EventRegistration.phone,
@@ -8202,12 +8231,14 @@ def event_detail(event_id):
         suppressed_phones=suppressed_phones,
         permission_statuses=permission_statuses,
         can_review_permission=_current_user_is_workspace_owner(),
+        event_is_current=is_current,
         surface_view=_event_detail_surface_view(
             event,
             registration_count=len(registrations),
             attendee_count=attendee_count,
             sendable_count=len({reg.phone for reg in registrations} - blocked_phones),
             unsubscribed_count=len(blocked_phones),
+            is_current=is_current,
         ),
     )
 

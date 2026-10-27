@@ -27,6 +27,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  runtime_systemd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Bootstrap isolated runtime
+        run: ./run/setup.sh
+      - name: Exercise real systemd failure paths with fake services
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS,CI,RUNNER_ENVIRONMENT,GITHUB_WORKSPACE \
+            "${GITHUB_WORKSPACE}/venv/bin/python" run/test_runtime_systemd.py
+      - name: Retain isolated systemd evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-systemd-${{ github.run_id }}
+          path: output/maintenance-recovery-2026-10-27/systemd/
+          if-no-files-found: warn
+          retention-days: 7
+
   validate:
     runs-on: ubuntu-latest
     services:
@@ -98,7 +123,7 @@ jobs:
 
   deploy:
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [validate, runtime_systemd]
     permissions:
       contents: read
       issues: write
@@ -357,15 +382,7 @@ jobs:
           echo "==> Deploy latest branch"
           sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" /usr/local/bin/deploy_twinevia_saas.sh
 
-          echo "==> Service assertions"
-          sudo systemctl is-active --quiet twinevia-saas
-          sudo systemctl is-active --quiet twinevia-saas-worker
-          sudo systemctl is-active --quiet twinevia-saas-scheduler.timer
-          sudo systemctl is-active --quiet twinevia-saas-billing-reconcile.timer
-          sudo systemctl is-active --quiet twinevia-saas-platform-restart-queue.timer
-          sudo systemctl is-active --quiet twinevia-saas-a2p-reconcile.timer
-          sudo systemctl is-active --quiet twinevia-saas-backup.timer
-          sudo systemctl is-active --quiet twinevia-saas-readiness.timer
+          echo "==> Runtime state is checked against the declared maintenance policy below"
 
           echo "==> Restart helper smoke check"
           sudo -u "${APP_USER}" sudo -n /usr/local/bin/restart-twinevia-saas-services --check >/dev/null
@@ -384,16 +401,21 @@ jobs:
           done
           [ "${HEALTH_RESPONSE}" = "OK" ] || fail "Health endpoint did not return OK after 15 attempts."
           READINESS_TOKEN_VALUE="$(sudo awk -F= '$1 == "READINESS_TOKEN" { value = substr($0, index($0, "=") + 1) } END { print value }' "${APP_ROOT}/.env")"
-          READY_RESPONSE=""
+          runtime_readiness_proof() {
+            local endpoint="$1"
+            printf '%s' "${READINESS_TOKEN_VALUE}" | sudo -n env APP_BASE_URL="https://app.twinevia.com" \
+              python3 /usr/local/lib/twinevia-saas/runtime_control.py check --app-root "${APP_ROOT}" \
+              --url "${endpoint}" --readiness-token-stdin
+          }
+          READY_PROOF=0
           for attempt in $(seq 1 15); do
-            READY_RESPONSE="$(curl -fsS --connect-timeout 2 --max-time 10 -H "Host: ${HEALTH_HOST}" -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" http://127.0.0.1:8100/ready 2>/dev/null || true)"
-            if [ "${READY_RESPONSE}" = "READY" ]; then
+            if runtime_readiness_proof 'http://127.0.0.1:8100/ready'; then
+              READY_PROOF=1
               break
             fi
-            echo "Readiness attempt ${attempt}/15 did not return READY; retrying."
             sleep 2
           done
-          [ "${READY_RESPONSE}" = "READY" ] || fail "Readiness endpoint did not return READY after 15 attempts."
+          [ "${READY_PROOF}" = "1" ] || fail "Runtime readiness or its exact declared maintenance proof failed."
           CURRENT_RELEASE="$(sudo readlink -f "${APP_ROOT}/current")"
           RELEASE_SHA="$(sudo awk -F= '$1 == "APP_RELEASE_SHA" { print substr($0, index($0, "=") + 1) }' "${CURRENT_RELEASE}/.release.env")"
           [ "${RELEASE_SHA}" = "${EXPECTED_SHA}" ] || fail "Active release ${RELEASE_SHA} does not match workflow commit ${EXPECTED_SHA}."
@@ -409,16 +431,15 @@ jobs:
             sleep 2
           done
           [ "${EXTERNAL_HEALTH}" = "OK" ] || fail "External health endpoint did not return OK after 15 attempts."
-          EXTERNAL_READY=""
+          EXTERNAL_READY_PROOF=0
           for attempt in $(seq 1 15); do
-            EXTERNAL_READY="$(curl -fsS --connect-timeout 3 --max-time 20 -H "X-Twinevia-Readiness-Token: ${READINESS_TOKEN_VALUE}" https://app.twinevia.com/ready 2>/dev/null || true)"
-            if [ "${EXTERNAL_READY}" = "READY" ]; then
+            if runtime_readiness_proof 'https://app.twinevia.com/ready'; then
+              EXTERNAL_READY_PROOF=1
               break
             fi
-            echo "External readiness attempt ${attempt}/15 did not return READY; retrying."
             sleep 2
           done
-          [ "${EXTERNAL_READY}" = "READY" ] || fail "External readiness endpoint did not return READY after 15 attempts."
+          [ "${EXTERNAL_READY_PROOF}" = "1" ] || fail "External runtime readiness/declared-maintenance proof failed."
           PUBLIC_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://twinevia.com/)"
           [[ "${PUBLIC_PAGE}" == *"Automated survey flows"* ]] || fail "Public site is missing the automated survey flow feature."
           LOGIN_PAGE="$(curl -fsS --connect-timeout 3 --max-time 20 https://app.twinevia.com/login)"

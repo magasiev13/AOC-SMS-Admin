@@ -19,7 +19,12 @@
 
 {% block content %}
 <div class="collection-shell">
-    {{ ui.collection_search_panel(
+    <nav class="d-flex flex-wrap gap-2" aria-label="Event view">
+        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'current' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', search=search) }}"{% if event_view == 'current' %} aria-current="page"{% endif %}>Current events</a>
+        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'past' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', view='past', search=search) }}"{% if event_view == 'past' %} aria-current="page"{% endif %}>Past events</a>
+    </nav>
+    <p class="small text-muted mb-0">{{ 'Upcoming and ongoing events appear here. After an event ends, its RSVPs leave the current audience automatically; attendance and feedback stay in Past events. Undated events stay current until a date is set.' if event_view == 'current' else 'Attendance and feedback history is retained. Open an event to send an intentional follow-up or feedback request; opt-outs still apply.' }}</p>
+    {% call ui.collection_search_panel(
         url_for('main.events_list'),
         'Search events',
         search,
@@ -27,7 +32,7 @@
         'Search events',
         'Review registrations and act from one event list.',
         'eventsTable'
-    ) }}
+    ) %}<input type="hidden" name="view" value="{{ event_view }}">{% endcall %}
 
 <div class="card app-card collection-panel collection-panel--results">
     {% if events and can_manage_events %}
