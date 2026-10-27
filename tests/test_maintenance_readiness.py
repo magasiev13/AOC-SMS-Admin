@@ -20,7 +20,9 @@ from deploy.runtime_control import RUNTIME_UNITS, SERVICE_UNITS, TIMER_UNITS, re
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = 'a' * 40
-BILLING = 'twinevia-saas-billing-reconcile.timer'
+# This is a public unit identity, not a financial value. Select it from the
+# canonical runtime names so the fixture cannot invent a different unit.
+HELD_TIMER = next(unit for unit in TIMER_UNITS if unit.endswith('-billing-reconcile.timer'))
 
 
 @pytest.fixture
@@ -56,9 +58,9 @@ def runtime(tmp_path, monkeypatch):
                         read_maintenance_receipt(path, trusted_uid=os.geteuid(), **kwargs))
 
     def declare(file_state='enabled', **changes):
-        facts[BILLING].update(active_state='inactive', sub_state='dead', unit_file_state=file_state)
+        facts[HELD_TIMER].update(active_state='inactive', sub_state='dead', unit_file_state=file_state)
         now = datetime.now(timezone.utc)
-        receipt = dict(version=1, held_units=[BILLING], states={BILLING: deepcopy(facts[BILLING])},
+        receipt = dict(version=1, held_units=[HELD_TIMER], states={HELD_TIMER: deepcopy(facts[HELD_TIMER])},
                        reason='Review the historical recovery repair', actor='fixture operator',
                        declared_at=now.isoformat(), updated_at=now.isoformat(),
                        expires_at=(now + timedelta(hours=24)).isoformat(), release_sha=SHA,
@@ -87,16 +89,16 @@ def test_canonical_eight_units_are_reported_with_source_and_one_readonly_probe(r
 def test_valid_exact_hold_is_maintenance_but_remains_publicly_nonready(runtime, file_state):
     runtime.declare(file_state)
     if file_state.startswith('masked'):
-        runtime.facts[BILLING]['load_state'] = 'masked'
+        runtime.facts[HELD_TIMER]['load_state'] = 'masked'
         path = Path(runtime.app.config['RUNTIME_MAINTENANCE_FILE'])
         receipt = json.loads(path.read_text())
-        receipt['states'][BILLING]['load_state'] = 'masked'
+        receipt['states'][HELD_TIMER]['load_state'] = 'masked'
         path.write_text(json.dumps(receipt))
     report = runtime.report()
     assert report.ready is False and report.state == 'maintenance'
     assert report.maintenance['actor'] == 'fixture operator'
     assert report.maintenance['release_sha'] == SHA
-    assert report.units[BILLING]['held'] is True
+    assert report.units[HELD_TIMER]['held'] is True
     failed = {row.name for row in report.checks if not row.ready}
     assert failed == {'scheduler_timers', 'runtime_maintenance'}
 
@@ -139,7 +141,7 @@ def test_maintenance_cannot_hide_an_independent_failure(runtime, monkeypatch, fa
 
 
 def test_undeclared_pause_and_additional_pause_are_not_maintenance(runtime):
-    runtime.facts[BILLING].update(active_state='inactive', sub_state='dead')
+    runtime.facts[HELD_TIMER].update(active_state='inactive', sub_state='dead')
     assert runtime.report().state == 'not_ready'
     runtime.declare()
     runtime.facts['twinevia-saas-backup.timer'].update(active_state='inactive', sub_state='dead')
@@ -156,11 +158,11 @@ def test_configuration_cannot_remove_a_canonical_required_timer(runtime):
 def test_changed_operating_state_cannot_reuse_the_maintenance_waiver(runtime, change):
     runtime.declare()
     if change == 'resumed':
-        runtime.facts[BILLING].update(active_state='active', sub_state='waiting')
+        runtime.facts[HELD_TIMER].update(active_state='active', sub_state='waiting')
     elif change == 'enablement':
-        runtime.facts[BILLING]['unit_file_state'] = 'disabled'
+        runtime.facts[HELD_TIMER]['unit_file_state'] = 'disabled'
     elif change == 'failed':
-        runtime.facts[BILLING]['active_state'] = 'failed'
+        runtime.facts[HELD_TIMER]['active_state'] = 'failed'
     else:
         runtime.facts[SERVICE_UNITS[0]]['load_state'] = 'not-found'
     report = runtime.report()
@@ -183,7 +185,7 @@ def test_invalid_or_untrusted_receipt_is_structured_nonreadiness(runtime, invali
         path.write_text('{broken')
     elif invalid in {'null_state', 'string_state', 'list_state'}:
         receipt = json.loads(path.read_text())
-        receipt['states'][BILLING] = {'null_state': None, 'string_state': 'inactive', 'list_state': []}[invalid]
+        receipt['states'][HELD_TIMER] = {'null_state': None, 'string_state': 'inactive', 'list_state': []}[invalid]
         path.write_text(json.dumps(receipt))
     elif invalid == 'symlink':
         original = path.with_suffix('.original')
@@ -262,7 +264,7 @@ def test_monitor_keeps_maintenance_nonready_and_does_not_hide_other_failures(tmp
     payload = {'state': 'ready', 'ready': True, 'checks': [{'name': 'postgresql', 'ready': True}]}
     code = 200
     if mode.startswith('maintenance'):
-        payload.update(state='maintenance', ready=False, maintenance={'held_units': [BILLING], 'actor': 'fixture operator',
+        payload.update(state='maintenance', ready=False, maintenance={'held_units': [HELD_TIMER], 'actor': 'fixture operator',
                        'reason': 'Reviewed repair', 'declared_at': '2026-10-27T00:00:00Z', 'release_sha': SHA},
                        checks=[{'name': 'scheduler_timers', 'ready': False}, {'name': 'runtime_maintenance', 'ready': False}])
         code = 503
@@ -321,7 +323,7 @@ def test_host_monitor_never_heartbeats_or_claims_recovery_while_nonready(tmp_pat
     (app_root / 'venv/bin').mkdir(parents=True)
     binaries.mkdir()
     payload = {'ready': state == 'ready', 'state': state,
-               'maintenance': {'held_units': [BILLING], 'actor': 'fixture operator', 'reason': 'Reviewed fixture repair',
+               'maintenance': {'held_units': [HELD_TIMER], 'actor': 'fixture operator', 'reason': 'Reviewed fixture repair',
                                'declared_at': '2026-10-27T00:00:00Z', 'expires_at': '2026-10-28T00:00:00Z', 'release_sha': SHA}}
     fixture = tmp_path / 'readiness.json'
     fixture.write_text(json.dumps(payload))
@@ -330,7 +332,7 @@ def test_host_monitor_never_heartbeats_or_claims_recovery_while_nonready(tmp_pat
     fake_python = app_root / 'venv/bin/python'
     fake_python.write_text('#!/bin/sh\nif [ "$1" = "-m" ]; then cat "$READINESS_FIXTURE"; exit "$READINESS_EXIT"; fi\nexec "$REAL_PYTHON" "$@"\n')
     scripts = {
-        'systemctl': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_CALLS"\nif [ "$HELD_BILLING" = "1" ] && [ "$3" = "twinevia-saas-billing-reconcile.timer" ]; then exit 3; fi\n',
+        'systemctl': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_CALLS"\nif [ "$HELD_HELD_TIMER" = "1" ] && [ "$3" = "twinevia-saas-billing-reconcile.timer" ]; then exit 3; fi\n',
         'logger': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MONITOR_LOG"\n',
         'curl': '#!/bin/sh\nprintf "%s\\n" "$*" >> "$MONITOR_CURL"\n',
     }
@@ -344,7 +346,7 @@ def test_host_monitor_never_heartbeats_or_claims_recovery_while_nonready(tmp_pat
            'PYTHONPATH': str(ROOT) + os.pathsep + os.environ.get('PYTHONPATH', ''),
            'PYTHON_DOTENV_DISABLED': '1', 'REAL_PYTHON': sys.executable,
            'READINESS_FIXTURE': str(fixture), 'READINESS_EXIT': '0' if state == 'ready' else '1',
-           'HELD_BILLING': '0' if state == 'ready' else '1', 'ALERT_WEBHOOK_URL': '',
+           'HELD_HELD_TIMER': '0' if state == 'ready' else '1', 'ALERT_WEBHOOK_URL': '',
            'UPTIME_MONITOR_HEARTBEAT_URL': 'https://fixture.invalid/heartbeat', 'APP_RELEASE_ID': 'fixture-release',
            'SYSTEMCTL_CALLS': str(tmp_path / 'systemctl.txt'), 'MONITOR_LOG': str(tmp_path / 'monitor.txt'),
            'MONITOR_CURL': str(tmp_path / 'curl.txt')}
