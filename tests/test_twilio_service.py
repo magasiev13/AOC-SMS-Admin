@@ -1456,7 +1456,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         self.assertEqual(record.margin, Decimal("-0.0400"))
 
     @patch("app.services.twilio_service._build_subaccount_client")
-    def test_reconcile_messaging_usage_suppresses_hard_fail_destinations(self, mock_build_subaccount_client) -> None:
+    def test_reconcile_messaging_usage_gates_invalid_destinations_without_deleting_contacts(self, mock_build_subaccount_client) -> None:
         from app.models import CommunityMember, MessageLog, SuppressedContact
         from app.services.provider_secret_service import encrypt_provider_secret
         from app.services.twilio_service import reconcile_messaging_usage
@@ -1483,6 +1483,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
             self.MessagingUsageRecord(
                 organization_id=organization.id,
                 message_sid="SMusage-hard-fail",
+                historical_observation_only=False,
                 source="blast",
                 reconciliation_status="pending",
             )
@@ -1493,7 +1494,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
         mock_client.messages.return_value.fetch.return_value = SimpleNamespace(
             sid="SMusage-hard-fail",
             status="undelivered",
-            error_code=30003,
+            error_code=21614,
             error_message="Unknown subscriber",
             num_segments="1",
             price="-0.0200",
@@ -1506,7 +1507,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
 
         self.assertEqual(summary["suppression_actions"], 1)
         self.assertIsNotNone(SuppressedContact.query.filter_by(phone="+15550003333").first())
-        self.assertIsNone(CommunityMember.query.filter_by(phone="+15550003333").first())
+        self.assertIsNotNone(CommunityMember.query.filter_by(phone="+15550003333").first())
 
     @patch("app.services.twilio_service._build_subaccount_client")
     def test_reconcile_messaging_usage_keeps_soft_fail_destinations_sendable(self, mock_build_subaccount_client) -> None:
@@ -1571,6 +1572,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-1",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
@@ -1581,6 +1583,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-2",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
@@ -1615,6 +1618,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-growth-1",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=2,
                     billable=True,
@@ -1625,6 +1629,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-growth-2",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=3,
                     billable=True,
@@ -1656,6 +1661,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-comp-1",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=1,
                     billable=True,
@@ -1666,6 +1672,7 @@ class TestTwilioProviderLifecycle(unittest.TestCase):
                 self.MessagingUsageRecord(
                     organization_id=organization.id,
                     message_sid="SM-comp-2",
+                    historical_observation_only=False,
                     cost_status="known", units_status="known", provider_cost=Decimal("0.02"),
                     billable_units=2,
                     billable=True,

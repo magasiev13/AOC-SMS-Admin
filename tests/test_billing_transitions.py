@@ -844,6 +844,7 @@ def usage_settlement(billing, monkeypatch):
         billable=True, billable_units=1005, cost_status='known', units_status='known',
         provider_cost=Decimal('0.02'), provider_currency='usd',
         billing_period_start=start, billing_period_end=end, billing_review_required=False,
+        historical_observation_only=False,
     ))
     billing.db.session.commit()
     provider = UsageSettlementBoundary()
@@ -952,13 +953,19 @@ def test_new_usage_retry_uses_durable_attempt_start_instead_of_old_period_creati
     assert len(provider.invoices) == 1 and period.settlement_version == 1
 
 
-def test_migration_026_retains_existing_invoice_and_legacy_unknown_start(billing, monkeypatch):
+@pytest.mark.parametrize('state', ['included', 'error'])
+def test_migration_026_retains_existing_invoice_and_legacy_unknown_start(billing, monkeypatch, state):
     import importlib
     from sqlalchemy import inspect
 
     period, _provider, _twilio = usage_settlement(billing, monkeypatch)
-    period.status, period.settlement_version, period.stripe_invoice_id = 'error', 7, 'in_legacy_retained'
+    period.status = state
+    period.settlement_version = 0 if state == 'included' else 7
+    period.stripe_invoice_id = None if state == 'included' else 'in_legacy_retained'
+    if state == 'included':
+        period.used_units, period.overage_units, period.sell_amount = 3828, 0, 0
     billing.db.session.commit()
+    before = {column.name: getattr(period, column.name) for column in period.__table__.columns}
     period_id = period.id
     billing.db.session.remove()
     with billing.db.engine.begin() as connection:
@@ -968,4 +975,61 @@ def test_migration_026_retains_existing_invoice_and_legacy_unknown_start(billing
         migration.apply(connection, MagicMock())
         assert 'settlement_started_at' in {row['name'] for row in inspect(connection).get_columns('organization_usage_billing_periods')}
     period = billing.db.session.get(billing.models.OrganizationUsageBillingPeriod, period_id)
-    assert (period.status, period.settlement_version, period.stripe_invoice_id, period.settlement_started_at) == ('error', 7, 'in_legacy_retained', None)
+    assert {column.name: getattr(period, column.name) for column in period.__table__.columns} == before
+
+
+@pytest.mark.parametrize('historical_marker', ['billing_review', 'observation_only'])
+def test_historical_partial_fact_recovery_preserves_original_included_period_snapshot(billing, monkeypatch, historical_marker):
+    """Regression for the 3828 -> 2744 historical included-period rewrite."""
+    period, provider, twilio = usage_settlement(billing, monkeypatch)
+    organization(billing).subscription.status = 'complimentary'
+    period.status, period.used_units, period.overage_units, period.sell_amount = 'included', 3828, 0, 0
+    record = billing.models.MessagingUsageRecord.query.filter_by(organization_id=billing.organization_id).one()
+    record.billable_units = 2744
+    record.billing_review_required = historical_marker == 'billing_review'
+    record.historical_observation_only = historical_marker == 'observation_only'
+    billing.db.session.commit()
+    before = {column.name: getattr(period, column.name) for column in period.__table__.columns}
+    twilio.upsert_closed_usage_billing_periods()
+    billing.service._post_closed_usage_invoice_items()
+    billing.db.session.refresh(period)
+    assert {column.name: getattr(period, column.name) for column in period.__table__.columns} == before
+    assert billing.models.OrganizationUsageBillingPeriod.query.count() == 1
+    provider.api.Invoice.create.assert_not_called()
+    provider.api.InvoiceItem.create.assert_not_called()
+
+
+@pytest.mark.parametrize('state', ['pending', 'pending_customer', 'error', 'invoicing', 'item_created', 'posted', 'carry_forward'])
+@pytest.mark.parametrize('historical_marker', ['billing_review', 'observation_only'])
+def test_historical_posting_hold_never_rewrites_retained_financial_state(billing, monkeypatch, state, historical_marker):
+    period, provider, _twilio = usage_settlement(billing, monkeypatch)
+    period.status = state
+    period.settlement_version, period.stripe_invoice_id = 3, 'in_retained_historical'
+    period.stripe_invoice_item_id = 'ii_retained_historical' if state in {'item_created', 'posted', 'carry_forward'} else None
+    period.settlement_due_at = billing.service._billing_utc_now() - timedelta(days=1)
+    record = billing.models.MessagingUsageRecord.query.filter_by(organization_id=billing.organization_id).one()
+    record.billing_review_required = historical_marker == 'billing_review'
+    record.historical_observation_only = historical_marker == 'observation_only'
+    billing.db.session.commit()
+    before = {column.name: getattr(period, column.name) for column in period.__table__.columns}
+    assert billing.service._post_closed_usage_invoice_items()['periods_skipped'] == 1
+    billing.db.session.refresh(period)
+    assert {column.name: getattr(period, column.name) for column in period.__table__.columns} == before
+    provider.api.Invoice.create.assert_not_called()
+    provider.api.InvoiceItem.create.assert_not_called()
+    provider.api.Invoice.finalize_invoice.assert_not_called()
+
+
+@pytest.mark.parametrize('historical_marker', ['billing_review', 'observation_only'])
+def test_historical_usage_without_a_period_cannot_create_automatic_financial_state(billing, monkeypatch, historical_marker):
+    period, provider, twilio = usage_settlement(billing, monkeypatch)
+    record = billing.models.MessagingUsageRecord.query.filter_by(organization_id=billing.organization_id).one()
+    record.billing_review_required = historical_marker == 'billing_review'
+    record.historical_observation_only = historical_marker == 'observation_only'
+    billing.db.session.delete(period)
+    billing.db.session.commit()
+    twilio.upsert_closed_usage_billing_periods()
+    billing.service._post_closed_usage_invoice_items()
+    assert billing.models.OrganizationUsageBillingPeriod.query.count() == 0
+    provider.api.Invoice.create.assert_not_called()
+    provider.api.InvoiceItem.create.assert_not_called()

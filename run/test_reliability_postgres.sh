@@ -21,7 +21,8 @@ export OUTBOX_TEST_REDIS_SERVER="$(command -v redis-server)"
 for key in OUTBOX_TEST_POSTGRES_ROOT AUDIT_AOC_DATABASE_ROOT \
   AUDIT_PERMISSION_DATABASE_ROOT AUDIT_REVIEW_DATABASE_ROOT AUDIT_UX_DATABASE_ROOT \
   INBOUND_TEST_POSTGRES_ROOT CANCELLATION_TEST_POSTGRES_ROOT REPLY_TEST_POSTGRES_ROOT \
-  BILLING_TEST_POSTGRES_ROOT DELIVERY_TEST_POSTGRES_ROOT AUTOMATION_TEST_POSTGRES_ROOT; do
+  BILLING_TEST_POSTGRES_ROOT DELIVERY_TEST_POSTGRES_ROOT AUTOMATION_TEST_POSTGRES_ROOT \
+  HISTORICAL_TEST_POSTGRES_ROOT; do
   export "${key}=${TWINEVIA_TEST_POSTGRES_ROOT}"
 done
 
@@ -33,4 +34,4 @@ cd "${REPO_ROOT}"
   tests/test_outbound_rq_recovery.py tests/test_outbound_review.py \
   tests/test_durable_reply_races.py tests/test_inbound_inactive_consent.py \
   tests/test_scheduled_cancellation_safety.py tests/test_recipient_permissions.py \
-  tests/test_ux_recovery.py "$@"
+  tests/test_ux_recovery.py tests/test_historical_recovery_safety.py "$@"

@@ -62,7 +62,9 @@ def backfill_suppressions(
             if not details:
                 continue
             batch_details += len(details)
-            result = process_failure_details(details, log_entry.id)
+            # Historical log replay is a diagnostic report. It cannot establish
+            # today's consent/number state or undo a later signup/START.
+            result = process_failure_details(details, log_entry.id, observe_only=True)
             batch_unsubscribed += result.get('unsubscribed_upserts', 0)
             batch_suppressed += result.get('suppressed_upserts', 0)
             batch_calls += 1

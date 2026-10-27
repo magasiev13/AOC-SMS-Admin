@@ -30,7 +30,7 @@ from app.models import (
     UnsubscribedContact,
     utc_now,
 )
-from app.services.suppression_service import apply_failure_suppression, classify_failure
+from app.services.suppression_service import HARD_FAIL_ERROR_CODES, apply_failure_suppression, classify_failure
 from app.services.provider_secret_service import (
     decrypt_provider_secret,
     encrypt_provider_secret,
@@ -56,7 +56,6 @@ ALLOWED_OUTBOUND_SEND_KINDS = {
     "manual_reply",
 }
 TESTING_BLOCKED_SEND_KINDS = {"auth_alert", "automation_reply"}
-HARD_FAIL_ERROR_CODES = {"21610", "30003", "30004", "30005", "30006", "30007"}
 CUSTOMER_MANAGED_APPROVED_CAMPAIGN_STATUSES = {"approved", "active", "verified"}
 CUSTOMER_MANAGED_APPROVED_BRAND_STATUSES = {"approved", "registered", "verified", "vetting_verified"}
 CUSTOMER_MANAGED_FAILED_CAMPAIGN_STATUSES = {"failed", "rejected", "deleted"}
@@ -1457,7 +1456,9 @@ def _resolve_message_log_detail_for_sid(
 
 
 def _resolve_usage_record_delivery_context(record: MessagingUsageRecord) -> dict[str, Any]:
-    inbox_message = InboxMessage.query.filter_by(message_sid=record.message_sid).first()
+    inbox_message = InboxMessage.query.filter_by(
+        organization_id=record.organization_id, message_sid=record.message_sid,
+    ).first()
     if inbox_message is not None:
         return {
             "phone": normalize_phone(inbox_message.phone),
@@ -1504,6 +1505,13 @@ def apply_usage_record_failure_suppression(
         "reason": None,
     }
 
+    # This guard belongs at the mutation boundary as well as in the observer:
+    # callbacks, polling, direct calls and explicit backfill share this helper.
+    # Missing provenance is observational, never authorization to alter consent.
+    if record.historical_observation_only is not False:
+        result['skipped_reason'] = 'historical_observation_only'
+        return result
+
     if category not in {"opt_out", "hard_fail"}:
         return result
     if str(error_code or "").strip() not in HARD_FAIL_ERROR_CODES:
@@ -1532,6 +1540,8 @@ def apply_usage_record_failure_suppression(
         source="usage_reconciliation",
         source_type=context.get("source_type"),
         source_message_log_id=context.get("source_message_log_id"),
+        purge_related_rows=False,
+        evidence_occurred_at=getattr(twilio_message, 'date_created', None) or record.created_at,
         commit=False,
     )
     result.update(
@@ -3382,6 +3392,7 @@ def record_usage_candidates(
                             organization_id=organization_id, message_sid=sid, direction='outbound', source=source,
                             twilio_subaccount_sid=str(detail.get('account_sid') or '').strip() or None,
                             provider_currency=_usage_currency(), reconciliation_status='pending',
+                            historical_observation_only=False,
                         )
                         db.session.add(record)
                         db.session.flush()
@@ -3499,6 +3510,7 @@ def backfill_usage_record_failure_suppressions(
         "records_checked": 0,
         "suppression_actions": 0,
         "errors": 0,
+        "historical_skipped": 0,
     }
     last_id = 0
 
@@ -3518,13 +3530,21 @@ def backfill_usage_record_failure_suppressions(
 
         for record in batch:
             summary["records_seen"] += 1
+            if record.historical_observation_only is not False:
+                summary['historical_skipped'] += 1
+                continue
             try:
                 client = _client_for_usage_reconciliation(record.organization_id)
                 message = client.messages(record.message_sid).fetch()
+                record = MessagingUsageRecord.query.filter_by(
+                    id=record.id, organization_id=organization_id,
+                ).populate_existing().with_for_update().one()
+                _validate_usage_provider_record(record, message)
                 suppression = apply_usage_record_failure_suppression(record, twilio_message=message)
                 summary["records_checked"] += 1
                 if suppression.get("applied"):
                     summary["suppression_actions"] += 1
+                    record.suppression_applied_at = utc_now().replace(tzinfo=None)
                 db.session.commit()
             except Exception as exc:
                 db.session.rollback()
@@ -3558,7 +3578,10 @@ def _period_usage_query(period):
 def usage_period_billing_block_reason(period) -> str | None:
     """Delivery receipts do not gate settlement; verified economic facts do."""
     query = _period_usage_query(period)
-    if query.filter(MessagingUsageRecord.billing_review_required.is_(True)).first() is not None:
+    if query.filter(db.or_(
+        MessagingUsageRecord.historical_observation_only.is_(True),
+        MessagingUsageRecord.billing_review_required.is_(True),
+    )).first() is not None:
         return 'historical_usage_review_required'
     if query.filter(db.or_(
         MessagingUsageRecord.cost_status != 'known', MessagingUsageRecord.units_status != 'known',
@@ -3609,6 +3632,17 @@ def upsert_closed_usage_billing_periods() -> int:
             period_start=period_start,
             period_end=period_end,
         ).populate_existing().with_for_update().first()
+        # A late read of historical facts must not revise even an included,
+        # unposted snapshot, nor invent an automatically payable period. Keep
+        # this before every assignment (including status/due/updated_at).
+        period_identity = period or SimpleNamespace(
+            organization_id=organization_id, period_start=period_start, period_end=period_end,
+        )
+        if _period_usage_query(period_identity).filter(db.or_(
+            MessagingUsageRecord.historical_observation_only.is_(True),
+            MessagingUsageRecord.billing_review_required.is_(True),
+        )).first() is not None:
+            continue
         if period is not None and (
             int(period.invoiced_units or 0) > 0 or period.status == 'posted'
             or int(period.settlement_version or 0) > 0 or period.settlement_started_at is not None
