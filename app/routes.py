@@ -26,7 +26,7 @@ from flask import (
     stream_with_context,
     url_for,
 )
-from flask_login import current_user, login_required, login_user, logout_user
+from flask_login import current_user, login_required, login_user
 from sqlalchemy import BigInteger, String, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import selectinload
@@ -38,7 +38,7 @@ from app.services.audience_service import (
     community_query, current_audience_counts, current_event_predicate, event_is_current,
     event_registrations_query, events_query,
 )
-from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, require_roles
+from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, logout_and_clear_session, require_roles
 
 from app.models import (
     AuthEvent,
@@ -3169,7 +3169,8 @@ def _normalized_keyword_sql(column):
         normalized = func.replace(normalized, token, ' ')
     for _ in range(6):
         normalized = func.replace(normalized, '  ', ' ')
-    return normalized
+    # Edge control whitespace becomes spaces above, so trim after replacement.
+    return func.trim(normalized)
 
 
 def _keyword_conflicts_with_survey(trigger_keyword: str, *, exclude_survey_id: int | None = None) -> bool:
@@ -4380,6 +4381,7 @@ def dashboard():
                 MessageLog.created_at < range_end,
             ).all()
         except OperationalError:
+            db.session.rollback()
             logs = []
 
         for log in logs:
@@ -5524,8 +5526,7 @@ def change_password():
                 },
             )
 
-        logout_user()
-        session.clear()
+        logout_and_clear_session()
         flash('Password updated successfully. Please sign in again.', 'success')
         return redirect(url_for('auth.login'))
 
@@ -9594,7 +9595,7 @@ def inbox_list():
 
     messages = []
     active_sessions = []
-    active_trigger_keywords: set[str] = set()
+    message_keyword_origins: dict[int, str] = {}
     selected_thread_is_unsubscribed = False
     older_messages_url = newer_messages_url = None
     acknowledged_reply_key = None
@@ -9640,7 +9641,31 @@ def inbox_list():
                 acknowledged_reply_key = submitted.get('form_key')
                 submitted_drafts.pop(str(selected_thread.id), None)
                 session['reply_draft_submissions'] = submitted_drafts
-        active_trigger_keywords = _active_trigger_keywords_set()
+        current_origins = {}
+        for source, model, keyword_field in (
+            ('keyword', KeywordAutomationRule, 'keyword'),
+            ('survey', SurveyFlow, 'trigger_keyword'),
+        ):
+            origin_ids = {message.automation_source_id for message in messages
+                          if message.matched_keyword and message.automation_source == source
+                          and message.automation_source_id is not None}
+            if origin_ids:
+                for origin in model.query.filter(model.id.in_(origin_ids), model.is_active.is_(True)).all():
+                    current_origins[(source, origin.id)] = (
+                        normalize_keyword(getattr(origin, keyword_field)), as_utc_datetime(origin.created_at),
+                    )
+        for message in messages:
+            if not message.matched_keyword:
+                continue
+            key = (message.automation_source, message.automation_source_id)
+            known_origin = key[0] in {'keyword', 'survey'} and key[1] is not None
+            state = 'historical' if known_origin else 'unknown'
+            current = current_origins.get(key)
+            received_at = as_utc_datetime(message.created_at)
+            if (current is not None and current[0] == normalize_keyword(message.matched_keyword)
+                    and current[1] is not None and received_at is not None and current[1] <= received_at):
+                state = 'current'
+            message_keyword_origins[message.id] = state
         active_sessions = SurveySession.query.filter_by(
             thread_id=selected_thread.id,
             status='active',
@@ -9658,7 +9683,7 @@ def inbox_list():
         selected_thread=selected_thread,
         messages=messages,
         active_sessions=active_sessions,
-        active_trigger_keywords=active_trigger_keywords,
+        message_keyword_origins=message_keyword_origins,
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
         inbox_status_latest_message_id=activity['latest_message_id'],
@@ -9952,14 +9977,19 @@ def keyword_rule_edit(rule_id):
             flash('Auto-reply message is required.', 'error')
             return _render_keyword_form(rule=rule, form_data=None)
 
-        if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
-            flash('That keyword already exists.', 'error')
-            return _render_keyword_form(rule=rule, form_data=None)
-        if _keyword_conflicts_with_survey(normalized_keyword):
-            flash('That keyword is already used as a survey trigger.', 'error')
-            return _render_keyword_form(rule=rule, form_data=None)
+        keyword_changed = normalized_keyword != normalize_keyword(rule.keyword)
+        # Existing imports may overlap a survey trigger. Updating a response or
+        # disabling that rule does not introduce a new trigger; reactivation does.
+        if keyword_changed or (is_active and not rule.is_active):
+            if _keyword_conflicts_with_rule(normalized_keyword, exclude_rule_id=rule.id):
+                flash('That keyword already exists.', 'error')
+                return _render_keyword_form(rule=rule, form_data=None)
+            if _keyword_conflicts_with_survey(normalized_keyword):
+                flash('That keyword is already used as a survey trigger.', 'error')
+                return _render_keyword_form(rule=rule, form_data=None)
 
-        rule.keyword = normalized_keyword
+        if keyword_changed:
+            rule.keyword = normalized_keyword
         rule.response_body = response_body
         rule.is_active = is_active
         db.session.commit()
@@ -10258,12 +10288,14 @@ def survey_flow_edit(survey_id):
             flash('A survey with this name already exists.', 'error')
             return _render_survey_form(survey=survey, form_data=form_data)
 
-        if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
-            flash('That survey trigger keyword already exists.', 'error')
-            return _render_survey_form(survey=survey, form_data=form_data)
-        if _keyword_conflicts_with_rule(trigger_keyword):
-            flash('That survey trigger keyword is already used by a keyword automation.', 'error')
-            return _render_survey_form(survey=survey, form_data=form_data)
+        keyword_changed = trigger_keyword != normalize_keyword(survey.trigger_keyword)
+        if keyword_changed or (is_active and not survey.is_active):
+            if _keyword_conflicts_with_survey(trigger_keyword, exclude_survey_id=survey.id):
+                flash('That survey trigger keyword already exists.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
+            if _keyword_conflicts_with_rule(trigger_keyword):
+                flash('That survey trigger keyword is already used by a keyword automation.', 'error')
+                return _render_survey_form(survey=survey, form_data=form_data)
 
         if event_link_mode == 'new':
             linked_event = Event(title=new_event_title, date=new_event_date)
@@ -10272,7 +10304,8 @@ def survey_flow_edit(survey_id):
             linked_event_id = linked_event.id
 
         survey.name = name
-        survey.trigger_keyword = trigger_keyword
+        if keyword_changed:
+            survey.trigger_keyword = trigger_keyword
         survey.intro_message = intro_message
         survey.completion_message = completion_message
         survey.linked_event_id = linked_event_id

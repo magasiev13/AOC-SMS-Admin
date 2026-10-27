@@ -173,8 +173,7 @@ def _release(root, name):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPOSITORY / relative, target)
     contract = root / 'deploy/runtime-contract.json'
-    contract.write_text(json.dumps({'version': 1, 'historical_usage_observation_boundary': True,
-                                    'schema_min': '027', 'schema_max': '027'}))
+    shutil.copyfile(REPOSITORY / 'deploy/runtime-contract.json', contract)
     (root / 'fixture-source-name').write_text(name)
     subprocess.run(['git', '-C', str(root), 'add', *relative_files, 'deploy/runtime-contract.json', 'fixture-source-name'], check=True)
     subprocess.run(['git', '-C', str(root), '-c', 'user.name=Runtime fixture', '-c', 'user.email=runtime@fixture.test',
@@ -546,6 +545,98 @@ def test_unsafe_rollback_target_is_rejected_without_any_runtime_action(runtime):
     (unsafe / 'release.json').write_text(json.dumps({'release_id': 'old', 'source_sha': 'c' * 40}))
     with pytest.raises(runtime.module.RuntimeControlError):
         runtime.controller.verify_target(unsafe)
+    assert _state(runtime)['calls'] == []
+    assert _state(runtime)['provider_calls'] == []
+
+
+def _label_fixture_as_legacy_transition(runtime, monkeypatch):
+    import hashlib
+    names = ('deploy/runtime_control.py', 'app/services/twilio_service.py',
+             'app/saas_migrations/027_historical_usage_observation_boundary.py')
+    monkeypatch.setattr(runtime.module, 'LEGACY_SAFE_SHA', runtime.sha)
+    monkeypatch.setattr(runtime.module, 'LEGACY_SAFETY_HASHES', {
+        name: hashlib.sha256((runtime.original / name).read_bytes()).hexdigest() for name in names
+    })
+
+
+@pytest.mark.parametrize('kind', ['deploy', 'release', 'install'])
+def test_first_upgrade_can_inspect_legacy_and_restore_it_only_inside_its_original_transaction(
+        runtime, monkeypatch, capsys, kind):
+    _label_fixture_as_legacy_transition(runtime, monkeypatch)
+    assert runtime.controller.verify_target(runtime.original)['source_sha'] == runtime.sha
+    assert _state(runtime)['calls'] == []
+    snapshot = runtime.controller.capture(kind=kind)
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    before = _operating_state(runtime)
+    # A later standalone rollback would resurrect the repaired account/survey
+    # bugs. Merely retaining a trusted, Git-matching release cannot authorize it.
+    with pytest.raises(runtime.module.RuntimeControlError, match='standalone rollback'):
+        runtime.controller.verify_target(runtime.original)
+    assert runtime.controller.current() == runtime.candidate
+    assert _state(runtime)['calls'] == calls
+    assert _operating_state(runtime) == before
+    # The first upgrade's own failure path still has to recover its original
+    # operating release. Exercise the CLI's captured-state policy, not just the
+    # Python method, so an omitted snapshot cannot strand first-time promotion.
+    state_file = runtime.state_root / 'transactions' / (snapshot['transaction_id'] + '.json')
+    runtime.module._write_json(state_file, snapshot)
+    assert runtime.module.main(['verify-target', '--state', str(state_file), '--target', str(runtime.original)]) == 0
+    proof = json.loads(capsys.readouterr().out)
+    assert proof['source_sha'] == runtime.sha
+    assert _state(runtime)['calls'] == calls
+    assert _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('kind', ['rollback', 'restart'])
+def test_a_rollback_or_restart_snapshot_cannot_waive_the_legacy_recovery_boundary(runtime, monkeypatch, kind):
+    _label_fixture_as_legacy_transition(runtime, monkeypatch)
+    snapshot = runtime.controller.capture(kind=kind)
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='standalone rollback'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert runtime.controller.current() == runtime.candidate
+    assert _state(runtime)['calls'] == calls
+    assert _state(runtime)['provider_calls'] == []
+
+
+def test_a_captured_hold_cannot_authorize_legacy_recovery_even_if_its_receipt_is_lost(runtime, monkeypatch):
+    runtime.controller.pause([BILLING], reason='Captured financial containment', expected_sha=runtime.sha)
+    snapshot = runtime.controller.capture(kind='deploy')
+    assert snapshot['held_units'] == [BILLING]
+    _label_fixture_as_legacy_transition(runtime, monkeypatch)
+    _switch(runtime, runtime.candidate)
+    # Simulate lost operational evidence without discarding the original
+    # transaction's known hold. Missing evidence must not widen recovery scope.
+    runtime.controller.maintenance_file.unlink()
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='standalone rollback'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert _state(runtime)['calls'] == calls
+    assert _state(runtime)['units'][BILLING]['ActiveState'] == 'inactive'
+    assert _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('missing_guard', ['logout_session_revocation', 'active_survey_session_guard'])
+def test_reviewed_modern_release_without_either_repaired_guard_is_not_a_recovery_target(runtime, missing_guard):
+    contract_path = runtime.root / 'deploy/runtime-contract.json'
+    contract = json.loads(contract_path.read_text())
+    assert contract.pop(missing_guard) is True
+    contract_path.write_text(json.dumps(contract, sort_keys=True) + '\n')
+    subprocess.run(['git', '-C', str(runtime.root), 'add', 'deploy/runtime-contract.json'], check=True)
+    subprocess.run(['git', '-C', str(runtime.root), '-c', 'user.name=Runtime fixture',
+                    '-c', 'user.email=runtime@fixture.test', '-c', 'commit.gpgsign=false',
+                    'commit', '--quiet', '-m', 'Reviewed fixture without ' + missing_guard], check=True)
+    sha = subprocess.run(['git', '-C', str(runtime.root), 'rev-parse', 'HEAD'],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    target = runtime.root / 'releases' / ('without-' + missing_guard)
+    shutil.copytree(runtime.candidate, target)
+    shutil.copyfile(contract_path, target / 'deploy/runtime-contract.json')
+    (target / 'release.json').write_text(json.dumps({'release_id': target.name, 'source_sha': sha}))
+    (target / '.release.env').write_text(f'APP_RELEASE_ID={target.name}\nAPP_RELEASE_SHA={sha}\n')
+    with pytest.raises(runtime.module.RuntimeControlError, match='account and survey safety guards'):
+        runtime.controller.verify_target(target)
     assert _state(runtime)['calls'] == []
     assert _state(runtime)['provider_calls'] == []
 

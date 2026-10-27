@@ -78,11 +78,16 @@ class TestSendBulkJob(unittest.TestCase):
 
         self.db.session.expire_all()
         log = self.db.session.get(self.MessageLog, log_id)
-        self.assertEqual(log.status, "failed")
+        self.assertEqual(log.status, "ambiguous")
         details = json.loads(log.details or "[]")
         self.assertGreaterEqual(len(details), 2)
         self.assertEqual(details[0].get("phone"), "+15550000001")
         self.assertTrue(any(detail.get("error") == "provider down" for detail in details))
+        self.assertEqual(log.success_count, 1)
+        self.assertEqual(log.failure_count, 0)
+        mock_service.send_bulk.reset_mock()
+        self.send_bulk_job(log_id, recipients, "Hello", delay=0)
+        mock_service.send_bulk.assert_not_called()
 
     @patch("app.tasks.process_failure_details")
     @patch("app.tasks.get_twilio_service")
@@ -354,6 +359,7 @@ class TestSendBulkJob(unittest.TestCase):
         mock_get_current_job,
     ) -> None:
         from app.services.twilio_service import TwilioTransientError
+        from twilio.base.exceptions import TwilioRestException
 
         log_id = self._create_log(details=[])
         recipients = [
@@ -362,7 +368,7 @@ class TestSendBulkJob(unittest.TestCase):
         ]
 
         mock_service = MagicMock()
-        mock_service.send_bulk.side_effect = TwilioTransientError(
+        rate_limit = TwilioTransientError(
             "provider retry",
             results={
                 "total": 2,
@@ -372,6 +378,8 @@ class TestSendBulkJob(unittest.TestCase):
             },
             failed_index=1,
         )
+        rate_limit.__cause__ = TwilioRestException(429, 'https://provider.example.test/messages', msg='Rate limited', code=20429)
+        mock_service.send_bulk.side_effect = rate_limit
         mock_get_twilio.return_value = mock_service
         mock_process_failure_details.return_value = {}
         mock_record_usage_candidates.side_effect = RuntimeError("usage ledger down")

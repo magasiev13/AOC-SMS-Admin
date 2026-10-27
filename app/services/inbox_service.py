@@ -1011,6 +1011,9 @@ def process_inbound_sms(payload: dict) -> dict:
         if session is not None and saas_mode_enabled():
             from app.services.automation_outbox_service import session_has_unsubmitted_reply
             pending_survey_reply = session_has_unsubmitted_reply(session.id)
+        if session is not None and outbound_ready and normalized not in STOP_KEYWORDS:
+            inbound_message.automation_source = 'survey'
+            inbound_message.automation_source_id = session.survey_id
         if normalized in STOP_KEYWORDS:
             _upsert_unsubscribed(
                 phone,
@@ -1123,6 +1126,8 @@ def process_inbound_sms(payload: dict) -> dict:
                         break
 
                 if survey:
+                    inbound_message.automation_source = 'survey'
+                    inbound_message.automation_source_id = survey.id
                     _session, replies = _start_survey(survey, thread, phone)
                     session = _session
                     for reply in replies:
@@ -1148,6 +1153,8 @@ def process_inbound_sms(payload: dict) -> dict:
                         if not rule:
                             continue
                         matched_keyword = candidate
+                        inbound_message.automation_source = 'keyword'
+                        inbound_message.automation_source_id = rule.id
                         rule.match_count = (rule.match_count or 0) + 1
                         rule.last_matched_at = utc_now()
                         pending_replies.append(

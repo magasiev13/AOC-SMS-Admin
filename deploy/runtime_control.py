@@ -235,7 +235,7 @@ class RuntimeController:
                 'before_release': identity, 'units': units, 'paired_services': paired, 'held_units': held,
                 'maintenance_before': receipt, 'fresh_install': fresh_install, 'owner_pid': os.getpid()}
 
-    def verify_target(self, path):
+    def verify_target(self, path, *, transition_snapshot=None):
         path = Path(path).resolve(strict=True)
         if path.parent != (self.app_root / 'releases').resolve():
             raise RuntimeControlError('Recovery target must be a retained release inside this application.')
@@ -248,6 +248,14 @@ class RuntimeController:
         if sha == LEGACY_SAFE_SHA:
             if self.maintenance_file.exists():
                 raise RuntimeControlError('The legacy recovery baseline supports normal operation only; keep maintenance contained and use a reviewed repair instead of this code rollback.')
+            current_identity = self.identity()
+            already_legacy = current_identity and current_identity['source_sha'] == LEGACY_SAFE_SHA
+            recovering_first_upgrade = (transition_snapshot is not None
+                and (transition_snapshot.get('before_release') or {}).get('source_sha') == LEGACY_SAFE_SHA
+                and transition_snapshot.get('kind') in {'deploy', 'release', 'install'}
+                and not transition_snapshot.get('held_units'))
+            if not already_legacy and not recovering_first_upgrade:
+                raise RuntimeControlError('The transition baseline predates the repaired account and survey guards. A standalone rollback would reintroduce known bugs; use a reviewed current repair.')
             if any(not (path / name).is_file() or hashlib.sha256((path / name).read_bytes()).hexdigest() != digest
                    for name, digest in LEGACY_SAFETY_HASHES.items()):
                 raise RuntimeControlError('The approved recovery baseline differs from its reviewed safety files.')
@@ -259,6 +267,8 @@ class RuntimeController:
                 raise RuntimeControlError('Older code lacks the required recovery safety contract. Use a reviewed matching backup restore, not a standalone code rollback.') from exc
             if not isinstance(contract, dict) or contract.get('version') != 1 or contract.get('historical_usage_observation_boundary') is not True:
                 raise RuntimeControlError('Recovery target does not declare the required historical observation boundary.')
+            if contract.get('logout_session_revocation') is not True or contract.get('active_survey_session_guard') is not True:
+                raise RuntimeControlError('Recovery target predates the required account and survey safety guards.')
             ceiling = str(contract.get('schema_max') or '')
             if not re.fullmatch(r'\d{3}', ceiling) or str(contract.get('schema_min') or '') > '027':
                 raise RuntimeControlError('Recovery target schema contract is invalid.')
@@ -638,7 +648,7 @@ def main(argv=None):
         elif args.command == 'assert': print(json.dumps(controller.assert_state(snapshot)))
         elif args.command == 'verify-readiness': print(json.dumps(controller.verify_readiness(snapshot, url=args.url)))
         elif args.command == 'render-unit': controller.render_unit(snapshot, args.rendered, args.target, args.vendor_unit_dir)
-        elif args.command == 'verify-target': print(json.dumps(controller.verify_target(args.target)))
+        elif args.command == 'verify-target': print(json.dumps(controller.verify_target(args.target, transition_snapshot=snapshot)))
         else: parser.error('Command cannot be used inside an existing transaction.')
     elif args.command == 'verify-target':
         print(json.dumps(controller.verify_target(args.target)))

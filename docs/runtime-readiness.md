@@ -85,3 +85,5 @@ loopback stack, fake providers and a disposable database. Receipt ownership is
 injected at the local browser-fixture boundary; production still requires root.
 Real systemd promotion/rollback and root-provenance verification belong to the
 separate runtime-controller acceptance suite.
+
+See [runtime operations](runtime-operations.md) for the first-upgrade recovery exception and the required corrected recovery baseline. Account sign-out behavior is documented in [account sign-out](account-signout.md).

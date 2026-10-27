@@ -1,6 +1,8 @@
 {
   "version": 1,
   "historical_usage_observation_boundary": true,
+  "logout_session_revocation": true,
+  "active_survey_session_guard": true,
   "schema_min": "027",
   "schema_max": "027"
 }
