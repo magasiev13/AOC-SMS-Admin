@@ -1054,6 +1054,9 @@ class MessagingUsageRecord(db.Model):
     reconcile_attempt_count = db.Column(db.Integer, nullable=False, default=0)
     suppression_applied_at = db.Column(db.DateTime, nullable=True)
     billing_review_required = db.Column(db.Boolean, nullable=False, default=False)
+    # Recovered provider facts do not authorize changes to today's directory,
+    # consent or financial snapshots. Only a new runtime submission opts out.
+    historical_observation_only = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     billing_period_start = db.Column(db.DateTime, nullable=True, index=True)
     billing_period_end = db.Column(db.DateTime, nullable=True, index=True)
     last_error = db.Column(db.Text, nullable=True)

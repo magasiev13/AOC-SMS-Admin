@@ -2321,7 +2321,14 @@ def _post_closed_usage_invoice_items() -> dict[str, int]:
             .with_for_update()
             .one()
         )
-        if period.status == "review_required" or usage_period_billing_block_reason(period):
+        block_reason = usage_period_billing_block_reason(period)
+        if block_reason == "historical_usage_review_required":
+            # Historical observation is not authorization to revise a retained
+            # billing snapshot, including an included or never-invoiced period.
+            db.session.rollback()
+            summary["periods_skipped"] += 1
+            continue
+        if period.status == "review_required" or block_reason:
             if period.status not in {"posted", "carry_forward"}:
                 period.status = "review_required"
                 period.settlement_due_at = None

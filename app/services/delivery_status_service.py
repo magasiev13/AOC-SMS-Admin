@@ -115,7 +115,7 @@ def observe_usage_record(record, message, *, source, include_cost=True, now=None
         raise ValueError('Unsupported outbound provider status.')
     code = str(getattr(message, 'error_code', '') or '').strip() or None
     error = str(getattr(message, 'error_message', '') or '').strip() or None
-    if record.billing_review_required:
+    if record.historical_observation_only is not False or record.billing_review_required:
         existing_review = OrganizationProviderAuditLog.query.filter_by(
             organization_id=record.organization_id, action='usage_historical_review',
         ).filter(OrganizationProviderAuditLog.metadata_json.contains(json.dumps(record.message_sid))).first()
@@ -199,10 +199,13 @@ def observe_usage_record(record, message, *, source, include_cost=True, now=None
         record.billing_period_start, record.billing_period_end = utc_naive(start), utc_naive(end)
     record.last_error = None
     suppression = {'applied': False}
-    if record.delivery_status in {'failed', 'undelivered'} and record.suppression_applied_at is None:
+    if (record.historical_observation_only is False
+            and record.delivery_status in {'failed', 'undelivered'}
+            and record.suppression_applied_at is None):
         suppression = twilio_service.apply_usage_record_failure_suppression(
             record, twilio_message=SimpleNamespace(status=record.delivery_status, error_code=record.delivery_error_code,
-                                                  error_message=record.delivery_error_message),
+                                                  error_message=record.delivery_error_message,
+                                                  date_created=provider_created),
         )
         if suppression.get('applied'):
             record.suppression_applied_at = now

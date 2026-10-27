@@ -3,12 +3,15 @@ from typing import Literal
 from flask import current_app
 
 from app import db
-from app.models import CommunityMember, EventRegistration, MessageLog, SuppressedContact, UnsubscribedContact, utc_now
-from app.utils import normalize_phone, validate_phone
+from app.models import MessageLog, RecipientPermissionEvidence, SuppressedContact, UnsubscribedContact
+from app.utils import as_utc_datetime, normalize_phone, validate_phone
 
 
 OptOutCategory = Literal['opt_out', 'hard_fail', 'soft_fail']
-HARD_FAIL_ERROR_CODES = {'21610', '30003', '30004', '30005', '30006', '30007'}
+# Carrier/device reachability and content filtering (30003–30007) are delivery
+# evidence, not proof that a recipient is permanently invalid or opted out.
+# These destination-validation errors gate future SMS without deleting people.
+HARD_FAIL_ERROR_CODES = {'21610', '21211', '21614'}
 
 
 def classify_failure(
@@ -22,8 +25,12 @@ def classify_failure(
 
     if normalized_error_code == '21610':
         return 'opt_out'
-    if normalized_error_code in {'30003', '30004', '30005', '30006', '30007'}:
+    if normalized_error_code in {'21211', '21614'}:
         return 'hard_fail'
+    if normalized_error_code:
+        # An explicit provider code is authoritative. Generic advice in its
+        # error text (e.g. "reply STOP") must not invent a recipient opt-out.
+        return 'soft_fail'
 
     if not error_text:
         if normalized_status in {'failed', 'undelivered'}:
@@ -33,35 +40,20 @@ def classify_failure(
     message = error_text.lower()
 
     opt_out_phrases = [
-        'unsubscribed',
-        'opted out',
-        'opted-out',
-        'opt-out',
-        'opt out',
-        'reply stop',
-        'unsubscribe',
+        'unsubscribed recipient',
+        'recipient is unsubscribed',
+        'user has unsubscribed',
         'recipient has opted out',
+        'recipient is opted out',
     ]
     # Keep opt-out detection strict to avoid suppressing valid contacts on
     # generic carrier blocks/transient failures.
     hard_fail_patterns = [
-        'invalid',
-        'not a valid',
-        'does not exist',
-        'unknown subscriber',
-        'unreachable',
-        'landline',
-        'not a mobile',
-        'no route',
-        'unassigned',
+        'invalid number',
+        'invalid phone number',
         'number is not valid',
-        'phone number is not',
-        'carrier violation',
-        '30003',
-        '30004',
-        '30005',
-        '30006',
-        '30007',
+        'not a valid mobile number',
+        'not a valid phone number',
     ]
     soft_fail_patterns = [
         'temporarily',
@@ -85,7 +77,7 @@ def classify_failure(
 
     if any(pattern in message for pattern in opt_out_phrases):
         return 'opt_out'
-    if normalized_error_code == '21610' or '21610' in message:
+    if '21610' in message:
         return 'opt_out'
     if any(pattern in message for pattern in hard_fail_patterns):
         return 'hard_fail'
@@ -93,6 +85,24 @@ def classify_failure(
         return 'soft_fail'
 
     return 'soft_fail'
+
+
+def _newer_verified_recipient_evidence(organization_id, phone, occurred_at, category):
+    """A delayed failure cannot undo a later authenticated START/review."""
+    if organization_id is None or occurred_at is None or not current_app.config.get('SAAS_MODE'):
+        return False
+    occurred_at = as_utc_datetime(occurred_at).replace(tzinfo=None)
+    newer = RecipientPermissionEvidence.query.filter(
+        RecipientPermissionEvidence.organization_id == organization_id,
+        RecipientPermissionEvidence.phone == phone,
+        RecipientPermissionEvidence.occurred_at >= occurred_at,
+    )
+    if newer.filter(RecipientPermissionEvidence.source == 'inbound_start').first() is not None:
+        return True
+    return category == 'hard_fail' and newer.filter(
+        RecipientPermissionEvidence.decision == 'granted',
+        RecipientPermissionEvidence.verified.is_(True),
+    ).first() is not None
 
 
 def apply_failure_suppression(
@@ -106,7 +116,8 @@ def apply_failure_suppression(
     source: str = 'message_failure',
     source_type: str | None = 'message_log',
     source_message_log_id: int | None = None,
-    purge_related_rows: bool = True,
+    purge_related_rows: bool = False,
+    evidence_occurred_at=None,
     commit: bool = False,
 ) -> dict:
     normalized_phone = normalize_phone(phone)
@@ -118,6 +129,8 @@ def apply_failure_suppression(
     reason = str(error_text or error_code or status or '').strip() or None
     category = classify_failure(reason or '', error_code=error_code, status=status)
     applied = False
+    if _newer_verified_recipient_evidence(organization_id, normalized_phone, evidence_occurred_at, category):
+        return {'applied': False, 'category': category, 'reason': reason, 'skipped_reason': 'newer_recipient_evidence'}
 
     if category == 'opt_out':
         existing = UnsubscribedContact.query.filter_by(
@@ -125,11 +138,9 @@ def apply_failure_suppression(
             organization_id=organization_id,
         ).first()
         if existing:
-            existing.source = source
-            if reason:
-                existing.reason = reason
-            if name and not existing.name:
-                existing.name = name
+            # Keep the original authenticated STOP/manual provenance. The
+            # new provider observation remains in its message/usage evidence.
+            return {'applied': False, 'category': category, 'reason': reason, 'skipped_reason': 'restriction_already_present'}
         else:
             db.session.add(
                 UnsubscribedContact(
@@ -147,12 +158,7 @@ def apply_failure_suppression(
             organization_id=organization_id,
         ).first()
         if existing:
-            existing.reason = reason
-            existing.category = category
-            existing.source = source
-            existing.source_type = source_type
-            existing.source_message_log_id = source_message_log_id
-            existing.updated_at = utc_now()
+            return {'applied': False, 'category': category, 'reason': reason, 'skipped_reason': 'restriction_already_present'}
         else:
             db.session.add(
                 SuppressedContact(
@@ -170,15 +176,9 @@ def apply_failure_suppression(
     if not applied:
         return {'applied': False, 'category': category, 'reason': reason}
 
-    if purge_related_rows:
-        CommunityMember.query.filter(
-            CommunityMember.organization_id == organization_id,
-            CommunityMember.phone == normalized_phone,
-        ).delete(synchronize_session=False)
-        EventRegistration.query.filter(
-            EventRegistration.organization_id == organization_id,
-            EventRegistration.phone == normalized_phone,
-        ).delete(synchronize_session=False)
+    # Keep the legacy keyword accepted for callers, but provider observations
+    # never authorize deleting directory members or event bookings. Negative
+    # recipient filters enforce the restriction while preserving customer data.
 
     if commit:
         db.session.commit()
@@ -186,7 +186,7 @@ def apply_failure_suppression(
     return {'applied': True, 'category': category, 'reason': reason}
 
 
-def process_failure_details(details: list, source_message_log_id: int) -> dict:
+def process_failure_details(details: list, source_message_log_id: int, *, observe_only: bool = False) -> dict:
     source_log = MessageLog.query.filter_by(id=source_message_log_id).first()
     organization_id = source_log.organization_id if source_log is not None else None
     counts = {
@@ -205,8 +205,6 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
 
     def get_phone(entry: dict) -> str:
         return entry.get('phone') or entry.get('to') or entry.get('recipient') or ''
-
-    suppressed_phones = set()
 
     try:
         for detail in details:
@@ -237,9 +235,11 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                 status=status,
             )
             counts[category] += 1
+            if observe_only:
+                continue
 
             if category == 'opt_out':
-                apply_failure_suppression(
+                result = apply_failure_suppression(
                     organization_id=organization_id,
                     phone=normalized_phone,
                     name=detail.get('name'),
@@ -250,12 +250,12 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                     source_type='message_log',
                     source_message_log_id=source_message_log_id,
                     purge_related_rows=False,
+                    evidence_occurred_at=source_log.created_at if source_log is not None else None,
                     commit=False,
                 )
-                counts['unsubscribed_upserts'] += 1
-                suppressed_phones.add(normalized_phone)
+                counts['unsubscribed_upserts'] += int(bool(result.get('applied')))
             elif category == 'hard_fail':
-                apply_failure_suppression(
+                result = apply_failure_suppression(
                     organization_id=organization_id,
                     phone=normalized_phone,
                     name=detail.get('name'),
@@ -266,20 +266,10 @@ def process_failure_details(details: list, source_message_log_id: int) -> dict:
                     source_type='message_log',
                     source_message_log_id=source_message_log_id,
                     purge_related_rows=False,
+                    evidence_occurred_at=source_log.created_at if source_log is not None else None,
                     commit=False,
                 )
-                counts['suppressed_upserts'] += 1
-                suppressed_phones.add(normalized_phone)
-
-        if suppressed_phones:
-            counts['community_member_deletes'] = CommunityMember.query.filter(
-                CommunityMember.organization_id == organization_id,
-                CommunityMember.phone.in_(suppressed_phones)
-            ).delete(synchronize_session=False)
-            counts['event_registration_deletes'] = EventRegistration.query.filter(
-                EventRegistration.organization_id == organization_id,
-                EventRegistration.phone.in_(suppressed_phones)
-            ).delete(synchronize_session=False)
+                counts['suppressed_upserts'] += int(bool(result.get('applied')))
 
         db.session.commit()
     except Exception:

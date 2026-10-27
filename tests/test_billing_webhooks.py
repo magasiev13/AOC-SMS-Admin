@@ -662,6 +662,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
             provider_currency="usd", cost_status="known", units_status="known",
             billing_period_start=period_start, billing_period_end=period_end,
             reconciliation_status="finalized", billing_review_required=False,
+            historical_observation_only=False,
         ))
         self.db.session.commit()
 

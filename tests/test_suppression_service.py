@@ -54,34 +54,49 @@ class TestSuppressionService(unittest.TestCase):
         self._temp_dir.cleanup()
 
     def test_classify_failure_patterns(self) -> None:
-        self.assertEqual(classify_failure("Reply STOP to opt out"), "opt_out")
-        self.assertEqual(classify_failure("Carrier violation: 30005"), "hard_fail")
-        self.assertEqual(classify_failure("", error_code=30006, status="undelivered"), "hard_fail")
+        self.assertEqual(classify_failure("Reply STOP to opt out"), "soft_fail")
+        self.assertEqual(classify_failure("Carrier violation: 30005"), "soft_fail")
+        self.assertEqual(classify_failure("", error_code=30006, status="undelivered"), "soft_fail")
         self.assertEqual(classify_failure("Service unavailable: 503"), "soft_fail")
-        self.assertEqual(classify_failure("Message blocked by carrier (30007)"), "hard_fail")
+        self.assertEqual(classify_failure("Message blocked by carrier (30007)"), "soft_fail")
         self.assertEqual(classify_failure("Temporarily blocked due rate limit 429"), "soft_fail")
+        for code in (30003, 30004, 30005, 30006, 30007, 21612):
+            with self.subTest(code=code):
+                self.assertEqual(classify_failure('Invalid carrier route; reply STOP to opt out', error_code=code), 'soft_fail')
+        self.assertEqual(classify_failure('Recipient has opted out', error_code=21610), 'opt_out')
+        self.assertEqual(classify_failure('Invalid destination', error_code=21211), 'hard_fail')
+        self.assertEqual(classify_failure('Invalid mobile destination', error_code=21614), 'hard_fail')
 
-    def test_apply_failure_suppression_removes_hard_fail_contact_from_future_blast_lists(self) -> None:
+    def test_invalid_destination_is_gated_without_deleting_contact_or_booking(self) -> None:
         from app import db
-        from app.models import CommunityMember, SuppressedContact
+        from app.models import CommunityMember, Event, EventRegistration, SuppressedContact
 
         db.session.add(CommunityMember(name="Dead Number", phone="+17205550109"))
+        event = Event(title='Retained booking')
+        db.session.add(event)
+        db.session.flush()
+        db.session.add(EventRegistration(event_id=event.id, name='Dead Number', phone='+17205550109'))
         db.session.commit()
 
         result = apply_failure_suppression(
             organization_id=None,
             phone="+17205550109",
             error_text="Unknown subscriber",
-            error_code="30003",
+            error_code="21614",
             status="undelivered",
             source="usage_reconciliation",
+            purge_related_rows=True,
             commit=True,
         )
 
         self.assertTrue(result["applied"])
         self.assertEqual(result["category"], "hard_fail")
         self.assertIsNotNone(SuppressedContact.query.filter_by(phone="+17205550109").first())
-        self.assertIsNone(CommunityMember.query.filter_by(phone="+17205550109").first())
+        self.assertIsNotNone(CommunityMember.query.filter_by(phone="+17205550109").first())
+        self.assertIsNotNone(EventRegistration.query.filter_by(phone="+17205550109").first())
+        remaining, skipped, _ = filter_suppressed_recipients([{'phone': '+17205550109'}])
+        self.assertEqual(remaining, [])
+        self.assertEqual(len(skipped), 1)
 
     def test_unsubscribed_contact_upsert_is_idempotent(self) -> None:
         details = [
@@ -111,7 +126,7 @@ class TestSuppressionService(unittest.TestCase):
 
         entries = UnsubscribedContact.query.all()
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].reason, "Reply STOP")
+        self.assertEqual(entries[0].reason, "User has unsubscribed")
         self.assertEqual(entries[0].source, "message_failure")
 
     def test_suppressed_contact_upsert_is_idempotent(self) -> None:
@@ -141,9 +156,9 @@ class TestSuppressionService(unittest.TestCase):
 
         entries = SuppressedContact.query.all()
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].reason, "Number is not valid")
+        self.assertEqual(entries[0].reason, "Invalid number")
         self.assertEqual(entries[0].source, "message_failure")
-        self.assertEqual(entries[0].source_message_log_id, 202)
+        self.assertEqual(entries[0].source_message_log_id, 201)
         self.assertEqual(entries[0].category, "hard_fail")
 
     def test_recipient_filtering_excludes_unsubscribed_and_suppressed(self) -> None:
@@ -215,7 +230,7 @@ class TestSuppressionService(unittest.TestCase):
             "errors": 0,
         },
     )
-    def test_suppression_backfill_is_scoped_to_one_organization(self, mock_usage_backfill) -> None:
+    def test_suppression_backfill_is_scoped_and_cannot_rewrite_current_eligibility(self, mock_usage_backfill) -> None:
         from app.models import MessageLog, Organization, SuppressedContact
         from app.services.suppression_backfill import backfill_suppressions
 
@@ -244,7 +259,9 @@ class TestSuppressionService(unittest.TestCase):
         result = backfill_suppressions(first_organization.id)
 
         self.assertEqual(result["logs"], 1)
-        self.assertIsNotNone(
+        self.assertEqual(result['suppressed'], 0)
+        self.assertEqual(result['unsubscribed'], 0)
+        self.assertIsNone(
             SuppressedContact.query.filter_by(
                 organization_id=first_organization.id,
                 phone="+17205550111",

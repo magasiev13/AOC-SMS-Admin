@@ -88,10 +88,21 @@ change does not enable `automatic_tax`.
 
 Provider delivery completion is separate from verified economic facts. Before
 posting a usage period, billing calls `usage_period_billing_block_reason`. Missing
-cost/units, currency mismatch, missing underlying evidence or retained historical
-review flags keep the period in review. Existing invoice/item identities and
-already settled amounts are preserved. Reopening historical provider records for
-read-only reconciliation cannot automatically create a new historical charge.
+cost/units, currency mismatch or missing underlying evidence holds an otherwise
+current period for review. Historical observation has a stricter boundary:
+migration 027 marks every pre-existing usage row `historical_observation_only`,
+including rows whose provider prices were already known. Only a newly recorded
+current submission explicitly opts out of that boundary; replay cannot upgrade an
+existing row.
+
+If a period contains that marker or a retained `billing_review_required` flag,
+aggregation and posting leave every existing period field unchanged. This includes
+an `included`, never-invoiced period's units, status, amount, due date and update
+timestamp. Historical observation also cannot create an absent billing period.
+Provider facts and audit evidence can improve without rewriting customer billing.
+A period mixing historical and new current usage requires reviewed allocation;
+the current rows do not authorize automatic collection for the historical portion.
+Periods containing only explicit current submissions continue the normal process.
 
 Once a settlement version starts, aggregation freezes its amount, state and remote
 identities. Migration 026 adds a nullable `settlement_started_at`; new attempts set

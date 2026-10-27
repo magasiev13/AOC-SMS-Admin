@@ -163,12 +163,12 @@ class TestDeliveryFinality(unittest.TestCase):
         record = self._record()
         self.assertEqual((record.delivery_status, record.cost_status, record.reconciliation_status), ('undelivered','known','finalized'))
         self.assertEqual(record.provider_cost, Decimal('0.0175'))
-        self.assertEqual(summary['suppression_actions'], 1)
+        self.assertEqual(summary['suppression_actions'], 0)
         self.assertEqual(self._callback('undelivered', code=30003).status_code, 204)
         self.assertEqual(self._callback('sent').status_code, 204)
         self.assertEqual(self._record().delivery_status, 'undelivered')
         self.assertEqual(self.models.MessagingUsageRecord.query.count(), 1)
-        self.assertEqual(self.models.SuppressedContact.query.filter_by(phone=self.phone).count(), 1)
+        self.assertEqual(self.models.SuppressedContact.query.filter_by(phone=self.phone).count(), 0)
         self._assert_acceptance_intact()
 
     def test_terminal_delivery_waits_independently_for_late_price(self):
@@ -180,6 +180,139 @@ class TestDeliveryFinality(unittest.TestCase):
         record = self._record()
         self.assertEqual((record.cost_status, record.reconciliation_status, record.provider_cost), ('known','finalized',Decimal('0.0200')))
         self._assert_acceptance_intact()
+
+    def _snapshot(self, model):
+        self.db.session.flush()
+        return [tuple(getattr(row, column.name) for column in model.__table__.columns)
+                for row in model.query.order_by(model.id).all()]
+
+    def test_historical_failures_with_known_prices_cannot_change_current_customer_state(self):
+        record = self._candidate()
+        start, end = self.twilio.previous_billing_period_window()
+        record.created_at = start - timedelta(days=90)
+        record.billing_period_start, record.billing_period_end = start, end
+        record.historical_observation_only = True
+        record.cost_status, record.units_status = 'known', 'known'
+        record.provider_cost, record.billable_units, record.billable = Decimal('0.02'), 1, True
+        event = self.models.Event(organization_id=self.org_id, title='Current valid booking')
+        member = self.models.CommunityMember(organization_id=self.org_id, name='Later signup', phone=self.phone, created_at=self.now)
+        restriction = self.models.SuppressedContact(
+            organization_id=self.org_id, phone=self.phone, category='hard_fail', source='manual',
+            reason='Original reviewed restriction', source_message_log_id=self.log_id,
+        )
+        stop = self.models.UnsubscribedContact(organization_id=self.org_id, phone='+17205550146', source='inbound', reason='Authenticated STOP')
+        period = self.models.OrganizationUsageBillingPeriod(
+            organization_id=self.org_id, period_start=start, period_end=end, used_units=3828,
+            included_units=5000, status='included', sell_amount=Decimal('0'),
+        )
+        self.db.session.add_all([event, member, restriction, stop, period])
+        self.db.session.flush()
+        self.db.session.add(self.models.EventRegistration(organization_id=self.org_id, event_id=event.id, phone=self.phone, name='Later signup', created_at=self.now))
+        self.db.session.commit()
+        protected = [self.models.CommunityMember, self.models.EventRegistration, self.models.SuppressedContact,
+                     self.models.UnsubscribedContact, self.models.RecipientPermissionEvidence,
+                     self.models.OrganizationUsageBillingPeriod, self.models.MessageLog, self.models.MessageDispatchAttempt]
+        before = {model.__name__: self._snapshot(model) for model in protected}
+        for review_required, code in [(False,30003),(False,21614),(False,21610),(True,21614)]:
+            with self.subTest(review_required=review_required, code=code):
+                record = self._record()
+                record.billing_review_required = review_required
+                record.delivery_status = record.twilio_message_status = 'sent'
+                record.reconciliation_status, record.next_reconcile_at = 'pending', None
+                self.db.session.commit()
+                summary, _ = self._poll('undelivered', '-0.02', error_code=code, date_created=start-timedelta(days=90))
+                self.assertEqual(summary['suppression_actions'], 0)
+                self.assertIsNone(self._record().suppression_applied_at)
+                self.assertEqual(self._record().delivery_status, 'undelivered')
+                self.assertEqual(self._callback('undelivered', code=code).status_code, 204)
+                for model in protected:
+                    self.assertEqual(self._snapshot(model), before[model.__name__], model.__name__)
+                self.assertEqual(self.twilio.usage_period_billing_block_reason(period), 'historical_usage_review_required')
+        self._assert_acceptance_intact()
+
+    def test_new_candidate_is_live_but_replaying_historical_sid_never_upgrades_provenance(self):
+        record = self._candidate()
+        self.assertIs(record.historical_observation_only, False)
+        record.historical_observation_only = True
+        self.db.session.commit()
+        created = self.twilio.record_usage_candidates(self.org_id, [{'sid':self.sid, 'status':'queued', 'account_sid':'AC'+'a'*32}])
+        self.assertEqual(created, 0)
+        self.assertIs(self._record().historical_observation_only, True)
+        self._poll('undelivered', '0', error_code=21610)
+        self.assertEqual(self.models.UnsubscribedContact.query.count(), 0)
+        self.assertIsNone(self._record().suppression_applied_at)
+
+    def test_current_invalid_destination_and_optout_gate_without_losing_directory_or_booking(self):
+        self._candidate()
+        event = self.models.Event(organization_id=self.org_id, title='Keep booking')
+        self.db.session.add_all([event, self.models.CommunityMember(organization_id=self.org_id, name='Keep contact', phone=self.phone)])
+        self.db.session.flush()
+        self.db.session.add(self.models.EventRegistration(organization_id=self.org_id, event_id=event.id, phone=self.phone))
+        self.db.session.commit()
+        from app.services.recipient_service import filter_suppressed_recipients, filter_unsubscribed_recipients
+        self.assertEqual(self._callback('undelivered', code=21614).status_code, 204)
+        with self.organization_context(self.org_id):
+            self.assertEqual(filter_suppressed_recipients([{'phone':self.phone}])[0], [])
+        record = self._record()
+        record.delivery_status = record.twilio_message_status = 'queued'
+        record.suppression_applied_at = None
+        self.db.session.commit()
+        self.assertEqual(self._callback('undelivered', code=21610).status_code, 204)
+        with self.organization_context(self.org_id):
+            self.assertEqual(filter_unsubscribed_recipients([{'phone':self.phone}])[0], [])
+        self.assertEqual(self.models.CommunityMember.query.filter_by(phone=self.phone).count(), 1)
+        self.assertEqual(self.models.EventRegistration.query.filter_by(phone=self.phone).count(), 1)
+        self._assert_acceptance_intact()
+
+    def test_late_current_optout_does_not_recreate_a_restriction_after_authenticated_start(self):
+        record = self._candidate()
+        self.db.session.add(self.models.RecipientPermissionEvidence(
+            organization_id=self.org_id, phone=self.phone, purpose='all', decision='unknown',
+            source='inbound_start', evidence_key='SMlaterstart', occurred_at=record.created_at+timedelta(seconds=1),
+        ))
+        self.db.session.commit()
+        self._poll('undelivered', '0', error_code=21610)
+        self.assertEqual(self.models.UnsubscribedContact.query.count(), 0)
+        self.assertIsNone(self._record().suppression_applied_at)
+
+    def test_historical_direct_and_usage_backfill_paths_cannot_apply_suppression(self):
+        record = self._candidate()
+        record.historical_observation_only = True
+        record.reconciliation_status = 'finalized'
+        record.twilio_message_status = record.delivery_status = 'undelivered'
+        self.db.session.commit()
+        result = self.twilio.apply_usage_record_failure_suppression(record, twilio_message=self._message('undelivered', error_code=21610))
+        self.assertEqual((result['applied'],result['skipped_reason']), (False,'historical_observation_only'))
+        with patch('app.services.twilio_service._client_for_usage_reconciliation', side_effect=AssertionError('Historical suppression backfill must not contact a provider.')):
+            summary = self.twilio.backfill_usage_record_failure_suppressions(organization_id=self.org_id)
+        self.assertEqual((summary['records_seen'],summary['historical_skipped'],summary['suppression_actions']), (1,1,0))
+        self.assertEqual(self.models.UnsubscribedContact.query.count(), 0)
+
+    def test_live_suppression_backfill_verifies_provider_identity_before_any_mutation(self):
+        record = self._candidate()
+        record.reconciliation_status = 'finalized'
+        record.twilio_message_status = record.delivery_status = 'undelivered'
+        self.db.session.commit()
+        client = MagicMock()
+        for overrides in [{'sid':'SM'+'f'*32}, {'account_sid':'AC'+'b'*32}, {'direction':'inbound'}]:
+            with self.subTest(overrides=overrides):
+                client.messages.return_value.fetch.return_value = self._message('undelivered', error_code=21610, **overrides)
+                with patch('app.services.twilio_service._client_for_usage_reconciliation', return_value=client):
+                    summary = self.twilio.backfill_usage_record_failure_suppressions(organization_id=self.org_id)
+                self.assertEqual((summary['errors'],summary['suppression_actions']), (1,0))
+                self.assertEqual(self.models.UnsubscribedContact.query.count(), 0)
+                self.assertIsNone(self._record().suppression_applied_at)
+
+    def test_current_provider_failure_keeps_existing_authenticated_stop_provenance(self):
+        self._candidate()
+        self.db.session.add(self.models.UnsubscribedContact(
+            organization_id=self.org_id, phone=self.phone, name='Original recipient',
+            source='inbound', reason='Inbound STOP keyword received',
+        ))
+        self.db.session.commit()
+        before = self._snapshot(self.models.UnsubscribedContact)
+        self.assertEqual(self._callback('undelivered', code=21610).status_code, 204)
+        self.assertEqual(self._snapshot(self.models.UnsubscribedContact), before)
 
     def test_explicit_zero_cost_is_known_and_missing_cost_is_not(self):
         self._candidate()
@@ -323,9 +456,7 @@ class TestDeliveryFinality(unittest.TestCase):
         self._poll('delivered', '-0.03', date_created=start - timedelta(days=5))
         record = self._record()
         self.assertEqual((record.billing_period_start,record.billing_period_end), (start,end))
-        period = self.models.OrganizationUsageBillingPeriod.query.filter_by(organization_id=self.org_id).one()
-        self.assertEqual((period.status,period.settlement_due_at), ('review_required',None))
-        self.assertEqual(self.twilio.usage_period_billing_block_reason(period), 'historical_usage_review_required')
+        self.assertIsNone(self.models.OrganizationUsageBillingPeriod.query.filter_by(organization_id=self.org_id).first())
         self.assertEqual(self.models.OrganizationProviderAuditLog.query.filter_by(action='usage_historical_review').count(), 1)
         self._callback('delivered')
         self.assertEqual(self.models.OrganizationProviderAuditLog.query.filter_by(action='usage_historical_review').count(), 1)
@@ -372,10 +503,10 @@ class TestDeliveryFinality(unittest.TestCase):
     def test_callback_storage_failure_rolls_back_and_retry_retains_receipt_once(self):
         self._candidate()
         with patch('app.services.twilio_service.apply_usage_record_failure_suppression', side_effect=RuntimeError('isolated persistence failure')):
-            self.assertEqual(self._callback('undelivered', code=30003).status_code, 500)
+            self.assertEqual(self._callback('undelivered', code=21614).status_code, 500)
         self.assertEqual(self._record().delivery_status, 'queued')
         self.assertEqual(self.models.SuppressedContact.query.count(), 0)
-        self.assertEqual(self._callback('undelivered', code=30003).status_code, 204)
+        self.assertEqual(self._callback('undelivered', code=21614).status_code, 204)
         self.assertEqual(self._record().delivery_status, 'undelivered')
         self.assertEqual(self.models.SuppressedContact.query.count(), 1)
 
@@ -435,6 +566,9 @@ class TestDeliveryFinality(unittest.TestCase):
             migration = importlib.import_module('app.saas_migrations.023_separate_delivery_and_usage_finality')
             migration.apply(connection, MagicMock())
             migration.apply(connection, MagicMock())
+            boundary = importlib.import_module('app.saas_migrations.027_historical_usage_observation_boundary')
+            boundary.apply(connection, MagicMock())
+            boundary.apply(connection, MagicMock())
         self.db.session.expire_all()
         records = self.models.MessagingUsageRecord.query.order_by(self.models.MessagingUsageRecord.id).all()
         self.assertEqual(len(records), 2)
@@ -458,7 +592,7 @@ class TestDeliveryFinality(unittest.TestCase):
         def deliver():
             try:
                 barrier.wait(timeout=5)
-                results.append(self._callback('undelivered',code=30003).status_code)
+                results.append(self._callback('undelivered',code=21614).status_code)
             except BaseException as error:
                 errors.append(error)
 
@@ -509,7 +643,7 @@ class TestDeliveryFinality(unittest.TestCase):
             poller.start()
             try:
                 self.assertTrue(fetched.wait(5))
-                self.assertEqual(self._callback('undelivered', code=30003).status_code, 204)
+                self.assertEqual(self._callback('undelivered', code=21614).status_code, 204)
             finally:
                 release.set()
                 poller.join(10)
