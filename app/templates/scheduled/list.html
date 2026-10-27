@@ -180,7 +180,7 @@
 {% if past %}
 <div class="card app-card collection-panel collection-panel--results">
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Past Scheduled Messages</h6>
+        <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Processing and Past Messages</h6>
         <div class="d-flex align-items-center gap-3">
             <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
                 <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select all</button>
@@ -235,15 +235,14 @@
                 {% for msg in past %}
                 <tr>
                     <td>
+                        {% if msg.id not in protected_delete_ids|default([]) %}
                         <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
+                        {% endif %}
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
                     <td data-sort-value="{{ msg.status or 'sent' }}">
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
-                        {% if msg.message_log and msg.message_log.id %}
-                        <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
-                        {% endif %}
                         {% elif msg.status == 'processing' %}
                         <span class="badge bg-info text-dark">Processing</span>
                         {% elif msg.status == 'failed' %}
@@ -252,6 +251,12 @@
                         <span class="badge bg-warning text-dark" title="{{ msg.error_message }}">Expired</span>
                         {% elif msg.status == 'cancelled' %}
                         <span class="badge bg-secondary">Cancelled</span>
+                        {% endif %}
+                        {% if msg.message_log_id %}
+                        <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
+                        {% endif %}
+                        {% if msg.error_message %}
+                        <div class="small text-muted text-break mt-2">{{ msg.error_message }}</div>
                         {% endif %}
                     </td>
                     <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
@@ -271,16 +276,33 @@
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
+                            {% if msg.status == 'processing' %}
+                            <button type="button" class="btn btn-sm btn-outline-warning" aria-label="Cancel remaining scheduled messages" title="Cancel remaining sends"
+                                    data-bs-toggle="modal" data-bs-target="#actionModal"
+                                    data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                            {% elif msg.id not in protected_delete_ids|default([]) %}
                             <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete scheduled message" title="Delete"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
                                     data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
                                 <i class="bi bi-trash"></i>
                             </button>
+                            {% else %}
+                            <span class="small text-muted align-self-center">History retained</span>
+                            {% endif %}
                         </div>
+                        {% if msg.status == 'processing' %}
+                        <form id="cancel-scheduled-{{ msg.id }}" method="POST"
+                              action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        </form>
+                        {% elif msg.id not in protected_delete_ids|default([]) %}
                         <form id="delete-scheduled-{{ msg.id }}" method="POST" 
                               action="{{ url_for('main.scheduled_delete', scheduled_id=msg.id) }}" style="display:none;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -314,8 +336,13 @@
                         {{ msg.target }}
                     </div>
                     <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
+                    {% if msg.error_message %}
+                    <div class="small text-muted text-break mt-2">{{ msg.error_message }}</div>
+                    {% endif %}
                 </div>
+                {% if msg.id not in protected_delete_ids|default([]) %}
                 <input class="form-check-input js-select-row" type="checkbox" id="past-select-mobile-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
+                {% endif %}
             </div>
             <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
                 <button type="button" class="btn btn-sm btn-outline-primary"
@@ -323,11 +350,24 @@
                         aria-controls="scheduledPreview{{ msg.id }}">
                     <i class="bi bi-layout-sidebar-inset"></i> Preview
                 </button>
+                {% if msg.status == 'processing' %}
+                <button type="button" class="btn btn-sm btn-outline-warning"
+                        data-bs-toggle="modal" data-bs-target="#actionModal"
+                        data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">
+                    <i class="bi bi-x-circle"></i> Cancel remaining sends
+                </button>
+                {% elif msg.id not in protected_delete_ids|default([]) %}
                 <button type="button" class="btn btn-sm btn-outline-danger"
                         data-bs-toggle="modal" data-bs-target="#actionModal"
                         data-action="Delete" data-form-id="delete-scheduled-{{ msg.id }}">
                     <i class="bi bi-trash"></i> Delete
                 </button>
+                {% else %}
+                <span class="small text-muted align-self-center">History retained</span>
+                {% endif %}
+                {% if msg.message_log_id %}
+                <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="btn btn-sm btn-outline-secondary">View Log</a>
+                {% endif %}
             </div>
         </div>
         {% endfor %}
@@ -337,10 +377,10 @@
 
 {% if pending or past %}
     {% for msg in (pending or []) + (past or []) %}
-    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="scheduledPreview{{ msg.id }}">
+    <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="scheduledPreview{{ msg.id }}" aria-labelledby="scheduledPreviewTitle{{ msg.id }}">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title">Scheduled preview</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+            <h5 class="offcanvas-title" id="scheduledPreviewTitle{{ msg.id }}">Scheduled preview</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close preview"></button>
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Scheduled:</strong> {{ msg.scheduled_at|localtime }}</p>
@@ -351,6 +391,10 @@
                 {% endif %}
                 <span class="ms-1">{{ msg.target }}</span>
             </p>
+            <p class="mb-2"><strong>Status:</strong> {{ msg.status|capitalize }}</p>
+            {% if msg.error_message %}
+            <p class="mb-2 text-break">{{ msg.error_message }}</p>
+            {% endif %}
             <p class="mb-0"><strong>Message:</strong> {{ msg.message_body }}</p>
         </div>
     </div>
@@ -363,7 +407,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="actionModalTitle">Confirm</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 <span id="actionModalText">Are you sure?</span>
@@ -382,7 +426,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="pendingBulkCancelModalTitle">Cancel Selected</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 Cancel <strong id="pendingBulkCancelCount">0</strong> scheduled messages?
@@ -405,7 +449,7 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="pastBulkDeleteModalTitle">Delete Selected</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
                 Delete <strong id="pastBulkDeleteCount">0</strong> scheduled messages?

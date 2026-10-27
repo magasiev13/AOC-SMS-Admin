@@ -540,6 +540,9 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
             id="cs_test_resubscribe",
             url="https://checkout.stripe.test/resubscribe",
         )
+        mock_stripe.Subscription.retrieve.return_value = {
+            "id": "sub_old_123", "customer": "cus_test_123", "status": "canceled",
+        }
         mock_stripe_module.return_value = mock_stripe
 
         self.create_checkout_session(
@@ -565,6 +568,13 @@ class TestBillingPlanCatalogAndCheckout(unittest.TestCase):
                 "https://app.example.com/success?session_id={CHECKOUT_SESSION_ID}",
                 "https://app.example.com/cancel",
             )
+            repeated = self.create_checkout_session(
+                organization, "owner@example.com",
+                "https://app.example.com/success?session_id={CHECKOUT_SESSION_ID}",
+                "https://app.example.com/cancel",
+            )
 
-        self.assertEqual(session.id, f"cs_fake_org_{organization.id}")
+        self.assertTrue(session.id.startswith(f"cs_fake_org_{organization.id}_"))
+        self.assertEqual(repeated.id, session.id)
+        self.assertEqual(repeated.url, session.url)
         self.assertIn(f"/_test/stripe/checkout/cs_fake_org_{organization.id}", session.url)

@@ -15,6 +15,20 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -40,3 +54,14 @@ jobs:
       - name: Run test suite
         run: |
           ./run/test.sh -q
+
+      - name: Install isolated queue test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+
+      - name: Run PostgreSQL concurrency and queue recovery checks
+        env:
+          TWINEVIA_TEST_POSTGRES_ROOT: postgresql://audit@127.0.0.1:55432/postgres
+        run: |
+          ./run/test_reliability_postgres.sh

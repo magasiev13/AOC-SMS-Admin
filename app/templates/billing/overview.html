@@ -38,10 +38,10 @@
                 </div>
             </div>
             <div class="workspace-panel__body">
-                <div class="billing-summary-note">{{ subscription_view.next_step }}</div>
+                <div class="billing-summary-note" {% if subscription_view.billing_incident %}role="alert"{% endif %}>{{ subscription_view.next_step }}</div>
                 {% include "includes/billing_plan_facts.html" %}
                 {% if subscription_view.is_complimentary %}
-                <div class="form-text mt-3">Stripe is not used for this workspace. Twilio charges stay on the customer-managed account.</div>
+                <div class="form-text mt-3">Platform billing is covered. Messaging provider readiness is checked separately.</div>
                 {% endif %}
                 {% if subscription_view.show_portal and (not subscription or not subscription.stripe_customer_id) %}
                 <div class="form-text mt-3">The billing portal becomes available after Stripe creates the customer record.</div>

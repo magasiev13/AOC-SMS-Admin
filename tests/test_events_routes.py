@@ -19,10 +19,11 @@ class TestEventsRoutes(unittest.TestCase):
 
         importlib.reload(app.config)
         from app import create_app, db
-        from app.models import AppUser, Event, EventRegistration, SurveyFlow, UnsubscribedContact
+        from app.models import AppUser, CommunityMember, Event, EventRegistration, SurveyFlow, UnsubscribedContact
 
         self.db = db
         self.AppUser = AppUser
+        self.CommunityMember = CommunityMember
         self.Event = Event
         self.EventRegistration = EventRegistration
         self.SurveyFlow = SurveyFlow
@@ -244,6 +245,30 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
         self.assertEqual(self.UnsubscribedContact.query.count(), 0)
 
+    def test_manual_paid_order_guest_joins_directory_without_extra_capacity(self) -> None:
+        event = self.Event(title="Paid Order Guest")
+        self.db.session.add(event)
+        self.db.session.commit()
+
+        self._login()
+        response = self.client.post(
+            f"/events/{event.id}/register",
+            data={
+                "name": "Guest Contact",
+                "phone": "+15550002008",
+                "included_in_paid_order": "1",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        registration = self.EventRegistration.query.filter_by(event_id=event.id).one()
+        self.assertEqual(registration.booking_spaces, 0)
+        self.assertEqual(registration.capacity_spaces, 0)
+        self.assertEqual(event.attendee_count, 0)
+        member = self.CommunityMember.query.one()
+        self.assertEqual(member.phone, "+15550002008")
+
     def test_event_import_allows_social_manager(self) -> None:
         event = self.Event(title="Manager Import")
         self.db.session.add(event)
@@ -260,6 +285,7 @@ class TestEventsRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Added 1 registrations.", response.data)
         self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
+        self.assertEqual(self.CommunityMember.query.filter_by(phone="+17205550204").count(), 1)
 
     def test_event_detail_uses_shared_summary_and_detail_layout(self) -> None:
         self._login()

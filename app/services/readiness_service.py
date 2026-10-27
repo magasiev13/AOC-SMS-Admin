@@ -12,11 +12,10 @@ from uuid import uuid4
 from flask import Flask
 from redis.exceptions import RedisError
 from rq import Worker
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
-from app.models import Organization, ScheduledMessage
 from app.queue import get_queue, get_redis_connection
 from app.saas_migrations.runner import inspect_saas_migrations
 
@@ -155,7 +154,6 @@ def _configuration_check(app: Flask) -> ReadinessCheck:
         "RESTORE_DRILL_STATUS_FILE",
         "RESTORE_DRILL_DATABASE_URL",
         "RESTORE_DRILL_DATABASE_NAME",
-        "AOC_SCHEDULED_CANCELLATION_RECORD_FILE",
     ]
     if str(app.config.get("OPERATIONS_MONITORING_MODE") or "") == "github_actions":
         required_names.append("OPERATIONS_GITHUB_REPOSITORY")
@@ -277,74 +275,6 @@ def _restore_drill_check(app: Flask) -> ReadinessCheck:
     return ReadinessCheck("restore_drill", True, f"latest isolated restore drill is {age_days:.1f} days old")
 
 
-def _aoc_scheduled_cancellation_check(app: Flask) -> ReadinessCheck:
-    status_path = Path(str(app.config.get("AOC_SCHEDULED_CANCELLATION_RECORD_FILE") or ""))
-    organization_slug = str(app.config.get("AOC_EVENTS_ORGANIZATION_SLUG") or "").strip()
-    try:
-        payload = json.loads(status_path.read_text(encoding="utf-8"))
-        cancellation_state = str(payload["cancellation_state"])
-        expected_count = int(payload["expected_count"])
-        recorded_slug = str(payload["organization"]["slug"])
-        recorded_messages = list(payload["scheduled_messages"])
-        recorded_remaining = int(payload["dispatchable_count_after_cancellation"])
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        return ReadinessCheck(
-            "aoc_scheduled_cancellation",
-            False,
-            f"AOC cancellation record is unavailable or invalid: {exc}",
-        )
-
-    if (
-        cancellation_state != "confirmed"
-        or expected_count < 1
-        or expected_count > 100
-        or len(recorded_messages) != expected_count
-        or recorded_remaining != 0
-        or recorded_slug != organization_slug
-    ):
-        return ReadinessCheck(
-            "aoc_scheduled_cancellation",
-            False,
-            "AOC cancellation record does not prove the expected sends were captured and cancelled",
-        )
-
-    try:
-        organization = db.session.execute(
-            select(Organization).where(Organization.slug == organization_slug)
-        ).scalar_one_or_none()
-        if organization is None:
-            return ReadinessCheck(
-                "aoc_scheduled_cancellation",
-                False,
-                "configured AOC organization was not found",
-            )
-        dispatchable_count = db.session.scalar(
-            select(func.count(ScheduledMessage.id)).where(
-                ScheduledMessage.organization_id == organization.id,
-                ScheduledMessage.status.in_(("pending", "processing")),
-            )
-        )
-    except SQLAlchemyError as exc:
-        db.session.rollback()
-        return ReadinessCheck(
-            "aoc_scheduled_cancellation",
-            False,
-            f"AOC scheduled-message verification failed: {exc}",
-        )
-
-    if int(dispatchable_count or 0) != 0:
-        return ReadinessCheck(
-            "aoc_scheduled_cancellation",
-            False,
-            f"AOC still has {int(dispatchable_count or 0)} dispatchable scheduled messages",
-        )
-    return ReadinessCheck(
-        "aoc_scheduled_cancellation",
-        True,
-        f"{expected_count} launch send(s) are recorded and no AOC scheduled message is dispatchable",
-    )
-
-
 def run_readiness_checks(
     app: Flask,
     require_worker: bool,
@@ -358,7 +288,6 @@ def run_readiness_checks(
                 _systemd_timers_check(app),
                 _backup_check(app),
                 _restore_drill_check(app),
-                _aoc_scheduled_cancellation_check(app),
             )
         )
     redis_check, queue_check = _redis_and_queue_checks(app)

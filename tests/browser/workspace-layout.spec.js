@@ -78,6 +78,9 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   ).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox');
+  if (await page.getByRole('link', { name: 'Back to threads' }).isVisible()) {
+    await page.getByRole('link', { name: 'Back to threads' }).click();
+  }
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.inbox-threads-card.collection-panel--results')).toBeVisible();
   await expect(page.locator('.workspace-panel').first()).toBeVisible();
@@ -89,7 +92,8 @@ test('workspace mobile surfaces keep the shared action hierarchy and tap targets
   await login(page, 'owner@browser.test', 'Owner-pass1!');
 
   await page.goto('/dashboard');
-  await expect(page.locator('.workspace-summary')).toBeVisible();
+  await expect(page.locator('#workspaceOverview')).not.toHaveAttribute('open', '');
+  expect((await page.locator('#message_body').boundingBox()).y).toBeLessThan(500);
   expect(await elementHeight(page.locator('#sendBtn'))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/community');
@@ -119,6 +123,9 @@ test('workspace mobile surfaces keep the shared action hierarchy and tap targets
   ).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox');
+  if (await page.getByRole('link', { name: 'Back to threads' }).isVisible()) {
+    await page.getByRole('link', { name: 'Back to threads' }).click();
+  }
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.inbox-threads-card.collection-panel--results')).toBeVisible();
   expect(await elementHeight(page.getByRole('link', { name: 'Survey Flows' }))).toBeGreaterThanOrEqual(44);
@@ -179,7 +186,7 @@ test('lower-frequency workspace mobile pages keep primary actions tappable', asy
 
   await page.goto('/unsubscribed');
   await expect(page.locator('.collection-shell')).toBeVisible();
-  expect(await elementHeight(page.getByRole('button', { name: 'Select all' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('button', { name: 'Select all', exact: true }))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/security/events');
   await expect(page.locator('.collection-panel--filters')).toBeVisible();

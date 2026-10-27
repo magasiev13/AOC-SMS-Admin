@@ -47,7 +47,7 @@ from app.utils import (
 )
 
 
-TERMINAL_MESSAGE_STATUSES = {"delivered", "sent", "undelivered", "failed"}
+TERMINAL_MESSAGE_STATUSES = {"delivered", "read", "undelivered", "failed", "canceled"}
 ALLOWED_OUTBOUND_SEND_KINDS = {
     "auth_alert",
     "automation_reply",
@@ -333,7 +333,8 @@ def previous_billing_period_window(reference_time: datetime | None = None) -> tu
     previous_end = current_start
     previous_reference = previous_end - timedelta(seconds=1)
     previous_start, _ = _period_window(previous_reference)
-    return previous_start, previous_end
+    # Database billing period columns are timestamp-without-time-zone UTC.
+    return previous_start.replace(tzinfo=None), previous_end.replace(tzinfo=None)
 
 
 def _record_provider_audit(
@@ -442,9 +443,20 @@ def _organization_send_block_reason(organization_id: int | None, send_kind: str)
     return None
 
 
-def _consent_send_block_reason(organization_id: int | None, phone: str | None) -> str | None:
-    if organization_id is None or not phone:
-        return None
+def _consent_send_block_reason(
+    organization_id: int | None,
+    phone: str | None,
+    *,
+    send_kind: str = 'blast',
+) -> str | None:
+    if not phone:
+        from app.tenant import saas_mode_enabled
+
+        return 'invalid_phone' if saas_mode_enabled() else None
+    if organization_id is None:
+        from app.tenant import saas_mode_enabled
+
+        return 'permission_unknown' if saas_mode_enabled() and send_kind == 'blast' else None
     if UnsubscribedContact.query.filter_by(
         organization_id=organization_id,
         phone=phone,
@@ -455,7 +467,19 @@ def _consent_send_block_reason(organization_id: int | None, phone: str | None) -
         phone=phone,
     ).first() is not None:
         return "suppressed"
-    return None
+    if send_kind == 'blast':
+        from app.services.recipient_permission_service import (
+            current_permission_context,
+            recipient_permission_block_reason,
+        )
+
+        purpose, event_id = current_permission_context()
+        return recipient_permission_block_reason(
+            organization_id, phone, purpose=purpose, event_id=event_id,
+        )
+    from app.services.recipient_permission_service import recipient_permission_revocation_reason
+
+    return recipient_permission_revocation_reason(organization_id, phone)
 
 
 def _build_subaccount_client_context(
@@ -534,14 +558,28 @@ def _client_for_profile(profile: OrganizationMessagingProfile) -> Client:
     raise ValueError(f"Unsupported provider mode {profile.provider_mode!r}.")
 
 
+def _bounded_message_http_client(client, *, reconciliation=False):
+    """Bound message transport only; provisioning workflows retain their client."""
+    from twilio.http.http_client import TwilioHttpClient
+
+    http_client = getattr(client, 'http_client', None)
+    if isinstance(http_client, TwilioHttpClient):
+        key = 'USAGE_PROVIDER_TIMEOUT_SECONDS' if reconciliation else 'TWILIO_MESSAGE_TIMEOUT_SECONDS'
+        default = 10 if reconciliation else 30
+        timeout = max(1, min(60, int(current_app.config.get(key, default))))
+        if http_client.timeout is None or http_client.timeout > timeout:
+            http_client.timeout = timeout
+    return client
+
+
 def _client_for_usage_reconciliation(organization_id: int | None) -> Client:
     profile = _messaging_profile_for_org(organization_id)
-    if profile is not None and profile.provider_status != "error":
+    if profile is not None:
         if profile.provider_mode == "platform_managed" and profile.twilio_subaccount_sid:
-            return _build_subaccount_client(profile)
+            return _bounded_message_http_client(_build_subaccount_client(profile), reconciliation=True)
         if profile.provider_mode == "customer_managed" and profile.twilio_account_sid:
-            return _client_for_profile(profile)
-    return _master_client()
+            return _bounded_message_http_client(_client_for_profile(profile), reconciliation=True)
+    return _bounded_message_http_client(_master_client(), reconciliation=True)
 
 
 def _service_context(profile: OrganizationMessagingProfile, client: Client | None = None):
@@ -1575,7 +1613,9 @@ class TwilioService:
 
     def _browser_fake_send_result(self, *, to_number: str, body: str, send_kind: str) -> dict:
         fingerprint = f"{self.account_sid}|{to_number}|{body}|{self.messaging_service_sid or self.from_number or ''}"
-        fake_sid = f"SM{hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:32]}"
+        # A fresh provider submission has a fresh SID, even for identical
+        # content. Durable attempt replay returns its already saved SID.
+        fake_sid = f"SM{hashlib.sha256((fingerprint + uuid4().hex).encode('utf-8')).hexdigest()[:32]}"
         analysis = analyze_sms_body(body, apply_normalization=False)
         return {
             "success": True,
@@ -1613,6 +1653,7 @@ class TwilioService:
         consent_block_reason = _consent_send_block_reason(
             self.organization_id,
             normalized_phone,
+            send_kind=normalized_send_kind,
         )
         if consent_block_reason:
             return self._skipped_send_result(
@@ -1658,7 +1699,11 @@ class TwilioService:
             create_params["messaging_service_sid"] = self.messaging_service_sid
         else:
             create_params["from_"] = self.from_number
+        base_url = (current_app.config.get('APP_BASE_URL') or current_app.config.get('SAAS_BASE_URL') or '').strip().rstrip('/')
+        if self.organization_id and current_app.config.get('SAAS_MODE') and base_url:
+            create_params['status_callback'] = f'{base_url}/webhooks/twilio/delivery?organization_id={self.organization_id}'
         try:
+            _bounded_message_http_client(self.client)
             message = self.client.messages.create(**create_params)
             return {
                 "success": True,
@@ -1710,24 +1755,52 @@ class TwilioService:
             "details": [],
         }
 
+        from app.services.scheduled_cancellation_service import (
+            current_scheduled_dispatch,
+            lock_scheduled_message,
+        )
+        scheduled_dispatch = current_scheduled_dispatch()
         for index, recipient in enumerate(recipients):
             phone = recipient.get("phone")
             name = recipient.get("name", "")
             personalized_body = render_message_template(body, recipient)
 
             try:
+                if scheduled_dispatch is not None:
+                    scheduled = lock_scheduled_message(*scheduled_dispatch)
+                    if scheduled is None or scheduled.status != 'processing':
+                        halted_status = scheduled.status if scheduled is not None else 'missing'
+                        db.session.commit()
+                        return {
+                            **results,
+                            'dispatch_halted': True,
+                            'cancelled': halted_status == 'cancelled',
+                            'halted_status': halted_status,
+                            'not_submitted_count': len(recipients) - len(results['details']),
+                        }
+                    scheduled.processing_started_at = utc_now().replace(tzinfo=None)
                 result = self.send_message(
                     phone,
                     personalized_body,
                     raise_on_transient=raise_on_transient,
                     send_kind=send_kind,
                 )
+                if scheduled_dispatch is not None:
+                    db.session.commit()
             except TwilioTransientError as exc:
+                if scheduled_dispatch is not None:
+                    db.session.rollback()
                 raise TwilioTransientError(
                     str(exc),
                     results=results,
                     failed_index=index,
                 ) from exc
+            except Exception as exc:
+                if scheduled_dispatch is not None:
+                    db.session.rollback()
+                if not hasattr(exc, 'results'):
+                    exc.results = results
+                raise
 
             detail = {
                 "phone": phone,
@@ -1759,6 +1832,8 @@ class TwilioService:
         message_log_id: int | None,
         scheduled_message_id: int | None,
         send_kind: str,
+        *,
+        automation_reply_id: int | None = None,
     ) -> dict[str, object]:
         if self.organization_id is None:
             raise ValueError("Durable message attempts require an organization id.")
@@ -1766,6 +1841,20 @@ class TwilioService:
         if not normalized_phone:
             raise ValueError("Durable message attempts require a valid recipient phone.")
         normalized_send_kind = _normalize_send_kind(send_kind)
+        from app.services.scheduled_cancellation_service import (
+            cancellation_result,
+            lock_scheduled_message,
+        )
+        if scheduled_message_id is not None:
+            scheduled = lock_scheduled_message(scheduled_message_id, self.organization_id)
+            if scheduled is None or scheduled.status != 'processing':
+                halted_status = scheduled.status if scheduled is not None else None
+                db.session.commit()
+                return cancellation_result(
+                    status=halted_status,
+                    account_sid=self.account_sid,
+                    send_kind=normalized_send_kind,
+                )
         body_digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         raw_key = str(logical_send_key or "").strip()
         if not raw_key:
@@ -1855,9 +1944,56 @@ class TwilioService:
 
         attempt.status = "sending"
         attempt.attempt_count = int(attempt.attempt_count or 0) + 1
-        attempt.sending_at = utc_now()
+        attempt.sending_at = utc_now().replace(tzinfo=None)
         attempt.last_error = None
         db.session.commit()
+        attempt_id = attempt.id
+
+        def reviewed_result(resolved):
+            return {
+                'success': resolved.status == 'sent',
+                'sid': resolved.provider_message_sid,
+                'status': resolved.status,
+                'error': resolved.last_error,
+                'account_sid': self.account_sid,
+                'send_kind': normalized_send_kind,
+                'logical_send_key': normalized_key,
+                'idempotent_replay': True,
+            }
+
+        # The attempt claim commit released any earlier lock. Reacquire the
+        # schedule immediately before provider submission and hold it until the
+        # outcome is persisted, so cancellation cannot acknowledge in between.
+        if scheduled_message_id is not None:
+            scheduled = lock_scheduled_message(scheduled_message_id, self.organization_id)
+            if scheduled is None or scheduled.status != 'processing':
+                halted_status = scheduled.status if scheduled is not None else None
+                attempt.status = 'failed'
+                attempt.last_error = 'not_submitted: scheduled send stopped before provider submission'
+                attempt.resolved_at = utc_now().replace(tzinfo=None)
+                db.session.commit()
+                return {
+                    **cancellation_result(
+                        status=halted_status,
+                        account_sid=self.account_sid,
+                        send_kind=normalized_send_kind,
+                    ),
+                    'logical_send_key': normalized_key,
+                }
+            scheduled.processing_started_at = utc_now().replace(tzinfo=None)
+
+        if automation_reply_id is not None:
+            from app.services.automation_outbox_service import lock_automation_submission
+
+            blocked = lock_automation_submission(
+                self.organization_id, automation_reply_id, phone=normalized_phone, body_digest=body_digest,
+            )
+            if blocked is not None:
+                attempt.status = 'queued' if blocked.get('deferred') else 'failed'
+                attempt.last_error = str(blocked.get('error') or '')[:2000]
+                attempt.resolved_at = None if blocked.get('deferred') else utc_now().replace(tzinfo=None)
+                db.session.commit()
+                return dict(blocked, logical_send_key=normalized_key)
 
         try:
             result = self.send_message(
@@ -1866,13 +2002,57 @@ class TwilioService:
                 raise_on_transient=True,
                 send_kind=normalized_send_kind,
             )
+            resolved = MessageDispatchAttempt.query.filter_by(id=attempt_id).populate_existing().with_for_update().first()
+            if resolved is None:
+                raise RuntimeError(f"Dispatch attempt {normalized_key} disappeared before resolution.")
+            if resolved.status in {'sent', 'failed'}:
+                replay = reviewed_result(resolved)
+                db.session.commit()
+                return replay
+            resolved.provider_message_sid = str(result.get("sid") or "").strip() or None
+            resolved.status = "sent" if result.get("success") else "failed"
+            resolved.last_error = str(result.get("error") or "")[:2000] or None
+            resolved.resolved_at = utc_now().replace(tzinfo=None)
+            db.session.commit()
         except Exception as exc:
             db.session.rollback()
-            unresolved = db.session.get(MessageDispatchAttempt, attempt.id)
+            unresolved = MessageDispatchAttempt.query.filter_by(id=attempt_id).populate_existing().with_for_update().first()
             if unresolved is None:
                 raise RuntimeError(
                     f"Dispatch attempt {normalized_key} disappeared after an ambiguous provider result."
                 ) from exc
+            if unresolved.status in {'sent', 'failed'}:
+                replay = reviewed_result(unresolved)
+                db.session.commit()
+                return replay
+            cause = exc.__cause__ if isinstance(exc, TwilioTransientError) else None
+            if isinstance(cause, TwilioRestException) and getattr(cause, 'status', None) == 429:
+                # Twilio guarantees an HTTP 429 request was not processed.
+                # Reuse this exact attempt through bounded queue/timer retries;
+                # never infer this safe-to-retry state from a timeout or 5xx.
+                maximum = max(1, int(current_app.config.get('AUTOMATION_REPLY_MAX_RETRIES', 3)) + 1) if automation_reply_id is not None else 4
+                exhausted = int(unresolved.attempt_count or 0) >= maximum
+                unresolved.status = 'failed' if exhausted else 'queued'
+                unresolved.provider_message_sid = None
+                unresolved.last_error = (
+                    'rejected_rate_limit: Twilio rejected the submission (HTTP 429). '
+                    + ((f'The {maximum}-attempt retry limit was reached; no message was accepted.' if automation_reply_id is not None
+                        else 'The four-attempt retry limit was reached; no message was accepted.') if exhausted
+                       else 'The same saved attempt will retry after backoff; no message was accepted.')
+                )
+                unresolved.resolved_at = utc_now().replace(tzinfo=None) if exhausted else None
+                db.session.commit()
+                if not exhausted:
+                    if automation_reply_id is not None:
+                        return {'success':False,'sid':None,'status':'retryable','retryable':True,'not_submitted':True,
+                                'error':unresolved.last_error,'logical_send_key':normalized_key,'account_sid':self.account_sid}
+                    raise
+                return {
+                    'success': False, 'sid': None, 'status': 'failed',
+                    'reason': 'rejected_rate_limit', 'error': unresolved.last_error,
+                    'account_sid': self.account_sid, 'send_kind': normalized_send_kind,
+                    'logical_send_key': normalized_key,
+                }
             unresolved.status = "ambiguous"
             unresolved.last_error = str(exc)[:2000]
             unresolved.resolved_at = None
@@ -1890,14 +2070,6 @@ class TwilioService:
                 "logical_send_key": normalized_key,
             }
 
-        resolved = db.session.get(MessageDispatchAttempt, attempt.id)
-        if resolved is None:
-            raise RuntimeError(f"Dispatch attempt {normalized_key} disappeared before resolution.")
-        resolved.provider_message_sid = str(result.get("sid") or "").strip() or None
-        resolved.status = "sent" if result.get("success") else "failed"
-        resolved.last_error = str(result.get("error") or "")[:2000] or None
-        resolved.resolved_at = utc_now()
-        db.session.commit()
         return {
             **result,
             "logical_send_key": normalized_key,
@@ -1936,14 +2108,37 @@ class TwilioService:
             recipient_digest = hashlib.sha256(
                 f"{logical_send_prefix}|{normalize_phone(phone)}|{personalized_body}".encode("utf-8")
             ).hexdigest()
-            result = self.send_message_with_attempt(
-                phone,
-                personalized_body,
-                f"{logical_send_prefix}:{recipient_digest}",
-                message_log_id,
-                scheduled_message_id,
-                send_kind,
-            )
+            try:
+                result = self.send_message_with_attempt(
+                    phone,
+                    personalized_body,
+                    f"{logical_send_prefix}:{recipient_digest}",
+                    message_log_id,
+                    scheduled_message_id,
+                    send_kind,
+                )
+            except Exception as exc:
+                # Even if persistence fails for this recipient, earlier
+                # provider-accepted outcomes remain available to finalization.
+                if getattr(exc, 'results', None) is None:
+                    exc.results = {
+                        'total': len(recipients),
+                        'success_count': success_count,
+                        'failure_count': failure_count,
+                        'details': list(details),
+                    }
+                raise
+            if result.get('dispatch_halted'):
+                return {
+                    'total': len(recipients),
+                    'success_count': success_count,
+                    'failure_count': failure_count,
+                    'details': details,
+                    'dispatch_halted': True,
+                    'cancelled': bool(result.get('cancelled')),
+                    'halted_status': result.get('halted_status'),
+                    'not_submitted_count': len(recipients) - len(details),
+                }
             detail = {
                 "phone": phone,
                 "name": name,
@@ -3163,39 +3358,80 @@ def record_usage_candidates(
     details: list[dict] | None,
     *,
     source: str = "blast",
+    commit: bool = True,
 ) -> int:
     if not organization_id or not details:
         return 0
-
+    from sqlalchemy.exc import IntegrityError
+    from app.tenant import organization_context
+    from app.services.delivery_status_service import observe_usage_record
     created_count = 0
-    for detail in details:
-        if not isinstance(detail, dict):
-            continue
-        sid = (detail.get("sid") or "").strip()
-        if not sid:
-            continue
-        record = MessagingUsageRecord.query.filter_by(message_sid=sid).first()
-        if record is None:
-            record = MessagingUsageRecord(
-                organization_id=organization_id,
-                message_sid=sid,
-                direction="outbound",
-                source=source,
-                twilio_subaccount_sid=(detail.get("account_sid") or "").strip() or None,
-                twilio_message_status=(detail.get("status") or "").strip() or None,
-                provider_currency=_usage_currency(),
-                reconciliation_status="pending",
-            )
-            db.session.add(record)
-            created_count += 1
-        else:
-            record.twilio_subaccount_sid = record.twilio_subaccount_sid or ((detail.get("account_sid") or "").strip() or None)
-            record.twilio_message_status = (detail.get("status") or "").strip() or record.twilio_message_status
-    db.session.commit()
+    with organization_context(organization_id):
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            sid = str(detail.get('sid') or '').strip()
+            if not sid:
+                continue
+            query = MessagingUsageRecord.query.filter_by(organization_id=organization_id, message_sid=sid)
+            record = query.populate_existing().with_for_update().first()
+            if record is None:
+                try:
+                    with db.session.begin_nested():
+                        record = MessagingUsageRecord(
+                            organization_id=organization_id, message_sid=sid, direction='outbound', source=source,
+                            twilio_subaccount_sid=str(detail.get('account_sid') or '').strip() or None,
+                            provider_currency=_usage_currency(), reconciliation_status='pending',
+                        )
+                        db.session.add(record)
+                        db.session.flush()
+                    created_count += 1
+                except IntegrityError:
+                    record = query.populate_existing().with_for_update().first()
+                    if record is None:
+                        raise ValueError('The provider SID already belongs to another organization.')
+            account = str(detail.get('account_sid') or '').strip() or None
+            if account and record.twilio_subaccount_sid and account != record.twilio_subaccount_sid:
+                raise ValueError('The provider SID account does not match its retained usage owner.')
+            record.twilio_subaccount_sid = record.twilio_subaccount_sid or account
+            observe_usage_record(record, SimpleNamespace(
+                status=detail.get('status') or 'queued', error_code=detail.get('error_code'),
+                error_message=detail.get('error'), price=detail.get('provider_price'),
+                price_unit=detail.get('provider_currency'), num_segments=detail.get('num_segments'),
+            ), source='submission')
+    if commit:
+        db.session.commit()
     return created_count
 
 
-def reconcile_messaging_usage() -> dict[str, int]:
+def _usage_record_expected_account(record):
+    if record.twilio_subaccount_sid:
+        return record.twilio_subaccount_sid
+    profile = _messaging_profile_for_org(record.organization_id)
+    if profile is not None:
+        return profile.twilio_subaccount_sid if profile.provider_mode == 'platform_managed' else profile.twilio_account_sid
+    return None
+
+
+def _validate_usage_provider_record(record, message):
+    if str(getattr(message, 'sid', '') or '') != record.message_sid:
+        raise ValueError('The provider response SID does not match the retained usage record.')
+    account = _usage_record_expected_account(record)
+    if not account or str(getattr(message, 'account_sid', '') or '') != account:
+        raise ValueError('The provider account does not match the retained usage organization.')
+    direction = getattr(message, 'direction', None)
+    if direction is not None and direction != 'outbound-api':
+        raise ValueError('The provider response is not an outbound API message.')
+    record.twilio_subaccount_sid = record.twilio_subaccount_sid or account
+
+
+def reconcile_messaging_usage(*, organization_id=None, include_expired=False, now=None) -> dict[str, int]:
+    from app.tenant import organization_context
+    from app.services.delivery_status_service import DELIVERY_CLOSED, finish_observation, observe_usage_record, utc_naive
+
+    if include_expired and organization_id is None:
+        raise ValueError('An explicit organization is required to review expired usage facts.')
+    now = utc_naive(now)
     summary = {
         "records_seen": 0,
         "records_finalized": 0,
@@ -3204,71 +3440,49 @@ def reconcile_messaging_usage() -> dict[str, int]:
         "periods_updated": 0,
         "suppression_actions": 0,
     }
-    pending_records = MessagingUsageRecord.query.filter(
-        MessagingUsageRecord.reconciliation_status.in_(("pending", "error"))
-    ).all()
-
-    for record in pending_records:
+    eligible = db.or_(
+        MessagingUsageRecord.delivery_status.notin_(DELIVERY_CLOSED),
+        MessagingUsageRecord.cost_status == 'pending', MessagingUsageRecord.units_status == 'pending',
+        MessagingUsageRecord.reconciliation_status.in_(('pending', 'error')),
+    )
+    query = MessagingUsageRecord.query
+    if organization_id is not None:
+        query = query.filter_by(organization_id=organization_id)
+    if not include_expired:
+        query = query.filter(eligible).filter(db.or_(MessagingUsageRecord.next_reconcile_at.is_(None), MessagingUsageRecord.next_reconcile_at <= now))
+    batch_size = max(1, min(1000, int(current_app.config.get('USAGE_RECONCILE_BATCH_SIZE', 100))))
+    candidates = query.with_entities(MessagingUsageRecord.id, MessagingUsageRecord.organization_id).order_by(MessagingUsageRecord.id).limit(batch_size).all()
+    started = time.monotonic()
+    budget = max(1, int(current_app.config.get('USAGE_RECONCILE_TIME_BUDGET_SECONDS', 30)))
+    for record_id, record_org in candidates:
         summary["records_seen"] += 1
-        try:
-            reconciliation_client = _client_for_usage_reconciliation(record.organization_id)
-            message = reconciliation_client.messages(record.message_sid).fetch()
-            status = (getattr(message, "status", None) or "").strip().lower() or None
-            segments = getattr(message, "num_segments", None)
-            price = getattr(message, "price", None)
-            currency = (getattr(message, "price_unit", None) or _usage_currency()).strip().lower() or _usage_currency()
-            date_created = getattr(message, "date_created", None) or record.created_at
-
-            provider_cost = _absolute_decimal(price)
-            billable_units = 0
-            if segments not in {None, ""}:
-                try:
-                    billable_units = max(0, int(segments))
-                except (TypeError, ValueError):
-                    billable_units = 0
-            if billable_units == 0 and provider_cost > 0:
-                billable_units = 1
-            billable = provider_cost > 0 or (status in {"sent", "delivered"} and billable_units > 0)
-            organization = db.session.get(Organization, record.organization_id)
-            complimentary_billing = _organization_has_complimentary_billing(organization)
-
-            sell_rate = _currency_rate()
-            sell_amount = Decimal("0")
-            if complimentary_billing:
-                sell_rate = Decimal("0")
-            elif billable and billable_units > 0:
-                sell_amount = Decimal(billable_units) * sell_rate
-
-            period_start, period_end = _period_window(date_created)
-            record.twilio_subaccount_sid = getattr(message, "account_sid", None) or record.twilio_subaccount_sid
-            record.twilio_message_status = status
-            record.provider_currency = currency
-            record.provider_cost = provider_cost
-            record.sell_rate = sell_rate
-            record.billable_units = billable_units
-            record.billable = billable
-            record.sell_amount = sell_amount
-            record.margin = sell_amount - provider_cost
-            record.billing_period_start = period_start
-            record.billing_period_end = period_end
-            record.last_error = None
-            record.reconciled_at = utc_now()
-            if _message_status_is_terminal(status):
-                record.reconciliation_status = "finalized"
-                suppression_result = apply_usage_record_failure_suppression(record, twilio_message=message)
-                if suppression_result.get("applied"):
-                    summary["suppression_actions"] += 1
-                summary["records_finalized"] += 1
-            else:
-                record.reconciliation_status = "pending"
-                summary["records_pending"] += 1
-        except Exception as exc:
-            record.reconciliation_status = "error"
-            record.last_error = str(exc)
-            record.reconciled_at = utc_now()
-            summary["records_errored"] += 1
-
-    db.session.commit()
+        with organization_context(record_org):
+            try:
+                record = MessagingUsageRecord.query.filter_by(id=record_id, organization_id=record_org).first()
+                if record is None:
+                    continue
+                # Do not hold the usage row lock during provider network I/O.
+                message = _client_for_usage_reconciliation(record_org).messages(record.message_sid).fetch()
+                record = MessagingUsageRecord.query.filter_by(id=record_id, organization_id=record_org).populate_existing().with_for_update().one()
+                _validate_usage_provider_record(record, message)
+                record.reconcile_attempt_count = int(record.reconcile_attempt_count or 0) + 1
+                suppression = observe_usage_record(record, message, source='poll', now=now)
+                summary['suppression_actions'] += int(bool(suppression.get('applied')))
+                summary['records_finalized' if record.reconciliation_status == 'finalized' else 'records_pending'] += 1
+                db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                record = MessagingUsageRecord.query.filter_by(id=record_id, organization_id=record_org).populate_existing().with_for_update().first()
+                if record is not None:
+                    record.reconcile_attempt_count = int(record.reconcile_attempt_count or 0) + 1
+                    finish_observation(record, now=now)
+                    if record.reconciliation_status == 'pending':
+                        record.reconciliation_status = 'error'
+                    record.last_error = str(exc)[:2000]
+                    db.session.commit()
+                summary['records_errored'] += 1
+        if time.monotonic() - started >= budget:
+            break
     summary["periods_updated"] = upsert_closed_usage_billing_periods()
     return summary
 
@@ -3328,14 +3542,45 @@ def backfill_usage_record_failure_suppressions(
     return summary
 
 
+def _period_usage_query(period):
+    return MessagingUsageRecord.query.filter(
+        MessagingUsageRecord.organization_id == period.organization_id,
+        db.or_(
+            db.and_(MessagingUsageRecord.billing_period_start == period.period_start,
+                    MessagingUsageRecord.billing_period_end == period.period_end),
+            db.and_(MessagingUsageRecord.billing_period_start.is_(None),
+                    MessagingUsageRecord.created_at >= period.period_start,
+                    MessagingUsageRecord.created_at < period.period_end),
+        ),
+    )
+
+
+def usage_period_billing_block_reason(period) -> str | None:
+    """Delivery receipts do not gate settlement; verified economic facts do."""
+    query = _period_usage_query(period)
+    if query.filter(MessagingUsageRecord.billing_review_required.is_(True)).first() is not None:
+        return 'historical_usage_review_required'
+    if query.filter(db.or_(
+        MessagingUsageRecord.cost_status != 'known', MessagingUsageRecord.units_status != 'known',
+        MessagingUsageRecord.billing_period_start.is_(None), MessagingUsageRecord.billing_period_end.is_(None),
+    )).first() is not None:
+        return 'usage_facts_incomplete'
+    if query.filter(MessagingUsageRecord.provider_currency != (period.currency or _usage_currency())).first() is not None:
+        return 'usage_currency_mismatch'
+    if int(period.used_units or 0) > 0 and query.first() is None:
+        return 'usage_evidence_missing'
+    return None
+
+
 def upsert_closed_usage_billing_periods() -> int:
     period_start, period_end = previous_billing_period_window()
     organization_ids = [
         row.organization_id
         for row in db.session.query(MessagingUsageRecord.organization_id)
-        .filter(MessagingUsageRecord.billing_period_start == period_start)
-        .filter(MessagingUsageRecord.billing_period_end == period_end)
-        .filter(MessagingUsageRecord.reconciliation_status == "finalized")
+        .filter(db.or_(
+            db.and_(MessagingUsageRecord.billing_period_start == period_start, MessagingUsageRecord.billing_period_end == period_end),
+            db.and_(MessagingUsageRecord.billing_period_start.is_(None), MessagingUsageRecord.created_at >= period_start, MessagingUsageRecord.created_at < period_end),
+        ))
         .group_by(MessagingUsageRecord.organization_id)
         .all()
     ]
@@ -3346,7 +3591,8 @@ def upsert_closed_usage_billing_periods() -> int:
             .filter(MessagingUsageRecord.organization_id == organization_id)
             .filter(MessagingUsageRecord.billing_period_start == period_start)
             .filter(MessagingUsageRecord.billing_period_end == period_end)
-            .filter(MessagingUsageRecord.reconciliation_status == "finalized")
+            .filter(MessagingUsageRecord.cost_status == 'known')
+            .filter(MessagingUsageRecord.units_status == 'known')
             .filter(MessagingUsageRecord.billable.is_(True))
             .scalar()
         ) or 0
@@ -3362,7 +3608,27 @@ def upsert_closed_usage_billing_periods() -> int:
             organization_id=organization_id,
             period_start=period_start,
             period_end=period_end,
-        ).first()
+        ).populate_existing().with_for_update().first()
+        if period is not None and (
+            int(period.invoiced_units or 0) > 0 or period.status == 'posted'
+            or int(period.settlement_version or 0) > 0 or period.settlement_started_at is not None
+            or period.stripe_invoice_id or period.stripe_invoice_item_id
+        ):
+            if int(period.used_units or 0) != int(used_units) or usage_period_billing_block_reason(period):
+                incident = OrganizationProviderAuditLog.query.filter_by(
+                    organization_id=organization_id, action='usage_settled_variance',
+                ).filter(OrganizationProviderAuditLog.metadata_json.contains(f'"period_id": {period.id},')).first()
+                if incident is None:
+                    db.session.add(OrganizationProviderAuditLog(
+                        organization_id=organization_id, action='usage_settled_variance', status='pending',
+                        message='Late usage facts differ from a settled snapshot; manual review required, existing invoice unchanged.',
+                        metadata_json=json.dumps({
+                            'period_id': period.id, 'settled_used_units': int(period.used_units or 0),
+                            'observed_known_units': int(used_units), 'invoiced_units': int(period.invoiced_units or 0),
+                            'sell_amount': str(period.sell_amount or 0), 'stripe_invoice_item_id': period.stripe_invoice_item_id,
+                        }, sort_keys=True), created_at=utc_now().replace(tzinfo=None),
+                    ))
+            continue
         if period is None:
             period = OrganizationUsageBillingPeriod(
                 organization_id=organization_id,
@@ -3377,7 +3643,11 @@ def upsert_closed_usage_billing_periods() -> int:
         period.overage_units = overage_units
         period.sell_amount = sell_amount
         period.currency = _usage_currency()
-        if overage_units == 0:
+        block_reason = usage_period_billing_block_reason(period)
+        if block_reason:
+            period.status = 'review_required'
+            period.settlement_due_at = None
+        elif overage_units == 0:
             period.status = "included" if int(period.invoiced_units or 0) == 0 else "posted"
             period.settlement_due_at = None
         elif int(period.invoiced_units or 0) == 0:

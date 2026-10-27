@@ -55,6 +55,7 @@ def _tenant_scoped_models():
     from app.models import (
         AuthEvent,
         CommunityMember,
+        RecipientPermissionEvidence,
         Event,
         EventRegistration,
         InboxMessage,
@@ -62,6 +63,8 @@ def _tenant_scoped_models():
         KeywordAutomationRule,
         MessageLog,
         MessageDispatchAttempt,
+        OutboundRequest,
+        AutomationReplyOutbox,
         CustomerPolicyAcceptance,
         StripeCheckoutSession,
         OrganizationEventSyncIntegration,
@@ -80,6 +83,7 @@ def _tenant_scoped_models():
     return (
         AuthEvent,
         CommunityMember,
+        RecipientPermissionEvidence,
         Event,
         EventRegistration,
         InboxMessage,
@@ -87,6 +91,8 @@ def _tenant_scoped_models():
         KeywordAutomationRule,
         MessageLog,
         MessageDispatchAttempt,
+        OutboundRequest,
+        AutomationReplyOutbox,
         CustomerPolicyAcceptance,
         StripeCheckoutSession,
         OrganizationEventSyncIntegration,

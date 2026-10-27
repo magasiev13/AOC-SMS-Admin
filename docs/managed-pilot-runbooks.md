@@ -43,7 +43,9 @@ sudo -u twinevia bash -lc '
 '
 ```
 
-The first command must report `inactive`; the guard must show two recorded rows with `cancelled` status and zero dispatchable rows. Do not restart the scheduler manually. A reviewed release enables it only after repeating this guard.
+Immediately after this explicit maintenance cancellation, the first command must report `inactive`; the guard must show the recorded rows with `cancelled` status and zero dispatchable rows. Do not restart the scheduler manually during maintenance. The `--expect-dispatchable-count 0` option is a maintenance assertion, not a permanent prohibition on future schedules.
+
+Normal releases run the guard without a count option. They require every message in the historical cancellation record to remain present and cancelled, while leaving unrelated future reminders unchanged. A missing/invalid record or a re-enabled recorded message still blocks the release.
 
 Rollback is recreation, not an automatic status flip. Use the private record at `AOC_SCHEDULED_CANCELLATION_RECORD_FILE` to recreate the content, target, and intended schedule only after explicit approval.
 
@@ -60,9 +62,11 @@ git ls-files --others --exclude-standard
 
 Store the production output and patch in a restricted maintenance evidence directory. Compare commit IDs and classify each path as reviewed local work, reviewed production hotfix, generated state, or unrelated user work. Bring production-only code back into the local review tree with a patch or an explicit file copy, resolve overlaps manually, and rerun the full suite. A release is intentionally refused until `git status --porcelain --untracked-files=all` is empty.
 
+The release also compares the active runtime with its declared source commit before building the candidate. It refuses a candidate that would restore base contents over an active override or omit a live-added source file. `source-preservation.json` records carried-forward and further-changed paths and their hashes. A `changed_in_candidate` result still requires review and regression evidence; this content guard does not prove semantic preservation of a modified file. Reconcile live hotfixes into reviewed source rather than bypassing the guard.
+
 ## Release
 
-Effect: archives the reviewed Git commit, builds a per-release Python 3.11 environment, checks dependencies and expand-only migrations, runs verification, creates an encrypted pre-migration backup, restores and forward-migrates it in the isolated drill database, verifies the AOC freeze, applies production migrations, validates live Stripe configuration, switches the `current` symlink atomically, restarts services, and verifies health/readiness.
+Effect: archives the reviewed Git commit, checks active-source preservation, builds a per-release Python 3.11 environment, checks dependencies and expand-only migrations, runs verification, creates an encrypted pre-migration backup, restores and forward-migrates it in the isolated drill database, verifies the historical AOC cancellation record, applies production migrations, validates live Stripe configuration, switches the `current` symlink atomically, restarts services, and verifies health/readiness.
 
 ```bash
 sudo /opt/twinevia-saas/deploy/deploy_twinevia_saas.sh
@@ -111,6 +115,8 @@ sudo jq . /var/lib/twinevia-saas/backup-status.json
 ```
 
 The archive contains a PostgreSQL custom dump, encrypted provider data from PostgreSQL, the application environment, Nginx, systemd units, the deployed application, metadata, and a SHA-256 manifest. It is encrypted with AES-256-CBC and PBKDF2 before the off-host copy.
+
+Application backup selection resolves the active `current` release even if an operator supplies the source checkout root. `deployed-application.manifest.json` verifies the inner application archive against the captured running files; `application-source.json` records the actual release ID, declared source SHA, content fingerprint and optional intended deployment SHA. The predeployment workflow supplies the intended SHA separately. A release requires fresh verified off-host proof for that same runtime fingerprint and target SHA; a recent archive of a different checkout or target is insufficient. The isolated restore verifies new archives' inner application manifest before database restore. Older encrypted archives remain restorable under their existing outer integrity/authentication checks.
 
 Isolated restore only:
 

@@ -949,7 +949,7 @@ class TestInboxService(unittest.TestCase):
             .first()
         )
         self.assertIsNotNone(latest_outbound)
-        self.assertIn("resubscribed", latest_outbound.body.lower())
+        self.assertIn("opt-out has been removed", latest_outbound.body.lower())
 
     def test_stop_unsubscribe_prefers_community_name_over_thread_name(self) -> None:
         self.db.session.add(self.CommunityMember(name="Community Name", phone="+15553334444"))
@@ -1308,7 +1308,7 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0].direction, "inbound")
         self.assertEqual(messages[1].direction, "outbound")
-        self.assertIn("already subscribed", messages[1].body)
+        self.assertIn("No SMS opt-out is recorded", messages[1].body)
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_yes_when_no_survey_or_rule_still_sends_opt_in_ack(self, mock_get_twilio) -> None:
@@ -1336,7 +1336,7 @@ class TestInboxService(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertEqual(messages[0].direction, "inbound")
         self.assertEqual(messages[1].direction, "outbound")
-        self.assertIn("already subscribed", messages[1].body)
+        self.assertIn("No SMS opt-out is recorded", messages[1].body)
 
     @patch("app.services.inbox_service.get_twilio_service")
     def test_yes_prefers_survey_trigger_when_contact_is_already_subscribed(self, mock_get_twilio) -> None:

@@ -19,6 +19,11 @@
 
 {% block content %}
 <div class="workspace-shell">
+    {% if outbound_request %}
+    <div class="alert {{ 'alert-success' if outbound_request.status == 'accepted' else 'alert-warning' }}" role="status">
+        {{ request_status_message(outbound_request) }}
+    </div>
+    {% endif %}
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div id="logStatusMeta" class="d-none"
          data-log-id="{{ log.id }}"
@@ -31,7 +36,7 @@
                 <div class="workspace-panel__header">
                     <div>
                         <h2 class="workspace-panel__title">Message body</h2>
-                        <p class="workspace-panel__meta">The exact content that was sent to the selected audience.</p>
+                        <p class="workspace-panel__meta">The exact content saved for this audience. Provider submission and delivery are separate states.</p>
                     </div>
                 </div>
                 <div class="workspace-panel__body">
@@ -43,7 +48,7 @@
                 <div class="collection-panel__header">
                     <div>
                         <h2 class="collection-panel__title">Recipient details</h2>
-                        <p class="collection-panel__meta">Review delivery status, suppression outcomes, and carrier errors by phone.</p>
+                        <p class="collection-panel__meta">Provider acceptance and recipient delivery are separate. Review each receipt and carrier error below.</p>
                     </div>
                 </div>
                 <div class="table-responsive d-none d-lg-block">
@@ -64,10 +69,11 @@
                                 </th>
                                 <th data-sort-type="enum">
                                     <button type="button" class="sort-button" data-sort-key="status">
-                                        <span>Status</span>
+                                        <span>Submission</span>
                                         <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
                                 </th>
+                                <th>Delivery receipt</th>
                                 <th data-sort-type="enum">
                                     <button type="button" class="sort-button" data-sort-key="suppression">
                                         <span>Suppression</span>
@@ -85,16 +91,13 @@
                         <tbody>
                             {% if details %}
                             {% for d in details %}
-                            <tr class="{{ 'table-danger' if not d.success else '' }}">
+                            <tr class="{{ 'table-danger' if d.outcome_label == 'Failed' else '' }}">
                                 <td data-sort-value="{{ d.name or '' }}">{{ d.name or '-' }}</td>
                                 <td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>
-                                <td data-sort-value="{{ 'Sent' if d.success else 'Failed' }}">
-                                    {% if d.success %}
-                                    <span class="badge bg-success">Sent</span>
-                                    {% else %}
-                                    <span class="badge bg-danger">Failed</span>
-                                    {% endif %}
+                                <td data-sort-value="{{ d.outcome_label }}">
+                                    <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
                                 </td>
+                                <td><span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.delivery_label }}</span></td>
                                 <td data-sort-value="{{ suppression_status.get(d.normalized_phone) or '' }}">
                                     {% if not d.success and suppression_status.get(d.normalized_phone) %}
                                     <span class="badge bg-warning text-dark text-uppercase">
@@ -104,9 +107,9 @@
                                     -
                                     {% endif %}
                                 </td>
-                                <td data-sort-value="{{ d.error or '' }}">
-                                    {% if d.error %}
-                                    <small class="text-danger">{{ d.error }}</small>
+                                <td data-sort-value="{{ d.delivery_error or d.error or '' }}">
+                                    {% if d.delivery_error or d.error %}
+                                    <small class="text-danger">{{ d.delivery_error or d.error }}</small>
                                     {% else %}
                                     -
                                     {% endif %}
@@ -115,7 +118,7 @@
                             {% endfor %}
                             {% else %}
                             <tr>
-                                <td colspan="5" class="py-5">
+                                <td colspan="6" class="py-5">
                                     {{ ui.empty_state(
                                         'bi-list-check',
                                         'No details available',
@@ -136,12 +139,9 @@
                                     <h6 class="mb-1">{{ d.name or '-' }}</h6>
                                     <div class="text-muted small"><code>{{ d.phone }}</code></div>
                                 </div>
-                                {% if d.success %}
-                                <span class="badge bg-success">Sent</span>
-                                {% else %}
-                                <span class="badge bg-danger">Failed</span>
-                                {% endif %}
+                                <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
                             </div>
+                            <div class="mt-2 small">Delivery: <span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.delivery_label }}</span></div>
                             <div class="mt-2 small text-muted">
                                 Suppression:
                                 {% if not d.success and suppression_status.get(d.normalized_phone) %}
@@ -152,8 +152,8 @@
                                 <span class="ms-1">-</span>
                                 {% endif %}
                             </div>
-                            {% if d.error %}
-                            <div class="mt-2 small text-danger">{{ d.error }}</div>
+                            {% if d.delivery_error or d.error %}
+                            <div class="mt-2 small text-danger">{{ d.delivery_error or d.error }}</div>
                             {% endif %}
                         </div>
                         {% endfor %}
@@ -177,13 +177,13 @@
                 <div class="workspace-panel__header">
                     <div>
                         <h2 class="workspace-panel__title">Send summary</h2>
-                        <p class="workspace-panel__meta">Current delivery status and audience details for this log entry.</p>
+                        <p class="workspace-panel__meta">Current submission state and saved audience details.</p>
                     </div>
                 </div>
                 <div class="workspace-panel__body">
                     <dl class="workspace-data-list">
                         <div>
-                            <dt>Sent at</dt>
+                            <dt>Created at</dt>
                             <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
                         </div>
                         <div>
@@ -205,15 +205,15 @@
                         <div>
                             <dt>Status</dt>
                             <dd>
-                                <span class="badge bg-{% if log.status == 'processing' %}warning{% elif log.status == 'failed' %}danger{% else %}success{% endif %}">
-                                    {{ log.status or 'sent' }}
+                                <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
+                                    {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
                                 </span>
                             </dd>
                         </div>
                         <div>
                             <dt>Results</dt>
                             <dd>
-                                <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} sent</span><br>
+                                <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }}</span><br>
                                 <span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ log.failure_count }} failed</span>
                             </dd>
                         </div>

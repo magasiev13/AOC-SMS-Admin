@@ -1,4 +1,5 @@
 import json
+import hashlib
 import time
 from contextlib import nullcontext
 from uuid import uuid4
@@ -13,6 +14,8 @@ from app.models import (
     EventRegistration,
     InboxMessage,
     InboxThread,
+    MessageDispatchAttempt,
+    OutboundRequest,
     KeywordAutomationRule,
     SurveyFlow,
     SurveyResponse,
@@ -67,8 +70,12 @@ def parse_survey_questions(raw_questions: str) -> list[str]:
     for line in (raw_questions or '').splitlines():
         prompt = line.strip()
         if prompt:
-            questions.append(prompt[:320])
-    return questions[:10]
+            if len(prompt) > 320:
+                raise ValueError(f'Question {len(questions) + 1} has {len(prompt)} characters. Each question may contain at most 320 characters; shorten it before saving.')
+            questions.append(prompt)
+    if len(questions) > 10:
+        raise ValueError(f'This survey has {len(questions)} questions. Use at most 10 questions; no questions were removed or saved.')
+    return questions
 
 
 def mark_thread_read(thread_id: int) -> None:
@@ -189,6 +196,14 @@ def _send_thread_reply_with_logical_key(
     actor: str | None,
     logical_send_key: str,
 ) -> dict:
+    saved_request_id = None
+    if current_app.config.get('SAAS_MODE') and logical_send_key.startswith('reply-request:'):
+        saved_request_id = int(logical_send_key.removeprefix('reply-request:'))
+        saved = OutboundRequest.query.filter_by(id=saved_request_id, kind='reply', thread_id=thread_id).populate_existing().first()
+        if saved is None:
+            raise ValueError('Saved reply request does not belong to this conversation.')
+        if saved.status in {'accepted', 'failed', 'ambiguous'} and saved.result_json:
+            return json.loads(saved.result_json)
     thread = db.session.get(InboxThread, thread_id)
     if thread is None:
         return {'success': False, 'error': 'thread_not_found'}
@@ -197,7 +212,22 @@ def _send_thread_reply_with_logical_key(
     if not reply_body:
         return {'success': False, 'error': 'empty_message'}
 
-    if _unsubscribed_entry_for_phone(thread.phone):
+    result = None
+    if saved_request_id:
+        saved_payload = json.loads(saved.payload_json)
+        if saved_payload['message_body'] != reply_body or saved_payload['intent']['phone'] != thread.phone:
+            raise ValueError('The conversation or reply content changed from the saved request.')
+        attempt = MessageDispatchAttempt.query.filter_by(logical_send_key=logical_send_key).populate_existing().first()
+        if attempt is not None:
+            if attempt.recipient_phone != thread.phone or attempt.message_body_digest != hashlib.sha256(reply_body.encode()).hexdigest():
+                raise ValueError('Saved reply attempt does not match this recipient and content.')
+            if attempt.status in {'sent', 'failed', 'sending', 'ambiguous'}:
+                result = {
+                    'success': attempt.status == 'sent', 'sid': attempt.provider_message_sid,
+                    'status': attempt.status, 'error': attempt.last_error,
+                    'logical_send_key': logical_send_key, 'idempotent_replay': True,
+                }
+    if result is None and _unsubscribed_entry_for_phone(thread.phone):
         return {
             'success': False,
             'status': 'blocked_opt_out',
@@ -205,25 +235,43 @@ def _send_thread_reply_with_logical_key(
             'error': 'Cannot send to unsubscribed recipient. They must reply START to resubscribe.',
         }
 
-    try:
-        twilio = get_twilio_service(thread.organization_id)
-        if current_app.config.get('SAAS_MODE'):
-            result = twilio.send_message_with_attempt(
-                thread.phone,
-                reply_body,
-                logical_send_key,
-                None,
-                None,
-                'manual_reply',
-            )
-        else:
-            result = twilio.send_message(
-                thread.phone,
-                reply_body,
-                send_kind='manual_reply',
-            )
-    except Exception as exc:
-        result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
+    if result is None:
+        try:
+            twilio = get_twilio_service(thread.organization_id)
+        except Exception as exc:
+            # Constructing the configured client does not submit a message.
+            result = {'success': False, 'status': 'blocked' if saved_request_id else 'failed', 'sid': None, 'error': str(exc)}
+    if result is None:
+        try:
+            if current_app.config.get('SAAS_MODE'):
+                result = twilio.send_message_with_attempt(
+                    thread.phone, reply_body, logical_send_key, None, None, 'manual_reply',
+                )
+            else:
+                result = twilio.send_message(thread.phone, reply_body, send_kind='manual_reply')
+        except Exception as exc:
+            if saved_request_id:
+                # Recover from the persisted attempt after DB/process errors.
+                # Its sent/ambiguous state, rather than this exception alone,
+                # determines the outcome on the next exact-key execution.
+                raise
+            result = {'success': False, 'status': 'failed', 'sid': None, 'error': str(exc)}
+
+    saved = None
+    previous_result = {}
+    if saved_request_id:
+        # The attempt commits before its provider call. Lock the intent after
+        # that boundary so concurrent recovery/replay records one inbox bubble
+        # and completes the intent in the same database transaction.
+        saved = OutboundRequest.query.filter_by(
+            id=saved_request_id, kind='reply', thread_id=thread_id,
+        ).populate_existing().with_for_update().one()
+        previous_result = json.loads(saved.result_json) if saved.result_json else {}
+        if saved.status in {'accepted', 'failed'} or (
+            saved.status == 'ambiguous' and result.get('status') in {'sending', 'ambiguous'}
+        ):
+            db.session.commit()
+            return previous_result
 
     if not result.get('success'):
         error_text = result.get('error') or ''
@@ -235,17 +283,25 @@ def _send_thread_reply_with_logical_key(
                 name=_resolve_unsubscribed_name(thread.phone, thread=thread),
             )
 
-    _append_inbox_message(
-        thread,
-        thread.phone,
-        'outbound',
-        reply_body,
-        message_sid=result.get('sid'),
-        automation_source='manual',
-        raw_payload={'actor': actor} if actor else None,
-        delivery_status=result.get('status'),
-        delivery_error=result.get('error'),
-    )
+    message = None
+    if saved and previous_result.get('inbox_message_id'):
+        message = InboxMessage.query.filter_by(id=previous_result['inbox_message_id'], thread_id=thread.id).first()
+    if message is None:
+        message = _append_inbox_message(
+            thread, thread.phone, 'outbound', reply_body,
+            message_sid=result.get('sid'), automation_source='manual',
+            raw_payload={'actor': actor, 'outbound_request_id': saved_request_id} if saved else ({'actor': actor} if actor else None),
+            delivery_status=result.get('status'), delivery_error=result.get('error'),
+        )
+    else:
+        message.message_sid = result.get('sid')
+        message.delivery_status = result.get('status')
+        message.delivery_error = result.get('error')
+    if saved:
+        from app.services.outbound_request_service import complete_request
+        db.session.flush()
+        result = dict(result, inbox_message_id=message.id)
+        complete_request(saved, result)
     db.session.commit()
     record_usage_candidates(
         thread.organization_id,
@@ -417,7 +473,9 @@ def _append_inbox_message(
     raw_payload: dict | None = None,
     duplicate_sid_mode: str = 'store_without_sid',
 ) -> InboxMessage:
-    now = utc_now()
+    # These columns deliberately store UTC without a timezone. Passing aware
+    # values lets PostgreSQL cast through its session timezone and shifts them.
+    now = utc_now().replace(tzinfo=None)
     payload = json.dumps(raw_payload, ensure_ascii=True) if raw_payload else None
     resolved_message_sid = (message_sid or '').strip() or None
     if resolved_message_sid:
@@ -859,9 +917,6 @@ def process_inbound_sms(payload: dict) -> dict:
         return {'status': 'ignored', 'reason': 'missing_from'}
     if saas_mode_enabled() and messaging_profile is None:
         return {'status': 'ignored', 'reason': 'missing_destination_profile'}
-    if saas_mode_enabled() and not messaging_profile.can_send:
-        return {'status': 'ignored', 'reason': 'inactive_destination_profile'}
-
     phone = normalize_phone(raw_from)
     if not validate_phone(phone):
         return {'status': 'ignored', 'reason': 'invalid_phone', 'phone': phone}
@@ -872,13 +927,28 @@ def process_inbound_sms(payload: dict) -> dict:
         else nullcontext()
     )
     with organization_scope:
+        def duplicate_result(existing_message):
+            result = {'status': 'duplicate', 'thread_id': existing_message.thread_id}
+            if saas_mode_enabled() and messaging_profile is not None:
+                from app.services.automation_outbox_service import enqueue_for_inbound
+                result['automation_outbox'] = enqueue_for_inbound(messaging_profile.organization_id, existing_message.id)
+            return result
+
         if message_sid:
+            if saas_mode_enabled() and messaging_profile is not None:
+                from app.services.automation_outbox_service import resume_saved_inbound_sid
+                saved_duplicate = resume_saved_inbound_sid(messaging_profile.organization_id, message_sid)
+                if saved_duplicate is not None:
+                    return saved_duplicate
             existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
             if existing:
-                return {'status': 'duplicate', 'thread_id': existing.thread_id}
+                return duplicate_result(existing)
 
         thread = _get_or_create_thread(phone, profile_name)
         try:
+            if saas_mode_enabled():
+                db.session.flush()
+                thread = InboxThread.query.filter_by(id=thread.id).populate_existing().with_for_update().one()
             inbound_message = _append_inbox_message(
                 thread,
                 phone,
@@ -891,13 +961,13 @@ def process_inbound_sms(payload: dict) -> dict:
             db.session.flush()
         except DuplicateMessageSidError as exc:
             db.session.rollback()
-            return {'status': 'duplicate', 'thread_id': exc.existing_message.thread_id}
+            return duplicate_result(exc.existing_message)
         except IntegrityError:
             db.session.rollback()
             if message_sid:
                 existing = InboxMessage.query.filter_by(message_sid=message_sid).first()
                 if existing:
-                    return {'status': 'duplicate', 'thread_id': existing.thread_id}
+                    return duplicate_result(existing)
             raise
 
         status = 'stored'
@@ -911,7 +981,36 @@ def process_inbound_sms(payload: dict) -> dict:
         except (TypeError, ValueError):
             duplicate_window_seconds = 3
 
+        # Destination recognition and authenticated ingestion do not depend on
+        # outbound readiness. In-flight callbacks must retain recipient consent
+        # even while billing, sender setup or the provider is paused.
+        outbound_ready = True
+        if messaging_profile is not None:
+            from app.services.billing_service import organization_can_transmit_messages
+
+            outbound_ready = organization_can_transmit_messages(messaging_profile.organization)
+
+        def record_transport_consent(*, source: str, decision: str) -> None:
+            if messaging_profile is None:
+                return
+            from app.services.recipient_permission_service import record_permission_evidence
+
+            record_permission_evidence(
+                messaging_profile.organization_id,
+                phone,
+                purpose='all',
+                decision=decision,
+                source=source,
+                evidence_key=message_sid or f'inbound:{inbound_message.id}',
+                occurred_at=inbound_message.created_at,
+                metadata={'keyword': normalized},
+            )
+
         session = _active_session(phone)
+        pending_survey_reply = False
+        if session is not None and saas_mode_enabled():
+            from app.services.automation_outbox_service import session_has_unsubmitted_reply
+            pending_survey_reply = session_has_unsubmitted_reply(session.id)
         if normalized in STOP_KEYWORDS:
             _upsert_unsubscribed(
                 phone,
@@ -919,8 +1018,21 @@ def process_inbound_sms(payload: dict) -> dict:
                 source='inbound',
                 name=_resolve_unsubscribed_name(phone, thread=thread),
             )
+            record_transport_consent(source='inbound_stop', decision='denied')
             _cancel_active_sessions(phone)
             status = 'opt_out'
+        elif not outbound_ready:
+            if normalized in START_KEYWORDS and (
+                normalized != 'YES'
+                or (session is None and _unsubscribed_entry_for_phone(phone) is not None)
+            ):
+                _remove_unsubscribed(phone)
+                # START removes the transport opt-out; it is not evidence of
+                # permission for every broadcast purpose or an imported list.
+                record_transport_consent(source='inbound_start', decision='unknown')
+                status = 'opt_in'
+            # Keep ordinary inbound messages without advancing a survey or
+            # matching a keyword that cannot currently deliver its next reply.
         elif session and normalized in SURVEY_CANCEL_KEYWORDS:
             now = utc_now()
             session.status = 'cancelled'
@@ -936,6 +1048,10 @@ def process_inbound_sms(payload: dict) -> dict:
             status = 'survey_cancelled'
         elif session and not inbound_body:
             status = 'survey_ignored_empty'
+        elif session and pending_survey_reply:
+            # Keep the text in the inbox; no answer can advance a question that
+            # is still waiting for its original provider submission.
+            status = 'survey_reply_pending'
         else:
             if session:
                 matched_keyword = session.survey.trigger_keyword
@@ -982,10 +1098,11 @@ def process_inbound_sms(payload: dict) -> dict:
                 normalized != 'YES' or _unsubscribed_entry_for_phone(phone) is not None
             ):
                 was_unsubscribed = _remove_unsubscribed(phone)
+                record_transport_consent(source='inbound_start', decision='unknown')
                 start_reply = (
-                    'You are resubscribed and can receive SMS alerts again.'
+                    'Your SMS opt-out has been removed.'
                     if was_unsubscribed
-                    else 'You are already subscribed and can receive SMS alerts.'
+                    else 'No SMS opt-out is recorded for this number.'
                 )
                 pending_replies.append(
                     {
@@ -1007,6 +1124,7 @@ def process_inbound_sms(payload: dict) -> dict:
 
                 if survey:
                     _session, replies = _start_survey(survey, thread, phone)
+                    session = _session
                     for reply in replies:
                         pending_replies.append(
                             {
@@ -1044,10 +1162,11 @@ def process_inbound_sms(payload: dict) -> dict:
 
                     if status == 'stored' and normalized == 'YES':
                         was_unsubscribed = _remove_unsubscribed(phone)
+                        record_transport_consent(source='inbound_start', decision='unknown')
                         start_reply = (
-                            'You are resubscribed and can receive SMS alerts again.'
+                            'Your SMS opt-out has been removed.'
                             if was_unsubscribed
-                            else 'You are already subscribed and can receive SMS alerts.'
+                            else 'No SMS opt-out is recorded for this number.'
                         )
                         pending_replies.append(
                             {
@@ -1060,6 +1179,23 @@ def process_inbound_sms(payload: dict) -> dict:
 
         if matched_keyword:
             inbound_message.matched_keyword = matched_keyword
+
+        if saas_mode_enabled():
+            from app.services.automation_outbox_service import enqueue_for_inbound, save_automation_replies
+
+            saved_replies = save_automation_replies(
+                inbound_message, thread, pending_replies, survey_session=session,
+                question_delay=_survey_start_question_delay_seconds() if status == 'survey_started' else 0,
+            )
+            inbound_id, thread_id = inbound_message.id, thread.id
+            db.session.commit()
+            queued = enqueue_for_inbound(messaging_profile.organization_id, inbound_id)
+            return {
+                'status': status, 'thread_id': thread_id, 'phone': phone,
+                'replies': [{'source': row.source, 'result': {'status': row.status, 'success': None, 'automation_outbox_id': row.id}} for row in saved_replies],
+                'organization_id': messaging_profile.organization_id, 'automation_blocked': not outbound_ready,
+                'automation_outbox': queued,
+            }
 
         db.session.commit()
 
@@ -1100,4 +1236,5 @@ def process_inbound_sms(payload: dict) -> dict:
             'phone': phone,
             'replies': sent_replies,
             'organization_id': messaging_profile.organization_id if messaging_profile is not None else None,
+            'automation_blocked': not outbound_ready,
         }

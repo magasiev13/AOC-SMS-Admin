@@ -202,16 +202,16 @@ test('platform admin sees each seeded onboarding state and action availability',
 
 test('owner and staff are blocked from platform messaging and onboarding routes', async ({ page }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
-  let response = await page.request.get('/platform/organizations/1/messaging');
+  let response = await page.goto('/platform/organizations/1/messaging');
   expect(response.status()).toBe(403);
 
-  response = await page.request.get('/platform/organizations/1/messaging/onboarding');
+  response = await page.goto('/platform/organizations/1/messaging/onboarding');
   expect(response.status()).toBe(403);
 
   await login(page, 'staff@browser.test', 'Staff-pass1!');
-  response = await page.request.get('/platform/organizations/1/messaging');
+  response = await page.goto('/platform/organizations/1/messaging');
   expect(response.status()).toBe(403);
 
-  response = await page.request.get('/platform/organizations/1/messaging/onboarding');
+  response = await page.goto('/platform/organizations/1/messaging/onboarding');
   expect(response.status()).toBe(403);
 });

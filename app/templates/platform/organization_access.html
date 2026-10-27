@@ -181,7 +181,7 @@
                     </p>
                     <div class="platform-note mb-3">
                         <div class="platform-note__title">{{ billing.title }}</div>
-                        <div class="platform-note__copy">{{ billing.next_step }}</div>
+                        <div class="platform-note__copy" {% if billing.billing_incident %}role="alert"{% endif %}>{{ billing.next_step }}</div>
                     </div>
                     <div class="platform-note mb-3">
                         <div class="platform-note__title">Checkout offer: {{ billing_offer.title }}</div>

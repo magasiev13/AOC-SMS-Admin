@@ -69,6 +69,8 @@ if [[ "${backup_status_file}" != /* || "${backup_status_file}" == "/" ]]; then
 fi
 
 BACKUP_ARTIFACT_EXPORT=1 \
+BACKUP_APPLICATION_HELPER="${BACKUP_APPLICATION_HELPER:-}" \
+BACKUP_TARGET_SOURCE_SHA="${BACKUP_TARGET_SOURCE_SHA:-}" \
 APP_ROOT="${APP_ROOT}" \
 APP_GROUP="${APP_GROUP}" \
 TWINEVIA_ENV_FILE="${ENV_FILE}" \
@@ -125,6 +127,7 @@ manifest_path.write_text(
             "encrypted_sha256": payload["encrypted_sha256"],
             "hmac": hmac_path.name,
             "offsite_mode": payload["offsite_mode"],
+            "application": payload["application"],
         },
         indent=2,
         sort_keys=True,

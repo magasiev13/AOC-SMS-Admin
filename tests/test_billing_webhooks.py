@@ -546,7 +546,7 @@ class TestStripeWebhookHardening(unittest.TestCase):
 
     @patch("app.services.billing_service._stripe_module")
     def test_refresh_subscription_from_stripe_paginates_checkout_sessions_until_match(self, mock_stripe_module) -> None:
-        from app.services.billing_service import refresh_subscription_from_stripe
+        from app.services.billing_service import _find_matching_checkout_session, sync_checkout_session_by_id
 
         offer_version = self._issue_checkout_session("cs_target")
 
@@ -590,7 +590,11 @@ class TestStripeWebhookHardening(unittest.TestCase):
         }
         mock_stripe_module.return_value = mock_stripe
 
-        subscription = refresh_subscription_from_stripe(self.organization, "owner@acme.test")
+        # Known issued IDs now reconcile directly. Exercise account-list
+        # recovery separately so its pagination/ownership contract stays covered.
+        matched = _find_matching_checkout_session(mock_stripe, self.organization, self.subscription, "owner@acme.test")
+        self.assertEqual(matched["id"], "cs_target")
+        subscription = sync_checkout_session_by_id(matched["id"], self.organization)
 
         self.assertIsNotNone(subscription)
         self.assertEqual(subscription.status, "trialing")
@@ -633,7 +637,8 @@ class TestStripeWebhookHardening(unittest.TestCase):
         mock_stripe.Subscription.retrieve.assert_not_called()
 
     @patch("app.services.billing_service._stripe_module")
-    def test_usage_invoice_posting_retries_with_stable_idempotency_key(self, mock_stripe_module) -> None:
+    def test_usage_invoice_posting_recovers_item_after_database_acknowledgement_loss(self, mock_stripe_module) -> None:
+        from app.models import MessagingUsageRecord
         from app.services.billing_service import _post_closed_usage_invoice_items
         from app.services.twilio_service import previous_billing_period_window
 
@@ -651,13 +656,20 @@ class TestStripeWebhookHardening(unittest.TestCase):
             status="pending",
         )
         self.db.session.add(period)
+        self.db.session.add(MessagingUsageRecord(
+            organization_id=self.organization.id, message_sid="SMverified_usage_fixture",
+            billable=True, billable_units=1005, provider_cost=Decimal("10.0000"),
+            provider_currency="usd", cost_status="known", units_status="known",
+            billing_period_start=period_start, billing_period_end=period_end,
+            reconciliation_status="finalized", billing_review_required=False,
+        ))
         self.db.session.commit()
 
         mock_stripe = MagicMock()
-        mock_stripe.Invoice.create.return_value = SimpleNamespace(id="in_overage_123")
-        mock_stripe.Invoice.retrieve.return_value = {
+        invoice_data = {
             "id": "in_overage_123",
-            "status": "draft",
+            "customer": "cus_test_123", "currency": "usd",
+            "status": "draft", "total": 15,
             "metadata": {
                 "organization_id": str(self.organization.id),
                 "period_start": period_start.date().isoformat(),
@@ -666,11 +678,14 @@ class TestStripeWebhookHardening(unittest.TestCase):
                 "settlement_version": "1",
             },
         }
-        mock_stripe.InvoiceItem.create.return_value = SimpleNamespace(id="ii_test_123")
-        mock_stripe.Invoice.finalize_invoice.return_value = SimpleNamespace(
-            id="in_overage_123",
-            status="open",
-        )
+        mock_stripe.Invoice.create.return_value = invoice_data
+        mock_stripe.Invoice.retrieve.return_value = invoice_data
+        item_data = {"id": "ii_test_123", "invoice": "in_overage_123", "customer": "cus_test_123",
+                     "currency": "usd", "amount": 15, "metadata": invoice_data["metadata"]}
+        mock_stripe.InvoiceItem.create.return_value = item_data
+        mock_stripe.InvoiceItem.list.return_value = {"data": [item_data], "has_more": False}
+        mock_stripe.InvoiceItem.retrieve.return_value = item_data
+        mock_stripe.Invoice.finalize_invoice.return_value = {**invoice_data, "status": "open"}
         mock_stripe_module.return_value = mock_stripe
 
         real_commit = self.db.session.commit
@@ -696,10 +711,8 @@ class TestStripeWebhookHardening(unittest.TestCase):
         self.assertEqual(period.stripe_invoice_item_id, "ii_test_123")
         self.assertEqual(period.stripe_invoice_id, "in_overage_123")
         self.assertEqual(period.invoiced_units, 5)
-        self.assertEqual(mock_stripe.InvoiceItem.create.call_count, 2)
+        self.assertEqual(mock_stripe.InvoiceItem.create.call_count, 1)
         first_call = mock_stripe.InvoiceItem.create.call_args_list[0].kwargs
-        second_call = mock_stripe.InvoiceItem.create.call_args_list[1].kwargs
-        self.assertEqual(first_call["idempotency_key"], second_call["idempotency_key"])
         self.assertIn(f"sms-overage:{self.organization.id}:", first_call["idempotency_key"])
         self.assertEqual(first_call["invoice"], "in_overage_123")
         self.assertEqual(first_call["amount"], 15)

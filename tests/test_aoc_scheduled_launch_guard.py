@@ -4,6 +4,7 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -124,6 +125,55 @@ class TestAocScheduledLaunchGuard(unittest.TestCase):
             ).count(),
             2,
         )
+
+    def test_normal_release_preserves_new_future_schedules_after_historical_freeze(self) -> None:
+        from app.aoc_scheduled_guard import report_passes_guard
+        self.cancel_dispatchable_messages("armenians-of-colorado", 2, self.record_path)
+        future = self.ScheduledMessage(
+            organization_id=self.organization.id,
+            scheduled_at=datetime.now(timezone.utc) + timedelta(days=30),
+            message_body="Legitimate new reminder",
+            target="community",
+            status="pending",
+            test_mode=False,
+        )
+        self.db.session.add(future)
+        self.db.session.commit()
+        report = self.build_dispatchable_report("armenians-of-colorado", self.record_path)
+        self.assertTrue(report_passes_guard(report))
+        self.assertFalse(report_passes_guard(report, 0))
+        self.assertEqual(report["dispatchable_ids"], [future.id])
+        self.assertEqual(future.status, "pending")
+
+    def test_reenabled_recorded_message_blocks_normal_release(self) -> None:
+        from app.aoc_scheduled_guard import report_passes_guard
+        payload = self.cancel_dispatchable_messages("armenians-of-colorado", 2, self.record_path)
+        recorded_id = payload["scheduled_messages"][0]["scheduled_message_id"]
+        recorded = self.db.session.get(self.ScheduledMessage, recorded_id)
+        recorded.status = "pending"
+        self.db.session.commit()
+        report = self.build_dispatchable_report("armenians-of-colorado", self.record_path)
+        self.assertFalse(report_passes_guard(report))
+        self.assertIn("no longer cancelled", report["record_error"])
+        self.assertEqual(recorded.status, "pending")
+
+    def test_cli_defaults_to_historical_proof_but_explicit_maintenance_still_requires_zero(self) -> None:
+        import contextlib
+        import io
+        from app.aoc_scheduled_guard import main
+        self.cancel_dispatchable_messages("armenians-of-colorado", 2, self.record_path)
+        self.db.session.add(self.ScheduledMessage(
+            organization_id=self.organization.id, scheduled_at=datetime.now(timezone.utc) + timedelta(days=30),
+            message_body="Future reminder", target="community", status="pending", test_mode=False,
+        ))
+        self.db.session.commit()
+        self.app.config["AOC_SCHEDULED_CANCELLATION_RECORD_FILE"] = str(self.record_path)
+        base_arguments = ["guard", "--organization-slug", "armenians-of-colorado"]
+        for arguments, expected_exit in ((base_arguments, 0), (base_arguments + ["--expect-dispatchable-count", "0"], 1)):
+            with self.subTest(arguments=arguments), patch("app.aoc_scheduled_guard.create_app", return_value=self.app), patch("sys.argv", arguments), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as result:
+                    main()
+                self.assertEqual(result.exception.code, expected_exit)
 
 
 if __name__ == "__main__":

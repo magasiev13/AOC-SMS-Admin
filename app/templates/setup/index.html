@@ -92,13 +92,13 @@
                 </div>
                 <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
                 <div class="setup-callout">
-                    <div>{{ subscription_view.next_step }}</div>
+                    <div {% if subscription_view.billing_incident %}role="alert"{% endif %}>{{ subscription_view.next_step }}</div>
                     {% include "includes/billing_plan_facts.html" %}
                     {% if subscription_view.period_value %}
                     <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
                     {% endif %}
                     {% if subscription_view.is_complimentary %}
-                    <div class="text-muted small">Stripe checkout is disabled because this workspace is comped and pays Twilio directly.</div>
+                    <div class="text-muted small">Platform billing is covered. Messaging provider readiness is checked separately.</div>
                     {% endif %}
                 </div>
                 <div class="setup-actions">
@@ -250,13 +250,13 @@
                 </div>
                 <p class="setup-panel__copy">{{ subscription_view.summary }}</p>
                 <div class="setup-callout">
-                    <div>{{ subscription_view.next_step }}</div>
+                    <div {% if subscription_view.billing_incident %}role="alert"{% endif %}>{{ subscription_view.next_step }}</div>
                     {% include "includes/billing_plan_facts.html" %}
                     {% if subscription_view.period_value %}
                     <div class="text-muted small">{{ subscription_view.period_label }}: {{ subscription_view.period_value }}</div>
                     {% endif %}
                     {% if subscription_view.is_complimentary %}
-                    <div class="text-muted small">Stripe checkout is disabled because this workspace is comped and pays Twilio directly.</div>
+                    <div class="text-muted small">Platform billing is covered. Messaging provider readiness is checked separately.</div>
                     {% endif %}
                 </div>
                 <div class="setup-actions">

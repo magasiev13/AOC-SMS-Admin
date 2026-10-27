@@ -1,0 +1,17 @@
+{% macro permission_badge(status, is_unsubscribed=false, is_suppressed=false, legacy_label='Sendable') -%}
+{% if is_unsubscribed %}
+<span class="badge bg-secondary" title="This phone is unsubscribed. A permission review does not resubscribe it.">Unsubscribed</span>
+{% elif is_suppressed %}
+<span class="badge bg-secondary" title="This phone is suppressed and cannot receive messages.">Suppressed</span>
+{% elif status.decision == 'legacy_compatibility' %}
+<span class="badge bg-success">{{ legacy_label }}</span>
+{% elif status.allowed %}
+<span class="badge bg-success" title="{{ status.source_label or 'Verified permission for this message purpose is recorded.' }}">Granted</span>
+{% elif status.reason == 'permission_revoked' %}
+<span class="badge bg-secondary" title="Permission was revoked. START alone does not restore an earlier broadcast grant.">Denied</span>
+{% elif status.decision == 'denied' %}
+<span class="badge bg-secondary" title="A refusal is recorded. A later verified grant is required for this purpose.">Denied</span>
+{% else %}
+<span class="badge bg-warning text-dark" title="No current verified permission for this purpose is recorded. This contact is excluded from sends.">Unknown</span>
+{% endif %}
+{%- endmacro %}

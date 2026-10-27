@@ -3,7 +3,10 @@ import json
 from flask import current_app
 from rq import get_current_job
 from app import create_app, db
-from app.models import MessageLog, Organization
+from app.models import MessageLog, MessageDispatchAttempt, Organization, OutboundRequest, utc_now
+from datetime import timedelta
+from app.services.outbound_request_service import complete_request, start_request_execution
+from app.services.recipient_permission_service import filter_permission_recipients, permission_context
 from app.services.billing_service import organization_transmit_block_reason
 from app.tenant import organization_context
 from app.services.outbound_idempotency_service import (
@@ -73,6 +76,83 @@ def _record_usage_candidates_safely(
         )
 
 
+def _finish_durable_request(log: MessageLog, *, error: str | None = None) -> bool:
+    if not current_app.config.get('SAAS_MODE'):
+        return False
+    incoming_details = _load_details(log)
+    incoming_status = log.status
+    incoming_total = log.total_recipients
+    # Finalizers may finish in a different order from provider calls. Refresh
+    # under one lock, and let committed attempts outrank stale worker results.
+    with db.session.no_autoflush:
+        log = MessageLog.query.filter_by(id=log.id).populate_existing().with_for_update().one()
+        request = OutboundRequest.query.filter_by(message_log_id=log.id, kind='blast').populate_existing().with_for_update().first()
+        attempts = MessageDispatchAttempt.query.filter_by(message_log_id=log.id).populate_existing().all()
+    if request is not None and request.status == 'accepted':
+        # A delayed duplicate cannot downgrade a completed accepted operation.
+        db.session.commit()
+        return True
+    by_phone = {}
+    other_details = []
+    for detail in _load_details(log) + incoming_details:
+        if not isinstance(detail, dict):
+            continue
+        phone = detail.get('phone') or detail.get('to')
+        if phone:
+            by_phone[phone] = detail
+        elif detail not in other_details:
+            other_details.append(detail)
+    for attempt in attempts:
+        if attempt.status == 'queued':
+            continue
+        detail = dict(by_phone.get(attempt.recipient_phone, {}))
+        detail.update(
+            phone=attempt.recipient_phone, sid=attempt.provider_message_sid,
+            status=attempt.status, success=attempt.status == 'sent', error=attempt.last_error,
+        )
+        by_phone[attempt.recipient_phone] = detail
+    details = list(by_phone.values()) + other_details
+    log.total_recipients = incoming_total
+    log.success_count = sum(row.get('success') is True for row in by_phone.values())
+    log.failure_count = sum(row.get('success') is False and row.get('status') not in {'sending', 'ambiguous'} for row in by_phone.values())
+    ambiguous = any(row.get('status') in {'sending', 'ambiguous'} for row in by_phone.values())
+    all_submitted = bool(log.total_recipients) and log.success_count == log.total_recipients
+    failed = bool(log.failure_count) or (incoming_status == 'failed' and not all_submitted)
+    if all_submitted and error == 'No recipients remain eligible.':
+        error = None
+    log.status = 'ambiguous' if ambiguous else ('failed' if failed else 'sent')
+    log.details = json.dumps(details)
+    result = {'details': details, 'success_count': log.success_count,
+              'failure_count': log.failure_count, 'error': error, 'success': not failed}
+    if request is not None:
+        complete_request(request, result)
+    db.session.commit()
+    return True
+
+
+def send_reply_request_job(organization_id: int, request_id: int) -> None:
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    with app.app_context(), organization_context(organization_id):
+        request = OutboundRequest.query.filter_by(id=request_id, kind='reply').first()
+        if request is None or request.status in {'accepted', 'failed', 'ambiguous'}:
+            return
+        if not request.thread_id:
+            complete_request(request, {'success': False, 'error': 'The saved conversation is unavailable.'})
+            db.session.commit()
+            return
+        if not start_request_execution(request):
+            return
+        payload = json.loads(request.payload_json)
+        from app.services.inbox_service import send_thread_reply_with_key
+        result = send_thread_reply_with_key(
+            request.thread_id, payload['message_body'], request.actor_key, f'reply-request:{request.id}',
+        )
+        db.session.refresh(request)
+        if request.status not in {'accepted', 'failed'}:
+            complete_request(request, result)
+            db.session.commit()
+
+
 def send_bulk_job(
     log_id: int,
     organization_id: int | list | None = None,
@@ -115,6 +195,22 @@ def send_bulk_job(
             )
             if not log:
                 raise ValueError(f"MessageLog {log_id} not found")
+            if current_app.config.get('SAAS_MODE') and organization_id is None and log.organization_id:
+                # Pre-tenant queue payloads contained only the log identifier.
+                # Resolve its persisted owner once, then execute under scope.
+                return send_bulk_job(log_id, log.organization_id, recipient_data, final_message, delay)
+
+            saved_request = None
+            if current_app.config.get('SAAS_MODE'):
+                saved_request = OutboundRequest.query.filter_by(message_log_id=log.id, kind='blast').first()
+                if saved_request is not None:
+                    if saved_request.status in {'accepted', 'failed', 'ambiguous'}:
+                        return
+                    saved_payload = json.loads(saved_request.payload_json)
+                    if saved_payload['recipients'] != recipient_data or saved_payload['message_body'] != final_message:
+                        raise ValueError('Queued payload does not match the immutable saved send request.')
+                    if not start_request_execution(saved_request):
+                        return
 
             existing_details = []
             if log.details:
@@ -132,13 +228,17 @@ def send_bulk_job(
                 organization = db.session.get(Organization, organization_id) if organization_id else None
                 send_block_reason = organization_transmit_block_reason(organization)
                 if send_block_reason:
-                    combined_details = _append_error_detail(existing_details, send_block_reason)
+                    combined_details = [
+                        dict(recipient, success=False, status='blocked', error=send_block_reason)
+                        for recipient in recipient_data
+                    ]
                     log.total_recipients = len(recipient_data)
                     log.success_count = max(log.success_count or 0, existing_success)
-                    log.failure_count = max(log.failure_count or 0, existing_failure + 1)
+                    log.failure_count = len(recipient_data)
                     log.status = "failed"
                     log.details = json.dumps(combined_details)
-                    db.session.commit()
+                    if not _finish_durable_request(log, error=send_block_reason):
+                        db.session.commit()
                     current_app.logger.warning(
                         "Bulk send job blocked log_id=%s organization_id=%s reason=%s",
                         log.id,
@@ -167,16 +267,25 @@ def send_bulk_job(
             try:
                 twilio = get_twilio_service(organization_id)
                 if current_app.config.get("SAAS_MODE"):
-                    result = twilio.send_bulk_with_attempts(
-                        recipient_data,
-                        final_message,
-                        f"blast-log:{log.id}",
-                        log.id,
-                        None,
-                        delay,
-                        "blast",
-                    )
-                    combined_details = result['details']
+                    permission_skips = []
+                    if log.test_mode:
+                        from app.services.test_recipient_service import list_test_recipients
+                        saved_phones = {entry.phone for entry in list_test_recipients(organization_id)}
+                        allowed = [row for row in recipient_data if row.get('phone') in saved_phones]
+                        permission_skips = [dict(row, permission_reason='test_recipient_removed') for row in recipient_data if row.get('phone') not in saved_phones]
+                    else:
+                        allowed, permission_skips, _ = filter_permission_recipients(
+                            recipient_data, organization_id=organization_id,
+                            purpose=log.target, event_id=log.event_id if log.target == 'event' else None,
+                        )
+                    with permission_context(log.target, log.event_id if log.target == 'event' else None):
+                        result = twilio.send_bulk_with_attempts(
+                            allowed, final_message, f"blast-log:{log.id}", log.id,
+                            None, delay, 'manual_live_test' if log.test_mode else 'blast',
+                        )
+                    combined_details = result['details'] + [
+                        dict(row, success=None, status='excluded', error=row['permission_reason']) for row in permission_skips
+                    ]
                     existing_success = 0
                     existing_failure = 0
                 else:
@@ -193,7 +302,11 @@ def send_bulk_job(
                 log.failure_count = existing_failure + result['failure_count']
                 log.details = json.dumps(combined_details)
                 log.status = 'sent' if log.failure_count == 0 else 'failed'
-                db.session.commit()
+                if current_app.config.get('SAAS_MODE') and not allowed:
+                    log.status = 'failed'
+                    log.failure_count = 0
+                if not _finish_durable_request(log, error='No recipients remain eligible.' if current_app.config.get('SAAS_MODE') and not allowed else None):
+                    db.session.commit()
                 _record_usage_candidates_safely(
                     log_id=log.id,
                     organization_id=organization_id,
@@ -241,6 +354,16 @@ def send_bulk_job(
                     log.total_recipients = len(recipient_data)
                     log.failure_count = max((log.failure_count or 0), existing_failure + 1)
                     log.details = json.dumps(combined_details)
+                    if not _finish_durable_request(log, error=str(exc)):
+                        db.session.commit()
+                elif saved_request is not None:
+                    OutboundRequest.query.filter(
+                        OutboundRequest.id == saved_request.id,
+                        ~OutboundRequest.status.in_(['accepted', 'failed', 'ambiguous']),
+                    ).update({
+                        OutboundRequest.status: 'queued',
+                        OutboundRequest.next_enqueue_at: utc_now().replace(tzinfo=None) + timedelta(minutes=2),
+                    }, synchronize_session=False)
                     db.session.commit()
                 try:
                     process_failure_details(combined_details, log.id)
@@ -270,7 +393,8 @@ def send_bulk_job(
                 log.failure_count = max(log.failure_count or 0, existing_failure + 1)
                 log.status = 'failed'
                 log.details = json.dumps(combined_details)
-                db.session.commit()
+                if not _finish_durable_request(log, error=str(exc)):
+                    db.session.commit()
                 try:
                     process_failure_details(combined_details, log.id)
                 except Exception as process_exc:

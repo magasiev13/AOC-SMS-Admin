@@ -82,6 +82,8 @@ def build_dispatchable_report(organization_slug: str, record_path: Path) -> dict
         and len(recorded_statuses) == len(record_message_ids)
         and all(recorded_statuses.get(message_id) == "cancelled" for message_id in record_message_ids)
     )
+    if not record_confirmed and record_error is None:
+        record_error = "recorded messages are missing or no longer cancelled"
     return {
         "dispatchable_count": len(messages),
         "dispatchable_ids": [int(message["id"]) for message in messages],
@@ -93,22 +95,31 @@ def build_dispatchable_report(organization_slug: str, record_path: Path) -> dict
     }
 
 
+def report_passes_guard(report: dict[str, Any], expected_dispatchable_count: int | None = None) -> bool:
+    """Normal releases preserve the historical freeze without freezing new work."""
+    if report["organization_found"] is not True or report["record_confirmed"] is not True:
+        return False
+    return expected_dispatchable_count is None or report["dispatchable_count"] == expected_dispatchable_count
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Assert that AOC has no dispatchable scheduled messages.")
+    parser = argparse.ArgumentParser(description="Verify that the recorded AOC launch messages remain cancelled.")
     parser.add_argument("--organization-slug", required=True)
-    parser.add_argument("--expect-dispatchable-count", required=True, type=int)
+    parser.add_argument(
+        "--expect-dispatchable-count",
+        type=int,
+        help="Additionally assert the current dispatchable count for an explicit maintenance freeze.",
+    )
     args = parser.parse_args()
+    if args.expect_dispatchable_count is not None and args.expect_dispatchable_count < 0:
+        parser.error("--expect-dispatchable-count must be nonnegative")
 
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
         record_path = Path(str(app.config.get("AOC_SCHEDULED_CANCELLATION_RECORD_FILE") or ""))
         report = build_dispatchable_report(args.organization_slug, record_path)
     print(json.dumps(report, indent=2, sort_keys=True))
-    sys.exit(
-        0
-        if report["dispatchable_count"] == args.expect_dispatchable_count and report["record_confirmed"] is True
-        else 1
-    )
+    sys.exit(0 if report_passes_guard(report, args.expect_dispatchable_count) else 1)
 
 
 if __name__ == "__main__":

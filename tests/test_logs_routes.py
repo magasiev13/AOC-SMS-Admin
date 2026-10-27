@@ -256,6 +256,7 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertIn("MessageLog details payload unusable", warning_mock.call_args[0][0])
 
     def test_dashboard_send_redirects_to_log_detail_for_general_blast(self) -> None:
+        self._grant_broadcast_permission('+15551234567')
         self._login()
         self.db.session.add(
             self.CommunityMember(
@@ -290,6 +291,7 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertEqual(retry.intervals, [30, 120, 300])
 
     def test_dashboard_duplicate_post_reuses_existing_log_and_does_not_enqueue_twice(self) -> None:
+        self._grant_broadcast_permission('+15551234568')
         self._login()
         self.db.session.add(
             self.CommunityMember(
@@ -332,6 +334,7 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertTrue(second_response.location.endswith(f"/logs/{logs[0].id}"))
 
     def test_dashboard_stale_cross_tenant_idempotency_log_reference_queues_new_log(self) -> None:
+        self._grant_broadcast_permission('+15551234568')
         self._login()
         self.db.session.add(
             self.CommunityMember(
@@ -430,6 +433,7 @@ class TestLogsRoutes(unittest.TestCase):
         mock_queue.enqueue.assert_called_once()
 
     def test_dashboard_send_normalizes_message_body_before_persisting_and_queueing(self) -> None:
+        self._grant_broadcast_permission('+15551234569')
         self._login()
         self.db.session.add(
             self.CommunityMember(
@@ -463,6 +467,7 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertIn("Estimated billing", response.get_data(as_text=True))
 
     def test_dashboard_schedule_stores_normalized_message_body(self) -> None:
+        self._grant_broadcast_permission('+15551234570')
         from datetime import datetime, timedelta
 
         self._login()
@@ -595,7 +600,7 @@ class TestLogsRoutes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("All recipients are unsubscribed or no recipients were found.", response.get_data(as_text=True))
+        self.assertIn("No eligible recipients were found. Review permission, unsubscribe, and suppression records.", response.get_data(as_text=True))
         self.assertEqual(self.MessageLog.query.count(), 0)
 
     def test_dashboard_test_mode_requires_saved_test_recipient(self) -> None:
@@ -619,6 +624,92 @@ class TestLogsRoutes(unittest.TestCase):
             response.get_data(as_text=True),
         )
         self.assertEqual(self.MessageLog.query.count(), 0)
+
+
+    def _grant_broadcast_permission(self, phone):
+        from app.services.recipient_permission_service import record_permission_evidence
+        from app.models import utc_now
+        record_permission_evidence(
+            self.organization.id, phone, purpose='community', decision='granted',
+            source='test_verified_opt_in', evidence_key='fixture-community-' + phone,
+            occurred_at=utc_now(), metadata={'proof': 'Explicit synthetic positive permission fixture'}, verified=True,
+        )
+        self.db.session.commit()
+
+    def test_audience_preview_and_saved_send_use_the_same_permission_boundary(self):
+        self._login()
+        self.db.session.add_all([
+            self.CommunityMember(organization_id=self.organization.id, name='Permitted', phone='+17205550141'),
+            self.CommunityMember(organization_id=self.organization.id, name='Unverified', phone='+17205550142'),
+        ])
+        self.db.session.commit()
+        self._grant_broadcast_permission('+17205550141')
+        preview = self.client.get('/dashboard/audience-preview?target=community')
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json['eligible'], 1)
+        self.assertEqual(preview.json['excluded'], 1)
+        queue = MagicMock()
+        with patch('app.queue.get_queue', return_value=queue):
+            response = self.client.post('/dashboard', data={
+                'message_body': 'Permission boundary test', 'target': 'community', 'request_idempotency_key': 'preview-test',
+            })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(queue.enqueue.call_args.args[3], [{'name': 'Permitted', 'phone': '+17205550141'}])
+
+    def test_audience_preview_rejects_foreign_event_and_invalid_target(self):
+        from app.models import Event
+        foreign = self.Organization(name='Foreign preview', slug='foreign-preview')
+        event = Event(organization=foreign, title='Private event')
+        self.db.session.add_all([foreign, event])
+        self.db.session.commit()
+        event_id = event.id
+        self._login()
+        self.assertEqual(self.client.get(f'/dashboard/audience-preview?target=event&event_id={event_id}').status_code, 404)
+        self.assertEqual(self.client.get('/dashboard/audience-preview?target=unrecognized').status_code, 400)
+
+    def test_clear_logs_preserves_saved_intent_and_dispatch_identity(self):
+        from app.models import OutboundRequest
+        self._login()
+        self._grant_broadcast_permission('+17205550141')
+        self.db.session.add(self.CommunityMember(organization_id=self.organization.id, phone='+17205550141'))
+        self.db.session.commit()
+        with patch('app.queue.get_queue', return_value=MagicMock()):
+            self.client.post('/dashboard', data={'message_body': 'Keep evidence', 'target': 'community', 'request_idempotency_key': 'keep-log'})
+        saved = OutboundRequest.query.one()
+        log = self.db.session.get(self.MessageLog, saved.message_log_id)
+        log.status = 'sent'
+        self.db.session.commit()
+        response = self.client.post('/logs/clear', data={'admin_password': 'admin-pass'}, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'logs with retained send evidence', response.data)
+        self.assertIsNotNone(self.db.session.get(self.MessageLog, saved.message_log_id))
+        self.assertEqual(OutboundRequest.query.count(), 1)
+
+    def test_clear_logs_keeps_schedule_log_before_first_dispatch_attempt(self):
+        from app.models import utc_now
+        self._login()
+        log_id = self._create_log('[]')
+        self.db.session.add(self.ScheduledMessage(
+            organization_id=self.organization.id, message_body='Scheduled history', target='community',
+            scheduled_at=utc_now().replace(tzinfo=None), status='cancelled', message_log_id=log_id,
+        ))
+        self.db.session.commit()
+        response = self.client.post('/logs/clear', data={'admin_password': 'admin-pass'}, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'logs with retained send evidence', response.data)
+        self.assertIsNotNone(self.db.session.get(self.MessageLog, log_id))
+
+    def test_clear_logs_preserves_suppression_source_evidence(self):
+        self._login()
+        log_id = self._create_log('[]')
+        self.db.session.add(self.SuppressedContact(
+            organization_id=self.organization.id, phone='+17205550143',
+            source_message_log_id=log_id, reason='Known provider rejection', category='hard_failure',
+        ))
+        self.db.session.commit()
+        response = self.client.post('/logs/clear', data={'admin_password': 'admin-pass'}, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(self.db.session.get(self.MessageLog, log_id))
 
 
 if __name__ == "__main__":

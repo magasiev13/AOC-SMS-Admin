@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime as dt, timezone
 
 from flask_login import UserMixin
+from sqlalchemy import text
 from sqlalchemy.orm import validates
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -264,7 +265,8 @@ class OrganizationInvitation(db.Model):
     invited_by_user = db.relationship('AppUser')
 
     __table_args__ = (
-        db.UniqueConstraint('organization_id', 'email', 'status', name='ux_org_invitations_org_email_status'),
+        db.Index('ux_org_invitations_pending_email', 'organization_id', 'email', unique=True,
+                 postgresql_where=text("status = 'pending'"), sqlite_where=text("status = 'pending'")),
     )
 
     @validates("email")
@@ -299,6 +301,13 @@ class OrganizationSubscription(db.Model):
     activation_payment_intent_id = db.Column(db.String(80), nullable=True, index=True)
     activation_invoice_id = db.Column(db.String(80), nullable=True, index=True)
     offer_version = db.Column(db.String(80), nullable=True)
+    checkout_request_key = db.Column(db.String(96), nullable=True)
+    checkout_request_payload_json = db.Column(db.Text, nullable=True)
+    checkout_request_started_at = db.Column(db.DateTime, nullable=True)
+    checkout_request_status = db.Column(db.String(24), nullable=True)
+    checkout_request_session_id = db.Column(db.String(80), nullable=True)
+    billing_incident_code = db.Column(db.String(64), nullable=True)
+    billing_incident_detail = db.Column(db.Text, nullable=True)
     last_stripe_event_created_at = db.Column(db.DateTime, nullable=True)
     last_stripe_event_id = db.Column(db.String(80), nullable=True)
     status = db.Column(db.String(30), nullable=False, default='incomplete')
@@ -350,6 +359,7 @@ class StripeCheckoutSession(db.Model):
     recurring_price_id = db.Column(db.String(80), nullable=False)
     activation_price_id = db.Column(db.String(80), nullable=True)
     offer_version = db.Column(db.String(80), nullable=False)
+    transition_key = db.Column(db.String(96), nullable=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='open', index=True)
     stripe_customer_id = db.Column(db.String(80), nullable=True, index=True)
     stripe_subscription_id = db.Column(db.String(80), nullable=True, index=True)
@@ -1029,10 +1039,25 @@ class MessagingUsageRecord(db.Model):
     billable_units = db.Column(db.Integer, nullable=False, default=0)
     billable = db.Column(db.Boolean, nullable=False, default=False)
     reconciliation_status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    delivery_status = db.Column(db.String(30), nullable=False, default='pending')
+    delivery_error_code = db.Column(db.String(32), nullable=True)
+    delivery_error_message = db.Column(db.Text, nullable=True)
+    delivery_finalized_at = db.Column(db.DateTime, nullable=True)
+    delivery_updated_at = db.Column(db.DateTime, nullable=True)
+    delivery_expires_at = db.Column(db.DateTime, nullable=True)
+    delivery_evidence_json = db.Column(db.Text, nullable=True)
+    cost_status = db.Column(db.String(20), nullable=False, default='pending')
+    cost_finalized_at = db.Column(db.DateTime, nullable=True)
+    cost_expires_at = db.Column(db.DateTime, nullable=True)
+    units_status = db.Column(db.String(20), nullable=False, default='pending')
+    next_reconcile_at = db.Column(db.DateTime, nullable=True, index=True)
+    reconcile_attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    suppression_applied_at = db.Column(db.DateTime, nullable=True)
+    billing_review_required = db.Column(db.Boolean, nullable=False, default=False)
     billing_period_start = db.Column(db.DateTime, nullable=True, index=True)
     billing_period_end = db.Column(db.DateTime, nullable=True, index=True)
     last_error = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: utc_now().replace(tzinfo=None), nullable=False)
     reconciled_at = db.Column(db.DateTime, nullable=True)
 
     organization = db.relationship('Organization')
@@ -1058,6 +1083,7 @@ class OrganizationUsageBillingPeriod(db.Model):
     stripe_invoice_id = db.Column(db.String(80), nullable=True, index=True)
     invoiced_units = db.Column(db.Integer, nullable=False, default=0)
     settlement_version = db.Column(db.Integer, nullable=False, default=0)
+    settlement_started_at = db.Column(db.DateTime, nullable=True)
     settlement_due_at = db.Column(db.DateTime, nullable=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='pending', index=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
@@ -1074,8 +1100,52 @@ class OrganizationUsageBillingPeriod(db.Model):
         return f'<OrganizationUsageBillingPeriod org={self.organization_id} start={self.period_start}>'
 
 
+class RecipientPermissionEvidence(db.Model):
+    """Retained evidence of permission for one tenant, phone and message purpose.
+
+    A directory or booking record is intentionally not an affirmative permission.
+    Entries are append-only through recipient_permission_service; source revisions
+    remain available when an operator needs to explain a send exclusion.
+    """
+    __tablename__ = 'recipient_permission_evidence'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    phone = db.Column(db.String(20), nullable=False, index=True)
+    purpose = db.Column(db.String(20), nullable=False)
+    scope_key = db.Column(db.String(80), nullable=False, default='')
+    decision = db.Column(db.String(12), nullable=False)
+    source = db.Column(db.String(80), nullable=False)
+    evidence_key = db.Column(db.String(128), nullable=False)
+    verified = db.Column(db.Boolean, nullable=False, default=False)
+    metadata_json = db.Column(db.Text, nullable=True)
+    occurred_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    organization = db.relationship('Organization')
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'organization_id', 'source', 'evidence_key', 'purpose', 'scope_key',
+            name='ux_recipient_permission_evidence_identity',
+        ),
+        db.Index(
+            'ix_recipient_permission_lookup',
+            'organization_id', 'phone', 'purpose', 'scope_key', 'occurred_at',
+        ),
+        db.CheckConstraint("decision IN ('granted', 'denied', 'unknown')", name='ck_recipient_permission_decision'),
+        db.CheckConstraint("purpose IN ('community', 'event', 'all')", name='ck_recipient_permission_purpose'),
+    )
+
+    @validates('phone')
+    def _normalize_permission_phone(self, key, value):
+        normalized = normalize_phone(value)
+        if not validate_phone(normalized):
+            raise ValueError('Permission evidence phone must be a valid E.164 number.')
+        return normalized
+
+
 class CommunityMember(db.Model):
-    """Recipients for community-wide SMS blasts."""
+    """Organization directory contacts; SMS permission is retained separately."""
     __tablename__ = 'community_members'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1201,7 +1271,7 @@ class Event(db.Model):
 
     @property
     def attendee_count(self) -> int:
-        return sum(max(registration.booking_spaces or 1, 1) for registration in self.registrations)
+        return sum(registration.capacity_spaces for registration in self.registrations)
 
     def __repr__(self):
         return f'<Event {self.title}>'
@@ -1241,6 +1311,12 @@ class EventRegistration(db.Model):
         if not validate_phone(normalized):
             raise ValueError("Event registration phone must be a valid E.164 number.")
         return normalized
+
+    @property
+    def capacity_spaces(self) -> int:
+        if self.booking_spaces is None:
+            return 1
+        return max(self.booking_spaces, 0)
 
     @property
     def selections(self) -> list[dict[str, str | int]]:
@@ -1577,6 +1653,77 @@ class ScheduledMessage(db.Model):
 
     def __repr__(self):
         return f'<ScheduledMessage {self.id} scheduled={self.scheduled_at} status={self.status}>'
+
+
+class AutomationReplyOutbox(db.Model):
+    """New-only immutable inbound response intents, separate from user sends."""
+    __tablename__ = 'automation_reply_outbox'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    inbound_message_id = db.Column(db.Integer, db.ForeignKey('inbox_messages.id', ondelete='SET NULL'), nullable=True)
+    inbound_message_sid = db.Column(db.String(64), nullable=True, index=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id', ondelete='SET NULL'), nullable=True, index=True)
+    survey_session_id = db.Column(db.Integer, db.ForeignKey('survey_sessions.id', ondelete='SET NULL'), nullable=True)
+    survey_session_state = db.Column(db.String(20), nullable=True)
+    phone = db.Column(db.String(20), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    body_digest = db.Column(db.String(64), nullable=False)
+    provider_account_sid = db.Column(db.String(64), nullable=True)
+    logical_send_key = db.Column(db.String(128), nullable=False, unique=True)
+    ordinal = db.Column(db.Integer, nullable=False)
+    source = db.Column(db.String(30), nullable=False)
+    source_id = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    delay_after_previous_seconds = db.Column(db.Float, nullable=False, default=0)
+    ready_at = db.Column(db.DateTime, nullable=False, default=lambda: utc_now().replace(tzinfo=None))
+    expires_at = db.Column(db.DateTime, nullable=False)
+    next_enqueue_at = db.Column(db.DateTime, nullable=True, index=True)
+    enqueue_lease = db.Column(db.String(32), nullable=True)
+    enqueue_lease_until = db.Column(db.DateTime, nullable=True)
+    worker_lease = db.Column(db.String(32), nullable=True)
+    worker_lease_until = db.Column(db.DateTime, nullable=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    inbox_message_id = db.Column(db.Integer, db.ForeignKey('inbox_messages.id', ondelete='SET NULL'), nullable=True)
+    result_json = db.Column(db.Text, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: utc_now().replace(tzinfo=None))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: utc_now().replace(tzinfo=None), onupdate=lambda: utc_now().replace(tzinfo=None))
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'inbound_message_id', 'ordinal', name='ux_automation_reply_inbound_ordinal'),
+        db.UniqueConstraint('organization_id', 'inbound_message_sid', 'ordinal', name='ux_automation_reply_sid_ordinal'),
+    )
+
+
+class OutboundRequest(db.Model):
+    """One persisted user intent; queue retries never replace its identity."""
+    __tablename__ = 'outbound_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    actor_key = db.Column(db.String(96), nullable=False)
+    request_key = db.Column(db.String(64), nullable=False)
+    kind = db.Column(db.String(20), nullable=False)
+    payload_digest = db.Column(db.String(64), nullable=False)
+    payload_json = db.Column(db.Text, nullable=False)
+    message_log_id = db.Column(db.Integer, db.ForeignKey('message_logs.id', ondelete='SET NULL'), nullable=True, index=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id', ondelete='SET NULL'), nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    result_json = db.Column(db.Text, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    enqueue_attempts = db.Column(db.Integer, nullable=False, default=0)
+    enqueue_lease = db.Column(db.String(32), nullable=True)
+    enqueue_lease_until = db.Column(db.DateTime, nullable=True)
+    next_enqueue_at = db.Column(db.DateTime, nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: utc_now().replace(tzinfo=None))
+    updated_at = db.Column(db.DateTime, nullable=False, default=lambda: utc_now().replace(tzinfo=None), onupdate=lambda: utc_now().replace(tzinfo=None))
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'actor_key', 'request_key', name='ux_outbound_requests_org_actor_key'),
+    )
 
 
 class UserPasswordHistory(db.Model):

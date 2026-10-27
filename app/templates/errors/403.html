@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Access restricted - {{ product_name }}{% endblock %}
+{% block page_title %}Access restricted{% endblock %}
+{% block content %}
+<section class="workspace-panel">
+    <div class="workspace-panel__body">
+        <p class="text-muted small">403 · Permission required</p>
+        <h2 class="h4">This account cannot perform that action</h2>
+        <p>{{ explanation }}</p>
+        <a class="btn btn-primary" href="{{ recovery_url }}">{{ recovery_label }}</a>
+    </div>
+</section>
+{% endblock %}

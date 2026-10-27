@@ -3,6 +3,7 @@ const {
   attachFailureDiagnostics,
   installFailureDiagnostics,
   login,
+  confirmSendReview,
 } = require('./helpers');
 
 test.beforeEach(async ({ page }) => {
@@ -80,6 +81,7 @@ test('owner can manage test recipients and use dashboard test mode states', asyn
     await page.locator('#testRecipientPhone').selectOption('+17205550123');
     await page.getByLabel('Message').fill('Owner immediate test send');
     await page.getByRole('button', { name: 'Send Now' }).click();
+    await confirmSendReview(page);
     await expect(page).toHaveURL(/\/logs\/\d+$/);
     await expect(page.locator('body')).toContainText('Test');
 
@@ -92,6 +94,7 @@ test('owner can manage test recipients and use dashboard test mode states', asyn
     await page.getByLabel('Date').fill('2099-12-31');
     await page.getByLabel('Time').fill('23:59');
     await page.getByRole('button', { name: /Schedule Message|Send Now/ }).click();
+    await confirmSendReview(page);
     await expect(page).toHaveURL(/\/scheduled$/);
     await expect(page.getByText('Message scheduled for')).toBeVisible();
     await expect(page.locator('body')).toContainText('Test');

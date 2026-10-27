@@ -24,6 +24,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          DIAGNOSTICS_FILE="${RUNNER_TEMP}/twinevia-monitor-diagnostics.txt"
+          READY_BODY_FILE="${RUNNER_TEMP}/twinevia-readiness.json"
+          : > "${DIAGNOSTICS_FILE}"
+          trap 'rm -f "${READY_BODY_FILE}"' EXIT
+
           if [ ${#TWINEVIA_READINESS_TOKEN} -lt 32 ]; then
             echo "TWINEVIA_READINESS_TOKEN is missing or too short." >&2
             exit 1
@@ -31,8 +36,36 @@ jobs:
 
           HEALTH_RESPONSE="$(curl --fail --silent --show-error --retry 2 --max-time 15 https://app.twinevia.com/health)"
           [ "${HEALTH_RESPONSE}" = "OK" ]
-          READY_RESPONSE="$(curl --fail --silent --show-error --retry 2 --max-time 20 -H "X-Twinevia-Readiness-Token: ${TWINEVIA_READINESS_TOKEN}" https://app.twinevia.com/ready)"
-          [ "${READY_RESPONSE}" = "READY" ]
+          READY_STATUS="$(curl --silent --show-error --retry 2 --max-time 20 \
+            -H "Accept: application/json" \
+            -H "X-Twinevia-Readiness-Token: ${TWINEVIA_READINESS_TOKEN}" \
+            --output "${READY_BODY_FILE}" \
+            --write-out '%{http_code}' \
+            https://app.twinevia.com/ready)"
+          python3 - "${READY_STATUS}" "${READY_BODY_FILE}" "${DIAGNOSTICS_FILE}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          status = int(sys.argv[1])
+          body_path = Path(sys.argv[2])
+          diagnostics_path = Path(sys.argv[3])
+          try:
+              payload = json.loads(body_path.read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError) as exc:
+              diagnostics_path.write_text(f"Readiness returned HTTP {status} with invalid JSON: {exc}\n", encoding="utf-8")
+              raise SystemExit(1)
+
+          failed_checks = [check for check in payload.get("checks", []) if check.get("ready") is not True]
+          lines = [f"Readiness returned HTTP {status}; ready={payload.get('ready')!r}."]
+          for check in failed_checks:
+              name = str(check.get("name") or "unknown").replace("\n", " ")[:100]
+              detail = str(check.get("detail") or "no detail").replace("\n", " ")[:500]
+              lines.append(f"- {name}: {detail}")
+          diagnostics_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          if status != 200 or payload.get("ready") is not True or failed_checks:
+              raise SystemExit(1)
+          PY
 
           curl --fail --silent --show-error --retry 2 --max-time 20 https://twinevia.com/ \
             | grep -Fq "Automated survey flows"
@@ -40,7 +73,7 @@ jobs:
             | grep -Fq "Twinevia"
 
           HEADER_FILE="$(mktemp)"
-          trap 'rm -f "${HEADER_FILE}"' EXIT
+          trap 'rm -f "${HEADER_FILE}" "${READY_BODY_FILE}"' EXIT
           curl --fail --silent --show-error --max-time 15 --dump-header "${HEADER_FILE}" --output /dev/null https://app.twinevia.com/login
           grep -Eiq '^strict-transport-security:' "${HEADER_FILE}"
           grep -Eiq '^content-security-policy:' "${HEADER_FILE}"
@@ -57,6 +90,11 @@ jobs:
 
           TITLE="Twinevia production monitor failed"
           RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          DIAGNOSTICS_FILE="${RUNNER_TEMP}/twinevia-monitor-diagnostics.txt"
+          DIAGNOSTICS="Production health or readiness failed."
+          if [ -s "${DIAGNOSTICS_FILE}" ]; then
+            DIAGNOSTICS="$(cat "${DIAGNOSTICS_FILE}")"
+          fi
           EXISTING_NUMBER="$(gh issue list --state open --search "${TITLE} in:title" --json number,title --jq '.[] | select(.title == "'"${TITLE}"'") | .number' | head -n1)"
           if [ "${JOB_STATUS}" = "success" ]; then
             if [ -n "${EXISTING_NUMBER}" ]; then
@@ -64,7 +102,11 @@ jobs:
               gh issue close "${EXISTING_NUMBER}" --reason completed
             fi
           elif [ -n "${EXISTING_NUMBER}" ]; then
-            gh issue comment "${EXISTING_NUMBER}" --body "Monitoring failed again: ${RUN_URL}"
+            gh issue comment "${EXISTING_NUMBER}" --body "Monitoring failed again: ${RUN_URL}
+
+          ${DIAGNOSTICS}"
           else
-            gh issue create --title "${TITLE}" --body "Twinevia production health or readiness failed. Review ${RUN_URL}."
+            gh issue create --title "${TITLE}" --body "${DIAGNOSTICS}
+
+          Review ${RUN_URL}."
           fi

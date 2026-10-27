@@ -39,8 +39,14 @@ logging.basicConfig(
 try:
     from app import create_app
     from app.services.scheduler_service import send_scheduled_messages
+    from app.services.outbound_request_service import reconcile_outbound_requests
+    from app.services.automation_outbox_service import recover_automation_replies
 
-    app = create_app()
+    app = create_app(run_startup_tasks=False, start_scheduler=False)
+    with app.app_context():
+        if app.config.get('SAAS_MODE'):
+            logging.info('Outbound recovery: %s', reconcile_outbound_requests())
+            logging.info('Automatic reply recovery: %s', recover_automation_replies())
     send_scheduled_messages(app)
     sys.exit(0)
 except Exception as e:

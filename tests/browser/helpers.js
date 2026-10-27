@@ -72,6 +72,12 @@ async function login(page, username, password, path = '/login') {
   await page.waitForLoadState('networkidle');
 }
 
+async function confirmSendReview(page) {
+  const review = page.getByRole('dialog', { name: 'Review send', exact: true });
+  await expect(review).toBeVisible();
+  await review.getByRole('button', { name: /^Confirm (send|test send|schedule)$/ }).click();
+}
+
 function organizationRow(page, organizationName) {
   return page.locator('.platform-directory__row').filter({ hasText: organizationName }).first();
 }
@@ -196,6 +202,7 @@ async function submitOwnerOnboarding(page) {
 }
 
 module.exports = {
+  confirmSendReview,
   acceptInvitation,
   attachFailureDiagnostics,
   completeFakeCheckout,

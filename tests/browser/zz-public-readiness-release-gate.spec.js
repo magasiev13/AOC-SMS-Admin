@@ -74,7 +74,7 @@ test('golden owner journey covers pilot approval billing onboarding staff invite
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'billing');
   await expect(page.locator('.setup-steps')).toBeVisible();
   await expect(page.locator('.setup-pill').filter({ hasText: 'Trial active' })).toBeVisible();
-  await expect(page.getByText('Billing is active and sending is unlocked during the trial.')).toBeVisible();
+  await expect(page.getByText('Platform billing is active during the trial.')).toBeVisible();
 
   await fillOwnerSetupCompliance(page, {
     organizationName,
@@ -179,7 +179,7 @@ test('blocked states and tenant isolation hold across seeded organizations', asy
   await login(page, 'past-due-owner@browser.test', 'PastDue-pass1!');
   await page.goto('/billing');
   await expect(page.getByText('Payment issue').first()).toBeVisible();
-  await expect(page.getByText('Sending paused').first()).toBeVisible();
+  await expect(page.getByText('Billing inactive').first()).toBeVisible();
   await page.goto('/dashboard');
   await expect(page.getByText('Live SMS is paused.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Activate Subscription' })).toBeVisible();

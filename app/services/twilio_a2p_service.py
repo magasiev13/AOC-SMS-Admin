@@ -4026,13 +4026,20 @@ def describe_a2p_onboarding(
             brand_status in A2P_BRAND_APPROVED_STATUSES
             and campaign_status in A2P_CAMPAIGN_APPROVED_STATUSES
         )
-        if can_send or activation_complete:
+        if can_send:
             stage = "approved"
             badge = "success"
             title = "External Twilio active"
             summary = "This workspace uses a customer-managed Twilio account and Twinevia is already the live inbound destination."
             next_step = "Keep A2P, sender compliance, and Messaging Service ownership managed in the customer Twilio account."
-            eta = "Ready immediately."
+            eta = "Provider ready; workspace and billing checks still apply."
+        elif activation_complete:
+            stage = "activation_pending"
+            badge = "warning text-dark"
+            title = "Inbound active, messaging paused"
+            summary = "Twinevia is the inbound destination, but the current messaging profile does not allow outbound sends."
+            next_step = "Review the sender identity and provider status before enabling customer messages."
+            eta = "Ready after sender and provider checks pass."
         elif approved_externally:
             stage = "activation_pending"
             badge = "warning text-dark"
@@ -4187,13 +4194,21 @@ def describe_a2p_onboarding(
         summary = "The A2P submission was canceled."
         next_step = "Submit a fresh packet when the business is ready."
         eta = "No carrier review is active."
-    elif can_send or onboarding.onboarding_status == "approved":
+    elif can_send:
         stage = "approved"
         badge = "success"
         title = "Live SMS approved"
-        summary = "Carrier approval and sender setup are complete for this workspace."
-        next_step = "You can start controlled live sends now."
-        eta = "Ready immediately."
+        summary = "The messaging profile is active and has a configured sender identity. Workspace access and billing are checked separately."
+        next_step = "Confirm workspace billing, then run a controlled internal test."
+        eta = "Provider ready; workspace and billing checks still apply."
+    elif onboarding.onboarding_status == "approved":
+        stage = "reviewing"
+        badge = "warning text-dark"
+        paused = bool(profile is not None and profile.provider_status in {'suspended', 'error'})
+        title = "Registration approved, messaging paused" if paused else "Registration approved, sender pending"
+        summary = "Carrier registration is approved. An active messaging profile and sender are still required before sending."
+        next_step = "Ask the platform administrator to review provider status and finish sender setup."
+        eta = "Ready after sender setup and provider activation."
     elif onboarding.onboarding_status in {"queued", "processing"}:
         stage = "submitted"
         badge = "info"

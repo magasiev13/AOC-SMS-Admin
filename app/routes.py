@@ -46,6 +46,7 @@ from app.models import (
     InboxThread,
     KeywordAutomationRule,
     MessageLog,
+    OutboundRequest,
     Organization,
     OrganizationA2POnboarding,
     OrganizationEventSyncIntegration,
@@ -56,6 +57,7 @@ from app.models import (
     OrganizationSubscription,
     PilotApplication,
     ScheduledMessage,
+    StripeCheckoutSession,
     SuppressedContact,
     SurveyFlow,
     SurveyResponse,
@@ -100,6 +102,7 @@ from app.services.aoc_event_sync_service import (
     process_aoc_event_sync_payload,
     record_event_sync_error,
     rotate_event_sync_secret,
+    upsert_community_member_contact,
     utc_now_for_aoc_sync,
     verify_event_sync_webhook_signature,
     verify_aoc_webhook_signature,
@@ -140,6 +143,15 @@ from app.services.policy_acceptance_service import (
     required_policy_versions,
 )
 from app.services.readiness_service import run_readiness_checks
+from app.services.outbound_request_service import (
+    OutboundRequestConflict, claim_reply_request, complete_request,
+    enqueue_outbound_request, existing_outbound_request, normalize_request_key,
+    request_status_message, reserve_outbound_request,
+)
+from app.services.recipient_permission_service import (
+    filter_permission_recipients, permission_status_by_phone,
+    recipient_permission_status, record_permission_evidence, organization_has_confirmed_signup_consent,
+)
 from app.services.pilot_application_service import (
     PilotApplicationError,
     PilotApplicationRateLimitError,
@@ -239,6 +251,24 @@ from app.utils import (
 
 bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
+
+
+@bp.app_errorhandler(403)
+def forbidden_page(_error):
+    if request.is_json or request.path.startswith(('/webhooks/', '/api/')) or request.accept_mimetypes.best == 'application/json':
+        return jsonify({'error': 'Forbidden'}), 403
+    if not current_user.is_authenticated:
+        destination, label = url_for('auth.login'), 'Sign in'
+        explanation = 'Sign in with an account that has access to this page.'
+    elif current_user.is_platform_admin:
+        destination, label = url_for('main.platform_home'), 'Back to platform'
+        explanation = 'Use an organization owner or staff account for workspace activity. Platform administration has its own access boundary.'
+    else:
+        destination, label = url_for('main.dashboard'), 'Back to workspace'
+        explanation = ('This action requires a workspace owner. Ask your owner to complete it or update your role.'
+                       if current_user.organization_role == 'staff' else
+                       'Your account does not have access to this action. Return to your workspace or contact platform support.')
+    return render_template('errors/403.html', recovery_url=destination, recovery_label=label, explanation=explanation), 403
 
 
 class ExternalWebhookDeliveryConflict(RuntimeError):
@@ -973,32 +1003,31 @@ def _launch_readiness_view(
     )
     sender_attached = bool(
         messaging_profile is not None
-        and messaging_profile.messaging_service_sid
-        and messaging_profile.from_number
-        and messaging_profile.phone_number_sid
+        and (messaging_profile.can_send or (
+            messaging_profile.messaging_service_sid and messaging_profile.from_number and messaging_profile.phone_number_sid
+        ))
     )
     service_address_ready = bool(messaging_profile is not None and messaging_profile.service_address_complete)
     emergency_address_ready = bool(
         messaging_profile is not None
         and messaging_profile.emergency_address_status in {"synced", "not_required"}
     )
-    provider_active = bool(messaging_profile is not None and messaging_profile.provider_status == "active")
+    provider_active = bool(messaging_profile is not None and messaging_profile.can_send)
+    sending_ready = organization_can_transmit_messages(organization)
     smoke_test_record = _message_log_smoke_test_record(
         organization.id,
         approved_at=onboarding.approved_at if onboarding is not None else None,
     )
     smoke_test_complete = smoke_test_record is not None
     awaiting_sender_assignment = bool(
-        onboarding is not None
-        and onboarding.approved_at is not None
+        a2p_approved
         and (
             not sender_attached
             or (messaging_profile is not None and messaging_profile.provider_status == "pending")
         )
     )
     awaiting_provider_activation = bool(
-        onboarding is not None
-        and onboarding.approved_at is not None
+        a2p_approved
         and sender_attached
         and not provider_active
     )
@@ -1025,7 +1054,7 @@ def _launch_readiness_view(
             "state_label": "Attached" if sender_attached else "Waiting",
             "complete": sender_attached,
             "detail": (
-                messaging_profile.from_number
+                messaging_profile.from_number or 'Workspace messaging service'
                 if sender_attached and messaging_profile is not None
                 else (
                     _sender_assignment_action(
@@ -1064,13 +1093,13 @@ def _launch_readiness_view(
         },
         {
             "label": "Provider active",
-            "state_label": "Active" if provider_active else "Waiting",
+            "state_label": "Active" if provider_active else ('Needs action' if messaging_profile is not None and messaging_profile.provider_status in {'error', 'suspended'} else 'Waiting'),
             "complete": provider_active,
             "detail": (
-                "Provider status is active and live sending is unlocked."
+                "An active provider and sender identity are configured. Workspace and billing checks are separate."
                 if provider_active
                 else (
-                    "Sender is attached. Wait for provider status to flip active."
+                    "Sender is configured. A platform administrator must resolve the current provider status before sending."
                     if awaiting_provider_activation
                     else f"Current provider status: {(messaging_profile.provider_status if messaging_profile else 'pending').replace('_', ' ')}."
                 )
@@ -1078,10 +1107,10 @@ def _launch_readiness_view(
         },
         {
             "label": "First smoke test",
-            "state_label": "Passed" if smoke_test_complete else "Manual",
+            "state_label": "Submission recorded" if smoke_test_complete else "Manual",
             "complete": smoke_test_complete,
             "detail": (
-                f"First successful outbound send recorded on {_format_datetime_display(smoke_test_record.created_at)}."
+                f"Provider acceptance recorded on {_format_datetime_display(smoke_test_record.created_at)}. Verify receipt, STOP and HELP separately."
                 if smoke_test_complete and smoke_test_record is not None
                 else (
                     "Run one controlled internal send, verify STOP and HELP, then open customer traffic."
@@ -1092,9 +1121,12 @@ def _launch_readiness_view(
         },
     ]
 
-    if provider_active and smoke_test_complete and billing_active:
+    if sending_ready and smoke_test_complete:
         heading = "Workspace is live"
-        summary = "Billing, approval, sender sync, and the first controlled smoke test are complete."
+        summary = "Workspace sending checks pass and outbound provider acceptance is recorded. Confirm recipient delivery, STOP and HELP before opening customer traffic."
+    elif sending_ready:
+        heading = "Ready for a controlled test"
+        summary = "Workspace, billing and provider checks pass. Submit an internal test and verify recipient receipt, STOP and HELP before opening customer traffic."
     elif (
         staged_annual_offer_enabled_for_organization(organization)
         and subscription_activation_paid(organization.subscription)
@@ -1113,14 +1145,17 @@ def _launch_readiness_view(
         heading = "Await sender assignment"
         summary = "Twilio approved the packet. Finish service-address validation and sender finalization before live sending unlocks."
     elif awaiting_provider_activation:
-        heading = "Await provider activation"
-        summary = "The sender is attached, but the workspace should stay paused until emergency address sync and provider activation complete."
+        heading = "Messaging paused" if messaging_profile is not None and messaging_profile.provider_status in {'error', 'suspended'} else "Await provider activation"
+        summary = "The sender is configured, but outbound messaging is unavailable. A platform administrator must complete provider activation or resolve its paused/error state."
     elif onboarding is not None and onboarding.onboarding_status in {"rejected", "error", "needs_action"}:
         heading = "Needs packet correction"
         summary = "Twilio flagged the packet for correction. Fix the CTA and compliance details before resubmitting."
     elif onboarding is not None and onboarding.onboarding_status == "canceled":
         heading = "Submission paused"
         summary = "No carrier review is active right now. Update the packet and resubmit when ready."
+    elif not billing_active:
+        heading = "Complete billing"
+        summary = "Billing access is not active. Review billing while registration and sender setup continue separately."
     else:
         heading = "Await Twilio review"
         summary = "Billing is active. Keep the workspace paused until carrier review and sender setup are complete."
@@ -1129,6 +1164,7 @@ def _launch_readiness_view(
         "heading": heading,
         "summary": summary,
         "items": items,
+        "can_send": bool(sending_ready),
         "awaiting_sender_assignment": awaiting_sender_assignment,
         "awaiting_provider_activation": awaiting_provider_activation,
         "sender_action": (
@@ -1689,6 +1725,25 @@ def _primary_organization_invitation(organization: Organization) -> Organization
     return invitations[0] if invitations else None
 
 
+def _current_owner_invitation_view(organization: Organization | None) -> dict:
+    if organization is None:
+        return {'label': 'Organization unavailable', 'url': None}
+    if any(membership.role == 'owner' for membership in organization.memberships):
+        return {'label': 'Owner has joined', 'url': None}
+    owners = sorted((invite for invite in organization.invitations if invite.role == 'owner'), key=lambda invite: invite.id or 0, reverse=True)
+    now = utc_now()
+    for invite in owners:
+        expiry = as_utc_datetime(invite.expires_at)
+        if invite.status == 'pending' and (expiry is None or expiry > now):
+            return {'label': 'Current owner invitation pending', 'url': _invitation_absolute_url(invite)}
+    if owners:
+        latest = owners[0]
+        expiry = as_utc_datetime(latest.expires_at)
+        state = 'expired' if latest.status == 'pending' and expiry and expiry <= now else latest.status
+        return {'label': f'Owner invitation {state}; no active link', 'url': None}
+    return {'label': 'No owner invitation issued', 'url': None}
+
+
 def _organization_owner_membership(organization: Organization) -> OrganizationMembership | None:
     owner_memberships = [
         membership
@@ -1757,7 +1812,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         'status': status,
         'badge': 'secondary',
         'title': 'Billing setup needed',
-        'summary': 'Finish checkout to unlock sending and team invites.',
+        'summary': 'Finish checkout to activate platform billing.',
         'next_step': 'Start your subscription to finish setting up the business account.',
         'plan_code': plan.code if plan is not None else 'custom',
         'plan_name': plan.name if plan is not None else 'Current plan',
@@ -1785,7 +1840,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         view.update(
             badge='success',
             title='Trial active',
-            summary='Billing is active and sending is unlocked during the trial.',
+            summary='Platform billing is active during the trial.',
             next_step='Keep onboarding your business and add a payment method before the trial ends.',
             can_send=True,
             checkout_button_label='Update Subscription',
@@ -1794,7 +1849,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         view.update(
             badge='success',
             title='Subscription active',
-            summary='Billing is active and your business can keep sending messages.',
+            summary='Platform billing is active for this workspace.',
             next_step='Use the billing portal anytime to update payment details.',
             can_send=True,
             checkout_button_label='Update Subscription',
@@ -1816,22 +1871,22 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         view.update(
             badge='warning',
             title='Payment issue',
-            summary='Your business can still sign in, but sending is paused until billing is fixed.',
+            summary='Your workspace can still sign in, but platform billing needs attention.',
             next_step='Open the billing portal and resolve the payment issue.',
         )
     elif normalized_status == 'canceled':
         view.update(
             badge='secondary',
             title='Subscription canceled',
-            summary='Sending is disabled because the subscription was canceled.',
+            summary='Platform billing is inactive because the subscription was canceled.',
             next_step='Start a new subscription if you want to resume service.',
         )
     elif normalized_status == 'incomplete':
         view.update(
             badge='warning',
             title='Billing setup needed',
-            summary='Your business is not active yet.',
-            next_step='Complete checkout to unlock sending and staff invites.',
+            summary='Platform billing has not been activated yet.',
+            next_step='Complete checkout to continue workspace setup.',
         )
 
     if (
@@ -1895,6 +1950,25 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
 
     if not subscription or not subscription.stripe_customer_id:
         view['show_portal'] = False
+
+    incident = subscription.billing_incident_detail if subscription is not None else None
+    transition_status = subscription.checkout_request_status if subscription is not None else None
+    view['billing_incident'] = incident
+    view['checkout_state'] = transition_status
+    if incident:
+        view['badge'] = 'warning'
+        view['title'] = 'Checkout confirmation pending' if transition_status in {'creating', 'unknown', 'payment_pending'} else 'Billing review required'
+        view['next_step'] = incident
+        if transition_status in {'creating', 'unknown'} and subscription.billing_incident_code == 'checkout_creation_unconfirmed':
+            view['checkout_button_label'] = 'Resume saved checkout'
+            started = as_utc_datetime(subscription.checkout_request_started_at)
+            if started is None or utc_now() - started >= timedelta(hours=23):
+                view['show_checkout'] = False
+        else:
+            view['show_checkout'] = False
+    elif transition_status == 'open' and normalized_status not in {'active', 'trialing', 'complimentary'}:
+        view['next_step'] = 'A checkout is already open. Continue it, or choose another plan to replace its payment link safely.'
+        view['checkout_button_label'] = 'Continue checkout'
 
     return view
 
@@ -2548,7 +2622,7 @@ def _event_detail_surface_view(
             _surface_stat('Booking contacts', registration_count, 'Unique phone registrations'),
             _surface_stat('Attendees', attendee_count, 'Total party size'),
             _surface_stat('Sendable', sendable_count, 'Eligible event SMS recipients'),
-            _surface_stat('Suppressed', unsubscribed_count, 'Registrants blocked from sends'),
+            _surface_stat('Not eligible', unsubscribed_count, 'Opt-outs, suppressions, or missing permission'),
         ],
     )
 
@@ -2560,7 +2634,7 @@ def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
     return _surface_view(
         eyebrow='Logs',
         title='Message log details',
-        copy='Review delivery outcomes and per-recipient results for this send.',
+        copy='Review provider submission outcomes and per-recipient results. Acceptance does not confirm delivery.',
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(target_label, 'bg-light text-dark'),
@@ -2571,13 +2645,13 @@ def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
         ],
         stats=[
             _surface_stat(
-                'Sent at',
+                'Created at',
                 log.created_at.strftime('%b %d, %Y %H:%M') if log.created_at else '-',
                 'UTC timestamp',
             ),
-            _surface_stat('Recipients', log.total_recipients or 0, 'Attempted sends'),
-            _surface_stat('Delivered', log.success_count or 0, 'Successful sends'),
-            _surface_stat('Failed', log.failure_count or 0, 'Delivery failures'),
+            _surface_stat('Recipients', log.total_recipients or 0, 'Saved audience size'),
+            _surface_stat('Provider accepted' if saas_mode_enabled() else 'Sent', log.success_count or 0, 'Submission acknowledgements'),
+            _surface_stat('Failed', log.failure_count or 0, 'Rejected or blocked submissions'),
         ],
     )
 
@@ -2928,7 +3002,7 @@ def _billing_surface_view(
     badges = [
         _badge_view(subscription_view['title'], f"bg-{subscription_view['badge']}"),
         _badge_view(
-            'Sending enabled' if subscription_view['can_send'] else 'Sending paused',
+            'Billing active' if subscription_view['can_send'] else 'Billing inactive',
             'bg-light text-dark',
         ),
     ]
@@ -3667,11 +3741,15 @@ def _prepare_sendable_blast_recipients(
     recipient_data: list[dict],
     *,
     apply_opt_out_filters: bool,
+    target: str = 'community',
+    event_id: int | None = None,
+    test_mode: bool = False,
 ) -> tuple[list[dict], dict[str, int]]:
     counts = {
         'unsubscribed': 0,
         'suppressed': 0,
         'duplicates': 0,
+        'permission': 0,
     }
     prepared = list(recipient_data)
     if apply_opt_out_filters:
@@ -3679,6 +3757,11 @@ def _prepare_sendable_blast_recipients(
         counts['unsubscribed'] = len(skipped_unsubscribed)
         prepared, skipped_suppressed, _ = filter_suppressed_recipients(prepared)
         counts['suppressed'] = len(skipped_suppressed)
+        if not test_mode:
+            prepared, skipped_permission, _ = filter_permission_recipients(
+                prepared, purpose=target, event_id=event_id if target == 'event' else None,
+            )
+            counts['permission'] = len(skipped_permission)
 
     prepared, duplicate_rows, _ = dedupe_recipients_by_phone_service(prepared)
     counts['duplicates'] = len(duplicate_rows)
@@ -3686,6 +3769,12 @@ def _prepare_sendable_blast_recipients(
 
 
 def _flash_blast_recipient_adjustments(counts: dict[str, int]) -> None:
+    if counts.get('permission'):
+        flash(
+            f"Excluded {counts['permission']} recipient(s) without verified permission for this audience. "
+            'An owner can review the permission evidence on the contact or event registration.',
+            'warning',
+        )
     if counts.get('unsubscribed'):
         flash(f"Skipped {counts['unsubscribed']} unsubscribed recipient(s).", 'warning')
     if counts.get('suppressed'):
@@ -3792,10 +3881,17 @@ def _survey_form_events() -> list[Event]:
     return Event.query.order_by(Event.date.desc(), Event.title.asc()).all()
 
 
-def _render_community_form(*, member: CommunityMember | None):
+def _render_community_form(*, member: CommunityMember | None, field_errors: dict | None = None):
+    form_values = (
+        {'name': request.form.get('name', ''), 'phone': request.form.get('phone', '')}
+        if request.method == 'POST' else
+        {'name': member.name or '' if member else '', 'phone': member.phone if member else ''}
+    )
     return render_template(
         'community/form.html',
         member=member,
+        form_values=form_values,
+        field_errors=field_errors or {},
         surface_view=_community_form_surface_view(member),
     )
 
@@ -3885,8 +3981,12 @@ def readiness():
         require_worker=True,
         require_launch_artifacts=True,
     )
+    status_code = 200 if report.ready else 503
+    headers = {'Cache-Control': 'no-store'}
+    if request.accept_mimetypes.best == 'application/json':
+        return jsonify(report.as_dict()), status_code, headers
     body = 'READY' if report.ready else 'NOT READY'
-    return body, 200 if report.ready else 503, {'Cache-Control': 'no-store'}
+    return body, status_code, headers
 
 
 @bp.route('/favicon.ico')
@@ -4080,6 +4180,119 @@ def platform_restart_services():
 
 
 # Dashboard - Send Messages
+def _send_review_intent(form):
+    body = normalize_sms_body(form.get('message_body', '').strip())
+    if not body:
+        raise ValueError('Message body is required.')
+    if len(body) > 1600:
+        raise ValueError('Use at most 1,600 characters for the message.')
+    invalid = find_invalid_template_tokens(body)
+    if invalid:
+        raise ValueError('Correct unsupported personalization tokens before reviewing this send.')
+    target = form.get('target', 'community')
+    if target not in {'community', 'event'}:
+        raise ValueError('Choose a community or event audience.')
+    try:
+        event_id = int(form.get('event_id') or 0) if target == 'event' else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Choose a valid event.') from exc
+    if target == 'event' and not event_id:
+        raise ValueError('Please select an event.')
+    test_mode = form.get('test_mode') == 'on'
+    schedule = form.get('schedule_later') == 'on'
+    return {
+        'message_body': body + (BLAST_UNSUBSCRIBE_FOOTER if form.get('include_unsubscribe') == 'on' else ''),
+        'target': target, 'event_id': event_id, 'test_mode': test_mode,
+        'test_recipient_selection_mode': normalize_test_recipient_selection_mode(form.get('test_recipient_selection_mode')) if test_mode else None,
+        'test_recipient_phone': normalize_phone(form.get('test_recipient_phone', '')) if test_mode else None,
+        'schedule_later': schedule,
+        'schedule_date': form.get('schedule_date', '').strip() if schedule else None,
+        'schedule_time': form.get('schedule_time', '').strip() if schedule else None,
+        'client_timezone': form.get('client_timezone', '').strip() if schedule else None,
+    }
+
+
+def _create_send_review(form):
+    from app.services.send_review_service import freeze_review
+    from app.utils import render_message_template
+
+    if saas_mode_enabled() and not organization_can_transmit_messages(_current_organization()):
+        raise ValueError('Workspace billing and messaging must both be active before reviewing a send.')
+    intent = _send_review_intent(form)
+    event = _tenant_get_or_404(Event, intent['event_id']) if intent['target'] == 'event' else None
+    test_data = None
+    if intent['test_mode']:
+        _, _, test_data = build_test_recipient_snapshot(
+            _current_organization_id(), selection_mode=intent['test_recipient_selection_mode'], selected_phone=intent['test_recipient_phone'],
+        )
+    rows = _load_blast_target_recipients(target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'], test_recipient_data=test_data)
+    recipients, counts = _prepare_sendable_blast_recipients(rows, apply_opt_out_filters=True, target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'])
+    if not recipients:
+        raise ValueError('No eligible recipients were found. Review the audience and its opt-out or permission records.')
+    estimate = analyze_personalized_sms_blast(intent['message_body'], recipients)
+    error = _blast_limit_error(estimate)
+    if error:
+        raise ValueError(error)
+    _bounded_recipient_snapshot_json(recipients)
+    timing = 'Send now'
+    if intent['schedule_later']:
+        tz_name = intent['client_timezone'] or current_app.config.get('APP_TIMEZONE', 'UTC')
+        try:
+            zone = ZoneInfo(tz_name)
+        except Exception:
+            tz_name = current_app.config.get('APP_TIMEZONE', 'UTC')
+            zone = ZoneInfo(tz_name)
+        try:
+            local = datetime.strptime(f"{intent['schedule_date']} {intent['schedule_time']}", '%Y-%m-%d %H:%M').replace(tzinfo=zone)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Choose a valid schedule date and time.') from exc
+        if local.astimezone(timezone.utc) <= utc_now():
+            raise ValueError('Scheduled time must be in the future.')
+        timing = f'{local.isoformat(timespec="minutes")} ({tz_name})'
+    key = normalize_request_key(form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'), kind='blast', intent=intent)
+    profile = _current_organization().messaging_profile if _current_organization() is not None else None
+    return {
+        'review_token': freeze_review(current_user, _current_organization_id(), key, intent, recipients),
+        'audience': 'Internal test recipients' if intent['test_mode'] else (event.title if event is not None else 'Community'),
+        'eligible': len(recipients), 'excluded': sum(counts.values()), 'reasons': counts,
+        'sender': profile.from_number if profile is not None and profile.from_number else 'Configured messaging service',
+        'sample': render_message_template(intent['message_body'], recipients[0]),
+        'segments': estimate['total_segments'], 'timing': timing,
+        'confirmation_label': 'Confirm schedule' if intent['schedule_later'] else ('Confirm test send' if intent['test_mode'] else 'Confirm send'),
+        'audience_policy': ('Community signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.'
+                            if intent['target'] == 'community' and organization_has_confirmed_signup_consent(_current_organization_id()) else
+                            'Current recipient eligibility is checked for this message purpose.'),
+    }
+
+
+@bp.route('/dashboard/review', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def dashboard_send_review():
+    try:
+        return jsonify(_create_send_review(request.form))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@bp.route('/dashboard/audience-preview')
+@login_required
+def dashboard_audience_preview():
+    target = request.args.get('target', 'community')
+    if target not in {'community', 'event'}:
+        return jsonify({'error': 'Choose a community or event audience.'}), 400
+    event_id = request.args.get('event_id', type=int) if target == 'event' else None
+    if target == 'event':
+        if not event_id:
+            return jsonify({'eligible': 0, 'excluded': 0, 'total': 0})
+        _tenant_get_or_404(Event, event_id)
+    rows = _load_blast_target_recipients(target=target, event_id=event_id, test_mode=False, test_recipient_data=None)
+    eligible, counts = _prepare_sendable_blast_recipients(
+        rows, apply_opt_out_filters=True, target=target, event_id=event_id,
+    )
+    return jsonify({'eligible': len(eligible), 'excluded': len(rows) - len(eligible), 'total': len(rows), 'reasons': counts})
+
+
 @bp.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
@@ -4273,6 +4486,7 @@ def dashboard():
             'current_subscription_view': subscription_view,
             'a2p_status_view': a2p_status_view,
             'can_send_messages': can_send_messages,
+            'confirmed_community_signup_consent': organization_has_confirmed_signup_consent(_current_organization_id()),
             'send_disabled_reason': send_disabled_reason,
             'workspace_summary': _workspace_summary_view(
                 organization=organization,
@@ -4320,6 +4534,8 @@ def dashboard():
     if request.method == 'POST':
         if getattr(current_user, 'effective_role', current_user.role) not in {'admin', 'social_manager'}:
             abort(403)
+        if request.form.get('edit_review') == '1':
+            return render_dashboard()
         subscription_gate = _require_active_subscription()
         if subscription_gate is not None:
             return subscription_gate
@@ -4357,6 +4573,9 @@ def dashboard():
         if target == 'event' and not event_id:
             flash('Please select an event.', 'error')
             return render_dashboard()
+        if target not in {'community', 'event'}:
+            flash('Choose a community or event audience.', 'error')
+            return render_dashboard()
 
         if test_mode:
             if not saas_mode_enabled():
@@ -4387,7 +4606,49 @@ def dashboard():
         final_message = message_body
         if include_unsubscribe:
             final_message = f"{message_body}{BLAST_UNSUBSCRIBE_FOOTER}"
+
+        durable_intent = {
+            'message_body': final_message, 'target': target,
+            'event_id': event_id if target == 'event' else None,
+            'test_mode': bool(test_mode),
+            'test_recipient_selection_mode': test_recipient_selection_mode if test_mode else None,
+            'test_recipient_phone': normalize_phone(test_recipient_phone) if test_mode else None,
+        }
+        durable_key = None
+        if saas_mode_enabled() and not schedule_later:
+            try:
+                durable_key = normalize_request_key(
+                    request.form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'),
+                    kind='blast', intent=durable_intent,
+                )
+                existing_request = existing_outbound_request(
+                    _current_organization_id(), current_user, durable_key, 'blast', durable_intent,
+                )
+            except ValueError as exc:
+                db.session.rollback()
+                flash(str(exc), 'error')
+                return render_dashboard()
+            if existing_request is not None:
+                db.session.commit()
+                flash(request_status_message(existing_request), 'warning')
+                if existing_request.message_log_id:
+                    return redirect(url_for('main.log_detail', log_id=existing_request.message_log_id))
+                return redirect(url_for('main.logs_list'))
         
+        reviewed_snapshot = None
+        if request.form.get('require_review') == '1' or request.form.get('review_token'):
+            try:
+                if not request.form.get('review_token'):
+                    review = _create_send_review(request.form)
+                    return render_template('send/review.html', review=review, submitted_fields=request.form.lists())
+                from app.services.send_review_service import reviewed_recipients
+                review_intent = _send_review_intent(request.form)
+                review_key = normalize_request_key(request.form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'), kind='blast', intent=review_intent)
+                reviewed_snapshot = reviewed_recipients(request.form['review_token'], current_user, _current_organization_id(), review_key, review_intent)
+            except ValueError as exc:
+                flash(str(exc), 'error')
+                return render_dashboard()
+
         # Handle scheduled message
         if schedule_later:
             if not schedule_date or not schedule_time:
@@ -4415,7 +4676,7 @@ def dashboard():
                     flash('Scheduled time must be in the future.', 'error')
                     return render_dashboard()
 
-                snapshot_recipient_data = _load_blast_target_recipients(
+                snapshot_recipient_data = reviewed_snapshot if reviewed_snapshot is not None else _load_blast_target_recipients(
                     target=target,
                     event_id=event_id,
                     test_mode=test_mode,
@@ -4424,6 +4685,7 @@ def dashboard():
                 snapshot_recipient_data, schedule_counts = _prepare_sendable_blast_recipients(
                     snapshot_recipient_data,
                     apply_opt_out_filters=True,
+                    target=target, event_id=event_id, test_mode=test_mode,
                 )
                 _flash_blast_recipient_adjustments(schedule_counts)
                 if not snapshot_recipient_data:
@@ -4530,7 +4792,7 @@ def dashboard():
                 return render_dashboard()
         
         # Immediate send
-        raw_recipient_data = _load_blast_target_recipients(
+        raw_recipient_data = reviewed_snapshot if reviewed_snapshot is not None else _load_blast_target_recipients(
             target=target,
             event_id=event_id,
             test_mode=test_mode,
@@ -4539,6 +4801,7 @@ def dashboard():
         recipient_data, recipient_counts = _prepare_sendable_blast_recipients(
             raw_recipient_data,
             apply_opt_out_filters=True,
+            target=target, event_id=event_id, test_mode=test_mode,
         )
         _flash_blast_recipient_adjustments(recipient_counts)
 
@@ -4546,7 +4809,7 @@ def dashboard():
             if test_mode:
                 flash('No internal test recipients were resolved for this test send.', 'error')
             else:
-                flash('All recipients are unsubscribed or no recipients were found.', 'error')
+                flash('No eligible recipients were found. Review permission, unsubscribe, and suppression records.', 'error')
             return render_dashboard()
 
         blast_estimate = analyze_personalized_sms_blast(final_message, recipient_data)
@@ -4574,6 +4837,23 @@ def dashboard():
                 'error',
             )
             return render_dashboard()
+
+        if saas_mode_enabled():
+            try:
+                saved_request, created = reserve_outbound_request(
+                    organization_id=organization_id, actor=current_user, key=durable_key,
+                    kind='blast', intent=durable_intent, recipient_data=recipient_data,
+                    message_body=final_message,
+                )
+            except OutboundRequestConflict as exc:
+                db.session.rollback()
+                flash(str(exc), 'error')
+                return render_dashboard()
+            if created:
+                enqueue_outbound_request(saved_request)
+            flash(request_status_message(saved_request), 'warning' if saved_request.status in {'pending', 'queue_unknown', 'ambiguous'} else 'info')
+            flash(_format_blast_estimate_summary(blast_estimate), 'info')
+            return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))
 
         send_fingerprint = build_blast_send_fingerprint(
             organization_id=_current_organization_id() if saas_mode_enabled() else None,
@@ -5467,19 +5747,21 @@ def platform_pilot_applications():
         abort(403)
     applications = (
         PilotApplication.query
+        .options(
+            selectinload(PilotApplication.organization).selectinload(Organization.invitations),
+            selectinload(PilotApplication.organization).selectinload(Organization.memberships),
+        )
         .order_by(PilotApplication.created_at.desc(), PilotApplication.id.desc())
         .limit(250)
         .all()
     )
-    invitation_urls = {
-        application.id: _invitation_absolute_url(application.owner_invitation)
-        for application in applications
-        if application.owner_invitation is not None
-    }
+    invitation_views = {application.id: _current_owner_invitation_view(application.organization) for application in applications}
+    invitation_urls = {application_id: view['url'] for application_id, view in invitation_views.items() if view['url']}
     return render_template(
         'platform/pilot_applications.html',
         applications=applications,
         invitation_urls=invitation_urls,
+        invitation_views=invitation_views,
     )
 
 
@@ -5776,7 +6058,7 @@ def platform_organizations_reissue_owner_invite(organization_id):
     if not _can_manage_platform():
         abort(403)
 
-    organization = db.get_or_404(Organization, organization_id)
+    organization = Organization.query.filter_by(id=organization_id).populate_existing().with_for_update().first_or_404()
     owner_email = request.form.get('owner_email', '').strip().lower()
     owner_membership = _organization_owner_membership(organization)
     if owner_membership is not None:
@@ -5849,12 +6131,14 @@ def platform_organizations_reissue_owner_invite(organization_id):
             status='pending',
         )
         .order_by(OrganizationInvitation.created_at.desc(), OrganizationInvitation.id.desc())
+        .populate_existing().with_for_update()
         .all()
     )
     revoked_count = 0
     for invitation in pending_owner_invitations:
         invitation.status = 'revoked'
         revoked_count += 1
+    db.session.flush()
 
     invitation = OrganizationInvitation(
         organization_id=organization.id,
@@ -6489,6 +6773,11 @@ def platform_organizations_toggle_status(organization_id):
 @bp.route('/invites/<token>', methods=['GET', 'POST'])
 def invitation_accept(token):
     invitation = OrganizationInvitation.query.filter_by(token=token).first_or_404()
+    if request.method == 'POST':
+        # Use the same lock order as owner recovery so a revoked link cannot
+        # finish joining after recovery has already replaced it.
+        Organization.query.filter_by(id=invitation.organization_id).populate_existing().with_for_update().first_or_404()
+        invitation = OrganizationInvitation.query.filter_by(id=invitation.id).populate_existing().with_for_update().first_or_404()
     if invitation.status != 'pending':
         flash('This invitation is no longer active.', 'error')
         return redirect(url_for('auth.login'))
@@ -6616,6 +6905,12 @@ def fake_stripe_checkout(session_id):
     organization = _current_organization()
     if organization is None:
         abort(404)
+    issued = StripeCheckoutSession.query.filter_by(
+        organization_id=organization.id, stripe_checkout_session_id=session_id,
+    ).first()
+    if issued is not None and issued.status in {'expired', 'expiry_unknown'}:
+        flash('This checkout was superseded. Return to billing for the current state.', 'warning')
+        return redirect(url_for('main.setup', step='billing'))
 
     try:
         requested_org_id = int((request.values.get('organization_id') or '').strip())
@@ -6869,6 +7164,7 @@ def setup_billing_checkout():
         )
     except Exception as exc:
         current_app.logger.exception('Failed to create setup Stripe checkout session.')
+        db.session.rollback()
         flash(str(exc), 'error')
         return redirect(url_for('main.setup', step='billing'))
     return redirect(checkout_session.url, code=303)
@@ -6927,6 +7223,7 @@ def billing_checkout():
         )
     except Exception as exc:
         current_app.logger.exception('Failed to create Stripe checkout session.')
+        db.session.rollback()
         flash(str(exc), 'error')
         return redirect(url_for('main.billing_overview'))
     return redirect(checkout_session.url, code=303)
@@ -7433,10 +7730,132 @@ def twilio_trusthub_status_webhook():
 
 
 # Community Members Management
+def _permission_review_token(subject, purpose, event_id, nonce):
+    payload = json.dumps([
+        _current_organization_id(), current_user.id, current_user.session_nonce,
+        purpose, event_id, subject.id, subject.phone, nonce,
+    ], separators=(',', ':'))
+    signature = hmac.new(
+        str(current_app.secret_key).encode('utf-8'), payload.encode('utf-8'), hashlib.sha256,
+    ).hexdigest()
+    return f'{nonce}.{signature}'
+
+
+def _review_recipient_permission(subject, *, purpose, event=None):
+    """An intentional owner action; directory writes never imply permission."""
+    from app.models import RecipientPermissionEvidence
+
+    if not _current_user_is_workspace_owner():
+        abort(403)
+    organization_id = _current_organization_id()
+    event_id = event.id if event is not None else None
+    scope_key = f'event:{event_id}' if event is not None else ''
+    scope_label = f'updates for {event.title}' if event is not None else 'general community messages'
+    back_url = url_for('main.event_detail', event_id=event.id) if event is not None else url_for('main.community_list')
+    form_values = {
+        'decision': 'unknown', 'source_label': '', 'proof': '',
+        'occurred_at': '', 'verified': '',
+    }
+    errors = []
+    if request.method == 'POST':
+        form_values = {key: request.form.get(key, '').strip() for key in form_values}
+        token = request.form.get('review_token', '')
+        nonce = token.partition('.')[0]
+        if not re.fullmatch(r'[a-f0-9]{32}', nonce) or not hmac.compare_digest(
+            token, _permission_review_token(subject, purpose, event_id, nonce),
+        ):
+            abort(409, description='This review no longer matches the contact. Reload the review before saving.')
+        decision = form_values['decision']
+        if decision not in {'granted', 'denied', 'unknown'}:
+            errors.append('Choose a valid permission decision.')
+        if not form_values['source_label'] or len(form_values['source_label']) > 160:
+            errors.append('Record the evidence source, using no more than 160 characters.')
+        if len(form_values['proof']) > 4000:
+            errors.append('Keep the evidence notes within 4,000 characters.')
+        if decision == 'granted' and (not form_values['proof'] or form_values['verified'] != '1'):
+            errors.append('A grant requires evidence notes and confirmation that you verified explicit permission.')
+        occurred_at = None
+        try:
+            occurred_at = datetime.fromisoformat(form_values['occurred_at'])
+            if occurred_at.tzinfo is not None:
+                raise ValueError('Use the UTC time shown in the field.')
+            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
+            if occurred_at > utc_now():
+                raise ValueError('Evidence cannot be dated in the future.')
+        except (TypeError, ValueError):
+            errors.append('Enter a valid evidence time in UTC that is not in the future.')
+        if not errors:
+            metadata = {
+                'source_label': form_values['source_label'], 'proof': form_values['proof'],
+                'actor_user_id': current_user.id,
+                'verified_attestation': decision == 'granted' and form_values['verified'] == '1',
+            }
+            try:
+                evidence = record_permission_evidence(
+                    organization_id, subject.phone, purpose=purpose, event_id=event_id,
+                    decision=decision, source='owner_review', evidence_key=f'owner-review:{nonce}',
+                    occurred_at=occurred_at, metadata=metadata, verified=decision == 'granted',
+                )
+                if json.loads(evidence.metadata_json or '{}') != metadata:
+                    raise ValueError('This review was already saved with different evidence. Reload to start another review.')
+                db.session.commit()
+            except ValueError as exc:
+                db.session.rollback()
+                errors.append(str(exc))
+            else:
+                status = recipient_permission_status(organization_id, subject.phone, purpose=purpose, event_id=event_id)
+                flash(f'Permission review saved. Current permission status: {status.decision}.', 'success')
+                return redirect(request.path)
+    else:
+        token = _permission_review_token(subject, purpose, event_id, uuid4().hex)
+
+    status = recipient_permission_status(organization_id, subject.phone, purpose=purpose, event_id=event_id)
+    entries = RecipientPermissionEvidence.query.filter(
+        RecipientPermissionEvidence.organization_id == organization_id,
+        RecipientPermissionEvidence.phone == subject.phone,
+        db.or_(
+            db.and_(RecipientPermissionEvidence.purpose == purpose, RecipientPermissionEvidence.scope_key == scope_key),
+            RecipientPermissionEvidence.purpose == 'all',
+        ),
+    ).order_by(RecipientPermissionEvidence.occurred_at.desc(), RecipientPermissionEvidence.id.desc()).limit(12).all()
+    history = []
+    for entry in entries:
+        try:
+            metadata = json.loads(entry.metadata_json or '{}')
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        history.append({'entry': entry, 'metadata': metadata})
+    return render_template(
+        'permissions/review.html', subject=subject, event=event, scope_label=scope_label,
+        back_url=back_url, permission_status=status, history=history,
+        is_unsubscribed=subject.phone in get_unsubscribed_phone_set([subject.phone]),
+        is_suppressed=subject.phone in get_suppressed_phone_set([subject.phone]),
+        form_values=form_values, review_token=token, errors=errors,
+        confirmed_signup_consent=organization_has_confirmed_signup_consent(organization_id),
+    ), 422 if errors else 200
+
+
+@bp.route('/community/<int:member_id>/permission', methods=['GET', 'POST'])
+@login_required
+def community_permission_review(member_id):
+    if not _current_user_is_workspace_owner():
+        abort(403)
+    member = _tenant_get_or_404(CommunityMember, member_id)
+    return _review_recipient_permission(member, purpose='community')
+
+
 @bp.route('/community')
 @login_required
 def community_list():
     search = request.args.get('search', '').strip()
+    page = max(1, request.args.get('page', 1, type=int) or 1)
+    per_page = 50
+    sort_key, sort_dir = normalize_sort_params(
+        request.args.get('sort'), request.args.get('dir'),
+        allowed_keys={'name', 'phone', 'added'}, default_key='name', default_dir='asc',
+    )
     
     query = CommunityMember.query
     
@@ -7458,9 +7877,26 @@ def community_list():
             db.or_(*search_filters)
         )
     
-    members = query.order_by(CommunityMember.name, CommunityMember.phone).all()
-    unsubscribed_phones = get_unsubscribed_phone_set([member.phone for member in members])
-    return render_template('community/list.html', members=members, search=search, unsubscribed_phones=unsubscribed_phones)
+    total_count = query.count()
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    sort_column = {
+        'name': func.lower(func.coalesce(CommunityMember.name, '')),
+        'phone': CommunityMember.phone, 'added': CommunityMember.created_at,
+    }[sort_key]
+    order = sort_column.desc() if sort_dir == 'desc' else sort_column.asc()
+    members = query.order_by(order, CommunityMember.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
+    phones = [member.phone for member in members]
+    unsubscribed_phones = get_unsubscribed_phone_set(phones)
+    return render_template(
+        'community/list.html', members=members, search=search,
+        unsubscribed_phones=unsubscribed_phones, suppressed_phones=get_suppressed_phone_set(phones),
+        permission_statuses=permission_status_by_phone(_current_organization_id(), phones),
+        can_review_permission=_current_user_is_workspace_owner(),
+        confirmed_signup_consent=organization_has_confirmed_signup_consent(_current_organization_id()),
+        page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
+        sort_key=sort_key, sort_dir=sort_dir,
+    )
 
 
 @bp.route('/community/add', methods=['GET', 'POST'])
@@ -7470,15 +7906,17 @@ def community_add():
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
         phone = request.form.get('phone', '').strip()
+        if name and len(name) > 100:
+            return _render_community_form(member=None, field_errors={'name': 'Use 100 characters or fewer for the name.'})
         
         if not phone:
             flash('Phone number is required.', 'error')
-            return _render_community_form(member=None)
+            return _render_community_form(member=None, field_errors={'phone': 'Phone number is required.'})
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
-            return _render_community_form(member=None)
+            return _render_community_form(member=None, field_errors={'phone': 'Enter a valid phone number.'})
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
             flash('This number is currently unsubscribed and will not receive messages.', 'warning')
@@ -7487,7 +7925,7 @@ def community_add():
         existing = CommunityMember.query.filter_by(phone=phone).first()
         if existing:
             flash('A member with this phone number already exists.', 'error')
-            return _render_community_form(member=None)
+            return _render_community_form(member=None, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member = CommunityMember(name=name, phone=phone)
         db.session.add(member)
@@ -7508,15 +7946,17 @@ def community_edit(member_id):
     if request.method == 'POST':
         name = request.form.get('name', '').strip() or None
         phone = request.form.get('phone', '').strip()
+        if name and len(name) > 100:
+            return _render_community_form(member=member, field_errors={'name': 'Use 100 characters or fewer for the name.'})
         
         if not phone:
             flash('Phone number is required.', 'error')
-            return _render_community_form(member=member)
+            return _render_community_form(member=member, field_errors={'phone': 'Phone number is required.'})
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
             flash('Invalid phone number format.', 'error')
-            return _render_community_form(member=member)
+            return _render_community_form(member=member, field_errors={'phone': 'Enter a valid phone number.'})
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
             flash('This number is currently unsubscribed and will not receive messages.', 'warning')
@@ -7528,7 +7968,7 @@ def community_edit(member_id):
         ).first()
         if existing:
             flash('A member with this phone number already exists.', 'error')
-            return _render_community_form(member=member)
+            return _render_community_form(member=member, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member.name = name
         member.phone = phone
@@ -7737,14 +8177,20 @@ def event_detail(event_id):
     ).all()
     unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
     suppressed_phones = get_suppressed_phone_set([reg.phone for reg in registrations])
+    permission_statuses = permission_status_by_phone(
+        _current_organization_id(), [reg.phone for reg in registrations], purpose='event', event_id=event.id,
+    )
     blocked_phones = unsubscribed_phones | suppressed_phones
-    attendee_count = sum(max(reg.booking_spaces or 1, 1) for reg in registrations)
+    blocked_phones |= {phone for phone, status in permission_statuses.items() if not status.allowed}
+    attendee_count = sum(reg.capacity_spaces for reg in registrations)
     return render_template(
         'events/detail.html',
         event=event,
         registrations=registrations,
         unsubscribed_phones=unsubscribed_phones,
         suppressed_phones=suppressed_phones,
+        permission_statuses=permission_statuses,
+        can_review_permission=_current_user_is_workspace_owner(),
         surface_view=_event_detail_surface_view(
             event,
             registration_count=len(registrations),
@@ -7753,6 +8199,18 @@ def event_detail(event_id):
             unsubscribed_count=len(blocked_phones),
         ),
     )
+
+
+@bp.route('/events/<int:event_id>/registrations/<int:registration_id>/permission', methods=['GET', 'POST'])
+@login_required
+def event_registration_permission_review(event_id, registration_id):
+    if not _current_user_is_workspace_owner():
+        abort(403)
+    event = _tenant_get_or_404(Event, event_id)
+    registration = _tenant_get_or_404(EventRegistration, registration_id)
+    if registration.event_id != event.id:
+        abort(404)
+    return _review_recipient_permission(registration, purpose='event', event=event)
 
 
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
@@ -7852,8 +8310,15 @@ def event_register(event_id):
         flash('This phone number is already registered for this event.', 'error')
         return redirect(url_for('main.event_detail', event_id=event_id))
     
-    registration = EventRegistration(event_id=event_id, name=name, phone=phone)
+    booking_spaces = 0 if request.form.get('included_in_paid_order') == '1' else 1
+    registration = EventRegistration(
+        event_id=event_id,
+        name=name,
+        phone=phone,
+        booking_spaces=booking_spaces,
+    )
     db.session.add(registration)
+    upsert_community_member_contact(name, phone)
     db.session.commit()
     
     flash('Registration added.', 'success')
@@ -7924,6 +8389,7 @@ def event_import_registrations(event_id):
 
         for rec in parsed:
             phone = rec['phone']
+            upsert_community_member_contact(rec['name'], phone)
 
             # Check if already registered for this event
             existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
@@ -7973,6 +8439,10 @@ def event_export_registrations(event_id):
 
     phones = [registration.phone for registration in registrations]
     blocked_phones = get_unsubscribed_phone_set(phones) | get_suppressed_phone_set(phones)
+    permission_statuses = permission_status_by_phone(
+        _current_organization_id(), phones, purpose='event', event_id=event.id,
+    )
+    blocked_phones |= {phone for phone, status in permission_statuses.items() if not status.allowed}
 
     def rows():
         yield [
@@ -7990,7 +8460,7 @@ def event_export_registrations(event_id):
             yield [
                 reg.name or '',
                 reg.phone,
-                reg.booking_spaces or 1,
+                reg.capacity_spaces,
                 reg.selection_summary,
                 reg.booking_comment or '',
                 reg.external_booking_status or '',
@@ -8063,6 +8533,9 @@ def log_detail(log_id):
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)
+    from app.services.delivery_status_service import project_log_delivery
+
+    details = project_log_delivery(log.organization_id, details)
     if log.details and not details and not _message_log_details_payload_is_valid(log.details):
         current_app.logger.warning(
             'MessageLog details payload unusable for log_id=%s.',
@@ -8071,6 +8544,18 @@ def log_detail(log_id):
     phones = set()
     for detail in details:
         raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
+        state = detail.get('status')
+        detail['outcome_label'] = (
+            'Unresolved' if state in {'sending', 'ambiguous'} else
+            'Excluded' if state in {'excluded', 'cancelled'} else
+            'Not submitted' if state in {'blocked', 'skipped'} else
+            ('Accepted' if saas_mode_enabled() else 'Sent') if detail.get('success') is True else 'Failed'
+        )
+        detail['outcome_tone'] = (
+            'warning text-dark' if state in {'sending', 'ambiguous'} else
+            'secondary' if state in {'excluded', 'cancelled', 'blocked', 'skipped'} else
+            'success' if detail.get('success') is True else 'danger'
+        )
         normalized = normalize_phone(raw_phone) if raw_phone else ''
         detail['normalized_phone'] = normalized
         if normalized:
@@ -8096,6 +8581,8 @@ def log_detail(log_id):
         details=details,
         suppression_status=suppression_status,
         surface_view=_log_detail_surface_view(log, details),
+        outbound_request=(OutboundRequest.query.filter_by(message_log_id=log.id, kind='blast').first() if saas_mode_enabled() else None),
+        request_status_message=request_status_message,
     )
 
 
@@ -8233,6 +8720,17 @@ def scheduled_list():
     pending = query.filter(ScheduledMessage.status == 'pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
     pending_ids = [m.id for m in pending]
+    from app.models import MessageDispatchAttempt
+
+    past_ids = [message.id for message in past]
+    retained_history_ids = {
+        row[0] for row in MessageDispatchAttempt.query.with_entities(
+            MessageDispatchAttempt.scheduled_message_id,
+        ).filter(MessageDispatchAttempt.scheduled_message_id.in_(past_ids)).distinct().all()
+    } if past_ids else set()
+    protected_delete_ids = retained_history_ids | {
+        message.id for message in past if message.status in {'pending', 'processing'}
+    }
 
     return render_template(
         'scheduled/list.html',
@@ -8240,6 +8738,7 @@ def scheduled_list():
         past=past,
         now=now,
         pending_ids=pending_ids,
+        protected_delete_ids=protected_delete_ids,
         search=search
     )
 
@@ -8249,14 +8748,17 @@ def scheduled_list():
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
-    
-    if scheduled.status not in {'pending', 'processing'}:
+    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+
+    scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
+    if scheduled is None:
+        abort(404)
+    if not apply_scheduled_cancellation(scheduled):
+        db.session.commit()
         flash('Only pending or processing messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
-    
-    scheduled.status = 'cancelled'
     db.session.commit()
-    flash('Scheduled message cancelled.', 'success')
+    flash('Scheduled message cancelled. Already submitted messages may still complete.', 'success')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -8265,6 +8767,20 @@ def scheduled_cancel(scheduled_id):
 @require_roles('admin')
 def scheduled_delete(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
+    from app.models import MessageDispatchAttempt
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
+
+    scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
+    if scheduled is None:
+        abort(404)
+    if scheduled.status in {'pending', 'processing'}:
+        db.session.commit()
+        flash('Cancel this scheduled message before deleting it.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+    if MessageDispatchAttempt.query.filter_by(scheduled_message_id=scheduled.id).first() is not None:
+        db.session.commit()
+        flash('This message has retained dispatch history and cannot be deleted.', 'error')
+        return redirect(url_for('main.scheduled_list'))
     db.session.delete(scheduled)
     db.session.commit()
     flash('Scheduled message deleted.', 'success')
@@ -8286,12 +8802,30 @@ def scheduled_bulk_delete():
         flash('Invalid selection.', 'error')
         return redirect(url_for('main.scheduled_list'))
     
-    deleted = _tenant_bulk_filter(
+    from app.models import MessageDispatchAttempt
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
+
+    selected = _tenant_bulk_filter(
         ScheduledMessage.query.filter(ScheduledMessage.id.in_(ids)),
         ScheduledMessage,
-    ).delete(synchronize_session=False)
+    ).order_by(ScheduledMessage.id).all()
+    deleted = 0
+    protected = 0
+    for selected_message in selected:
+        scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
+        if scheduled is None:
+            continue
+        if scheduled.status in {'pending', 'processing'} or MessageDispatchAttempt.query.filter_by(
+            scheduled_message_id=scheduled.id,
+        ).first() is not None:
+            protected += 1
+            continue
+        db.session.delete(scheduled)
+        deleted += 1
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
+    if protected:
+        flash(f'{protected} active message(s) or messages with retained dispatch history were kept.', 'warning')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -8314,18 +8848,22 @@ def scheduled_bulk_cancel():
         flash('No messages selected.', 'error')
         return redirect(url_for('main.scheduled_list'))
 
-    updated = _tenant_bulk_filter(
+    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+
+    selected = _tenant_bulk_filter(
         ScheduledMessage.query.filter(
         ScheduledMessage.id.in_(ids),
-        ScheduledMessage.status.in_(['pending', 'processing']),
     ),
         ScheduledMessage,
-    ).update(
-        {ScheduledMessage.status: 'cancelled'},
-        synchronize_session=False,
-    )
+    ).order_by(ScheduledMessage.id).all()
+    updated = 0
+    for selected_message in selected:
+        scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
+        if scheduled is not None and apply_scheduled_cancellation(scheduled):
+            updated += 1
+        db.session.flush()
     db.session.commit()
-    flash(f'Cancelled {updated} scheduled message(s).', 'success')
+    flash(f'Cancelled {updated} scheduled message(s). Already submitted messages may still complete.', 'success')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -8359,11 +8897,25 @@ def logs_clear():
         flash('Invalid admin password.', 'error')
         return redirect(url_for('main.logs_list'))
     
-    # Clear all logs
-    deleted_count = _tenant_bulk_filter(MessageLog.query, MessageLog).delete()
+    query = _tenant_bulk_filter(MessageLog.query, MessageLog)
+    retained_count = 0
+    if saas_mode_enabled():
+        from app.models import MessageDispatchAttempt
+        eligible = query.filter(
+            MessageLog.status != 'processing',
+            ~db.exists().where(MessageDispatchAttempt.message_log_id == MessageLog.id),
+            ~db.exists().where(OutboundRequest.message_log_id == MessageLog.id),
+            ~db.exists().where(ScheduledMessage.message_log_id == MessageLog.id),
+            ~db.exists().where(SuppressedContact.source_message_log_id == MessageLog.id),
+        )
+        retained_count = query.count() - eligible.count()
+        query = eligible
+    deleted_count = query.delete(synchronize_session=False)
     db.session.commit()
     
     flash(f'Successfully cleared {deleted_count} log(s).', 'success')
+    if retained_count:
+        flash(f'Kept {retained_count} active log(s) or logs with retained send evidence.', 'warning')
     return redirect(url_for('main.logs_list'))
 
 
@@ -8808,6 +9360,35 @@ def unsubscribed_bulk_delete():
     return redirect(url_for('main.unsubscribed_list'))
 
 
+@bp.route('/webhooks/twilio/delivery', methods=['POST'])
+@csrf.exempt
+def twilio_delivery_webhook():
+    from app.services.delivery_status_service import process_delivery_callback
+
+    organization_id = request.args.get('organization_id', type=int)
+    if not organization_id:
+        return 'Forbidden', 403
+    organization = db.session.get(Organization, organization_id)
+    profile = organization.messaging_profile if organization is not None else None
+    if profile is None:
+        return 'Forbidden', 403
+    validation = validate_inbound_signature_detailed(
+        request.url, request.form, request.headers.get('X-Twilio-Signature'), messaging_profile=profile,
+    )
+    if not validation.is_valid:
+        return 'Forbidden', 403
+    try:
+        process_delivery_callback(organization_id, request.form.to_dict(flat=True))
+    except ValueError:
+        db.session.rollback()
+        return 'Invalid delivery evidence', 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Failed to persist Twilio delivery evidence organization_id=%s', organization_id)
+        return 'Internal Server Error', 500
+    return '', 204
+
+
 @bp.route('/webhooks/twilio/inbound', methods=['POST'])
 @csrf.exempt
 def twilio_inbound_webhook():
@@ -8915,6 +9496,21 @@ def twilio_a2p_event_stream_webhook():
     return jsonify(summary), 200
 
 
+def _inbox_activity_snapshot() -> dict:
+    if saas_mode_enabled():
+        from app.models import MessagingUsageRecord
+        latest, count, delivery_updated = db.session.query(
+            func.max(InboxMessage.id), func.count(InboxMessage.id), func.max(MessagingUsageRecord.delivery_updated_at),
+        ).outerjoin(MessagingUsageRecord, db.and_(
+            MessagingUsageRecord.message_sid == InboxMessage.message_sid,
+            MessagingUsageRecord.organization_id == InboxMessage.organization_id,
+        )).one()
+    else:
+        latest, count = db.session.query(func.max(InboxMessage.id), func.count(InboxMessage.id)).one()
+        delivery_updated = None
+    return {'latest_message_id': int(latest or 0), 'message_count': int(count), 'delivery_version': delivery_updated.isoformat() if delivery_updated else ''}
+
+
 @bp.route('/inbox')
 @login_required
 def inbox_list():
@@ -8952,12 +9548,50 @@ def inbox_list():
     active_sessions = []
     active_trigger_keywords: set[str] = set()
     selected_thread_is_unsubscribed = False
+    older_messages_url = newer_messages_url = None
+    acknowledged_reply_key = None
     if selected_thread:
-        if selected_thread.unread_count:
+        before_id = request.args.get('before', type=int)
+        after_id = request.args.get('after', type=int)
+        if (request.args.get('before') and not before_id) or (request.args.get('after') and not after_id) or (before_id and after_id):
+            abort(400, description='Choose one valid message history cursor.')
+        message_query = InboxMessage.query.filter_by(thread_id=selected_thread.id)
+
+        def earlier_than(message):
+            return db.or_(InboxMessage.created_at < message.created_at, db.and_(InboxMessage.created_at == message.created_at, InboxMessage.id < message.id))
+
+        def later_than(message):
+            return db.or_(InboxMessage.created_at > message.created_at, db.and_(InboxMessage.created_at == message.created_at, InboxMessage.id > message.id))
+
+        if before_id or after_id:
+            anchor = message_query.filter_by(id=before_id or after_id).first()
+            if anchor is None:
+                abort(404)
+            message_query = message_query.filter(earlier_than(anchor) if before_id else later_than(anchor))
+        if after_id:
+            messages = message_query.order_by(InboxMessage.created_at.asc(), InboxMessage.id.asc()).limit(100).all()
+        else:
+            messages = list(reversed(message_query.order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc()).limit(100).all()))
+        if messages:
+            all_messages = InboxMessage.query.filter_by(thread_id=selected_thread.id)
+            if all_messages.filter(earlier_than(messages[0])).first() is not None:
+                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, before=messages[0].id)
+            if all_messages.filter(later_than(messages[-1])).first() is not None:
+                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, after=messages[-1].id)
+        if selected_thread.unread_count and not newer_messages_url:
             mark_thread_read(selected_thread.id)
             selected_thread.unread_count = 0
-
-        messages = InboxMessage.query.filter_by(thread_id=selected_thread.id).order_by(InboxMessage.created_at.asc()).all()
+        submitted_drafts = dict(session.get('reply_draft_submissions') or {})
+        submitted = submitted_drafts.get(str(selected_thread.id))
+        if isinstance(submitted, dict):
+            accepted = OutboundRequest.query.filter_by(
+                id=submitted.get('request_id'), thread_id=selected_thread.id,
+                actor_user_id=current_user.id, status='accepted',
+            ).first()
+            if accepted is not None:
+                acknowledged_reply_key = submitted.get('form_key')
+                submitted_drafts.pop(str(selected_thread.id), None)
+                session['reply_draft_submissions'] = submitted_drafts
         active_trigger_keywords = _active_trigger_keywords_set()
         active_sessions = SurveySession.query.filter_by(
             thread_id=selected_thread.id,
@@ -8968,7 +9602,7 @@ def inbox_list():
         )
 
     thread_display_names = _build_thread_display_names(threads, selected_thread=selected_thread)
-    latest_message_id = db.session.query(func.max(InboxMessage.id)).scalar() or 0
+    activity = _inbox_activity_snapshot()
 
     return render_template(
         'inbox/list.html',
@@ -8979,17 +9613,31 @@ def inbox_list():
         active_trigger_keywords=active_trigger_keywords,
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
-        inbox_status_latest_message_id=latest_message_id,
+        inbox_status_latest_message_id=activity['latest_message_id'],
+        inbox_status_message_count=activity['message_count'],
+        inbox_status_delivery_version=activity['delivery_version'],
+        older_messages_url=older_messages_url,
+        newer_messages_url=newer_messages_url,
+        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search) if selected_thread else url_for('main.inbox_list', search=search),
+        reply_draft_context=hashlib.sha256(f'{_current_organization_id()}:{current_user.id}:{current_user.session_nonce}'.encode()).hexdigest()[:32],
+        acknowledged_reply_key=acknowledged_reply_key,
         show_thread_list_only=show_thread_list_only,
         search=search,
+        reply_request_key=uuid4().hex,
+        saved_reply_request=(
+            OutboundRequest.query.filter_by(thread_id=selected_thread.id, kind='reply')
+            .filter(OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']))
+            .order_by(OutboundRequest.id.desc()).first()
+            if saas_mode_enabled() and selected_thread else None
+        ),
+        request_status_message=request_status_message,
     )
 
 
 @bp.route('/inbox/status')
 @login_required
 def inbox_status():
-    latest_message_id = db.session.query(func.max(InboxMessage.id)).scalar() or 0
-    return jsonify({'latest_message_id': int(latest_message_id)})
+    return jsonify(_inbox_activity_snapshot())
 
 
 @bp.route('/inbox/<int:thread_id>/reply', methods=['POST'])
@@ -9009,6 +9657,46 @@ def inbox_reply(thread_id):
         return redirect(url_for('main.inbox_list', thread=thread_id))
     if get_unsubscribed_phone_set([thread.phone]):
         flash('Reply blocked: this contact is unsubscribed. Ask them to text START to resubscribe.', 'warning')
+        return redirect(url_for('main.inbox_list', thread=thread_id))
+    if saas_mode_enabled():
+        intent = {'thread_id': thread.id, 'phone': normalize_phone(thread.phone), 'message_body': normalized_body}
+        try:
+            key = normalize_request_key(
+                request.form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'),
+                kind='reply', intent=intent,
+            )
+            saved_request, created = reserve_outbound_request(
+                organization_id=thread.organization_id, actor=current_user, key=key,
+                kind='reply', intent=intent, recipient_data=[{'phone': thread.phone}],
+                message_body=normalized_body, thread_id=thread.id,
+            )
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), 'error')
+            return redirect(url_for('main.inbox_list', thread=thread_id))
+        if created and claim_reply_request(saved_request):
+            try:
+                result = send_thread_reply_with_key(
+                    thread.id, normalized_body, current_user.username, f'reply-request:{saved_request.id}',
+                )
+                db.session.refresh(saved_request)
+                if saved_request.status not in {'accepted', 'failed', 'ambiguous'}:
+                    complete_request(saved_request, result)
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception('Manual reply outcome unresolved request_id=%s', saved_request.id)
+                # Recovery replays the same durable attempt: a sent attempt
+                # completes its missing inbox record; an unresolved attempt
+                # becomes ambiguous without a second provider call.
+                db.session.refresh(saved_request)
+                saved_request.last_error = 'The send response was interrupted; recovery will inspect the saved attempt.'
+                saved_request.next_enqueue_at = utc_now().replace(tzinfo=None) + timedelta(seconds=30)
+                db.session.commit()
+        submitted_drafts = dict(session.get('reply_draft_submissions') or {})
+        submitted_drafts[str(thread.id)] = {'request_id': saved_request.id, 'form_key': key}
+        session['reply_draft_submissions'] = dict(list(submitted_drafts.items())[-20:])
+        flash(request_status_message(saved_request), 'success' if saved_request.status == 'accepted' else 'warning')
         return redirect(url_for('main.inbox_list', thread=thread_id))
     send_fingerprint = build_outbound_fingerprint(
         {
@@ -9087,6 +9775,11 @@ def inbox_thread_update(thread_id):
 @require_roles('admin', 'social_manager')
 def inbox_thread_delete(thread_id):
     thread = _tenant_get_or_404(InboxThread, thread_id)
+    if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
+        OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
+    ).first() is not None:
+        flash('This conversation has an unresolved send request. Resolve it before deleting the conversation.', 'warning')
+        return _redirect_to_inbox(thread_id=thread.id)
     result = delete_thread_with_dependencies(thread.id)
     if result is None:
         flash('Thread not found.', 'error')
@@ -9347,7 +10040,6 @@ def survey_flow_add():
         intro_message = normalize_sms_body(request.form.get('intro_message', '').strip()) or None
         completion_message = normalize_sms_body(request.form.get('completion_message', '').strip()) or None
         questions_raw = request.form.get('questions', '')
-        questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'
         event_link_mode = (request.form.get('event_link_mode') or 'none').strip().lower()
         if event_link_mode not in {'none', 'existing', 'new'}:
@@ -9368,6 +10060,12 @@ def survey_flow_add():
             'new_event_title': new_event_title,
             'new_event_date': new_event_date_raw,
         }
+
+        try:
+            questions = parse_survey_questions(questions_raw)
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            return _render_survey_form(survey=None, form_data=form_data)
 
         linked_event_id = None
         new_event_date = None
@@ -9445,7 +10143,6 @@ def survey_flow_edit(survey_id):
         intro_message = normalize_sms_body(request.form.get('intro_message', '').strip()) or None
         completion_message = normalize_sms_body(request.form.get('completion_message', '').strip()) or None
         questions_raw = request.form.get('questions', '')
-        questions = parse_survey_questions(questions_raw)
         is_active = request.form.get('is_active') == 'on'
         event_link_mode = (request.form.get('event_link_mode') or 'none').strip().lower()
         if event_link_mode not in {'none', 'existing', 'new'}:
@@ -9466,6 +10163,12 @@ def survey_flow_edit(survey_id):
             'new_event_title': new_event_title,
             'new_event_date': new_event_date_raw,
         }
+
+        try:
+            questions = parse_survey_questions(questions_raw)
+        except ValueError as exc:
+            flash(str(exc), 'error')
+            return _render_survey_form(survey=survey, form_data=form_data)
 
         linked_event_id = None
         new_event_date = None
