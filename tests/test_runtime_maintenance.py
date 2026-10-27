@@ -955,3 +955,65 @@ raise SystemExit(result['code'])
     assert all(row[1:] == ['--all', '--no-legend', '--no-pager', 'twinevia-saas*'] for row in arguments)
     if accepted:
         assert [row[0] for row in arguments] == ['list-unit-files', 'list-units']
+
+
+@pytest.mark.parametrize('state,main_pid,control_pid,old_alive,financial_calls,accepted', [
+    ('inactive', '0', '0', False, [], True),
+    ('failed', '0', '0', False, [], True),
+    ('failed', '0', '0', True, [], False),
+    ('failed', '123', '0', False, [], False),
+    ('failed', '0', '123', False, [], False),
+    ('failed', 'unknown', '0', False, [], False),
+    ('inactive', '0', '0', False, [{'event': 'fake_financial_operation'}], False),
+    ('active', '0', '0', False, [], False),
+    ('activating', '0', '0', False, [], False),
+    ('deactivating', '0', '0', False, [], False),
+])
+def test_real_systemd_oneshot_containment_requires_terminal_state_zero_pids_and_no_financial_work(
+        monkeypatch, state, main_pid, control_pid, old_alive, financial_calls, accepted):
+    spec = importlib.util.spec_from_file_location('owned_systemd_containment_under_test', SYSTEMD_HARNESS)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    properties = {'ActiveState': state, 'MainPID': main_pid, 'ControlPID': control_pid, 'Result': 'signal'}
+    original = dict(properties)
+
+    def probe_old_pid(pid, signal):
+        assert (pid, signal) == (31415, 0)
+        if not old_alive:
+            raise ProcessLookupError('The contained child exited')
+
+    monkeypatch.setattr(harness.os, 'kill', probe_old_pid)
+    assert harness.oneshot_is_contained(properties, 31415, financial_calls) is accepted
+    assert properties == original
+
+
+def test_real_systemd_cleanup_removes_exact_owned_runtime_enablement_and_masks(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location('owned_systemd_cleanup_under_test', SYSTEMD_HARNESS)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    fixture = harness.OwnedSystemdFixture.__new__(harness.OwnedSystemdFixture)
+    fixture.root = tmp_path / 'owned-fixture'
+    fixture.root.mkdir()
+    fixture.evidence_directory = tmp_path / 'evidence'
+    fixture.owner_marker = '# owned-cleanup-regression'
+    definition = fixture.root / 'owned-unit-definition'
+    definition.write_text(fixture.owner_marker + '\n[Unit]\nDescription=Owned test\n')
+    fixture.created_files = [definition]
+    fixture.events = []
+    calls = []
+
+    def ctl(*arguments, **options):
+        calls.append(arguments)
+        return SimpleNamespace(stdout='', stderr='', returncode=0)
+
+    fixture.ctl = ctl
+    fixture.properties = lambda unit: {'ActiveState': 'inactive'}
+    monkeypatch.setattr(harness, 'run', lambda *args, **options: SimpleNamespace(stdout='owned journal', stderr='', returncode=0))
+    fixture.cleanup()
+    assert ('disable', '--runtime', *RUNTIME_UNITS) in calls
+    assert ('unmask', '--runtime', *(RUNTIME_UNITS + PAIRS)) in calls
+    assert ('disable', *RUNTIME_UNITS) in calls
+    assert ('unmask', *(RUNTIME_UNITS + PAIRS)) in calls
+    assert all(set(argument for argument in call if argument.endswith(('.service', '.timer'))) <= set(RUNTIME_UNITS + PAIRS)
+               for call in calls)
+    assert not fixture.root.exists()

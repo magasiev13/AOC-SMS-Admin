@@ -66,6 +66,20 @@ def require_empty_systemd_inventory(systemctl):
                                f'(exit {result.returncode}).\n{result.stdout}\n{result.stderr}')
 
 
+def oneshot_is_contained(properties, old_pid, financial_ledger):
+    if (properties.get('ActiveState') not in {'inactive', 'failed'}
+            or properties.get('MainPID') != '0' or properties.get('ControlPID') != '0'
+            or financial_ledger):
+        return False
+    try:
+        os.kill(old_pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def require_owned_github_vm():
     expected = {'GITHUB_ACTIONS': 'true', 'CI': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted'}
     if sys.platform != 'linux' or os.geteuid() != 0:
@@ -147,7 +161,7 @@ class OwnedSystemdFixture:
         return result
 
     def properties(self, unit):
-        output = self.ctl('show', unit, '--no-pager', '--property=LoadState,ActiveState,SubState,UnitFileState,MainPID,ControlPID,ActiveEnterTimestampMonotonic').stdout
+        output = self.ctl('show', unit, '--no-pager', '--property=LoadState,ActiveState,SubState,UnitFileState,MainPID,ControlPID,Result,ActiveEnterTimestampMonotonic').stdout
         return dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
 
     def wait(self, condition, *, description, seconds=10):
@@ -294,7 +308,9 @@ ReadWritePaths={self.root}
                 (self.evidence_directory / 'systemctl-transcript.json').write_text(json.dumps(self.events, indent=2) + '\n')
                 raise RuntimeError('Fixture cleanup could not stop owned units; retaining source for VM teardown: ' + ', '.join(still_running))
             self.ctl('disable', *RUNTIME_UNITS, check=False)
+            self.ctl('disable', '--runtime', *RUNTIME_UNITS, check=False)
             self.ctl('unmask', *ALL_UNITS, check=False)
+            self.ctl('unmask', '--runtime', *ALL_UNITS, check=False)
             self.ctl('clean', '--what=state', *[unit for unit in RUNTIME_UNITS if unit.endswith('.timer')], check=False)
             for path in self.created_files:
                 if path.exists() and path.read_text().startswith(self.owner_marker + '\n'):
@@ -359,14 +375,11 @@ def run_suite(fixture):
     results.append({'case': 'render all 14 definitions preserves raw states and both mask types',
                     'units': fixture.operating_state(), 'definitions': rendered})
     controller.quiesce(snapshot, rollback=True)
-    fixture.wait(lambda: fixture.properties('twinevia-saas-billing-reconcile.service')['ActiveState'] == 'inactive',
+    fixture.wait(lambda: oneshot_is_contained(fixture.properties('twinevia-saas-billing-reconcile.service'),
+                                             old_pid, fixture.ledger('fake-financial-ledger.jsonl')),
                  description='contained old-source oneshot termination')
-    try:
-        os.kill(old_pid, 0)
-    except ProcessLookupError:
-        pass
-    else:
-        raise AssertionError('The old imported oneshot process survived containment.')
+    contained_oneshot = fixture.properties('twinevia-saas-billing-reconcile.service')
+    assert oneshot_is_contained(contained_oneshot, old_pid, fixture.ledger('fake-financial-ledger.jsonl'))
     assert fixture.ledger('fake-financial-ledger.jsonl') == []
     fixture.switch('candidate')
     controller.activate(snapshot)
@@ -391,7 +404,7 @@ def run_suite(fixture):
     assert all(row['ip_socket_denied'] for row in fixture.ledger())
     results.append({'case': 'promotion preserves raw state and contains activating oneshot',
                     'units': before, 'application_readiness_unit_facts': facts,
-                    'old_oneshot_pid': old_pid, 'fake_financial_calls': 0})
+                    'old_oneshot_pid': old_pid, 'contained_oneshot': contained_oneshot, 'fake_financial_calls': 0})
 
     for failure in ['inner promotion health failure', 'outer environment recovery failure']:
         controller.quiesce(snapshot, rollback=True)
