@@ -5353,6 +5353,18 @@ a:focus-visible,
   }
 }
 
+@media (max-width: 575.98px) {
+  .auth-setup-main .auth-page-header {
+    /* The flex parent already separates the header from the setup content. */
+    margin-bottom: 0;
+  }
+
+  .auth-setup-main .setup-hero__title {
+    font-size: 1.75rem;
+    line-height: 1.12;
+  }
+}
+
 @keyframes auth-rise {
   from {
     opacity: 0;
