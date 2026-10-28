@@ -94,7 +94,7 @@
                         <span class="badge bg-info">Event: {{ (msg.event.title if msg.event else 'Unknown')|private_text }}</span>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body[:80])|private_text }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
+                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body|private_text)[:80] }}{% if (msg.message_body|private_text)|length > 80 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
@@ -141,7 +141,7 @@
                         {% endif %}
                         {{ msg.target }}
                     </div>
-                    <div class="text-muted small">{{ (msg.message_body[:80])|private_text }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
+                    <div class="text-muted small">{{ (msg.message_body|private_text)[:80] }}{% if (msg.message_body|private_text)|length > 80 %}...{% endif %}</div>
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
             </div>
@@ -268,7 +268,7 @@
                         <span class="badge bg-info">Event</span>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body[:50])|private_text }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
+                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body|private_text)[:50] }}{% if (msg.message_body|private_text)|length > 50 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
@@ -335,7 +335,7 @@
                         {% endif %}
                         {{ msg.target }}
                     </div>
-                    <div class="text-muted small">{{ (msg.message_body[:50])|private_text }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
+                    <div class="text-muted small">{{ (msg.message_body|private_text)[:50] }}{% if (msg.message_body|private_text)|length > 50 %}...{% endif %}</div>
                     {% if msg.error_message %}
                     <div class="small text-muted text-break mt-2">{{ (msg.error_message)|private_text }}</div>
                     {% endif %}

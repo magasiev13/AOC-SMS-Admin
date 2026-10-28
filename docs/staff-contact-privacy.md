@@ -23,6 +23,10 @@ review. A saved feedback invitation containing a protected number requires an
 owner to prepare it; staff see that explanation instead of a misleading masked
 draft or a link to an unavailable action. Summary cards, question tooltips,
 keyword labels and suppression metadata follow the same display policy.
+Display previews redact complete source text before any length cut. Staff inbox
+previews read complete latest message bodies in one bounded tenant-scoped query;
+an unavailable original produces a non-content label. Existing truncated caches,
+stored answers, provider content and owner-visible values are not rewritten.
 
 The fifteen-minute send-review snapshot is encrypted and authenticated with a
 purpose-derived application key, bound to the actor/session, form identity,

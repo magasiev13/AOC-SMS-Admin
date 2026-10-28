@@ -51,7 +51,9 @@ def index(event_id):
 @require_roles('admin', 'social_manager')
 def create(event_id):
     event = _event(event_id)
-    values = _values() if request.method == 'POST' else defaults_for_event(event)
+    display_context = _display_context()
+    values = (_values() if request.method == 'POST' else defaults_for_event(
+        event, display_title=display_context['feedback_display'](event.title)))
     if request.method == 'POST':
         try:
             flow = save_event_feedback(event, values)
@@ -65,7 +67,7 @@ def create(event_id):
         else:
             flash('Event feedback created. Review the invitation before sending it.', 'success')
             return redirect(url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id))
-    return render_template('feedback/form.html', event=event, flow=None, form_data=values, **_display_context())
+    return render_template('feedback/form.html', event=event, flow=None, form_data=values, **display_context)
 
 
 @bp.route('/events/<int:event_id>/feedback/<int:survey_id>')

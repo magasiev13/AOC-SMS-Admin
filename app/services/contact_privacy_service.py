@@ -150,3 +150,32 @@ def redact_private_json(payload):
         return value
 
     return walk(payload)
+
+
+def build_thread_display_previews(threads):
+    """Read complete latest bodies before cutting staff's bounded sidebar text.
+
+    The persisted rollup is already truncated and can contain a phone prefix.
+    Keep that cache untouched; fetch full sources in one tenant-scoped query,
+    rather than loading every thread's message relationship separately.
+    """
+    threads = list(threads)
+    if can_view_phone_numbers():
+        return {thread.id: thread.last_message_preview for thread in threads}
+    if not threads:
+        return {}
+    from sqlalchemy import inspect
+    from app.models import InboxMessage, InboxThread
+    # Read persisted identities without refreshing one expired ORM object per
+    # thread after a read-status commit.
+    thread_ids = [inspect(thread).identity[0] for thread in threads]
+    latest_body = (
+        InboxMessage.query.with_entities(InboxMessage.body)
+        .filter(InboxMessage.thread_id == InboxThread.id)
+        .order_by(InboxMessage.created_at.desc(), InboxMessage.id.desc())
+        .limit(1).correlate(InboxThread).scalar_subquery()
+    )
+    rows = (InboxThread.query.with_entities(InboxThread.id, latest_body.label('body'))
+            .filter(InboxThread.id.in_(thread_ids)).all())
+    return {thread_id: (redact_phone_numbers(body)[:180] if body is not None
+                        else 'Message preview unavailable') for thread_id, body in rows}

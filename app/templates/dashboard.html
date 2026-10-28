@@ -525,7 +525,7 @@
                 <div class="activity-item activity-item--{% if log.failure_count == 0 %}success{% elif log.failure_count < log.success_count %}warning{% else %}danger{% endif %}">
                     <div class="activity-item__content">
                         <div class="activity-item__header">
-                            <div class="activity-item__title">{{ (log.message_body|truncate(60))|private_text }}</div>
+                            <div class="activity-item__title">{{ (log.message_body|private_text)|truncate(60) }}</div>
                             <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
                         </div>
                         <div class="activity-item__meta">

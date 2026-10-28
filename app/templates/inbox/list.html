@@ -71,7 +71,7 @@
                                 {% endif %}
                             </div>
                             <div class="small mt-1 inbox-thread-preview">
-                                {{ (thread.last_message_preview or 'No messages yet')|private_text }}
+                                {{ (thread_display_previews.get(thread.id) or 'No messages yet')|private_text }}
                             </div>
                             <div class="small inbox-thread-time">
                                 {{ thread.last_message_at|localtime('%b %d, %H:%M') }}

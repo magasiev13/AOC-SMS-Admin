@@ -3537,6 +3537,8 @@ def _build_survey_submission_data(
         else:
             answer_preview_items = [answer for answer in answers if answer][:2]
         answers_preview = '; '.join(answer_preview_items)
+        if staff_phone_privacy_applies():
+            answers_preview = redact_phone_numbers(answers_preview)
         if len(answers_preview) > 120:
             answers_preview = f"{answers_preview[:117].rstrip()}..."
 
@@ -9741,6 +9743,7 @@ def inbox_list():
             name = thread_display_names.get(thread.id)
             thread_display_names[thread.id] = contact_display_label(name, thread.id, 'Contact')
     activity = _inbox_activity_snapshot()
+    from app.services.contact_privacy_service import build_thread_display_previews
 
     return render_template(
         'inbox/list.html',
@@ -9751,6 +9754,7 @@ def inbox_list():
         message_keyword_origins=message_keyword_origins,
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
+        thread_display_previews=build_thread_display_previews(threads),
         can_edit_thread_name=(not staff_phone_privacy_applies() or not selected_thread or redact_phone_numbers(selected_thread.contact_name or '') == (selected_thread.contact_name or '')),
         inbox_status_latest_message_id=activity['latest_message_id'],
         inbox_status_message_count=activity['message_count'],

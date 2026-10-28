@@ -763,3 +763,128 @@ def test_staff_setup_display_does_not_disclose_phone_bearing_organization_name(s
     assert response.status_code == 200
     assert_no_private_numbers(w, response)
     assert w.models.Organization.query.filter_by(id=w.org_id).one().name == original
+
+
+@pytest.mark.parametrize('surface,prefix', [
+    ('log', 43), ('pending-schedule', 73), ('past-schedule', 43), ('dashboard', 50),
+    ('survey-intro', 70), ('keyword-response', 110), ('survey-answer', 110),
+    ('inbox-cache', 173), ('feedback-default', 93),
+])
+def test_complete_phone_is_redacted_before_any_display_preview_cut(staff_workspace, surface, prefix):
+    w = staff_workspace
+    phone = '+17205550145'
+    w.private_phones.append(phone)
+    source = 'X' * prefix + phone + 'z' * 30
+    if surface in {'log', 'dashboard'}:
+        record = w.models.MessageLog.query.filter_by(id=w.log_id).one()
+        field, path = 'message_body', '/logs' if surface == 'log' else '/dashboard'
+    elif surface in {'pending-schedule', 'past-schedule'}:
+        record = w.models.ScheduledMessage.query.one()
+        if surface == 'pending-schedule':
+            record.status = 'pending'
+        field, path = 'message_body', '/scheduled'
+    elif surface == 'survey-intro':
+        record = w.models.SurveyFlow.query.filter_by(id=w.survey_id).one()
+        field, path = 'intro_message', '/inbox/surveys'
+    elif surface == 'keyword-response':
+        record = w.models.KeywordAutomationRule.query.filter_by(id=w.keyword_id).one()
+        field, path = 'response_body', '/inbox/keywords'
+    elif surface == 'survey-answer':
+        record = w.models.SurveyResponse.query.filter_by(survey_id=w.survey_id).one()
+        field, path = 'answer', f'/inbox/surveys/{w.survey_id}/submissions'
+    elif surface == 'inbox-cache':
+        record = w.models.InboxMessage.query.filter_by(thread_id=w.thread_id).one()
+        field, path = 'body', '/inbox?view=threads'
+    else:
+        record = w.models.Event.query.filter_by(id=w.event_id).one()
+        field, path = 'title', f'/events/{w.event_id}/feedback/new'
+    setattr(record, field, source)
+    if surface == 'inbox-cache':
+        # Reproduce both existing cache writers, without changing their stored
+        # contract. The staff display must use the complete original message.
+        from app.services.inbox_service import _refresh_thread_rollup
+        thread = w.models.InboxThread.query.filter_by(id=w.thread_id).one()
+        _refresh_thread_rollup(thread)
+        assert thread.last_message_preview == source[:180]
+    w.db.session.commit()
+    workspace_login(w)
+    hidden = w.client.get(path)
+    assert hidden.status_code == 200
+    assert_no_private_numbers(w, hidden)
+    # Checking only complete phones misses the original disclosure.
+    assert '+172055' not in hidden.get_data(as_text=True)
+    workspace_login(w, 'owner')
+    owner = w.client.get(path)
+    assert owner.status_code == 200
+    assert source[:prefix + 7].encode() in owner.data
+    w.db.session.expire_all()
+    assert getattr(record, field) == source
+    if surface == 'inbox-cache':
+        assert thread.last_message_preview == source[:180]
+    assert w.models.OutboundRequest.query.count() == 0
+
+
+def test_staff_orphaned_truncated_inbox_cache_fails_closed_without_rewriting_it(staff_workspace):
+    w = staff_workspace
+    w.models.InboxMessage.query.filter_by(thread_id=w.thread_id).delete()
+    thread = w.models.InboxThread.query.filter_by(id=w.thread_id).one()
+    original = 'X' * 173 + '+172055'
+    thread.last_message_preview = original
+    w.db.session.commit()
+    workspace_login(w)
+    hidden = w.client.get('/inbox?view=threads')
+    assert hidden.status_code == 200
+    assert '+172055' not in hidden.get_data(as_text=True)
+    assert b'Message preview unavailable' in hidden.data
+    workspace_login(w, 'owner')
+    owner = w.client.get('/inbox?view=threads')
+    assert original.encode() in owner.data
+    assert thread.last_message_preview == original
+
+
+def test_staff_preview_reads_latest_complete_body_in_one_tenant_scoped_query(staff_workspace):
+    from flask_login import login_user
+    from sqlalchemy import event
+    from app.services.contact_privacy_service import build_thread_display_previews
+    w = staff_workspace
+    now = w.models.utc_now().replace(tzinfo=None)
+    own = []
+    for index in range(10):
+        thread = w.models.InboxThread(organization_id=w.org_id, phone=f'+17205559{index:03d}',
+            last_message_preview='Cached fragment +172055')
+        w.db.session.add(thread)
+        w.db.session.flush()
+        # An older message has the higher ID, so max(id) would choose wrongly.
+        w.db.session.add(w.models.InboxMessage(organization_id=w.org_id, thread_id=thread.id,
+            phone=thread.phone, direction='inbound', body=f'Latest #{index} +17205550145', created_at=now))
+        w.db.session.flush()
+        w.db.session.add(w.models.InboxMessage(organization_id=w.org_id, thread_id=thread.id,
+            phone=thread.phone, direction='inbound', body='Older content must not be the preview',
+            created_at=now - timedelta(hours=2)))
+        own.append(thread)
+    foreign = w.models.InboxThread(organization_id=w.other_id, phone='+16175550444',
+        last_message_preview='Other tenant cached content')
+    w.db.session.add(foreign)
+    w.db.session.flush()
+    w.db.session.add(w.models.InboxMessage(organization_id=w.other_id, thread_id=foreign.id,
+        phone=foreign.phone, direction='inbound', body='Other tenant full content', created_at=now))
+    w.db.session.commit()
+    user = w.models.AppUser.query.filter_by(id=w.users['staff']).one()
+    statements = []
+    def count_selects(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            statements.append(statement)
+    with w.app.test_request_context('/inbox'), organization_context(w.org_id):
+        login_user(user)
+        assert can_view_phone_numbers() is False  # Warm the membership relationship.
+        event.listen(w.db.engine, 'before_cursor_execute', count_selects)
+        try:
+            previews = build_thread_display_previews([*own, foreign])
+        finally:
+            event.remove(w.db.engine, 'before_cursor_execute', count_selects)
+    assert len(statements) == 1
+    assert foreign.id not in previews
+    assert len(previews) == len(own)
+    for index, thread in enumerate(own):
+        assert previews[thread.id] == f'Latest #{index} [number hidden]'
+        assert thread.last_message_preview == 'Cached fragment +172055'

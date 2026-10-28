@@ -43,9 +43,9 @@ def get_event_feedback_or_404(event: Event, survey_id: int) -> SurveyFlow:
     return flow
 
 
-def defaults_for_event(event: Event) -> dict:
+def defaults_for_event(event: Event, *, display_title: str | None = None) -> dict:
     return {
-        'name': f'{event.title[:100]} feedback',
+        'name': f'{(event.title if display_title is None else display_title)[:100]} feedback',
         'trigger_keyword': f'FEEDBACK{event.id}',
         'intro_message': 'Thank you for helping us improve. Your answers are feedback, not a new registration.',
         'questions': '\n'.join(DEFAULT_QUESTIONS),
