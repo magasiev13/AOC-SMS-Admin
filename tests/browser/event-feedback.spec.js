@@ -4,6 +4,7 @@ const { login, installFailureDiagnostics, attachFailureDiagnostics } = require('
 
 test.beforeEach(async ({ page }) => installFailureDiagnostics(page));
 test.afterEach(async ({ page }, testInfo) => attachFailureDiagnostics(page, testInfo));
+test.setTimeout(60_000);
 
 async function postFakeInbound(page, { phone, body, width, ordinal }) {
   const url = new URL('/webhooks/twilio/inbound', page.url()).toString();
@@ -70,6 +71,18 @@ for (const width of [1440, 390]) {
     await page.keyboard.press('Escape'); // The invitation is reviewed, not sent.
 
     const phone = width === 390 ? '+17205558039' : '+17205558044';
+    // A recipient can still be in an old signup when the new invitation
+    // arrives. Its feedback keyword must never become an attendee name.
+    const oldKeyword = `RSVPPENDING${width}`;
+    await page.goto('/inbox/surveys/add');
+    await page.getByLabel('Survey name', { exact: true }).fill(`Interrupted RSVP ${width}`);
+    await page.getByLabel('Trigger keyword', { exact: true }).fill(oldKeyword);
+    await page.getByLabel('Questions (one per line)', { exact: true }).fill('What is your attendee name?');
+    await page.getByLabel('Link to an existing event', { exact: true }).check();
+    await page.getByLabel('Select event', { exact: true }).selectOption(eventPath.split('/').pop());
+    await page.getByRole('button', { name: 'Save survey flow', exact: true }).click();
+    await postFakeInbound(page, { phone, body: oldKeyword, width, ordinal: 0 });
+    await waitForSavedReply(page, width, 'What is your attendee name?');
     await postFakeInbound(page, { phone, body: keyword, width, ordinal: 1 });
     await waitForSavedReply(page, width, 'Rate this event from 1 to 5?');
     await postFakeInbound(page, { phone, body: '5', width, ordinal: 2 });

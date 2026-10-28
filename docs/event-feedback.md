@@ -12,6 +12,15 @@ completed/started totals appear on the feedback page, with links to the existing
 inbox conversation. Staff see names or respondent record labels, with phone-like
 content redacted. This workflow provides no recipient dataset export.
 
+The complete feedback keyword is a command, even if the person left an older
+signup unfinished. Starting feedback cancels that conversation without deleting
+its answers or changing any registration. Its unsent questions cannot later
+submit; already accepted or uncertain provider evidence remains intact. Repeating
+the current feedback keyword retains progress and repeats the frozen current
+question only when its original reply is no longer pending. A paused feedback
+target preserves the existing conversation. STOP and outbound readiness gates
+retain priority. Ordinary text containing a keyword is not a feedback command.
+
 Feedback is an explicit `event_feedback` survey purpose, associated with an event
 through `feedback_event_id`. It does not use registration `linked_event_id`.
 Answers are stored as survey responses, not attendee names, contact names,

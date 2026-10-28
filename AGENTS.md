@@ -13,7 +13,7 @@ Flask messaging SaaS with tenant-scoped workspaces, Stripe billing, and provider
 
 - Reuse tenant scoping and query helpers instead of hand-rolled organization filters. Cross-tenant platform operations must have an intentional admin boundary.
 - Staff contact privacy uses the active organization membership. Never emit phone fields, phone-derived identifiers or readable recipient snapshots to staff; dataset exports/raw-number management require owner/admin authority. Keep opaque machine tokens separate from display-only redaction.
-- Event feedback purpose and session context are distinct from registration surveys. Feedback completion must never modify attendee names, registrations, booking spaces or contact identity.
+- Event feedback purpose and session context are distinct from registration surveys. Feedback completion must never modify attendee names, registrations, booking spaces or contact identity. Its exact keyword must be handled as a command before an unfinished registration can consume it as an answer.
 - Session invalidation depends on `session_nonce`; preserve the password/contact gates in `app/auth.py`.
 - Use RQ workers and explicit systemd timer paths for background work, not long-lived threads from request handlers.
 - Customer-managed provider secrets belong encrypted in the database through the provider secret helpers, not in environment files or logs.

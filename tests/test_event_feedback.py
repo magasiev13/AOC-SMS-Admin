@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 @pytest.fixture
@@ -152,6 +153,245 @@ def advance_session(f, session, body):
         replies = f.inbox._advance_survey(session, body)
         f.db.session.flush()
         return replies
+
+
+def linked_registration_waiting(f, *, questions=None):
+    with f.organization_context(f.org.id):
+        member = f.m.CommunityMember(organization=f.org, phone='+17205550145', name='Original community name')
+        registration = f.m.EventRegistration(organization=f.org, event=f.event, phone=member.phone,
+            name='Original registered attendee', booking_spaces=3, external_source='aoc',
+            external_booking_id='Existing booking', selections_json='[{"label":"Family","quantity":3}]')
+        flow = f.m.SurveyFlow(organization=f.org, name='Original linked registration', trigger_keyword='RSVPOLD',
+            linked_event=f.event, completion_message='Registration recorded.')
+        flow.set_questions(questions or ['What is your name?'])
+        f.db.session.add_all([member, registration, flow]); f.db.session.commit()
+    assert input_message(f, flow.trigger_keyword)['status'] == 'survey_started'
+    session = f.m.SurveySession.query.filter_by(survey_id=flow.id).one()
+    before = {column.name:getattr(registration, column.name) for column in registration.__table__.columns}
+    return SimpleNamespace(flow=flow, session=session, registration=registration, member=member, before=before)
+
+
+@pytest.mark.parametrize('pending_old_reply', [False, True])
+def test_exact_feedback_command_hands_off_old_registration_without_answer_or_name_change(feedback, pending_old_reply):
+    f = feedback; old = linked_registration_waiting(f); flow = create_flow(f)
+    if not pending_old_reply:
+        drain(f)
+    calls_before = f.provider.client.messages.create.call_count
+    result = input_message(f, ' \n' + flow.trigger_keyword.lower() + '\t ', 'SM-feedback-handoff')
+    assert result['status'] == 'survey_started'
+    assert old.session.status == 'cancelled' and old.session.current_question_index == 0
+    assert f.m.SurveyResponse.query.count() == 0
+    assert {column.name:getattr(old.registration,column.name) for column in old.registration.__table__.columns} == old.before
+    assert old.member.name == 'Original community name'
+    session = f.m.SurveySession.query.filter_by(survey_id=flow.id).one()
+    assert session.status == 'active' and session.purpose == 'event_feedback'
+    inbound = f.m.InboxMessage.query.filter_by(message_sid='SM-feedback-handoff').one()
+    assert inbound.automation_source_id == flow.id and inbound.matched_keyword == flow.trigger_keyword
+    row_count = f.m.AutomationReplyOutbox.query.count()
+    assert input_message(f, flow.trigger_keyword, 'SM-feedback-handoff')['status'] == 'duplicate'
+    assert f.m.AutomationReplyOutbox.query.count() == row_count and flow.start_count == 1
+    drain(f)
+    old_reply = f.m.AutomationReplyOutbox.query.filter_by(survey_session_id=old.session.id).one()
+    assert old_reply.status == ('cancelled' if pending_old_reply else 'accepted')
+    assert f.provider.client.messages.create.call_count == calls_before + 2
+    assert old.session.status == 'cancelled' and session.status == 'active'
+
+
+def test_feedback_handoff_retains_prior_registration_answers_and_pending_question_history(feedback):
+    f = feedback; old = linked_registration_waiting(f, questions=['What is your name?', 'How many people?'])
+    drain(f); input_message(f, 'Actual person', 'SM-original-name')
+    prior_answers = [(row.question_prompt,row.answer) for row in old.session.responses]
+    flow = create_flow(f)
+    assert input_message(f, flow.trigger_keyword)['status'] == 'survey_started'
+    drain(f)
+    assert old.session.status == 'cancelled'
+    assert [(row.question_prompt,row.answer) for row in old.session.responses] == prior_answers == [('What is your name?','Actual person')]
+    assert {column.name:getattr(old.registration,column.name) for column in old.registration.__table__.columns} == old.before
+    assert f.m.AutomationReplyOutbox.query.filter_by(body='How many people?').one().status == 'cancelled'
+    assert all(call.kwargs['body'] != 'How many people?' for call in f.provider.client.messages.create.call_args_list)
+
+
+@pytest.mark.parametrize('known_result', ['accepted', 'ambiguous'])
+def test_feedback_handoff_preserves_interrupted_old_provider_evidence_without_resubmission(feedback, known_result):
+    f = feedback; old = linked_registration_waiting(f); flow = create_flow(f)
+    row = f.m.AutomationReplyOutbox.query.filter_by(survey_session_id=old.session.id).one()
+    fake_accept = f.provider.client.messages.create.side_effect
+    if known_result == 'ambiguous':
+        f.provider.client.messages.create.side_effect = TimeoutError('Synthetic lost provider acknowledgement')
+    try:
+        with patch('app.services.automation_outbox_service.get_twilio_service', return_value=f.provider), \
+             patch('app.services.automation_outbox_service._finish', side_effect=RuntimeError('Interrupted before outbox finalization')):
+            with pytest.raises(RuntimeError, match='Interrupted'):
+                f.outbox.dispatch_automation_reply(f.org.id, row.id)
+    finally:
+        f.provider.client.messages.create.side_effect = fake_accept
+        f.db.session.rollback(); f.db.session.expire_all()
+    attempt = f.m.MessageDispatchAttempt.query.filter_by(logical_send_key=row.logical_send_key).one()
+    assert attempt.status == ('sent' if known_result == 'accepted' else 'ambiguous')
+    original_sid = attempt.provider_message_sid
+    row.worker_lease_until = f.outbox._now() - timedelta(seconds=1)
+    f.db.session.commit()
+    assert old.session.status == 'active'
+    assert input_message(f, flow.trigger_keyword)['status'] == 'survey_started'
+    calls_before = f.provider.client.messages.create.call_count
+    with patch('app.services.automation_outbox_service.get_twilio_service', side_effect=AssertionError('Never resubmit an uncertain or accepted old question')):
+        result = f.outbox.dispatch_automation_reply(f.org.id, row.id)
+        replay = f.outbox.dispatch_automation_reply(f.org.id, row.id)
+    assert result['status'] == replay['status'] == known_result
+    assert result.get('sid') == original_sid and attempt.provider_message_sid == original_sid
+    assert f.provider.client.messages.create.call_count == calls_before
+    drain(f)
+    assert f.provider.client.messages.create.call_count == calls_before + 2
+    assert old.session.status == 'cancelled'
+    assert f.m.SurveySession.query.filter_by(survey_id=flow.id).one().status == 'active'
+    assert {column.name:getattr(old.registration,column.name) for column in old.registration.__table__.columns} == old.before
+
+
+@pytest.mark.parametrize('question_index', [0, 1])
+@pytest.mark.parametrize('pending_reply', [False, True])
+def test_repeated_feedback_keyword_replays_only_frozen_current_prompt_without_restarting(feedback, question_index, pending_reply):
+    f = feedback; flow = create_flow(f, questions=['Frozen rating?', 'Frozen comment?'])
+    input_message(f, flow.trigger_keyword)
+    session = f.m.SurveySession.query.one()
+    if question_index:
+        drain(f); input_message(f, '5')
+    if not pending_reply:
+        drain(f)
+    answers_before = [(row.question_prompt,row.answer) for row in session.responses]
+    flow.set_questions(['Edited question?']); f.db.session.commit()
+    row_count = f.m.AutomationReplyOutbox.query.count()
+    result = input_message(f, flow.trigger_keyword, 'SM-repeat-current-feedback')
+    assert result['status'] == ('survey_reply_pending' if pending_reply else 'survey_prompt_repeated')
+    assert f.m.SurveySession.query.count() == 1 and flow.start_count == 1
+    assert session.current_question_index == question_index and session.status == 'active'
+    assert [(row.question_prompt,row.answer) for row in session.responses] == answers_before
+    assert f.m.AutomationReplyOutbox.query.count() == row_count + (0 if pending_reply else 1)
+    if not pending_reply:
+        assert f.m.AutomationReplyOutbox.query.order_by(f.m.AutomationReplyOutbox.id.desc()).first().body == ['Frozen rating?','Frozen comment?'][question_index]
+    assert input_message(f, flow.trigger_keyword, 'SM-repeat-current-feedback')['status'] == 'duplicate'
+    drain(f)
+    assert f.m.EventRegistration.query.count() == 0
+
+
+@pytest.mark.parametrize('pending_old_reply', [False, True])
+def test_paused_feedback_command_preserves_old_registration_conversation(feedback, pending_old_reply):
+    f = feedback; old = linked_registration_waiting(f); flow = create_flow(f)
+    flow.is_active = False; f.db.session.commit()
+    if not pending_old_reply:
+        drain(f)
+    assert input_message(f, flow.trigger_keyword)['status'] == 'feedback_paused'
+    assert old.session.status == 'active' and old.session.current_question_index == 0
+    assert f.m.SurveyResponse.query.count() == 0 and flow.start_count == 0
+    assert f.m.SurveySession.query.count() == 1
+    assert {column.name:getattr(old.registration,column.name) for column in old.registration.__table__.columns} == old.before
+    notice = f.m.AutomationReplyOutbox.query.order_by(f.m.AutomationReplyOutbox.id.desc()).first()
+    assert notice.source == 'system' and notice.survey_session_id is None and 'paused' in notice.body
+    drain(f)
+    assert old.session.status == 'active'
+
+
+def test_paused_feedback_does_not_steal_keyword_from_active_rule(feedback):
+    f = feedback; paused = create_flow(f)
+    paused.is_active = False; f.db.session.commit()
+    with f.organization_context(f.org.id):
+        owner = f.m.KeywordAutomationRule(organization=f.org, keyword=paused.trigger_keyword,
+            response_body='Active rule reply.', is_active=True)
+        f.db.session.add(owner); f.db.session.commit()
+    result = input_message(f, paused.trigger_keyword)
+    assert result['status'] == 'keyword_reply'
+    assert f.m.SurveySession.query.filter_by(survey_id=paused.id).count() == 0 and paused.start_count == 0
+    reply = f.m.AutomationReplyOutbox.query.one()
+    assert reply.body == 'Active rule reply.'
+    assert reply.source == 'keyword' and reply.source_id == owner.id
+    assert f.m.SurveyResponse.query.count() == 0 and f.m.EventRegistration.query.count() == 0
+
+
+def test_current_schema_and_editor_preserve_paused_feedback_keyword_uniqueness(feedback):
+    f = feedback; paused = create_flow(f)
+    paused.is_active = False; f.db.session.commit()
+    values = f.service.defaults_for_event(f.event); values['name'] = 'Replacement feedback'
+    with f.organization_context(f.org.id):
+        with pytest.raises(ValueError, match='trigger is already used'):
+            f.service.save_event_feedback(f.event, values)
+        duplicate = f.m.SurveyFlow(organization=f.org, name='Direct replacement', purpose='event_feedback',
+            feedback_event=f.event, trigger_keyword=paused.trigger_keyword)
+        f.db.session.add(duplicate)
+        with pytest.raises(IntegrityError):
+            f.db.session.commit()
+        f.db.session.rollback()
+        assert f.m.SurveyFlow.query.count() == 1 and not paused.is_active
+
+
+@pytest.mark.parametrize('paused_target', [False, True])
+def test_different_feedback_command_preserves_existing_feedback_answers(feedback, paused_target):
+    f = feedback; original = create_flow(f); input_message(f, original.trigger_keyword); drain(f)
+    input_message(f, '5'); old_session = f.m.SurveySession.query.one()
+    values = f.service.defaults_for_event(f.event)
+    values.update(name='Different event feedback', trigger_keyword='OTHERFEEDBACK')
+    with f.organization_context(f.org.id):
+        target = f.service.save_event_feedback(f.event, values)
+        target.is_active = not paused_target; f.db.session.commit()
+    result = input_message(f, target.trigger_keyword)
+    assert result['status'] == ('feedback_paused' if paused_target else 'survey_started')
+    assert old_session.status == ('active' if paused_target else 'cancelled')
+    assert [row.answer for row in old_session.responses] == ['5']
+    assert f.m.SurveyResponse.query.count() == 1
+    assert f.m.SurveySession.query.count() == (1 if paused_target else 2)
+    assert f.m.EventRegistration.query.count() == 0
+
+
+def test_feedback_keyword_in_other_tenant_does_not_take_over_local_conversation(feedback):
+    f = feedback; old = linked_registration_waiting(f, questions=['Your comment?', 'Anything else?'])
+    drain(f); foreign = create_flow(f, event=f.other_event)
+    result = input_message(f, foreign.trigger_keyword)
+    assert result['status'] == 'survey_response'
+    assert old.session.status == 'active' and old.session.current_question_index == 1
+    assert [row.answer for row in old.session.responses] == [foreign.trigger_keyword]
+    assert f.m.SurveySession.query.filter_by(survey_id=foreign.id).count() == 0
+    assert foreign.start_count == 0
+
+
+@pytest.mark.parametrize('change', ['paused', 'legacy_purpose'])
+def test_repeat_keyword_retains_frozen_active_feedback_after_form_state_changes(feedback, change):
+    f = feedback; flow = create_flow(f, questions=['Original rating?', 'Original comment?'])
+    input_message(f, flow.trigger_keyword); drain(f); input_message(f, '5'); drain(f)
+    session = f.m.SurveySession.query.one()
+    if change == 'paused':
+        flow.is_active = False
+    else:
+        flow.purpose = 'survey'; flow.linked_event = f.event
+    flow.set_questions(['Replacement name?']); f.db.session.commit()
+    assert input_message(f, flow.trigger_keyword)['status'] == 'survey_prompt_repeated'
+    assert f.m.SurveySession.query.count() == 1 and session.current_question_index == 1
+    assert [row.answer for row in session.responses] == ['5']
+    assert f.m.AutomationReplyOutbox.query.order_by(f.m.AutomationReplyOutbox.id.desc()).first().body == 'Original comment?'
+    assert f.m.EventRegistration.query.count() == 0
+
+
+@pytest.mark.parametrize('body', ['FEEDBACK1 please', 'I enjoyed FEEDBACK1', 'FEEDBACK1!'])
+def test_feedback_command_requires_the_whole_normalized_keyword(feedback, body):
+    f = feedback; flow = create_flow(f)
+    assert flow.trigger_keyword == 'FEEDBACK1'
+    assert input_message(f, body)['status'] == 'stored'
+    assert f.m.SurveySession.query.count() == 0 and f.m.AutomationReplyOutbox.query.count() == 0
+
+
+def test_feedback_command_does_not_bypass_stop_or_outbound_readiness(feedback):
+    f = feedback; old = linked_registration_waiting(f); flow = create_flow(f)
+    row_count = f.m.AutomationReplyOutbox.query.count()
+    with patch('app.services.billing_service.organization_can_transmit_messages', return_value=False):
+        result = input_message(f, flow.trigger_keyword)
+    assert result['status'] == 'stored' and result['automation_blocked']
+    assert old.session.status == 'active' and old.session.current_question_index == 0
+    assert f.m.AutomationReplyOutbox.query.count() == row_count and flow.start_count == 0
+    assert input_message(f, 'STOP')['status'] == 'opt_out'
+    assert old.session.status == 'cancelled'
+    # A later command cannot silently remove an explicit opt-out or submit a reply.
+    input_message(f, flow.trigger_keyword); drain(f)
+    assert f.m.UnsubscribedContact.query.count() == 1
+    assert f.provider.client.messages.create.call_count == 0
+    assert all(row.status == 'cancelled' for row in f.m.SurveySession.query.all())
+    assert {column.name:getattr(old.registration,column.name) for column in old.registration.__table__.columns} == old.before
 
 
 def test_feedback_rating_comment_does_not_rename_or_change_attendance(feedback):
