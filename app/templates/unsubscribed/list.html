@@ -141,10 +141,10 @@
                                 <td data-sort-value="{{ (entry.name or '')|private_text }}">{{ (entry.name or '-')|private_text }}</td>
                                 {% if can_view_contact_numbers %}<td data-sort-value="{{ entry.phone }}"><code>{{ entry.phone }}</code></td>{% endif %}
                                 <td data-sort-value="{{ (entry.reason or '')|private_text }}">{{ (entry.reason or '-')|private_text }}</td>
-                                <td data-sort-value="{{ entry.category }}">
-                                    <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
+                            <td data-sort-value="{{ entry.category|private_text }}">
+                                <span class="badge bg-light text-dark text-uppercase">{{ entry.category|private_text }}</span>
                                 </td>
-                                <td data-sort-value="{{ entry.source or '' }}"><span class="badge bg-light text-dark">{{ entry.source or '-' }}</span></td>
+                            <td data-sort-value="{{ (entry.source or '')|private_text }}"><span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span></td>
                                 <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
                                 {% if can_manage_unsubscribed %}
                                 <td class="suppression-actions-cell">
@@ -211,8 +211,8 @@
                                 {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ entry.phone }}</code></div>{% endif %}
                                 <div class="text-muted small mt-1">{{ (entry.reason or '-')|private_text }}</div>
                                 <div class="d-flex flex-wrap gap-2 mt-2">
-                                    <span class="badge bg-light text-dark text-uppercase">{{ entry.category }}</span>
-                                    <span class="badge bg-light text-dark">{{ entry.source or '-' }}</span>
+                                <span class="badge bg-light text-dark text-uppercase">{{ entry.category|private_text }}</span>
+                                <span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span>
                                 </div>
                                 <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
                             </div>

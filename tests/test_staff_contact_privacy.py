@@ -334,7 +334,7 @@ def staff_workspace(tmp_path, monkeypatch, request):
     with application.app_context():
         try:
             db.create_all()
-            org = models.Organization(name='Privacy fixture', slug='armenians-of-colorado', status='active')
+            org = models.Organization(name='Privacy fixture +17205550444', slug='armenians-of-colorado', status='active')
             other = models.Organization(name='Other private tenant', slug='privacy-other', status='active')
             db.session.add_all([org, other])
             db.session.flush()
@@ -356,7 +356,7 @@ def staff_workspace(tmp_path, monkeypatch, request):
                 users[role] = user.id
             member = models.CommunityMember(organization_id=org.id, name='Alice +17205550123', phone='+17205550123')
             other_member = models.CommunityMember(organization_id=other.id, name='Other tenant secret', phone='+16175550111')
-            event = models.Event(organization_id=org.id, title='Past celebration', date=(models.utc_now() - timedelta(days=2)).date(),
+            event = models.Event(organization_id=org.id, title='Past celebration +17205550444', date=(models.utc_now() - timedelta(days=2)).date(),
                                  sms_location_note='Venue contact +17205550444')
             db.session.add_all([member, other_member, event])
             db.session.flush()
@@ -367,9 +367,9 @@ def staff_workspace(tmp_path, monkeypatch, request):
             db.session.flush()
             db.session.add(models.InboxMessage(organization_id=org.id, thread_id=thread.id, phone=thread.phone,
                 direction='inbound', body='Call me at (303) 555-0199', raw_payload=json.dumps({'From': thread.phone})))
-            survey = models.SurveyFlow(organization_id=org.id, name='Past survey', trigger_keyword='PRIVACY', linked_event_id=event.id,
+            survey = models.SurveyFlow(organization_id=org.id, name='Past survey +17205550555', trigger_keyword='PRIVACY17205550555', linked_event_id=event.id,
                                       intro_message='For help call +17205550555')
-            survey.set_questions(['What did you think?'])
+            survey.set_questions(['What did you think? Call +17205550555'])
             db.session.add(survey)
             db.session.flush()
             survey_session = models.SurveySession(organization_id=org.id, survey_id=survey.id, thread_id=thread.id,
@@ -387,11 +387,12 @@ def staff_workspace(tmp_path, monkeypatch, request):
                 target='event', event_id=event.id, scheduled_at=models.utc_now().replace(tzinfo=None) + timedelta(days=2), status='failed',
                 error_message='Cannot reach +13035550199')
             db.session.add_all([schedule, models.UnsubscribedContact(organization_id=org.id, phone='+17205550222',
-                name=None, reason='Request received from +17205550222', source='manual')])
+                name=None, reason='Request received from +17205550222', source='List +17205550222')])
             internal = models.OrganizationTestRecipient(organization_id=org.id, phone='+17205550333', label='Private test +17205550333')
             internal_other = models.OrganizationTestRecipient(organization_id=other.id, phone='+16175550333', label='Other tenant internal test')
-            keyword = models.KeywordAutomationRule(organization_id=org.id, keyword='HELPINFO', response_body='Call +17205550666 for help')
+            keyword = models.KeywordAutomationRule(organization_id=org.id, keyword='HELPINFO17205550666', response_body='Call +17205550666 for help')
             db.session.add_all([internal, internal_other, keyword])
+            models.InboxMessage.query.filter_by(thread_id=thread.id).one().matched_keyword = keyword.keyword
             db.session.commit()
             yield SimpleNamespace(app=application, db=db, models=models, users=users, org_id=org.id, other_id=other.id,
                 member_id=member.id, event_id=event.id, registration_id=registration.id,
@@ -685,3 +686,80 @@ def test_booking_notes_and_selections_are_private_display_without_changing_booki
     w.db.session.expire_all()
     assert (registration.name, registration.phone, registration.booking_spaces,
             registration.booking_comment, registration.selections_json) == before
+
+
+@pytest.mark.parametrize('protected_source', ['event_title', 'keyword'])
+def test_feedback_prefill_never_discloses_protected_saved_text_or_changes_its_intent(staff_workspace, protected_source, monkeypatch):
+    import app.routes as routes
+    w = staff_workspace
+    event = w.models.Event.query.filter_by(id=w.event_id).one()
+    event.title = 'Celebration +17205550444' if protected_source == 'event_title' else 'Celebration'
+    flow = w.models.SurveyFlow(organization_id=w.org_id, name='Event feedback', purpose='event_feedback',
+        feedback_event_id=event.id, trigger_keyword='RATE17205550555' if protected_source == 'keyword' else 'RATEPARTY', is_active=True)
+    flow.set_questions(['How was the celebration?'])
+    w.db.session.add(flow)
+    w.db.session.commit()
+    before = (event.title, flow.trigger_keyword, flow.questions_json)
+    def forbidden_queue():
+        raise AssertionError('Opening a protected invitation must not dispatch')
+    monkeypatch.setattr(routes, '_get_queue_with_preflight', forbidden_queue)
+    workspace_login(w)
+    detail = w.client.get(f'/events/{event.id}/feedback/{flow.id}')
+    assert detail.status_code == 200
+    assert_no_private_numbers(w, detail)
+    assert b'An owner needs to prepare this invitation' in detail.data
+    assert b'>Review invitation</a>' not in detail.data
+    form = {'target': 'event', 'event_id': event.id, 'feedback_id': flow.id}
+    for response in [w.client.get('/dashboard', query_string=form), w.client.post('/dashboard', data=form)]:
+        assert response.status_code == 403
+        assert_no_private_numbers(w, response)
+    workspace_login(w, 'owner')
+    owner = w.client.get('/dashboard', query_string=form)
+    assert owner.status_code == 200
+    protected = '+17205550444' if protected_source == 'event_title' else '17205550555'
+    assert protected.encode() in owner.data
+    assert (event.title, flow.trigger_keyword, flow.questions_json) == before
+    assert w.models.OutboundRequest.query.count() == 0 and w.models.MessageLog.query.count() == 1
+
+
+@pytest.mark.parametrize('role', ['staff', 'owner'])
+def test_native_html_send_review_obeys_privacy_and_preserves_sealed_send_intent(staff_workspace, role, monkeypatch):
+    import app.routes as routes
+    from app.services.send_review_service import _signer, _review_cipher
+    w = staff_workspace
+    workspace_login(w, role)
+    def forbidden_queue():
+        raise AssertionError('A native HTML review must not dispatch')
+    monkeypatch.setattr(routes, '_get_queue_with_preflight', forbidden_queue)
+    form = {'target': 'community', 'message_body': 'Hello {full_name}', 'test_mode': 'on',
+            'test_recipient_selection_mode': 'one', 'require_review': '1',
+            'request_idempotency_key': 'native-private-review'}
+    if role == 'staff':
+        form['test_recipient_id'] = str(w.internal_test_id)
+    else:
+        form['test_recipient_phone'] = '+17205550333'
+    response = w.client.post('/dashboard', data=form)
+    assert response.status_code == 200 and b'Review send' in response.data
+    if role == 'staff':
+        assert_no_private_numbers(w, response)
+        assert b'[number hidden]' in response.data
+    else:
+        assert b'+17205550000' in response.data and b'Private test +17205550333' in response.data
+    token = unescape(re.search(rb'name="review_token" value="([^"]+)"', response.data).group(1).decode())
+    envelope = _signer().loads(token)
+    assert set(envelope) == {'version', 'encrypted'}
+    payload = json.loads(_review_cipher().decrypt(envelope['encrypted'].encode()))
+    assert payload['intent']['message_body'] == 'Hello {full_name}'
+    assert payload['recipients'][0]['phone'] == '+17205550333'
+    assert w.models.OutboundRequest.query.count() == 0 and w.models.MessageLog.query.count() == 1
+
+
+@pytest.mark.parametrize('path', ['/setup', '/setup/pending'])
+def test_staff_setup_display_does_not_disclose_phone_bearing_organization_name(staff_workspace, path):
+    w = staff_workspace
+    original = w.models.Organization.query.filter_by(id=w.org_id).one().name
+    workspace_login(w)
+    response = w.client.get(path, follow_redirects=True)
+    assert response.status_code == 200
+    assert_no_private_numbers(w, response)
+    assert w.models.Organization.query.filter_by(id=w.org_id).one().name == original

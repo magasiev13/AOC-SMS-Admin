@@ -70,7 +70,7 @@
                 {% set target_sort = target_label ~ (': ' ~ log.event.title if log.event else '') %}
                 <tr>
                     <td data-sort-value="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ log.created_at|localtime }}</td>
-                    <td data-sort-value="{{ ('Test: ' if log.test_mode else '') ~ target_sort }}">
+                            <td data-sort-value="{{ (('Test: ' if log.test_mode else '') ~ target_sort)|private_text }}">
                         {% if log.test_mode %}
                         <span class="badge bg-warning text-dark mb-1">Test</span>
                         <br>

@@ -18,6 +18,11 @@ survey DOM IDs and staff response DTOs. Human display text also redacts phone-li
 sequences, including message/error text. This never rewrites stored content or
 provider send payloads. An existing editor containing protected phone text is
 owner-only on both GET and POST, preventing a redacted save from destroying it.
+The native HTML send review applies the same display policy as the JavaScript
+review. A saved feedback invitation containing a protected number requires an
+owner to prepare it; staff see that explanation instead of a misleading masked
+draft or a link to an unavailable action. Summary cards, question tooltips,
+keyword labels and suppression metadata follow the same display policy.
 
 The fifteen-minute send-review snapshot is encrypted and authenticated with a
 purpose-derived application key, bound to the actor/session, form identity,

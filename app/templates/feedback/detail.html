@@ -18,7 +18,7 @@
         <div class="workspace-panel__header"><div><h2 class="workspace-panel__title">Invite this event audience</h2><p class="workspace-panel__meta">Keyword <code>{{ feedback_display(flow.trigger_keyword) }}</code> · <span class="badge bg-{{ 'success' if flow.is_active else 'secondary' }}">{{ 'Active' if flow.is_active else 'Paused' }}</span></p></div></div>
         <div class="workspace-panel__body">
             <p class="mb-3" style="white-space: pre-wrap; overflow-wrap: anywhere;">{{ feedback_display(invitation) }}</p>
-            {% if flow.is_active %}<a class="btn btn-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id, feedback_id=flow.id, _anchor='message_body') }}">Review invitation</a><p class="form-text mb-0">Opens the composer with this event selected. Nothing sends until you review and confirm; actual opt-outs are excluded.</p>
+            {% if flow.is_active %}{% if not can_view_contact_numbers and feedback_display(invitation) != invitation %}<p class="text-muted mb-0" role="status">An owner needs to prepare this invitation because its saved text includes a protected contact number.</p>{% else %}<a class="btn btn-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id, feedback_id=flow.id, _anchor='message_body') }}">Review invitation</a><p class="form-text mb-0">Opens the composer with this event selected. Nothing sends until you review and confirm; actual opt-outs are excluded.</p>{% endif %}
             {% else %}<p class="text-muted mb-0">This feedback is paused. Edit it to accept new conversations before inviting people.</p>{% endif %}
         </div>
     </section>

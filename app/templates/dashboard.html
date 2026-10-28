@@ -492,7 +492,7 @@
                                 <tbody>
                                     {% for item in top_keywords %}
                                     <tr>
-                                        <td><code>{{ item.keyword }}</code></td>
+                                        <td><code>{{ item.keyword|private_text }}</code></td>
                                         <td>{{ item.hits }}</td>
                                     </tr>
                                     {% endfor %}

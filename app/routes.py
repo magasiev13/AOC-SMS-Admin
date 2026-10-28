@@ -4365,6 +4365,12 @@ def dashboard():
             flash('This feedback flow is archived. Activate it before inviting replies.', 'warning')
         else:
             feedback_invitation = feedback_invitation_text(feedback_flow, feedback_event)
+            if (not can_view_phone_numbers()
+                    and redact_phone_numbers(feedback_invitation) != feedback_invitation):
+                # This is saved server content, rather than text entered by
+                # this operator. Do not disclose it or silently turn a masked
+                # draft into a different outgoing invitation.
+                abort(403, description='An owner must prepare this invitation because its saved text includes a protected contact number.')
     if selected_event_id and selected_event_id not in {event.id for event in events}:
         # Past audiences remain available through an explicit history/follow-up
         # action. Event dates do not withdraw permission or rewrite a saved send.

@@ -61,8 +61,8 @@
                                 value="{{ loop.index0 }}"
                                 {% if loop.index0 in preview_question_indexes %}checked{% endif %}
                             >
-                            <span class="survey-preview-selector__text" title="{{ question }}">
-                                {{ question }}
+                            <span class="survey-preview-selector__text" title="{{ question|private_text }}">
+                                {{ question|private_text }}
                             </span>
                         </label>
                         {% endfor %}
