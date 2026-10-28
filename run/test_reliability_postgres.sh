@@ -22,7 +22,8 @@ for key in OUTBOX_TEST_POSTGRES_ROOT AUDIT_AOC_DATABASE_ROOT \
   AUDIT_PERMISSION_DATABASE_ROOT AUDIT_REVIEW_DATABASE_ROOT AUDIT_UX_DATABASE_ROOT \
   INBOUND_TEST_POSTGRES_ROOT CANCELLATION_TEST_POSTGRES_ROOT REPLY_TEST_POSTGRES_ROOT \
   BILLING_TEST_POSTGRES_ROOT DELIVERY_TEST_POSTGRES_ROOT AUTOMATION_TEST_POSTGRES_ROOT \
-  HISTORICAL_TEST_POSTGRES_ROOT AUDIENCE_TEST_POSTGRES_ROOT KEYWORD_TEST_POSTGRES_ROOT; do
+  HISTORICAL_TEST_POSTGRES_ROOT AUDIENCE_TEST_POSTGRES_ROOT KEYWORD_TEST_POSTGRES_ROOT \
+  FEEDBACK_TEST_POSTGRES_ROOT STAFF_PRIVACY_TEST_POSTGRES_ROOT; do
   export "${key}=${TWINEVIA_TEST_POSTGRES_ROOT}"
 done
 
@@ -35,5 +36,6 @@ cd "${REPO_ROOT}"
   tests/test_durable_reply_races.py tests/test_inbound_inactive_consent.py \
   tests/test_scheduled_cancellation_safety.py tests/test_recipient_permissions.py \
   tests/test_ux_recovery.py tests/test_historical_recovery_safety.py tests/test_daily_audiences.py \
+  tests/test_event_feedback.py tests/test_staff_contact_privacy.py \
   tests/test_keyword_legacy_editing.py tests/test_inbox_keyword_origin.py \
   tests/test_inbox_keyword_origin_ui.py tests/test_pr_comment_recovery.py "$@"

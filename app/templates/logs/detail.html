@@ -40,7 +40,7 @@
                     </div>
                 </div>
                 <div class="workspace-panel__body">
-                    <pre class="mb-0 message-body-preview">{{ log.message_body }}</pre>
+                    <pre class="mb-0 message-body-preview">{{ (log.message_body)|private_text }}</pre>
                 </div>
             </section>
 
@@ -61,12 +61,12 @@
                                         <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
                                 </th>
-                                <th data-sort-type="phone">
+                                {% if can_view_contact_numbers %}<th data-sort-type="phone">
                                     <button type="button" class="sort-button" data-sort-key="phone">
                                         <span>Phone</span>
                                         <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
-                                </th>
+                                </th>{% endif %}
                                 <th data-sort-type="enum">
                                     <button type="button" class="sort-button" data-sort-key="status">
                                         <span>Submission</span>
@@ -92,8 +92,8 @@
                             {% if details %}
                             {% for d in details %}
                             <tr class="{{ 'table-danger' if d.outcome_label == 'Failed' else '' }}">
-                                <td data-sort-value="{{ d.name or '' }}">{{ d.name or '-' }}</td>
-                                <td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>
+                                <td data-sort-value="{{ (d.name or '')|private_text }}">{{ (d.name or '-')|private_text }}</td>
+                                {% if can_view_contact_numbers %}<td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>{% endif %}
                                 <td data-sort-value="{{ d.outcome_label }}">
                                     <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
                                 </td>
@@ -107,9 +107,9 @@
                                     -
                                     {% endif %}
                                 </td>
-                                <td data-sort-value="{{ d.delivery_error or d.error or '' }}">
+                                <td data-sort-value="{{ (d.delivery_error or d.error or '')|private_text }}">
                                     {% if d.delivery_error or d.error %}
-                                    <small class="text-danger">{{ d.delivery_error or d.error }}</small>
+                                    <small class="text-danger">{{ (d.delivery_error or d.error)|private_text }}</small>
                                     {% else %}
                                     -
                                     {% endif %}
@@ -136,8 +136,8 @@
                         <div class="card-list-item">
                             <div class="d-flex justify-content-between align-items-start gap-2">
                                 <div>
-                                    <h6 class="mb-1">{{ d.name or '-' }}</h6>
-                                    <div class="text-muted small"><code>{{ d.phone }}</code></div>
+                                    <h6 class="mb-1">{{ (d.name or '-')|private_text }}</h6>
+                                    {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ d.phone }}</code></div>{% endif %}
                                 </div>
                                 <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
                             </div>
@@ -153,7 +153,7 @@
                                 {% endif %}
                             </div>
                             {% if d.delivery_error or d.error %}
-                            <div class="mt-2 small text-danger">{{ d.delivery_error or d.error }}</div>
+                            <div class="mt-2 small text-danger">{{ (d.delivery_error or d.error)|private_text }}</div>
                             {% endif %}
                         </div>
                         {% endfor %}
@@ -194,7 +194,7 @@
                                 {% endif %}
                                 <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">{{ log.target }}</span>
                                 {% if log.event %}
-                                <br>{{ log.event.title }}
+                                <br>{{ (log.event.title)|private_text }}
                                 {% endif %}
                             </dd>
                         </div>

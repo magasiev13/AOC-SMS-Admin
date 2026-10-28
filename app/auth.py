@@ -42,6 +42,7 @@ bp = Blueprint("auth", __name__)
 SUSPENDED_ORGANIZATION_MESSAGE = "Your organization is currently suspended. Contact your platform admin."
 
 TENANT_ENDPOINT_PREFIXES = (
+    "event_feedback.",
     "main.dashboard",
     "main.setup",
     "main.billing_",

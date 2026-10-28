@@ -76,6 +76,7 @@ def test_recipient_view_rows(organization_id: int) -> list[dict[str, str]]:
     for recipient in list_test_recipients(organization_id):
         rows.append(
             {
+                "id": recipient.id,
                 "phone": recipient.phone,
                 "label": recipient.label or "",
                 "display_label": recipient.label or recipient.phone,

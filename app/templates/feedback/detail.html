@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
+{% block title %}{{ feedback_display(flow.name) }} - {{ product_name }}{% endblock %}
+{% block page_title %}Event feedback{% endblock %}
+{% block breadcrumbs %}<a href="{{ url_for('main.events_list') }}">Events</a> / <a href="{{ url_for('event_feedback.index', event_id=event.id) }}">Feedback</a> / <span>Responses</span>{% endblock %}
+{% block page_actions %}<a class="btn btn-outline-secondary" href="{{ url_for('event_feedback.edit', event_id=event.id, survey_id=flow.id) }}">Edit feedback</a>{% endblock %}
+{% block content %}
+<div class="workspace-shell">
+    <section class="workspace-summary">
+        <div class="workspace-summary__header"><div class="workspace-summary__body"><div class="workspace-summary__eyebrow">{{ feedback_display(event.title) }}</div><h2 class="workspace-summary__title">{{ feedback_display(flow.name) }}</h2><p class="workspace-summary__copy">Feedback stays separate from registrations and attendee identity.</p></div></div>
+        <dl class="row g-2 mb-0" aria-label="Feedback progress">
+            <div class="col-4"><dt class="small text-muted fw-semibold">Started</dt><dd class="h5 mb-0">{{ summary.started }}</dd></div>
+            <div class="col-4"><dt class="small text-muted fw-semibold">Completed</dt><dd class="h5 mb-0">{{ summary.completed }}</dd></div>
+            <div class="col-4"><dt class="small text-muted fw-semibold">Respondents</dt><dd class="h5 mb-0">{{ summary.respondents }}</dd></div>
+        </dl>
+    </section>
+    <section class="workspace-panel">
+        <div class="workspace-panel__header"><div><h2 class="workspace-panel__title">Invite this event audience</h2><p class="workspace-panel__meta">Keyword <code>{{ feedback_display(flow.trigger_keyword) }}</code> · <span class="badge bg-{{ 'success' if flow.is_active else 'secondary' }}">{{ 'Active' if flow.is_active else 'Paused' }}</span></p></div></div>
+        <div class="workspace-panel__body">
+            <p class="mb-3" style="white-space: pre-wrap; overflow-wrap: anywhere;">{{ feedback_display(invitation) }}</p>
+            {% if flow.is_active %}{% if not can_view_contact_numbers and feedback_display(invitation) != invitation %}<p class="text-muted mb-0" role="status">An owner needs to prepare this invitation because its saved text includes a protected contact number.</p>{% else %}<a class="btn btn-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id, feedback_id=flow.id, _anchor='message_body') }}">Review invitation</a><p class="form-text mb-0">Opens the composer with this event selected. Nothing sends until you review and confirm; actual opt-outs are excluded.</p>{% endif %}
+            {% else %}<p class="text-muted mb-0">This feedback is paused. Edit it to accept new conversations before inviting people.</p>{% endif %}
+        </div>
+    </section>
+    <section class="collection-panel">
+        <div class="collection-panel__header"><div><h2 class="collection-panel__title">Responses</h2><p class="collection-panel__meta">Newest conversations first. Existing questions and answers retain their original event context.</p></div></div>
+        {% if summary.rows %}
+        <div class="card-list">{% for row in summary.rows %}
+            <article class="card-list-item" id="feedback-response-{{ row.id }}">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2"><h3 class="h6 mb-0">{{ row.label }}</h3><span class="badge bg-{{ 'success' if row.status == 'completed' else 'secondary' }}">{{ row.status|capitalize }}</span></div>
+                <div class="small text-muted mt-1">{{ row.started_at|localtime('%Y-%m-%d %H:%M') }} · {{ row.event_title }}</div>
+                {% if row.answers %}<dl class="mt-3 mb-2">{% for answer in row.answers %}<dt class="small mt-3" style="overflow-wrap: anywhere;">{{ answer.prompt }}</dt><dd class="mb-0" style="white-space: pre-wrap; overflow-wrap: anywhere;">{{ answer.answer }}</dd>{% endfor %}</dl>{% else %}<p class="text-muted small my-3">No answer yet.</p>{% endif %}
+                <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('main.inbox_list', thread=row.thread_id) }}">Open conversation</a>
+            </article>
+        {% endfor %}</div>
+        {% if summary.pages > 1 %}<nav class="collection-panel__body d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Feedback response pages"><span class="small text-muted">Page {{ summary.page }} of {{ summary.pages }}</span><div class="btn-group">{% if summary.page > 1 %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id, page=summary.page-1) }}">Previous</a>{% endif %}{% if summary.page < summary.pages %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id, page=summary.page+1) }}">Next</a>{% endif %}</div></nav>{% endif %}
+        {% else %}<div class="collection-panel__body">{{ ui.empty_state('bi-chat-square-text', 'No feedback yet', 'Review and send an invitation. Replies will appear here without changing attendance or contact names.') }}</div>{% endif %}
+    </section>
+    {% if flow.is_active %}<section class="workspace-panel"><div class="workspace-panel__body"><form method="POST" action="{{ url_for('event_feedback.archive', event_id=event.id, survey_id=flow.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-secondary" type="submit" data-confirm="Pause new feedback conversations? Existing responses will be retained.">Pause feedback</button><p class="form-text mb-0">Stops new keyword starts. Existing responses remain available.</p></form></div></section>{% endif %}
+</div>
+{% endblock %}

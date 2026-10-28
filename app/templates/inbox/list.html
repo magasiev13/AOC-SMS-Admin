@@ -35,7 +35,7 @@
     <div class="col-lg-4 {% if selected_thread and not show_thread_list_only %}d-none d-lg-block{% endif %}" id="inboxThreadsPanel">
         {% call ui.collection_search_panel(
             url_for('main.inbox_list'),
-            'Search phone or name',
+            'Search phone or name' if can_view_contact_numbers else 'Search contact names',
             search,
             'Search inbox threads',
             'Search inbox',
@@ -61,8 +61,8 @@
                            {% if thread_is_active %}aria-current="page"{% endif %}>
                             <div class="d-flex justify-content-between align-items-center gap-2">
                                 <div>
-                                    <div class="fw-semibold">{{ thread_label }}</div>
-                                    {% if thread_label != thread.phone %}
+                                    <div class="fw-semibold">{{ (thread_label)|private_text }}</div>
+                                    {% if can_view_contact_numbers and thread_label != thread.phone %}
                                     <div class="small text-muted inbox-thread-phone">{{ thread.phone }}</div>
                                     {% endif %}
                                 </div>
@@ -71,7 +71,7 @@
                                 {% endif %}
                             </div>
                             <div class="small mt-1 inbox-thread-preview">
-                                {{ thread.last_message_preview or 'No messages yet' }}
+                                {{ (thread_display_previews.get(thread.id) or 'No messages yet')|private_text }}
                             </div>
                             <div class="small inbox-thread-time">
                                 {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
@@ -114,8 +114,8 @@
             </div>
             <div class="card-header inbox-thread-header d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2">
                 <div class="inbox-thread-header-text">
-                    <div class="fw-semibold inbox-thread-header-title">{{ selected_label }}</div>
-                    {% if selected_label != selected_thread.phone %}
+                    <div class="fw-semibold inbox-thread-header-title">{{ (selected_label)|private_text }}</div>
+                    {% if can_view_contact_numbers and selected_label != selected_thread.phone %}
                     <div class="small text-muted inbox-thread-header-meta">{{ selected_thread.phone }}</div>
                     {% endif %}
                 </div>
@@ -125,7 +125,7 @@
                     </div>
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="d-none d-lg-block">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="search" value="{{ search }}">
+                        <input type="hidden" name="search" value="{{ (search)|private_text }}">
                         <button class="btn btn-sm btn-soft-danger" type="submit"
                                 data-confirm="Delete this thread and all related messages/survey data?">
                             <i class="bi bi-trash me-1"></i>Delete Thread
@@ -138,7 +138,7 @@
                     <summary class="small">Thread actions</summary>
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="mt-2 mb-0">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="search" value="{{ search }}">
+                        <input type="hidden" name="search" value="{{ (search)|private_text }}">
                         <button class="btn btn-sm btn-soft-danger w-100" type="submit"
                                 data-confirm="Delete this thread and all related messages/survey data?">
                             <i class="bi bi-trash me-1"></i>Delete thread
@@ -148,26 +148,28 @@
             </div>
 
             <div class="card-body d-flex flex-column" style="min-height: 480px;">
+                {% if can_edit_thread_name %}
                 <form method="POST" action="{{ url_for('main.inbox_thread_update', thread_id=selected_thread.id) }}" class="mb-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="search" value="{{ search }}">
+                    <input type="hidden" name="search" value="{{ (search)|private_text }}">
                     <label for="threadContactName" class="form-label">Thread contact name</label>
                     <div class="input-group">
                         <input id="threadContactName" name="contact_name" class="form-control" type="text"
-                               value="{{ selected_thread.contact_name or '' }}" maxlength="100"
+                               value="{{ (selected_thread.contact_name or '')|private_text }}" maxlength="100"
                                placeholder="Optional display name">
                         <button class="btn btn-outline-primary" type="submit">
                             <i class="bi bi-save me-1"></i>Save
                         </button>
                     </div>
                 </form>
+                {% else %}<p class="small text-muted">An owner must edit this contact name because its saved text includes a protected number.</p>{% endif %}
 
                 {% if active_sessions %}
                 <div class="alert alert-info py-2">
                     <i class="bi bi-info-circle me-1"></i>
                     Active survey:
                     {% for session in active_sessions %}
-                        <span class="badge bg-info text-dark">{{ session.survey.name }} (Q{{ (session.current_question_index or 0) + 1 }})</span>
+                        <span class="badge bg-info text-dark">{{ (session.survey.name)|private_text }} (Q{{ (session.current_question_index or 0) + 1 }})</span>
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -180,7 +182,7 @@
 
                 <form id="bulkMessageDeleteForm" method="POST" action="{{ url_for('main.inbox_messages_bulk_delete') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="search" value="{{ search }}">
+                    <input type="hidden" name="search" value="{{ (search)|private_text }}">
                     <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
                 </form>
                 <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-2">
@@ -202,23 +204,23 @@
                         <div class="d-flex mb-3 inbox-message-row {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
                             <div class="d-flex align-items-start inbox-message-row__inner {% if message.direction == 'outbound' %}flex-row-reverse{% endif %}">
                                 <input class="form-check-input js-message-select inbox-message-select" type="checkbox" name="message_ids"
-                                       value="{{ message.id }}" form="bulkMessageDeleteForm"
-                                       aria-label="Select message {{ message.id }}">
+                                       value="{{ (message.id)|private_text }}" form="bulkMessageDeleteForm"
+                                       aria-label="Select message {{ (message.id)|private_text }}">
                                 <div class="p-2 rounded inbox-message-bubble {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}">
-                                    <div class="small mb-1">{{ message.body }}</div>
+                                    <div class="small mb-1">{{ (message.body)|private_text }}</div>
                                     <div class="small inbox-message-meta {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
-                                        {{ message.direction|capitalize }} • {{ message.created_at|localtime('%b %d, %H:%M') }}
+                                        {{ (message.direction|capitalize)|private_text }} • {{ (message.created_at|localtime('%b %d, %H:%M'))|private_text }}
                                         {% if message.matched_keyword %}
                                             {% set keyword_origin = message_keyword_origins.get(message.id, 'unknown') %}
                                             {% if keyword_origin == 'current' %}
-                                                • keyword: <code>{{ message.matched_keyword }}</code>
+                                                • keyword: <code>{{ (message.matched_keyword)|private_text }}</code>
                                             {% else %}
                                                 • keyword hidden
                                                 <span class="badge rounded-pill text-bg-secondary">historical</span>
                                                 <details class="mt-1">
                                                     <summary class="small">Show historical keyword</summary>
                                                     <div class="small">
-                                                        Historical keyword: <code>{{ message.matched_keyword }}</code>
+                                                        Historical keyword: <code>{{ (message.matched_keyword)|private_text }}</code>
                                                         <div class="mt-1">
                                                             {% if keyword_origin == 'unknown' %}
                                                                 The original automation is unknown.
@@ -239,12 +241,12 @@
                                                 'pending': 'Awaiting delivery receipt', 'unknown': 'Delivery unconfirmed; receipt window expired',
                                                 'conflict': 'Conflicting delivery receipts'
                                             } %}
-                                            • {{ delivery_labels.get(message.delivery_status, message.delivery_status) }}
+                                            • {{ (delivery_labels.get(message.delivery_status, message.delivery_status))|private_text }}
                                         {% endif %}
                                     </div>
                                     {% if message.delivery_error %}
                                     <div class="small mt-1 inbox-delivery-error {% if message.direction == 'outbound' %}inbox-delivery-error--on-primary{% endif %}">
-                                        Delivery error: {{ message.delivery_error }}
+                                        Delivery error: {{ (message.delivery_error)|private_text }}
                                     </div>
                                     {% endif %}
                                 </div>

@@ -104,9 +104,9 @@
                                    aria-label="Select event" data-event-id="{{ event.id }}">
                         </td>
                         {% endif %}
-                        <td data-sort-value="{{ event.title }}">
+                        <td data-sort-value="{{ (event.title)|private_text }}">
                             <a href="{{ url_for('main.event_detail', event_id=event.id) }}" class="text-decoration-none">
-                                {{ event.title }}
+                                {{ (event.title)|private_text }}
                             </a>
                         </td>
                         <td data-sort-value="{{ event.date.isoformat() if event.date else '' }}">
@@ -138,7 +138,7 @@
                                 <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete event"
                                         data-bs-toggle="modal" data-bs-target="#deleteEventModal"
                                         data-form-id="delete-event-{{ event.id }}"
-                                        data-event-title="{{ event.title }}"
+                                        data-event-title="{{ (event.title)|private_text }}"
                                         data-registration-count="{{ event.registrations|length }}">
                                     <i class="bi bi-trash"></i><span class="row-action-label">Delete</span>
                                 </button>
@@ -187,7 +187,7 @@
             <div class="card-list-item">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
-                        <h6 class="mb-1">{{ event.title }}</h6>
+                        <h6 class="mb-1">{{ (event.title)|private_text }}</h6>
                         <div class="text-muted small">Date: {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</div>
                         <div class="text-muted small">Booking contacts: {{ event.contact_count }}</div>
                         <div class="text-muted small">Attendees: {{ event.attendee_count }}</div>
@@ -214,7 +214,7 @@
                     <button type="button" class="btn btn-sm btn-outline-danger"
                             data-bs-toggle="modal" data-bs-target="#deleteEventModal"
                             data-form-id="delete-event-mobile-{{ event.id }}"
-                            data-event-title="{{ event.title }}"
+                            data-event-title="{{ (event.title)|private_text }}"
                             data-registration-count="{{ event.registrations|length }}">
                         <i class="bi bi-trash"></i> Delete
                     </button>
@@ -250,7 +250,7 @@
     {% for event in events %}
     <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="eventPreview{{ event.id }}" aria-labelledby="eventPreviewTitle{{ event.id }}">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="eventPreviewTitle{{ event.id }}">{{ event.title }}</h5>
+            <h5 class="offcanvas-title" id="eventPreviewTitle{{ event.id }}">{{ (event.title)|private_text }}</h5>
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close preview"></button>
         </div>
         <div class="offcanvas-body">

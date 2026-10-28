@@ -269,7 +269,7 @@ class TestEventsRoutes(unittest.TestCase):
         member = self.CommunityMember.query.one()
         self.assertEqual(member.phone, "+15550002008")
 
-    def test_event_import_allows_social_manager(self) -> None:
+    def test_event_import_denies_staff_without_writing_contacts(self) -> None:
         event = self.Event(title="Manager Import")
         self.db.session.add(event)
         self.db.session.commit()
@@ -282,10 +282,9 @@ class TestEventsRoutes(unittest.TestCase):
             follow_redirects=True,
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Added 1 registrations.", response.data)
-        self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 1)
-        self.assertEqual(self.CommunityMember.query.filter_by(phone="+17205550204").count(), 1)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.EventRegistration.query.filter_by(event_id=event.id).count(), 0)
+        self.assertEqual(self.CommunityMember.query.filter_by(phone="+17205550204").count(), 0)
 
     def test_event_detail_uses_shared_summary_and_detail_layout(self) -> None:
         self._login()

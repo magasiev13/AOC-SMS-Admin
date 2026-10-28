@@ -44,7 +44,7 @@
                     required
                     autocomplete="tel"
                     placeholder="+15551234567"
-                    value="{{ current_user.phone or '' }}"
+                    value="{{ current_user.phone if can_view_contact_numbers else '' }}"
                 >
                 <div class="form-text">For US numbers, start with +1.</div>
             </div>

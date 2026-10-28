@@ -706,6 +706,49 @@ def _configure_security_headers(app: Flask) -> None:
 def _build_app() -> Flask:
     app = Flask(__name__)
 
+    @app.before_request
+    def bound_confidential_review_form():
+        # A sealed audience cannot use the compression of the former readable
+        # token. Permit its bounded confirmation field before CSRF parses it,
+        # within the existing total request limit; other forms keep their cap.
+        if request.endpoint == 'main.dashboard' and request.method == 'POST':
+            content_limit = app.config.get('MAX_CONTENT_LENGTH') or 2 * 1024 * 1024
+            request.max_form_memory_size = min(int(content_limit), 2 * 1024 * 1024)
+
+    from app.services.contact_privacy_service import (
+        can_view_phone_numbers, contact_display_label, redact_phone_numbers,
+        redact_private_json, staff_phone_privacy_applies,
+    )
+
+    @app.template_filter('private_text')
+    def private_text(value):
+        return redact_phone_numbers(value) if isinstance(value, str) and staff_phone_privacy_applies() else value
+
+    @app.context_processor
+    def inject_contact_privacy():
+        return {'can_view_contact_numbers': can_view_phone_numbers(),
+                'contact_label': contact_display_label}
+
+    @app.after_request
+    def protect_staff_response(response):
+        from flask_login import current_user
+        if current_user.is_authenticated and request.endpoint != 'static':
+            response.headers['Cache-Control'] = 'private, no-store'
+            response.headers['Pragma'] = 'no-cache'
+            response.vary.add('Cookie')
+        if not staff_phone_privacy_applies():
+            return response
+        from flask import session
+        # Flash data is also stored in the browser's signed (readable) session.
+        if session.get('_flashes'):
+            session['_flashes'] = [(category, redact_phone_numbers(message))
+                                   for category, message in session['_flashes']]
+        if response.is_json and not response.is_streamed:
+            payload = response.get_json(silent=True)
+            if payload is not None:
+                response.set_data(app.json.dumps(redact_private_json(payload)))
+        return response
+
     @app.context_processor
     def inject_app_version():
         return {
@@ -801,6 +844,34 @@ def _build_app() -> Flask:
     from app import routes
 
     app.register_blueprint(routes.bp)
+
+    from app.event_feedback_routes import bp as event_feedback_bp
+    app.register_blueprint(event_feedback_bp)
+
+    @app.before_request
+    def restrict_staff_phone_lookup():
+        if (staff_phone_privacy_applies() and request.endpoint
+                and request.endpoint.startswith(('main.', 'event_feedback.'))):
+            search = request.args.get('search', '')
+            if re.search(r'\d', search):
+                abort(400, description='Search by name or text. Phone lookup is restricted to workspace owners.')
+            from app.models import Event, InboxThread, KeywordAutomationRule, SurveyFlow
+            editors = {
+                'main.event_edit': (Event, 'event_id', ('title', 'sms_location_note')),
+                'main.keyword_rule_edit': (KeywordAutomationRule, 'rule_id', ('keyword', 'response_body')),
+                'main.survey_flow_edit': (SurveyFlow, 'survey_id', ('name', 'trigger_keyword', 'intro_message', 'questions_json', 'completion_message')),
+                'event_feedback.edit': (SurveyFlow, 'survey_id', ('name', 'trigger_keyword', 'intro_message', 'questions_json', 'completion_message')),
+                'main.inbox_thread_update': (InboxThread, 'thread_id', ('contact_name',)),
+            }
+            editor = editors.get(request.endpoint)
+            if editor:
+                from app.routes import _tenant_get_or_404
+                model, argument, attributes = editor
+                record = _tenant_get_or_404(model, request.view_args[argument])
+                if request.endpoint == 'event_feedback.edit' and record.feedback_event_id != request.view_args['event_id']:
+                    abort(404)
+                if any(redact_phone_numbers(getattr(record, field, '') or '') != str(getattr(record, field, '') or '') for field in attributes):
+                    abort(403, description='An owner must edit this record because its saved text includes a protected contact number.')
 
     return app
 

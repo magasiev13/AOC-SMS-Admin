@@ -11,16 +11,16 @@
     <div class="workspace-summary__header">
         <div class="workspace-summary__body">
             {% if eyebrow %}
-            <div class="workspace-summary__eyebrow">{{ eyebrow }}</div>
+            <div class="workspace-summary__eyebrow">{{ eyebrow|private_text }}</div>
             {% endif %}
-            <h2 class="workspace-summary__title">{{ title }}</h2>
+            <h2 class="workspace-summary__title">{{ title|private_text }}</h2>
             {% if copy %}
-            <p class="workspace-summary__copy">{{ copy }}</p>
+            <p class="workspace-summary__copy">{{ copy|private_text }}</p>
             {% endif %}
             {% if meta %}
             <div class="workspace-summary__meta" aria-label="Workspace context">
                 {% for item in meta %}
-                <span class="workspace-summary__meta-item">{{ item }}</span>
+                <span class="workspace-summary__meta-item">{{ item|private_text }}</span>
                 {% endfor %}
             </div>
             {% endif %}
@@ -29,7 +29,7 @@
             {% if badges %}
             <div class="workspace-summary__badges">
                 {% for badge in badges %}
-                <span class="badge {{ badge.class_name }}">{{ badge.label }}</span>
+                <span class="badge {{ badge.class_name }}">{{ badge.label|private_text }}</span>
                 {% endfor %}
             </div>
             {% endif %}
@@ -44,10 +44,10 @@
     <div class="workspace-summary__stats workspace-summary__stats--{{ stat_count_class }}" aria-label="Workspace highlights">
         {% for stat in stats %}
         <div class="workspace-summary__stat">
-            <div class="workspace-summary__stat-label">{{ stat.label }}</div>
+            <div class="workspace-summary__stat-label">{{ stat.label|private_text }}</div>
             <div class="workspace-summary__stat-value">{{ stat.value }}</div>
             {% if stat.meta %}
-            <div class="workspace-summary__stat-meta">{{ stat.meta }}</div>
+            <div class="workspace-summary__stat-meta">{{ stat.meta|private_text }}</div>
             {% endif %}
         </div>
         {% endfor %}

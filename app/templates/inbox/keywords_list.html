@@ -50,8 +50,8 @@
                         {% if rules %}
                             {% for rule in rules %}
                             <tr>
-                                <td><code>{{ rule.keyword }}</code></td>
-                                <td>{{ rule.response_body|truncate(120) }}</td>
+                            <td><code>{{ rule.keyword|private_text }}</code></td>
+                                <td>{{ (rule.response_body|private_text)|truncate(120) }}</td>
                                 <td>
                                     <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
                                         {{ 'Active' if rule.is_active else 'Inactive' }}
@@ -97,8 +97,8 @@
                     <div class="card-list-item">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                             <div>
-                                <h6 class="mb-1"><code>{{ rule.keyword }}</code></h6>
-                                <div class="text-muted small">{{ rule.response_body|truncate(120) }}</div>
+                            <h6 class="mb-1"><code>{{ rule.keyword|private_text }}</code></h6>
+                                <div class="text-muted small">{{ (rule.response_body|private_text)|truncate(120) }}</div>
                                 <div class="d-flex flex-wrap gap-2 mt-2">
                                     <span class="badge bg-{{ 'success' if rule.is_active else 'secondary' }}">
                                         {{ 'Active' if rule.is_active else 'Inactive' }}

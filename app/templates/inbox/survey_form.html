@@ -46,6 +46,7 @@
 {% endblock %}
 
 {% block content %}
+<div class="alert alert-info" role="note">An event-linked registration survey uses its first answer as the attendee name. For ratings or comments, open the event and choose <strong>Event feedback</strong>; feedback never changes registrations.</div>
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div class="workspace-form-layout workspace-form-layout--with-side">
@@ -134,7 +135,7 @@
                                             {% for event in events %}
                                             <option value="{{ event.id }}"
                                                     {% if (existing_event_id_value|string) == (event.id|string) %}selected{% endif %}>
-                                                {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                                {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
                                             </option>
                                             {% endfor %}
                                         </select>

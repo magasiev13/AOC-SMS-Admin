@@ -70,7 +70,7 @@
                 {% set target_sort = target_label ~ (': ' ~ log.event.title if log.event else '') %}
                 <tr>
                     <td data-sort-value="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ log.created_at|localtime }}</td>
-                    <td data-sort-value="{{ ('Test: ' if log.test_mode else '') ~ target_sort }}">
+                            <td data-sort-value="{{ (('Test: ' if log.test_mode else '') ~ target_sort)|private_text }}">
                         {% if log.test_mode %}
                         <span class="badge bg-warning text-dark mb-1">Test</span>
                         <br>
@@ -79,12 +79,12 @@
                             {{ log.target }}
                         </span>
                         {% if log.event %}
-                        <br><small class="text-muted">{{ log.event.title }}</small>
+                        <br><small class="text-muted">{{ (log.event.title)|private_text }}</small>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ log.message_body }}">
-                        <span title="{{ log.message_body }}">
-                            {{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}
+                    <td data-sort-value="{{ (log.message_body)|private_text }}">
+                        <span title="{{ (log.message_body)|private_text }}">
+                            {{ (log.message_body|private_text)[:50] }}{% if (log.message_body|private_text)|length > 50 %}...{% endif %}
                         </span>
                     </td>
                     <td data-sort-value="{{ log.total_recipients or 0 }}">
@@ -150,14 +150,14 @@
                             {% if log.test_mode %}
                             <span class="badge bg-warning text-dark me-1">Test</span>
                             {% endif %}
-                            {{ log.target }}{% if log.event %} · {{ log.event.title }}{% endif %}
+                            {{ log.target }}{% if log.event %} · {{ (log.event.title)|private_text }}{% endif %}
                         </div>
                         <div class="mt-1">
                             <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
                                 {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
                             </span>
                         </div>
-                        <div class="text-muted small">{{ log.message_body[:50] }}{% if log.message_body|length > 50 %}...{% endif %}</div>
+                        <div class="text-muted small">{{ (log.message_body|private_text)[:50] }}{% if (log.message_body|private_text)|length > 50 %}...{% endif %}</div>
                     </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
@@ -201,7 +201,7 @@
             <p class="mb-2"><strong>Target:</strong> {{ log.target }}</p>
             <p class="mb-2"><strong>Status:</strong> {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent')) }}</p>
             <p class="mb-2"><strong>Results:</strong> {{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }} / {{ log.failure_count }} failed</p>
-            <p class="mb-0"><strong>Message:</strong> {{ log.message_body }}</p>
+            <p class="mb-0"><strong>Message:</strong> {{ (log.message_body)|private_text }}</p>
         </div>
     </div>
     {% endfor %}
@@ -220,7 +220,7 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="alert alert-warning">
-                        <strong>Warning:</strong> {{ 'This permanently deletes logs without retained send evidence. Active logs and logs linked to saved requests or dispatch attempts are kept.' if config.SAAS_MODE else 'This will permanently delete all message logs. This action cannot be undone.' }}
+                        <strong>Warning:</strong> {{ ('This permanently deletes logs without retained send evidence. Active logs and logs linked to saved requests or dispatch attempts are kept.' if config.SAAS_MODE else 'This will permanently delete all message logs. This action cannot be undone.')|private_text }}
                     </div>
                     <div class="mb-3">
                         <label for="admin_password" class="form-label">Enter Admin Password to confirm:</label>

@@ -43,7 +43,7 @@
                 <div class="send-card__body">
                     {% if config.SAAS_MODE and current_organization and not can_send_messages %}
                     <div class="alert alert-warning" role="alert">
-                        <strong>Live SMS is paused.</strong> {{ send_disabled_reason }}
+                        <strong>Live SMS is paused.</strong> {{ (send_disabled_reason)|private_text }}
                     </div>
                     {% endif %}
                     <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}">
@@ -57,7 +57,7 @@
                         <div class="mb-3">
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
-                                      placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', '') }}</textarea>
+                                      placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
                             <div class="form-text">
                                 <span><span id="charCount">0</span> / 1600 characters</span>
                                 <span class="ms-2">Encoding: <span id="messageEncoding">GSM-7</span></span>
@@ -99,7 +99,7 @@
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
                                 <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
-                                    {{ event.title }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
+                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -192,10 +192,11 @@
                                             </div>
                                         </div>
 
+                                        {% if can_view_contact_numbers %}
                                         {% if saved_test_recipient_count == 1 %}
                                         <input type="hidden" name="test_recipient_phone" value="{{ saved_test_recipients[0].phone }}">
                                         <div class="small text-muted" id="singleTestRecipientSummary">
-                                            Sending to <strong>{{ saved_test_recipients[0].display_label }}</strong>
+                                            Sending to <strong>{{ (saved_test_recipients[0].display_label)|private_text }}</strong>
                                             <span class="ms-1"><code>{{ saved_test_recipients[0].phone }}</code></span>
                                         </div>
                                         {% else %}
@@ -205,10 +206,22 @@
                                                 <option value="">-- Select a saved test recipient --</option>
                                                 {% for recipient in saved_test_recipients %}
                                                 <option value="{{ recipient.phone }}" {% if request.form.get('test_recipient_phone') == recipient.phone %}selected{% endif %}>
-                                                    {{ recipient.display_label }} · {{ recipient.phone }}
+                                                    {{ (recipient.display_label)|private_text }} · {{ recipient.phone }}
                                                 </option>
                                                 {% endfor %}
                                             </select>
+                                        </div>
+                                        {% endif %}
+                                        {% else %}
+                                        <div class="mb-0" id="singleTestRecipientWrapper">
+                                            <label for="testRecipientPhone" class="form-label">Saved test contact</label>
+                                            <select class="form-select" id="testRecipientPhone" name="test_recipient_id">
+                                                <option value="">-- Select a saved test contact --</option>
+                                                {% for recipient in saved_test_recipients %}
+                                                <option value="{{ recipient.id }}" {% if request.form.get('test_recipient_id', type=int) == recipient.id or saved_test_recipient_count == 1 %}selected{% endif %}>{{ contact_label(recipient.label, recipient.id, 'Test contact') }}</option>
+                                                {% endfor %}
+                                            </select>
+                                            <div class="form-text">Your owner manages the saved numbers; staff select a contact by label.</div>
                                         </div>
                                         {% endif %}
                                         {% else %}
@@ -260,7 +273,7 @@
                 <div class="workspace-callout__title">Workspace activation in progress</div>
                 <p class="workspace-callout__copy">
                     {% if current_user_is_workspace_owner %}
-                    {{ send_disabled_reason or 'Finish setup to unlock live SMS sending.' }}
+                    {{ (send_disabled_reason or 'Finish setup to unlock live SMS sending.')|private_text }}
                     {% else %}
                     An owner or platform admin is finishing activation. You can keep preparing contacts, replies, and campaigns; live sending unlocks automatically when setup is complete.
                     {% endif %}
@@ -479,7 +492,7 @@
                                 <tbody>
                                     {% for item in top_keywords %}
                                     <tr>
-                                        <td><code>{{ item.keyword }}</code></td>
+                                        <td><code>{{ item.keyword|private_text }}</code></td>
                                         <td>{{ item.hits }}</td>
                                     </tr>
                                     {% endfor %}
@@ -512,7 +525,7 @@
                 <div class="activity-item activity-item--{% if log.failure_count == 0 %}success{% elif log.failure_count < log.success_count %}warning{% else %}danger{% endif %}">
                     <div class="activity-item__content">
                         <div class="activity-item__header">
-                            <div class="activity-item__title">{{ log.message_body|truncate(60) }}</div>
+                            <div class="activity-item__title">{{ (log.message_body|private_text)|truncate(60) }}</div>
                             <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
                         </div>
                         <div class="activity-item__meta">
@@ -525,7 +538,7 @@
                             </span>
                             {% endif %}
                             <span class="activity-item__badge activity-item__badge--info">
-                                {{ log.target|capitalize }}{% if log.event %}: {{ log.event.title }}{% endif %}
+                                {{ log.target|capitalize }}{% if log.event %}: {{ (log.event.title)|private_text }}{% endif %}
                             </span>
                             <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary ms-auto">
                                 Details <i class="bi bi-arrow-right"></i>
