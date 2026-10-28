@@ -1040,6 +1040,33 @@ def process_inbound_sms(payload: dict) -> dict:
         if session is not None and saas_mode_enabled():
             from app.services.automation_outbox_service import session_has_unsubmitted_reply
             pending_survey_reply = session_has_unsubmitted_reply(session.id)
+        # A complete feedback keyword is an explicit command, including when
+        # an older signup is awaiting a name. Never turn it into that answer.
+        # Keep paused forms recognizable so they cannot consume saved work.
+        feedback_command = None
+        if outbound_ready and normalized not in STOP_KEYWORDS:
+            active_survey = SurveyFlow.query.filter_by(
+                trigger_keyword=normalized, is_active=True,
+            ).first()
+            active_rule = None
+            if active_survey is None:
+                active_rule = KeywordAutomationRule.query.filter_by(
+                    keyword=normalized, is_active=True,
+                ).first()
+            # Preserved/imported rows can predate namespace validation. Prefer
+            # an active owner over an older paused row; current editors reject
+            # reuse rather than releasing a paused form's trigger.
+            if active_survey is not None and active_survey.is_event_feedback:
+                feedback_command = active_survey
+            elif (active_rule is None and session is not None
+                    and session.purpose == 'event_feedback'
+                    and normalize_keyword(session.survey.trigger_keyword) == normalized
+                    and (active_survey is None or active_survey.id == session.survey_id)):
+                feedback_command = session.survey
+            elif active_survey is None and active_rule is None:
+                feedback_command = SurveyFlow.query.filter_by(
+                    trigger_keyword=normalized, purpose='event_feedback',
+                ).order_by(SurveyFlow.id.desc()).first()
         if session is not None and outbound_ready and normalized not in STOP_KEYWORDS:
             inbound_message.automation_source = 'survey'
             inbound_message.automation_source_id = session.survey_id
@@ -1065,6 +1092,52 @@ def process_inbound_sms(payload: dict) -> dict:
                 status = 'opt_in'
             # Keep ordinary inbound messages without advancing a survey or
             # matching a keyword that cannot currently deliver its next reply.
+        elif feedback_command is not None:
+            inbound_message.automation_source = 'survey'
+            inbound_message.automation_source_id = feedback_command.id
+            matched_keyword = feedback_command.trigger_keyword
+            if (session is not None and session.survey_id == feedback_command.id
+                    and session.purpose == 'event_feedback'):
+                # Repeating the keyword is not an answer or a fresh start.
+                # An in-flight prompt already has its own durable identity.
+                if pending_survey_reply:
+                    status = 'survey_reply_pending'
+                else:
+                    questions = _questions_for_session(session)
+                    question_index = session.current_question_index or 0
+                    if 0 <= question_index < len(questions):
+                        pending_replies.append({
+                            'source': 'survey', 'source_id': session.survey_id,
+                            'body': questions[question_index],
+                        })
+                        status = 'survey_prompt_repeated'
+                    else:
+                        now = utc_now()
+                        session.status = 'cancelled'
+                        session.completed_at = session.last_activity_at = now
+                        pending_replies.append({
+                            'source': 'system', 'source_id': None,
+                            'body': 'This feedback form is no longer available. Please contact the organizer.',
+                        })
+                        status = 'feedback_unavailable'
+            elif not feedback_command.is_active:
+                pending_replies.append({
+                    'source': 'system', 'source_id': None,
+                    'body': 'This feedback form is paused. Your existing conversation has been kept. Please contact the organizer.',
+                })
+                status = 'feedback_paused'
+            else:
+                # The existing start helper cancels, but never completes or
+                # deletes, old sessions. Their unsent questions remain bound
+                # to the cancelled session; the outbox gate cancels them while
+                # preserving any previously accepted or uncertain submission.
+                session, replies = _start_survey(feedback_command, thread, phone)
+                for reply in replies:
+                    pending_replies.append({
+                        'source': 'survey', 'source_id': feedback_command.id,
+                        'body': reply,
+                    })
+                status = 'survey_started'
         elif session and normalized in SURVEY_CANCEL_KEYWORDS:
             now = utc_now()
             session.status = 'cancelled'
@@ -1150,6 +1223,9 @@ def process_inbound_sms(payload: dict) -> dict:
                 survey = None
                 for candidate in candidates:
                     survey = SurveyFlow.query.filter_by(trigger_keyword=candidate, is_active=True).first()
+                    if survey and survey.is_event_feedback and candidate != normalized:
+                        survey = None
+                        continue
                     if survey:
                         matched_keyword = candidate
                         break

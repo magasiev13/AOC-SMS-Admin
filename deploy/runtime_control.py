@@ -39,6 +39,7 @@ SHA_PATTERN = re.compile(r'^[a-f0-9]{40}$')
 FILE_STATES = {'enabled', 'enabled-runtime', 'disabled', 'masked', 'masked-runtime', 'static', 'indirect', 'linked', 'linked-runtime'}
 LEGACY_SAFE_SHA = 'ad7814b2946f3bec1c4e543e297e2e443340f619'
 FEEDBACK_PRIVACY_TRANSITION_SHA = '25cd1109cca886848f61425dd18439d6b8bbc9ff'
+FEEDBACK_COMMAND_TRANSITION_SHA = '8fcb642a79dcf54a18f95be5cf123e7e29d6de92'
 LEGACY_SAFETY_HASHES = {
     'app/models.py': 'd3af855a62d6e4cf271620bc48771e1894938c7daaacc8c3281fb5d314f62ccb',
     'app/services/delivery_status_service.py': '0b544eec2fe986298aeb15bcd649f39230fb51e85a00a19b09f9c81ce3252c7b',
@@ -278,12 +279,11 @@ class RuntimeController:
             if ceiling >= '028' and (contract.get('feedback_registration_isolation') is not True
                                      or contract.get('staff_phone_privacy') is not True):
                 raise RuntimeControlError('Recovery target predates the required feedback and staff contact privacy guards.')
-            # Schema 028 is additive, so an interrupted first promotion may
-            # recover its exact prior operating release. This is not authority
-            # for a later standalone downgrade that would expose staff numbers
-            # or forget the feedback/registration boundary. The original root
-            # capture and full Git source proof remain required.
-            if (sha == FEEDBACK_PRIVACY_TRANSITION_SHA and ceiling == '027'
+            # Only the original normal-operation capture can authorize either
+            # known baseline during its own failed first promotion. Neither
+            # contract exception grants a later standalone downgrade.
+            recovering_original_upgrade = False
+            if (sha in {FEEDBACK_PRIVACY_TRANSITION_SHA, FEEDBACK_COMMAND_TRANSITION_SHA}
                     and isinstance(transition_snapshot, dict)):
                 before = transition_snapshot.get('before_release') or {}
                 units = transition_snapshot.get('units') or {}
@@ -304,7 +304,19 @@ class RuntimeController:
                                 and row.get('unit_file_state') in FILE_STATES
                                 and not row.get('unit_file_state', '').startswith(('masked', 'linked'))
                                 for row in units.values())):
-                    ceiling = '028'
+                    recovering_original_upgrade = True
+            if ceiling >= '028' and contract.get('feedback_command_isolation') is not True:
+                current_identity = self.identity()
+                already_command_baseline = (sha == FEEDBACK_COMMAND_TRANSITION_SHA
+                    and current_identity and current_identity['source_sha'] == sha)
+                if not (already_command_baseline
+                        or (sha == FEEDBACK_COMMAND_TRANSITION_SHA and recovering_original_upgrade)):
+                    raise RuntimeControlError('Recovery target predates the required feedback command isolation guard. A standalone rollback would reintroduce registration identity mutation.')
+            # Schema 028 is additive. The original 027-to-028 promotion keeps
+            # its exact prior-source recovery path without widening the older
+            # pre-contract exception or waiving any retained Git source proof.
+            if sha == FEEDBACK_PRIVACY_TRANSITION_SHA and ceiling == '027' and recovering_original_upgrade:
+                ceiling = '028'
         current = self.current()
         current_versions = [p.name[:3] for p in (current / 'app/saas_migrations').glob('[0-9][0-9][0-9]_*.py')] if current else []
         if max(current_versions, default='000') > ceiling:

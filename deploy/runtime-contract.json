@@ -4,6 +4,7 @@
   "logout_session_revocation": true,
   "active_survey_session_guard": true,
   "feedback_registration_isolation": true,
+  "feedback_command_isolation": true,
   "staff_phone_privacy": true,
   "schema_min": "028",
   "schema_max": "028"

@@ -164,7 +164,7 @@ if mode is not None:target.chmod(mode)
                            binary=binary, temporary=tmp_path, sha=sha, new_sha=new_sha)
 
 
-def _release(root, name, *, schema='028'):
+def _release(root, name, *, schema='028', feedback_command_guard=True):
     relative_files = ['deploy/runtime_control.py', 'deploy/runtime_state.sh', 'app/services/twilio_service.py',
                       'app/services/delivery_status_service.py',
                       'app/saas_migrations/027_historical_usage_observation_boundary.py']
@@ -179,12 +179,14 @@ def _release(root, name, *, schema='028'):
         shutil.copyfile(REPOSITORY / relative, target)
     contract = root / 'deploy/runtime-contract.json'
     shutil.copyfile(REPOSITORY / 'deploy/runtime-contract.json', contract)
+    value = json.loads(contract.read_text())
     if schema == '027':
-        value = json.loads(contract.read_text())
         value.update(schema_min='027', schema_max='027')
         value.pop('feedback_registration_isolation', None)
         value.pop('staff_phone_privacy', None)
-        contract.write_text(json.dumps(value) + '\n')
+    if schema == '027' or not feedback_command_guard:
+        value.pop('feedback_command_isolation', None)
+    contract.write_text(json.dumps(value) + '\n')
     (root / 'fixture-source-name').write_text(name)
     subprocess.run(['git', '-C', str(root), 'add', *relative_files, 'deploy/runtime-contract.json', 'fixture-source-name'], check=True)
     subprocess.run(['git', '-C', str(root), '-c', 'user.name=Runtime fixture', '-c', 'user.email=runtime@fixture.test',
@@ -635,7 +637,8 @@ def test_a_captured_hold_cannot_authorize_legacy_recovery_even_if_its_receipt_is
 
 
 @pytest.mark.parametrize('missing_guard', ['logout_session_revocation', 'active_survey_session_guard',
-                                        'feedback_registration_isolation', 'staff_phone_privacy'])
+                                        'feedback_registration_isolation', 'staff_phone_privacy',
+                                        'feedback_command_isolation'])
 def test_reviewed_modern_release_without_a_required_guard_is_not_a_recovery_target(runtime, missing_guard):
     contract_path = runtime.root / 'deploy/runtime-contract.json'
     contract = json.loads(contract_path.read_text())
@@ -653,7 +656,7 @@ def test_reviewed_modern_release_without_a_required_guard_is_not_a_recovery_targ
     (target / 'release.json').write_text(json.dumps({'release_id': target.name, 'source_sha': sha}))
     (target / '.release.env').write_text(f'APP_RELEASE_ID={target.name}\nAPP_RELEASE_SHA={sha}\n')
     with pytest.raises(runtime.module.RuntimeControlError,
-                       match='account and survey safety guards|feedback and staff contact privacy guards'):
+                       match='account and survey safety guards|feedback and staff contact privacy guards|feedback command isolation guard'):
         runtime.controller.verify_target(target)
     assert _state(runtime)['calls'] == []
     assert _state(runtime)['provider_calls'] == []
@@ -664,6 +667,13 @@ def _feedback_prior_release(runtime, monkeypatch, *, pin=True):
     _switch(runtime, runtime.original)
     if pin:
         monkeypatch.setattr(runtime.module, 'FEEDBACK_PRIVACY_TRANSITION_SHA', runtime.sha)
+
+
+def _feedback_command_prior_release(runtime, monkeypatch, *, pin=True):
+    runtime.original, runtime.sha = _release(runtime.root, 'feedback-command-prior', feedback_command_guard=False)
+    _switch(runtime, runtime.original)
+    if pin:
+        monkeypatch.setattr(runtime.module, 'FEEDBACK_COMMAND_TRANSITION_SHA', runtime.sha)
 
 
 @pytest.mark.parametrize('kind', ['deploy', 'release', 'install'])
@@ -687,14 +697,40 @@ def test_feedback_upgrade_recovers_exact_prior_release_only_inside_original_capt
     assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
 
 
+@pytest.mark.parametrize('kind', ['deploy', 'release', 'install'])
+def test_feedback_command_upgrade_recovers_exact_prior_source_only_inside_original_capture(
+        runtime, monkeypatch, capsys, kind):
+    _feedback_command_prior_release(runtime, monkeypatch)
+    assert runtime.controller.verify_target(runtime.original)['source_sha'] == runtime.sha
+    snapshot = runtime.controller.capture(kind=kind)
+    _switch(runtime, runtime.candidate)
+    before = _operating_state(runtime)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='feedback command isolation guard'):
+        runtime.controller.verify_target(runtime.original)
+    state_file = runtime.state_root / 'transactions' / (snapshot['transaction_id'] + '.json')
+    runtime.module._write_json(state_file, snapshot)
+    assert runtime.module.main(['verify-target', '--state', str(state_file), '--target', str(runtime.original)]) == 0
+    assert json.loads(capsys.readouterr().out)['source_sha'] == runtime.sha
+    assert runtime.controller.current() == runtime.candidate
+    assert _operating_state(runtime) == before
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('transition', ['feedback-schema', 'feedback-command'])
 @pytest.mark.parametrize('mutation', [
     'rollback', 'restart', 'different-sha', 'different-path', 'different-release-id',
     'different-app-root', 'different-state-root', 'fresh-install', 'captured-hold',
     'missing-held-scope', 'captured-maintenance', 'missing-maintenance', 'missing-unit',
     'inactive-unit', 'linked-unit', 'unknown-unit-state', 'live-hold',
 ])
-def test_feedback_transition_cannot_widen_capture_identity_or_operating_scope(runtime, monkeypatch, mutation):
-    _feedback_prior_release(runtime, monkeypatch)
+def test_feedback_transition_cannot_widen_capture_identity_or_operating_scope(runtime, monkeypatch, mutation, transition):
+    if transition == 'feedback-schema':
+        _feedback_prior_release(runtime, monkeypatch)
+        expected = 'expanded schema'
+    else:
+        _feedback_command_prior_release(runtime, monkeypatch)
+        expected = 'feedback command isolation guard'
     snapshot = runtime.controller.capture(kind='deploy')
     _switch(runtime, runtime.candidate)
     if mutation in {'rollback', 'restart'}:
@@ -732,7 +768,7 @@ def test_feedback_transition_cannot_widen_capture_identity_or_operating_scope(ru
         runtime.controller.maintenance_file.write_text('{}\n')
     calls = list(_state(runtime)['calls'])
     before = _operating_state(runtime)
-    with pytest.raises(runtime.module.RuntimeControlError, match='expanded schema'):
+    with pytest.raises(runtime.module.RuntimeControlError, match=expected):
         runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
     assert runtime.controller.current() == runtime.candidate
     assert _operating_state(runtime) == before
@@ -750,9 +786,45 @@ def test_other_old_contract_cannot_inherit_feedback_transition_exception(runtime
     assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
 
 
+def test_other_old_feedback_source_cannot_inherit_command_transition_exception(runtime, monkeypatch):
+    _feedback_command_prior_release(runtime, monkeypatch, pin=False)
+    assert runtime.sha != runtime.module.FEEDBACK_COMMAND_TRANSITION_SHA
+    # Even an already-current, Git-matching different commit is not the exact
+    # reviewed corrective baseline and cannot use its one-time exception.
+    with pytest.raises(runtime.module.RuntimeControlError, match='feedback command isolation guard'):
+        runtime.controller.verify_target(runtime.original)
+    snapshot = runtime.controller.capture(kind='deploy')
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='feedback command isolation guard'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+def test_command_transition_cannot_select_sibling_copy_of_exact_prior_source(runtime, monkeypatch):
+    _feedback_command_prior_release(runtime, monkeypatch)
+    snapshot = runtime.controller.capture(kind='deploy')
+    sibling = runtime.root / 'releases' / 'feedback-command-prior-copy'
+    shutil.copytree(runtime.original, sibling)
+    identity = json.loads((sibling / 'release.json').read_text())
+    identity['release_id'] = sibling.name
+    (sibling / 'release.json').write_text(json.dumps(identity))
+    (sibling / '.release.env').write_text(f'APP_RELEASE_ID={sibling.name}\nAPP_RELEASE_SHA={runtime.sha}\n')
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='feedback command isolation guard'):
+        runtime.controller.verify_target(sibling, transition_snapshot=snapshot)
+    assert runtime.controller.current() == runtime.candidate
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('transition', ['feedback-schema', 'feedback-command'])
 @pytest.mark.parametrize('failure', ['newer-schema', 'changed-source', 'dead-owner'])
-def test_feedback_transition_does_not_waive_schema_source_or_live_cli_owner(runtime, monkeypatch, failure):
-    _feedback_prior_release(runtime, monkeypatch)
+def test_feedback_transition_does_not_waive_schema_source_or_live_cli_owner(runtime, monkeypatch, failure, transition):
+    if transition == 'feedback-schema':
+        _feedback_prior_release(runtime, monkeypatch)
+    else:
+        _feedback_command_prior_release(runtime, monkeypatch)
     snapshot = runtime.controller.capture(kind='deploy')
     _switch(runtime, runtime.candidate)
     if failure == 'newer-schema':
