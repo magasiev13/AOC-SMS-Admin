@@ -686,6 +686,11 @@ def _event_registration_name_for_session(session: SurveySession) -> str | None:
 
 def _sync_linked_event_registration(session: SurveySession) -> None:
     survey = session.survey
+    # Feedback completion is never a registration transition. Both the frozen
+    # session purpose and the current flow are checked so a later flow edit
+    # cannot turn saved feedback into an attendee name or signup.
+    if session.purpose == 'event_feedback' or (survey and survey.is_event_feedback):
+        return
     if not survey or not survey.linked_event_id:
         return
 
@@ -715,13 +720,20 @@ def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[
         survey=survey,
         thread=thread,
         phone=phone,
+        purpose=survey.purpose or 'survey',
         status='active',
         current_question_index=0,
         started_at=now,
         last_activity_at=now,
     )
-    survey.start_count = (survey.start_count or 0) + 1
     db.session.add(session)
+    if survey.is_event_feedback:
+        with db.session.no_autoflush:
+            session.feedback_event_id = survey.feedback_event_id
+            session.feedback_event_title = survey.feedback_event.title if survey.feedback_event else None
+            session.feedback_questions_json = json.dumps(survey.questions)
+            session.feedback_completion_message = survey.completion_message
+    survey.start_count = (survey.start_count or 0) + 1
 
     replies: list[str] = []
     if survey.intro_message:
@@ -740,10 +752,25 @@ def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[
     return session, replies
 
 
+def _questions_for_session(session: SurveySession) -> list[str]:
+    if session.purpose == 'event_feedback':
+        try:
+            questions = json.loads(session.feedback_questions_json or '[]')
+        except (ValueError, TypeError):
+            return []
+        if not isinstance(questions, list) or not all(isinstance(question, str) for question in questions):
+            return []
+        return questions
+    return session.survey.questions
+
+
 def _advance_survey(session: SurveySession, inbound_text: str) -> list[str]:
     now = utc_now()
     survey = session.survey
-    questions = survey.questions
+    questions = _questions_for_session(session)
+    if session.purpose == 'event_feedback' and not questions:
+        session.status, session.completed_at, session.last_activity_at = 'cancelled', now, now
+        return ['This feedback form is no longer available. Please contact the organizer.']
     current_index = session.current_question_index or 0
 
     if current_index < len(questions):
@@ -771,8 +798,10 @@ def _advance_survey(session: SurveySession, inbound_text: str) -> list[str]:
         session.completed_at = now
         survey.completion_count = (survey.completion_count or 0) + 1
         _sync_linked_event_registration(session)
-        if survey.completion_message:
-            replies.append(survey.completion_message.strip())
+        completion_message = (session.feedback_completion_message
+                              if session.purpose == 'event_feedback' else survey.completion_message)
+        if completion_message:
+            replies.append(completion_message.strip())
     return replies
 
 
@@ -896,7 +925,7 @@ def _is_ambiguous_rapid_repeat_survey_answer(
 
 def _survey_confirmation_prompt(session: SurveySession, candidate_answer: str) -> str:
     compact_answer = ' '.join((candidate_answer or '').split())[:80]
-    questions = session.survey.questions
+    questions = _questions_for_session(session)
     current_index = session.current_question_index or 0
     question_prompt = questions[current_index] if current_index < len(questions) else 'the current question'
     return (

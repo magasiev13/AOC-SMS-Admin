@@ -91,10 +91,10 @@
                         {% elif msg.target == 'community' %}
                         <span class="badge bg-primary">Community</span>
                         {% else %}
-                        <span class="badge bg-info">Event: {{ msg.event.title if msg.event else 'Unknown' }}</span>
+                        <span class="badge bg-info">Event: {{ (msg.event.title if msg.event else 'Unknown')|private_text }}</span>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
+                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body[:80])|private_text }}{% if msg.message_body|length > 80 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
@@ -141,7 +141,7 @@
                         {% endif %}
                         {{ msg.target }}
                     </div>
-                    <div class="text-muted small">{{ msg.message_body[:80] }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
+                    <div class="text-muted small">{{ (msg.message_body[:80])|private_text }}{% if msg.message_body|length > 80 %}...{% endif %}</div>
                 </div>
                 <input class="form-check-input js-select-row" type="checkbox" id="pending-select-mobile-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
             </div>
@@ -246,9 +246,9 @@
                         {% elif msg.status == 'processing' %}
                         <span class="badge bg-info text-dark">Processing</span>
                         {% elif msg.status == 'failed' %}
-                        <span class="badge bg-danger" title="{{ msg.error_message }}">Failed</span>
+                        <span class="badge bg-danger" title="{{ (msg.error_message)|private_text }}">Failed</span>
                         {% elif msg.status == 'expired' %}
-                        <span class="badge bg-warning text-dark" title="{{ msg.error_message }}">Expired</span>
+                        <span class="badge bg-warning text-dark" title="{{ (msg.error_message)|private_text }}">Expired</span>
                         {% elif msg.status == 'cancelled' %}
                         <span class="badge bg-secondary">Cancelled</span>
                         {% endif %}
@@ -256,7 +256,7 @@
                         <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
                         {% endif %}
                         {% if msg.error_message %}
-                        <div class="small text-muted text-break mt-2">{{ msg.error_message }}</div>
+                        <div class="small text-muted text-break mt-2">{{ (msg.error_message)|private_text }}</div>
                         {% endif %}
                     </td>
                     <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
@@ -268,7 +268,7 @@
                         <span class="badge bg-info">Event</span>
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ msg.message_body }}">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
+                    <td data-sort-value="{{ (msg.message_body)|private_text }}">{{ (msg.message_body[:50])|private_text }}{% if msg.message_body|length > 50 %}...{% endif %}</td>
                     <td>
                         <div class="d-flex flex-wrap gap-2 row-actions" data-row-actions>
                             <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview scheduled message" title="Preview"
@@ -335,9 +335,9 @@
                         {% endif %}
                         {{ msg.target }}
                     </div>
-                    <div class="text-muted small">{{ msg.message_body[:50] }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
+                    <div class="text-muted small">{{ (msg.message_body[:50])|private_text }}{% if msg.message_body|length > 50 %}...{% endif %}</div>
                     {% if msg.error_message %}
-                    <div class="small text-muted text-break mt-2">{{ msg.error_message }}</div>
+                    <div class="small text-muted text-break mt-2">{{ (msg.error_message)|private_text }}</div>
                     {% endif %}
                 </div>
                 {% if msg.id not in protected_delete_ids|default([]) %}
@@ -393,9 +393,9 @@
             </p>
             <p class="mb-2"><strong>Status:</strong> {{ msg.status|capitalize }}</p>
             {% if msg.error_message %}
-            <p class="mb-2 text-break">{{ msg.error_message }}</p>
+            <p class="mb-2 text-break">{{ (msg.error_message)|private_text }}</p>
             {% endif %}
-            <p class="mb-0"><strong>Message:</strong> {{ msg.message_body }}</p>
+            <p class="mb-0"><strong>Message:</strong> {{ (msg.message_body)|private_text }}</p>
         </div>
     </div>
     {% endfor %}

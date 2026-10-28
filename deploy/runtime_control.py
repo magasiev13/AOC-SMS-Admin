@@ -38,6 +38,7 @@ DEFAULT_MAINTENANCE_FILE = '/var/lib/twinevia-saas/runtime-maintenance.json'
 SHA_PATTERN = re.compile(r'^[a-f0-9]{40}$')
 FILE_STATES = {'enabled', 'enabled-runtime', 'disabled', 'masked', 'masked-runtime', 'static', 'indirect', 'linked', 'linked-runtime'}
 LEGACY_SAFE_SHA = 'ad7814b2946f3bec1c4e543e297e2e443340f619'
+FEEDBACK_PRIVACY_TRANSITION_SHA = '25cd1109cca886848f61425dd18439d6b8bbc9ff'
 LEGACY_SAFETY_HASHES = {
     'app/models.py': 'd3af855a62d6e4cf271620bc48771e1894938c7daaacc8c3281fb5d314f62ccb',
     'app/services/delivery_status_service.py': '0b544eec2fe986298aeb15bcd649f39230fb51e85a00a19b09f9c81ce3252c7b',
@@ -270,8 +271,40 @@ class RuntimeController:
             if contract.get('logout_session_revocation') is not True or contract.get('active_survey_session_guard') is not True:
                 raise RuntimeControlError('Recovery target predates the required account and survey safety guards.')
             ceiling = str(contract.get('schema_max') or '')
-            if not re.fullmatch(r'\d{3}', ceiling) or str(contract.get('schema_min') or '') > '027':
+            floor = str(contract.get('schema_min') or '')
+            if (not re.fullmatch(r'\d{3}', ceiling) or not re.fullmatch(r'\d{3}', floor)
+                    or floor > ceiling or floor > '028'):
                 raise RuntimeControlError('Recovery target schema contract is invalid.')
+            if ceiling >= '028' and (contract.get('feedback_registration_isolation') is not True
+                                     or contract.get('staff_phone_privacy') is not True):
+                raise RuntimeControlError('Recovery target predates the required feedback and staff contact privacy guards.')
+            # Schema 028 is additive, so an interrupted first promotion may
+            # recover its exact prior operating release. This is not authority
+            # for a later standalone downgrade that would expose staff numbers
+            # or forget the feedback/registration boundary. The original root
+            # capture and full Git source proof remain required.
+            if (sha == FEEDBACK_PRIVACY_TRANSITION_SHA and ceiling == '027'
+                    and isinstance(transition_snapshot, dict)):
+                before = transition_snapshot.get('before_release') or {}
+                units = transition_snapshot.get('units') or {}
+                if (transition_snapshot.get('version') == 1
+                        and transition_snapshot.get('kind') in {'deploy', 'release', 'install'}
+                        and transition_snapshot.get('app_root') == str(self.app_root)
+                        and transition_snapshot.get('state_root') == str(self.state_root)
+                        and transition_snapshot.get('fresh_install') is False
+                        and transition_snapshot.get('held_units') == []
+                        and transition_snapshot.get('maintenance_before', 'unavailable') is None
+                        and not self.maintenance_file.exists() and not self.maintenance_file.is_symlink()
+                        and isinstance(before, dict) and isinstance(units, dict)
+                        and before.get('source_sha') == sha and before.get('path') == str(path)
+                        and before.get('release_id') == identity['release_id']
+                        and set(units) == set(RUNTIME_UNITS)
+                        and all(isinstance(row, dict)
+                                and row.get('load_state') == 'loaded' and row.get('active_state') == 'active'
+                                and row.get('unit_file_state') in FILE_STATES
+                                and not row.get('unit_file_state', '').startswith(('masked', 'linked'))
+                                for row in units.values())):
+                    ceiling = '028'
         current = self.current()
         current_versions = [p.name[:3] for p in (current / 'app/saas_migrations').glob('[0-9][0-9][0-9]_*.py')] if current else []
         if max(current_versions, default='000') > ceiling:

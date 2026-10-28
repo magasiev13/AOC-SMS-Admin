@@ -3,6 +3,8 @@
   "historical_usage_observation_boundary": true,
   "logout_session_revocation": true,
   "active_survey_session_guard": true,
-  "schema_min": "027",
-  "schema_max": "027"
+  "feedback_registration_isolation": true,
+  "staff_phone_privacy": true,
+  "schema_min": "028",
+  "schema_max": "028"
 }

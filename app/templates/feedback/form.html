@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if flow else 'Create' }} feedback - {{ product_name }}{% endblock %}
+{% block page_title %}{{ 'Edit' if flow else 'Create' }} event feedback{% endblock %}
+{% block breadcrumbs %}<a href="{{ url_for('main.events_list') }}">Events</a> / <a href="{{ url_for('event_feedback.index', event_id=event.id) }}">Feedback</a> / <span>{{ 'Edit' if flow else 'Create' }}</span>{% endblock %}
+{% block content %}
+<div class="workspace-shell">
+    <section class="workspace-summary"><div class="workspace-summary__header"><div class="workspace-summary__body">
+        <div class="workspace-summary__eyebrow">{{ feedback_display(event.title) }}</div><h2 class="workspace-summary__title">Ask for feedback by text</h2>
+        <p class="workspace-summary__copy">People reply with the keyword, then answer one question at a time. Their answers will not create a registration or change an attendee name.</p>
+    </div></div></section>
+    <div class="workspace-form-layout workspace-form-layout--centered"><div class="workspace-form-main">
+        <section class="workspace-panel"><form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="workspace-panel__body">
+                <div class="mb-3"><label class="form-label" for="feedback_name">Feedback name</label><input id="feedback_name" class="form-control" name="name" required maxlength="120" value="{{ feedback_display(form_data.name) }}"><div class="form-text">An internal name for finding this feedback later.</div></div>
+                <div class="mb-3"><label class="form-label" for="feedback_keyword">Reply keyword</label><input id="feedback_keyword" class="form-control" name="trigger_keyword" required maxlength="40" value="{{ feedback_display(form_data.trigger_keyword) }}" autocomplete="off"><div class="form-text">Use a unique keyword. STOP, HELP and other messaging controls remain reserved.</div></div>
+                <div class="mb-3"><label class="form-label" for="feedback_intro">Intro message</label><textarea id="feedback_intro" class="form-control" name="intro_message" rows="3" maxlength="1600">{{ feedback_display(form_data.intro_message) }}</textarea></div>
+                <div class="mb-3"><label class="form-label" for="feedback_questions">Questions</label><textarea id="feedback_questions" class="form-control" name="questions" rows="6" required aria-describedby="feedback_questions_help">{{ feedback_display(form_data.questions) }}</textarea><div class="form-text" id="feedback_questions_help">One question per line, up to 10 questions and 320 characters per question. Start with a rating or comment; a name is not required.</div></div>
+                <div class="mb-3"><label class="form-label" for="feedback_completion">Thank-you message</label><textarea id="feedback_completion" class="form-control" name="completion_message" rows="2" maxlength="1600">{{ feedback_display(form_data.completion_message) }}</textarea></div>
+                <div class="form-check"><input id="feedback_active" class="form-check-input" type="checkbox" name="is_active"{% if form_data.is_active %} checked{% endif %}><label class="form-check-label" for="feedback_active">Accept new feedback conversations</label></div>
+                {% if flow %}<p class="small text-muted mt-3 mb-0">People who already started keep their original questions and event context. Edits apply to new conversations.</p>{% endif %}
+            </div>
+            <div class="workspace-panel__footer"><div class="workspace-form-actions"><button class="btn btn-primary" type="submit">{{ 'Save feedback' if flow else 'Create feedback' }}</button><a class="btn btn-outline-secondary" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) if flow else url_for('event_feedback.index', event_id=event.id) }}">Cancel</a></div></div>
+        </form></section>
+    </div></div>
+</div>
+{% endblock %}

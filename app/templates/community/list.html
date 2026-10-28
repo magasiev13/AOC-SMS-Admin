@@ -27,6 +27,7 @@
 {% endblock %}
 
 {% block content %}
+{% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and dataset exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
 <div class="collection-shell">
     <nav class="d-flex flex-wrap gap-2" aria-label="Community view">
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'contactable' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', search=search) }}"{% if audience_view == 'contactable' %} aria-current="page"{% endif %}>Contactable</a>
@@ -35,7 +36,7 @@
     <p class="small text-muted mb-0">{{ 'Contactable hides opted-out and suppressed numbers automatically. Their records remain in All contacts and never receive a send while blocked.' if audience_view == 'contactable' else 'All contacts includes retained opt-outs and suppressed numbers. Showing a record here does not make it eligible to receive messages.' }}</p>
     {% call ui.collection_search_panel(
         url_for('main.community_list'),
-        'Search by name or phone',
+        'Search by name or phone' if can_view_contact_numbers else 'Search by name',
         search,
         'Search community members',
         'Search community',
@@ -86,12 +87,12 @@
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
-                    <th data-sort-type="phone">
+                    {% if can_view_contact_numbers %}<th data-sort-type="phone">
                         <button type="button" class="sort-button" data-sort-key="phone">
                             <span>Phone</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
-                    </th>
+                    </th>{% endif %}
                     <th>Community SMS</th>
                     <th data-sort-type="date">
                         <button type="button" class="sort-button" data-sort-key="added">
@@ -114,8 +115,8 @@
                             <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids" value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select member">
                         </td>
                         {% endif %}
-                        <td data-sort-value="{{ member.name or '' }}">{{ member.name or '-' }}</td>
-                        <td data-sort-value="{{ member.phone }}"><code>{{ member.phone }}</code></td>
+                        <td data-sort-value="{{ (member.name or '')|private_text }}">{{ contact_label(member.name, member.id) }}</td>
+                        {% if can_view_contact_numbers %}<td data-sort-value="{{ member.phone }}"><code>{{ member.phone }}</code></td>{% endif %}
                         <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else permission_statuses[member.phone].decision }}">
                             {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}
                             {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review permission</a></div>{% endif %}
@@ -128,7 +129,7 @@
                             <div class="row-actions community-row-actions" data-row-actions data-row-actions-primary="2">
                                 <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview member" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
-                                        data-member-name="{{ member.name or 'Member preview' }}" data-member-phone="{{ member.phone }}"
+                                        data-member-name="{{ (member.name or 'Member preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
                                         data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
                                         data-member-status="{{ 'Unsubscribed' if is_unsubscribed else ('Suppressed' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                                         {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
@@ -140,13 +141,13 @@
                                 </a>
                                 {% if not is_unsubscribed %}
                                 <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe member"
-                                        data-confirm="Unsubscribe {{ member.name or member.phone }}? This will add them to the suppression list.">
+                                        data-confirm="Unsubscribe {{ (member.name or member.phone)|private_text }}? This will add them to the suppression list.">
                                     <i class="bi bi-person-x"></i>
                                 </button>
                                 {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete member"
                                         data-bs-toggle="modal" data-bs-target="#deleteModal" 
-                                        data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
+                                        data-member-name="{{ (member.name)|private_text }}" data-form-id="delete-member-{{ member.id }}">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </div>
@@ -205,8 +206,8 @@
             <div class="card-list-item">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
-                        <h6 class="mb-1">{{ member.name or '-' }}</h6>
-                        <div class="text-muted small"><code>{{ member.phone }}</code></div>
+                        <h6 class="mb-1">{{ contact_label(member.name, member.id) }}</h6>
+                        {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ member.phone }}</code></div>{% endif %}
                         <div class="small mt-1">Community SMS: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
                         {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review permission</a></div>{% endif %}
                         <div class="text-muted small">Added {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</div>
@@ -220,7 +221,7 @@
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions data-row-actions-primary="2">
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
-                            data-member-name="{{ member.name or 'Member preview' }}" data-member-phone="{{ member.phone }}"
+                            data-member-name="{{ (member.name or 'Member preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
                             data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
                             data-member-status="{{ 'Unsubscribed' if is_unsubscribed else ('Suppressed' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                             {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
@@ -231,13 +232,13 @@
                     </a>
                     {% if not is_unsubscribed %}
                     <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning"
-                            data-confirm="Unsubscribe {{ member.name or member.phone }}? This will add them to the suppression list.">
+                            data-confirm="Unsubscribe {{ (member.name or member.phone)|private_text }}? This will add them to the suppression list.">
                         <i class="bi bi-person-x"></i> Unsubscribe
                     </button>
                     {% endif %}
                     <button type="button" class="btn btn-sm btn-outline-danger"
                             data-bs-toggle="modal" data-bs-target="#deleteModal"
-                            data-member-name="{{ member.name }}" data-form-id="delete-member-{{ member.id }}">
+                            data-member-name="{{ (member.name)|private_text }}" data-form-id="delete-member-{{ member.id }}">
                         <i class="bi bi-trash"></i> Delete
                     </button>
                 </div>

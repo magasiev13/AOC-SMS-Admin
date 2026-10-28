@@ -1512,13 +1512,16 @@ class SurveyFlow(db.Model):
     questions_json = db.Column(db.Text, nullable=False, default='[]')
     completion_message = db.Column(db.Text, nullable=True)
     linked_event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=True, index=True)
+    purpose = db.Column(db.String(24), nullable=False, default='survey', server_default='survey')
+    feedback_event_id = db.Column(db.Integer, db.ForeignKey('events.id', ondelete='SET NULL'), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     start_count = db.Column(db.Integer, default=0, nullable=False)
     completion_count = db.Column(db.Integer, default=0, nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
-    linked_event = db.relationship('Event')
+    linked_event = db.relationship('Event', foreign_keys=[linked_event_id])
+    feedback_event = db.relationship('Event', foreign_keys=[feedback_event_id])
     organization = db.relationship('Organization')
     sessions = db.relationship('SurveySession', back_populates='survey')
     responses = db.relationship('SurveyResponse', back_populates='survey')
@@ -1531,6 +1534,17 @@ class SurveyFlow(db.Model):
     @validates('trigger_keyword')
     def _normalize_trigger_keyword(self, key, value):
         return normalize_keyword(value)
+
+    @validates('purpose')
+    def _normalize_purpose(self, key, value):
+        purpose = (value or 'survey').strip().lower()
+        if purpose not in {'survey', 'event_feedback'}:
+            raise ValueError('Survey purpose must be survey or event_feedback.')
+        return purpose
+
+    @property
+    def is_event_feedback(self) -> bool:
+        return self.purpose == 'event_feedback'
 
     @property
     def questions(self) -> list[str]:
@@ -1559,6 +1573,13 @@ class SurveySession(db.Model):
     thread_id = db.Column(db.Integer, db.ForeignKey('inbox_threads.id'), nullable=False, index=True)
     phone = db.Column(db.String(20), nullable=False, index=True)
     status = db.Column(db.String(20), default='active', nullable=False)  # active/completed/cancelled
+    purpose = db.Column(db.String(24), nullable=False, default='survey', server_default='survey')
+    # Feedback origin is immutable evidence, rather than a live registration link.
+    # Keep its ID/title if an event or flow is later renamed or removed.
+    feedback_event_id = db.Column(db.Integer, nullable=True, index=True)
+    feedback_event_title = db.Column(db.String(200), nullable=True)
+    feedback_questions_json = db.Column(db.Text, nullable=True)
+    feedback_completion_message = db.Column(db.Text, nullable=True)
     current_question_index = db.Column(db.Integer, default=0, nullable=False)
     started_at = db.Column(db.DateTime, default=utc_now, nullable=False)
     last_activity_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now, nullable=False)

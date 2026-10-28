@@ -34,6 +34,10 @@ from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
 from app.services.send_review_service import SendReviewInputError
+from app.services.contact_privacy_service import (
+    can_view_phone_numbers, contact_display_label, redact_phone_numbers,
+    require_contact_export_permission, staff_phone_privacy_applies,
+)
 from app.services.audience_service import (
     community_query, current_audience_counts, current_event_predicate, event_is_current,
     event_registrations_query, events_query,
@@ -3526,6 +3530,8 @@ def _build_survey_submission_data(
             or first_answer
             or session.phone
         )
+        if staff_phone_privacy_applies():
+            display_name = contact_display_label(display_name, session.thread_id, 'Contact')
         if selected_preview_indexes:
             answer_preview_items = [answers[index] for index in selected_preview_indexes if answers[index]]
         else:
@@ -3553,7 +3559,7 @@ def _build_survey_submission_data(
         }
         if latest_session_by_phone.get(session.phone) == session.id:
             row['submission_count'] = submission_counts.get(session.phone, 0)
-            row['phone_dom_id'] = re.sub(r'[^0-9]', '', str(session.phone)) or f"phone{session.id}"
+            row['phone_dom_id'] = f'session{session.id}'
             latest_rows.append(row)
         else:
             history_by_phone.setdefault(str(session.phone), []).append(row)
@@ -3834,6 +3840,8 @@ def _bounded_recipient_snapshot_json(recipient_data: list[dict]) -> str:
 
 
 def _csv_download_response(filename: str, rows: object) -> Response:
+    if not can_view_phone_numbers():
+        abort(403)
     response = Response(stream_with_context(_stream_csv_rows(rows)), mimetype='text/csv')
     response.headers['Content-Disposition'] = f'attachment; filename={filename}'
     return response
@@ -4190,6 +4198,26 @@ def platform_restart_services():
 
 
 # Dashboard - Send Messages
+def _selected_test_recipient_phone(form):
+    if not staff_phone_privacy_applies():
+        return (form.get('test_recipient_phone') or '').strip()
+    if form.get('test_recipient_phone'):
+        raise SendReviewInputError('Choose a saved test contact by its label.')
+    if normalize_test_recipient_selection_mode(form.get('test_recipient_selection_mode')) == 'all':
+        return ''
+    try:
+        recipient_id = int(form.get('test_recipient_id') or 0)
+    except (TypeError, ValueError) as exc:
+        raise SendReviewInputError('Choose a saved test contact.') from exc
+    from app.models import OrganizationTestRecipient
+    recipient = OrganizationTestRecipient.query.filter_by(
+        organization_id=_current_organization_id(), id=recipient_id,
+    ).first()
+    if recipient is None:
+        raise SendReviewInputError('Choose a saved test contact.')
+    return recipient.phone
+
+
 def _send_review_intent(form):
     body = normalize_sms_body(form.get('message_body', '').strip())
     if not body:
@@ -4214,7 +4242,7 @@ def _send_review_intent(form):
         'message_body': body + (BLAST_UNSUBSCRIBE_FOOTER if form.get('include_unsubscribe') == 'on' else ''),
         'target': target, 'event_id': event_id, 'test_mode': test_mode,
         'test_recipient_selection_mode': normalize_test_recipient_selection_mode(form.get('test_recipient_selection_mode')) if test_mode else None,
-        'test_recipient_phone': normalize_phone(form.get('test_recipient_phone', '')) if test_mode else None,
+        'test_recipient_phone': normalize_phone(_selected_test_recipient_phone(form)) if test_mode else None,
         'schedule_later': schedule,
         'schedule_date': form.get('schedule_date', '').strip() if schedule else None,
         'schedule_time': form.get('schedule_time', '').strip() if schedule else None,
@@ -4325,6 +4353,18 @@ def dashboard():
     selected_target = selection.get('target', 'community')
     selected_event_id = selection.get('event_id', type=int) if selected_target == 'event' else None
     selected_past_event = None
+    feedback_invitation = None
+    feedback_id = selection.get('feedback_id', type=int)
+    if feedback_id:
+        if selected_target != 'event' or not selected_event_id:
+            abort(404)
+        from app.services.event_feedback_service import get_event_feedback_or_404, feedback_invitation_text
+        feedback_event = _tenant_get_or_404(Event, selected_event_id)
+        feedback_flow = get_event_feedback_or_404(feedback_event, feedback_id)
+        if not feedback_flow.is_active:
+            flash('This feedback flow is archived. Activate it before inviting replies.', 'warning')
+        else:
+            feedback_invitation = feedback_invitation_text(feedback_flow, feedback_event)
     if selected_event_id and selected_event_id not in {event.id for event in events}:
         # Past audiences remain available through an explicit history/follow-up
         # action. Event dates do not withdraw permission or rewrite a saved send.
@@ -4542,6 +4582,7 @@ def dashboard():
             'selected_target': selected_target,
             'selected_event_id': selected_event_id,
             'selected_past_event': selected_past_event,
+            'feedback_invitation': feedback_invitation,
             'users_missing_email': users_missing_email,
             'saved_test_recipients': saved_test_recipients,
             'saved_test_recipient_count': len(saved_test_recipients),
@@ -4587,7 +4628,11 @@ def dashboard():
         test_recipient_selection_mode = normalize_test_recipient_selection_mode(
             request.form.get('test_recipient_selection_mode')
         )
-        test_recipient_phone = request.form.get('test_recipient_phone', '').strip()
+        try:
+            test_recipient_phone = _selected_test_recipient_phone(request.form) if test_mode else ''
+        except SendReviewInputError as exc:
+            flash(exc.public_message, 'error')
+            return render_dashboard()
         include_unsubscribe = request.form.get('include_unsubscribe') == 'on'
         schedule_later = request.form.get('schedule_later') == 'on'
         schedule_date = request.form.get('schedule_date', '').strip()
@@ -7905,13 +7950,14 @@ def community_list():
         pattern = f'%{escaped}%'
         search_filters = [
             CommunityMember.name.ilike(pattern, escape='\\'),
-            CommunityMember.phone.ilike(pattern, escape='\\'),
         ]
+        if can_view_phone_numbers():
+            search_filters.append(CommunityMember.phone.ilike(pattern, escape='\\'))
         normalized_search_phone = normalize_phone(search)
-        if validate_phone(normalized_search_phone):
+        if can_view_phone_numbers() and validate_phone(normalized_search_phone):
             search_filters.append(CommunityMember.phone == normalized_search_phone)
         search_digits = re.sub(r'\D', '', search)
-        if search_digits:
+        if can_view_phone_numbers() and search_digits:
             digits_pattern = f'%{escape_like(search_digits)}%'
             search_filters.append(phone_digits_sql(CommunityMember.phone).ilike(digits_pattern, escape='\\'))
         query = query.filter(
@@ -8301,6 +8347,10 @@ def event_edit(event_id):
 @require_roles('admin')
 def event_delete(event_id):
     event = _tenant_get_or_404(Event, event_id)
+    from app.services.event_feedback_service import event_has_feedback
+    if event_has_feedback(event):
+        flash('This event has feedback history. Keep it in Past events rather than deleting it.', 'warning')
+        return redirect(url_for('main.event_detail', event_id=event.id))
     db.session.delete(event)
     db.session.commit()
     flash('Event deleted.', 'success')
@@ -8325,6 +8375,10 @@ def events_bulk_delete():
         return redirect(url_for('main.events_list'))
 
     events = Event.query.filter(Event.id.in_(event_ids)).all()
+    from app.services.event_feedback_service import event_has_feedback
+    if any(event_has_feedback(event) for event in events):
+        flash('No events were deleted. A selected event has feedback history; keep it in Past events.', 'warning')
+        return redirect(url_for('main.events_list'))
     for event in events:
         db.session.delete(event)
 
@@ -8335,7 +8389,7 @@ def events_bulk_delete():
 
 @bp.route('/events/<int:event_id>/register', methods=['POST'])
 @login_required
-@require_roles('admin', 'social_manager')
+@require_roles('admin')
 def event_register(event_id):
     event = _tenant_get_or_404(Event, event_id)
     name = request.form.get('name', '').strip() or None
@@ -8415,7 +8469,7 @@ def event_registration_unsubscribe(event_id, registration_id):
 
 @bp.route('/events/<int:event_id>/import', methods=['POST'])
 @login_required
-@require_roles('admin', 'social_manager')
+@require_roles('admin')
 def event_import_registrations(event_id):
     event = _tenant_get_or_404(Event, event_id)
 
@@ -8476,6 +8530,7 @@ def event_import_registrations(event_id):
 
 @bp.route('/events/<int:event_id>/export')
 @login_required
+@require_contact_export_permission
 def event_export_registrations(event_id):
     event = _tenant_get_or_404(Event, event_id)
     registrations = _bounded_export_query_all(
@@ -9032,14 +9087,14 @@ def unsubscribed_list():
                 UnsubscribedContact.name.ilike(pattern, escape='\\'),
                 CommunityMember.name.ilike(pattern, escape='\\'),
                 InboxThread.contact_name.ilike(pattern, escape='\\'),
-                UnsubscribedContact.phone.ilike(pattern, escape='\\'),
+                *([UnsubscribedContact.phone.ilike(pattern, escape='\\')] if can_view_phone_numbers() else []),
                 UnsubscribedContact.reason.ilike(pattern, escape='\\'),
                 UnsubscribedContact.source.ilike(pattern, escape='\\'),
             )
         )
         suppressed_query = suppressed_query.filter(
             db.or_(
-                SuppressedContact.phone.ilike(pattern, escape='\\'),
+                *([SuppressedContact.phone.ilike(pattern, escape='\\')] if can_view_phone_numbers() else []),
                 SuppressedContact.reason.ilike(pattern, escape='\\'),
                 SuppressedContact.category.ilike(pattern, escape='\\'),
                 SuppressedContact.source.ilike(pattern, escape='\\'),
@@ -9121,14 +9176,14 @@ def unsubscribed_list():
                 UnsubscribedContact.name.ilike(pattern, escape='\\'),
                 CommunityMember.name.ilike(pattern, escape='\\'),
                 InboxThread.contact_name.ilike(pattern, escape='\\'),
-                UnsubscribedContact.phone.ilike(pattern, escape='\\'),
+                *([UnsubscribedContact.phone.ilike(pattern, escape='\\')] if can_view_phone_numbers() else []),
                 UnsubscribedContact.reason.ilike(pattern, escape='\\'),
                 UnsubscribedContact.source.ilike(pattern, escape='\\'),
             )
         )
         suppressed_rows = suppressed_rows.where(
             or_(
-                SuppressedContact.phone.ilike(pattern, escape='\\'),
+                *([SuppressedContact.phone.ilike(pattern, escape='\\')] if can_view_phone_numbers() else []),
                 SuppressedContact.reason.ilike(pattern, escape='\\'),
                 SuppressedContact.category.ilike(pattern, escape='\\'),
                 SuppressedContact.source.ilike(pattern, escape='\\'),
@@ -9576,7 +9631,7 @@ def inbox_list():
             query.outerjoin(CommunityMember, CommunityMember.phone == InboxThread.phone)
             .filter(
                 db.or_(
-                    InboxThread.phone.ilike(pattern, escape='\\'),
+                    *([InboxThread.phone.ilike(pattern, escape='\\')] if can_view_phone_numbers() else []),
                     InboxThread.contact_name.ilike(pattern, escape='\\'),
                     CommunityMember.name.ilike(pattern, escape='\\'),
                 )
@@ -9675,6 +9730,10 @@ def inbox_list():
         )
 
     thread_display_names = _build_thread_display_names(threads, selected_thread=selected_thread)
+    if staff_phone_privacy_applies():
+        for thread in [*threads, *([selected_thread] if selected_thread else [])]:
+            name = thread_display_names.get(thread.id)
+            thread_display_names[thread.id] = contact_display_label(name, thread.id, 'Contact')
     activity = _inbox_activity_snapshot()
 
     return render_template(
@@ -9686,6 +9745,7 @@ def inbox_list():
         message_keyword_origins=message_keyword_origins,
         selected_thread_is_unsubscribed=selected_thread_is_unsubscribed,
         thread_display_names=thread_display_names,
+        can_edit_thread_name=(not staff_phone_privacy_applies() or not selected_thread or redact_phone_numbers(selected_thread.contact_name or '') == (selected_thread.contact_name or '')),
         inbox_status_latest_message_id=activity['latest_message_id'],
         inbox_status_message_count=activity['message_count'],
         inbox_status_delivery_version=activity['delivery_version'],
@@ -9848,6 +9908,9 @@ def inbox_thread_update(thread_id):
 @require_roles('admin', 'social_manager')
 def inbox_thread_delete(thread_id):
     thread = _tenant_get_or_404(InboxThread, thread_id)
+    if SurveySession.query.filter_by(thread_id=thread.id, purpose='event_feedback').first() is not None:
+        flash('This conversation contains retained event feedback. Keep it to preserve that history.', 'warning')
+        return _redirect_to_inbox(thread_id=thread.id)
     if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
         OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
     ).first() is not None:
@@ -10043,6 +10106,10 @@ def survey_flows_list():
 @require_roles('admin', 'social_manager')
 def survey_flow_submissions(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    if survey.purpose == 'event_feedback':
+        if not survey.feedback_event_id:
+            abort(404)
+        return redirect(url_for('event_feedback.detail', event_id=survey.feedback_event_id, survey_id=survey.id))
     search = request.args.get('search', '').strip()
     page = request.args.get('page', type=int) or 1
     preview_question_indexes = _parse_survey_preview_indexes(
@@ -10081,8 +10148,13 @@ def survey_flow_submissions(survey_id):
 @bp.route('/inbox/surveys/<int:survey_id>/submissions/export')
 @login_required
 @require_roles('admin', 'social_manager')
+@require_contact_export_permission
 def survey_flow_submissions_export(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    if survey.purpose == 'event_feedback':
+        if not survey.feedback_event_id:
+            abort(404)
+        return redirect(url_for('event_feedback.detail', event_id=survey.feedback_event_id, survey_id=survey.id))
     max_rows = int(current_app.config.get('CSV_EXPORT_MAX_ROWS', 25000) or 25000)
     completed_count = SurveySession.query.filter_by(
         survey_id=survey.id,
@@ -10214,6 +10286,10 @@ def survey_flow_add():
 @require_roles('admin', 'social_manager')
 def survey_flow_edit(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    if survey.purpose == 'event_feedback':
+        if not survey.feedback_event_id:
+            abort(404)
+        return redirect(url_for('event_feedback.detail', event_id=survey.feedback_event_id, survey_id=survey.id))
     form_data = None
     if request.method == 'POST':
         name = request.form.get('name', '').strip()
@@ -10323,6 +10399,10 @@ def survey_flow_edit(survey_id):
 @require_roles('admin', 'social_manager')
 def survey_flow_delete(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    if survey.purpose == 'event_feedback':
+        if not survey.feedback_event_id:
+            abort(404)
+        return redirect(url_for('event_feedback.detail', event_id=survey.feedback_event_id, survey_id=survey.id))
     if survey.linked_event_id:
         flash(
             'This survey is linked to an event. Edit it and choose "Do not link to an event" before deleting.',
@@ -10350,6 +10430,10 @@ def survey_flow_delete(survey_id):
 @require_roles('admin', 'social_manager')
 def survey_flow_deactivate(survey_id):
     survey = _tenant_get_or_404(SurveyFlow, survey_id)
+    if survey.purpose == 'event_feedback':
+        if not survey.feedback_event_id:
+            abort(404)
+        return redirect(url_for('event_feedback.detail', event_id=survey.feedback_event_id, survey_id=survey.id))
     survey.is_active = False
 
     now = utc_now()

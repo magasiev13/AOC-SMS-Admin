@@ -164,16 +164,27 @@ if mode is not None:target.chmod(mode)
                            binary=binary, temporary=tmp_path, sha=sha, new_sha=new_sha)
 
 
-def _release(root, name):
+def _release(root, name, *, schema='028'):
     relative_files = ['deploy/runtime_control.py', 'deploy/runtime_state.sh', 'app/services/twilio_service.py',
                       'app/services/delivery_status_service.py',
                       'app/saas_migrations/027_historical_usage_observation_boundary.py']
+    feedback_migration = 'app/saas_migrations/028_event_feedback_context.py'
+    if schema == '028':
+        relative_files.append(feedback_migration)
+    elif (root / feedback_migration).exists():
+        subprocess.run(['git', '-C', str(root), 'rm', '--quiet', '--force', feedback_migration], check=True)
     for relative in relative_files:
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPOSITORY / relative, target)
     contract = root / 'deploy/runtime-contract.json'
     shutil.copyfile(REPOSITORY / 'deploy/runtime-contract.json', contract)
+    if schema == '027':
+        value = json.loads(contract.read_text())
+        value.update(schema_min='027', schema_max='027')
+        value.pop('feedback_registration_isolation', None)
+        value.pop('staff_phone_privacy', None)
+        contract.write_text(json.dumps(value) + '\n')
     (root / 'fixture-source-name').write_text(name)
     subprocess.run(['git', '-C', str(root), 'add', *relative_files, 'deploy/runtime-contract.json', 'fixture-source-name'], check=True)
     subprocess.run(['git', '-C', str(root), '-c', 'user.name=Runtime fixture', '-c', 'user.email=runtime@fixture.test',
@@ -551,6 +562,11 @@ def test_unsafe_rollback_target_is_rejected_without_any_runtime_action(runtime):
 
 def _label_fixture_as_legacy_transition(runtime, monkeypatch):
     import hashlib
+    # The ad7814 transition was reviewed for schema027 only. Keep that earlier
+    # upgrade scenario at027 rather than widening it when today's fixture grows.
+    runtime.original, runtime.sha = _release(runtime.root, 'legacy-original', schema='027')
+    runtime.candidate, runtime.new_sha = _release(runtime.root, 'legacy-candidate', schema='027')
+    _switch(runtime, runtime.original)
     names = ('deploy/runtime_control.py', 'app/services/twilio_service.py',
              'app/saas_migrations/027_historical_usage_observation_boundary.py')
     monkeypatch.setattr(runtime.module, 'LEGACY_SAFE_SHA', runtime.sha)
@@ -618,8 +634,9 @@ def test_a_captured_hold_cannot_authorize_legacy_recovery_even_if_its_receipt_is
     assert _state(runtime)['provider_calls'] == []
 
 
-@pytest.mark.parametrize('missing_guard', ['logout_session_revocation', 'active_survey_session_guard'])
-def test_reviewed_modern_release_without_either_repaired_guard_is_not_a_recovery_target(runtime, missing_guard):
+@pytest.mark.parametrize('missing_guard', ['logout_session_revocation', 'active_survey_session_guard',
+                                        'feedback_registration_isolation', 'staff_phone_privacy'])
+def test_reviewed_modern_release_without_a_required_guard_is_not_a_recovery_target(runtime, missing_guard):
     contract_path = runtime.root / 'deploy/runtime-contract.json'
     contract = json.loads(contract_path.read_text())
     assert contract.pop(missing_guard) is True
@@ -635,10 +652,138 @@ def test_reviewed_modern_release_without_either_repaired_guard_is_not_a_recovery
     shutil.copyfile(contract_path, target / 'deploy/runtime-contract.json')
     (target / 'release.json').write_text(json.dumps({'release_id': target.name, 'source_sha': sha}))
     (target / '.release.env').write_text(f'APP_RELEASE_ID={target.name}\nAPP_RELEASE_SHA={sha}\n')
-    with pytest.raises(runtime.module.RuntimeControlError, match='account and survey safety guards'):
+    with pytest.raises(runtime.module.RuntimeControlError,
+                       match='account and survey safety guards|feedback and staff contact privacy guards'):
         runtime.controller.verify_target(target)
     assert _state(runtime)['calls'] == []
     assert _state(runtime)['provider_calls'] == []
+
+
+def _feedback_prior_release(runtime, monkeypatch, *, pin=True):
+    runtime.original, runtime.sha = _release(runtime.root, 'feedback-prior', schema='027')
+    _switch(runtime, runtime.original)
+    if pin:
+        monkeypatch.setattr(runtime.module, 'FEEDBACK_PRIVACY_TRANSITION_SHA', runtime.sha)
+
+
+@pytest.mark.parametrize('kind', ['deploy', 'release', 'install'])
+def test_feedback_upgrade_recovers_exact_prior_release_only_inside_original_capture(runtime, monkeypatch, capsys, kind):
+    _feedback_prior_release(runtime, monkeypatch)
+    assert runtime.controller.verify_target(runtime.original)['source_sha'] == runtime.sha
+    snapshot = runtime.controller.capture(kind=kind)
+    _switch(runtime, runtime.candidate)
+    before = _operating_state(runtime)
+    calls = list(_state(runtime)['calls'])
+    # Retaining Git-matching old code does not permit a later phone-privacy or
+    # feedback downgrade once current declares schema028.
+    with pytest.raises(runtime.module.RuntimeControlError, match='expanded schema'):
+        runtime.controller.verify_target(runtime.original)
+    state_file = runtime.state_root / 'transactions' / (snapshot['transaction_id'] + '.json')
+    runtime.module._write_json(state_file, snapshot)
+    assert runtime.module.main(['verify-target', '--state', str(state_file), '--target', str(runtime.original)]) == 0
+    assert json.loads(capsys.readouterr().out)['source_sha'] == runtime.sha
+    assert runtime.controller.current() == runtime.candidate
+    assert _operating_state(runtime) == before
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('mutation', [
+    'rollback', 'restart', 'different-sha', 'different-path', 'different-release-id',
+    'different-app-root', 'different-state-root', 'fresh-install', 'captured-hold',
+    'missing-held-scope', 'captured-maintenance', 'missing-maintenance', 'missing-unit',
+    'inactive-unit', 'linked-unit', 'unknown-unit-state', 'live-hold',
+])
+def test_feedback_transition_cannot_widen_capture_identity_or_operating_scope(runtime, monkeypatch, mutation):
+    _feedback_prior_release(runtime, monkeypatch)
+    snapshot = runtime.controller.capture(kind='deploy')
+    _switch(runtime, runtime.candidate)
+    if mutation in {'rollback', 'restart'}:
+        snapshot['kind'] = mutation
+    elif mutation == 'different-sha':
+        snapshot['before_release']['source_sha'] = runtime.new_sha
+    elif mutation == 'different-path':
+        snapshot['before_release']['path'] = str(runtime.candidate)
+    elif mutation == 'different-release-id':
+        snapshot['before_release']['release_id'] = 'sibling-copy'
+    elif mutation == 'different-app-root':
+        snapshot['app_root'] = str(runtime.temporary)
+    elif mutation == 'different-state-root':
+        snapshot['state_root'] = str(runtime.temporary)
+    elif mutation == 'fresh-install':
+        snapshot['fresh_install'] = True
+    elif mutation == 'captured-hold':
+        snapshot['held_units'] = [BILLING]
+    elif mutation == 'missing-held-scope':
+        snapshot.pop('held_units')
+    elif mutation == 'captured-maintenance':
+        snapshot['maintenance_before'] = {'held_units': [BILLING]}
+    elif mutation == 'missing-maintenance':
+        snapshot.pop('maintenance_before')
+    elif mutation == 'missing-unit':
+        snapshot['units'].pop(BILLING)
+    elif mutation == 'inactive-unit':
+        snapshot['units'][BILLING]['active_state'] = 'inactive'
+    elif mutation == 'linked-unit':
+        snapshot['units'][BILLING]['unit_file_state'] = 'linked'
+    elif mutation == 'unknown-unit-state':
+        snapshot['units'][BILLING]['unit_file_state'] = 'unavailable'
+    elif mutation == 'live-hold':
+        runtime.controller.maintenance_file.parent.mkdir(parents=True, exist_ok=True)
+        runtime.controller.maintenance_file.write_text('{}\n')
+    calls = list(_state(runtime)['calls'])
+    before = _operating_state(runtime)
+    with pytest.raises(runtime.module.RuntimeControlError, match='expanded schema'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert runtime.controller.current() == runtime.candidate
+    assert _operating_state(runtime) == before
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+def test_other_old_contract_cannot_inherit_feedback_transition_exception(runtime, monkeypatch):
+    _feedback_prior_release(runtime, monkeypatch, pin=False)
+    assert runtime.sha != runtime.module.FEEDBACK_PRIVACY_TRANSITION_SHA
+    snapshot = runtime.controller.capture(kind='deploy')
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='expanded schema'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+@pytest.mark.parametrize('failure', ['newer-schema', 'changed-source', 'dead-owner'])
+def test_feedback_transition_does_not_waive_schema_source_or_live_cli_owner(runtime, monkeypatch, failure):
+    _feedback_prior_release(runtime, monkeypatch)
+    snapshot = runtime.controller.capture(kind='deploy')
+    _switch(runtime, runtime.candidate)
+    if failure == 'newer-schema':
+        (runtime.candidate / 'app/saas_migrations/029_unreviewed.py').write_text('# isolated newer schema\n')
+        expected = 'expanded schema'
+    elif failure == 'changed-source':
+        with (runtime.original / 'app/services/twilio_service.py').open('a') as handle:
+            handle.write('\n# preserved unreviewed source drift\n')
+        expected = 'differs from Git'
+    else:
+        snapshot['owner_pid'] = 999999999
+        expected = 'owner is no longer running'
+    state_file = runtime.state_root / 'transactions' / (snapshot['transaction_id'] + '.json')
+    runtime.module._write_json(state_file, snapshot)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match=expected):
+        runtime.module.main(['verify-target', '--state', str(state_file), '--target', str(runtime.original)])
+    assert runtime.controller.current() == runtime.candidate
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
+
+
+def test_precontract_legacy_exception_does_not_extend_to_feedback_schema(runtime, monkeypatch):
+    _label_fixture_as_legacy_transition(runtime, monkeypatch)
+    snapshot = runtime.controller.capture(kind='deploy')
+    runtime.candidate, runtime.new_sha = _release(runtime.root, 'feedback-schema-candidate', schema='028')
+    _switch(runtime, runtime.candidate)
+    calls = list(_state(runtime)['calls'])
+    with pytest.raises(runtime.module.RuntimeControlError, match='expanded schema'):
+        runtime.controller.verify_target(runtime.original, transition_snapshot=snapshot)
+    assert runtime.controller.current() == runtime.candidate
+    assert _state(runtime)['calls'] == calls and _state(runtime)['provider_calls'] == []
 
 
 def _captured_promotion(runtime):

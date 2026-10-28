@@ -27,6 +27,13 @@ attendees must leave current lists automatically while remaining available for
 intentional follow-up and useful historical reporting. These are priorities for
 simplicity and reliability, rather than reasons to add more setup gates.
 
+Event feedback is separate from registration: rating/comment answers must never
+rename attendees, add registrations or change party sizes. Staff communicate
+through names and records; full contact phone numbers, raw-number management
+and dataset exports are reserved for the organization owner/admin. This policy
+is enforced by the active membership and server responses, including hidden
+fields and send-review data, rather than only by hiding UI controls.
+
 ## Positioning
 
 Twinevia launches as a managed service rather than unrestricted self-service software. Its inferred distinguishing position is a single operational relationship for the messaging workspace, customer onboarding, A2P and sender-registration assistance, provider readiness, billing, suppression enforcement, and recoverable delivery operations. The public promise is assistance and operational stewardship; external provider approval is never guaranteed.

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% import "includes/ui_macros.html" as ui %}
+{% block title %}Event feedback - {{ product_name }}{% endblock %}
+{% block page_title %}Event feedback{% endblock %}
+{% block breadcrumbs %}<a href="{{ url_for('main.events_list') }}">Events</a> / <a href="{{ url_for('main.event_detail', event_id=event.id) }}">{{ feedback_display(event.title) }}</a> / <span>Feedback</span>{% endblock %}
+{% block page_actions %}<a class="btn btn-primary" href="{{ url_for('event_feedback.create', event_id=event.id) }}"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Create feedback</a>{% endblock %}
+{% block content %}
+<div class="workspace-shell">
+    <section class="workspace-summary">
+        <div class="workspace-summary__header"><div class="workspace-summary__body">
+            <div class="workspace-summary__eyebrow">Event feedback</div>
+            <h2 class="workspace-summary__title">{{ feedback_display(event.title) }}</h2>
+            <p class="workspace-summary__copy">Ask what worked and what to improve. Feedback answers stay separate from attendee names, registrations and party sizes.</p>
+        </div></div>
+    </section>
+    <section class="collection-panel">
+        <div class="collection-panel__header"><div><h2 class="collection-panel__title">Feedback forms</h2><p class="collection-panel__meta">{{ total }} saved {{ 'form' if total == 1 else 'forms' }}</p></div></div>
+        {% if flows %}
+        <div class="card-list">
+            {% for flow in flows %}
+            <article class="card-list-item">
+                <h3 class="h6 mb-2"><a href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">{{ feedback_display(flow.name) }}</a></h3>
+                <div class="d-flex flex-wrap align-items-center gap-2"><span class="badge bg-{{ 'success' if flow.is_active else 'secondary' }}">{{ 'Active' if flow.is_active else 'Paused' }}</span><span class="small text-muted">Keyword <code>{{ feedback_display(flow.trigger_keyword) }}</code> · {{ flow.questions|length }} questions</span></div>
+                <a class="btn btn-sm btn-outline-primary mt-3" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">View responses and invitation</a>
+            </article>
+            {% endfor %}
+        </div>
+        {% if pages > 1 %}<nav class="collection-panel__body d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Feedback form pages"><span class="small text-muted">Page {{ page }} of {{ pages }}</span><div class="btn-group">{% if page > 1 %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('event_feedback.index', event_id=event.id, page=page-1) }}">Previous</a>{% endif %}{% if page < pages %}<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('event_feedback.index', event_id=event.id, page=page+1) }}">Next</a>{% endif %}</div></nav>{% endif %}
+        {% else %}
+        <div class="collection-panel__body">{{ ui.empty_state('bi-chat-square-heart', 'No feedback form yet', 'Create a short SMS conversation, then review its invitation before sending to this event audience.', primary_href=url_for('event_feedback.create', event_id=event.id), primary_label='Create feedback') }}</div>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
