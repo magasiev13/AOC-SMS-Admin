@@ -274,8 +274,15 @@ class RuntimeController:
             ceiling = str(contract.get('schema_max') or '')
             floor = str(contract.get('schema_min') or '')
             if (not re.fullmatch(r'\d{3}', ceiling) or not re.fullmatch(r'\d{3}', floor)
-                    or floor > ceiling or floor > '028'):
+                    or floor > ceiling or floor > '031'):
                 raise RuntimeControlError('Recovery target schema contract is invalid.')
+            for required_schema, feature in (
+                ('029', 'booking_projection_isolation'),
+                ('030', 'complete_inventory_authority'),
+                ('031', 'explicit_feedback_invitation_authority'),
+            ):
+                if ceiling >= required_schema and contract.get(feature) is not True:
+                    raise RuntimeControlError('Recovery target lacks the required booking, inventory or invitation authority guards.')
             if ceiling >= '028' and (contract.get('feedback_registration_isolation') is not True
                                      or contract.get('staff_phone_privacy') is not True):
                 raise RuntimeControlError('Recovery target predates the required feedback and staff contact privacy guards.')

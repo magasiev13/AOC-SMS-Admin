@@ -116,38 +116,41 @@ def generate_event_sync_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
-def event_sync_setup_view(organization: Organization, base_url: str) -> dict[str, Any]:
+def event_sync_setup_view(organization: Organization, base_url: str, provider: str = WORDPRESS_PROVIDER) -> dict[str, Any]:
+    provider = _integration_provider(provider)
     integration = OrganizationEventSyncIntegration.query.filter_by(
         organization_id=organization.id,
-        provider=WORDPRESS_PROVIDER,
+        provider=provider,
     ).first()
-    endpoint = _event_sync_webhook_url(base_url, organization.slug)
+    endpoint = _event_sync_webhook_url(base_url, organization.slug, provider)
     enabled = integration.enabled if integration is not None else False
     has_secret = bool(integration.webhook_secret_encrypted) if integration is not None else False
     return {
         "enabled": enabled,
-        "provider": WORDPRESS_PROVIDER,
+        "provider": provider,
         "endpoint": endpoint,
+        "source_namespace_prefix": f"app:{integration.id}:" if integration is not None and provider == "app" else None,
         "has_secret": has_secret,
         "last_event_synced_at": integration.last_event_synced_at if integration is not None else None,
         "last_signup_synced_at": integration.last_signup_synced_at if integration is not None else None,
         "last_reconcile_synced_at": integration.last_reconcile_synced_at if integration is not None else None,
         "last_error_at": integration.last_error_at if integration is not None else None,
         "last_error_message": integration.last_error_message if integration is not None else None,
-        "setup_block": _wordpress_setup_block(endpoint, has_secret),
+        "setup_block": _wordpress_setup_block(endpoint, has_secret) if provider == WORDPRESS_PROVIDER else "Sign timestamp + dot + exact UTF-8 JSON body using HMAC-SHA256. Send X-Twinevia-Timestamp, X-Twinevia-Signature=sha256=<hex>, and a stable X-Twinevia-Delivery-ID.",
     }
 
 
-def ensure_event_sync_integration(organization_id: int) -> OrganizationEventSyncIntegration:
+def ensure_event_sync_integration(organization_id: int, provider: str = WORDPRESS_PROVIDER) -> OrganizationEventSyncIntegration:
+    provider = _integration_provider(provider)
     integration = OrganizationEventSyncIntegration.query.filter_by(
         organization_id=organization_id,
-        provider=WORDPRESS_PROVIDER,
+        provider=provider,
     ).first()
     if integration is not None:
         return integration
     integration = OrganizationEventSyncIntegration(
         organization_id=organization_id,
-        provider=WORDPRESS_PROVIDER,
+        provider=provider,
         enabled=False,
     )
     db.session.add(integration)
@@ -159,8 +162,9 @@ def configure_event_sync_integration(
     organization_id: int,
     enabled: bool,
     actor_user_id: int,
+    provider: str = WORDPRESS_PROVIDER,
 ) -> tuple[OrganizationEventSyncIntegration, str | None]:
-    integration = ensure_event_sync_integration(organization_id)
+    integration = ensure_event_sync_integration(organization_id, provider)
     generated_secret = None
     if enabled and not integration.webhook_secret_encrypted:
         generated_secret = generate_event_sync_secret()
@@ -179,8 +183,9 @@ def configure_event_sync_integration(
 def rotate_event_sync_secret(
     organization_id: int,
     actor_user_id: int,
+    provider: str = WORDPRESS_PROVIDER,
 ) -> tuple[OrganizationEventSyncIntegration, str]:
-    integration = ensure_event_sync_integration(organization_id)
+    integration = ensure_event_sync_integration(organization_id, provider)
     generated_secret = generate_event_sync_secret()
     integration.webhook_secret_encrypted = encrypt_provider_secret(generated_secret)
     integration.enabled = True
@@ -200,16 +205,14 @@ def event_sync_integration_for_webhook(
     organization_slug: str,
     provider: str,
 ) -> OrganizationEventSyncIntegration:
-    normalized_provider = (provider or "").strip().lower()
-    if normalized_provider != WORDPRESS_PROVIDER:
-        raise AocEventSyncPayloadError(f"Unsupported event sync provider {provider!r}.")
+    normalized_provider = _integration_provider(provider)
     with without_tenant_scope():
         organization = Organization.query.filter_by(slug=organization_slug.strip()).first()
         if organization is None:
             raise AocEventSyncPayloadError(f"Organization slug {organization_slug!r} was not found.")
         integration = OrganizationEventSyncIntegration.query.filter_by(
             organization_id=organization.id,
-            provider=WORDPRESS_PROVIDER,
+            provider=normalized_provider,
         ).first()
     if integration is None or not integration.enabled:
         raise AocWebhookAuthError("Event sync is not enabled for this organization.")
@@ -231,11 +234,15 @@ def process_event_sync_payload(
     received_at: datetime,
 ) -> dict[str, Any]:
     try:
-        summary = _process_event_sync_payload_for_organization(
-            payload=payload,
-            organization_id=integration.organization_id,
-            received_at=received_at,
-        )
+        if integration.provider == "app":
+            from app.services.app_registration_sync_service import process_app_registration_payload
+            summary = process_app_registration_payload(payload, integration, received_at)
+        else:
+            summary = _process_event_sync_payload_for_organization(
+                payload=payload,
+                organization_id=integration.organization_id,
+                received_at=received_at,
+            )
     except AocEventSyncError as exc:
         record_event_sync_error(integration, str(exc), received_at)
         raise
@@ -245,7 +252,7 @@ def process_event_sync_payload(
         integration.last_event_synced_at = _as_utc_naive(received_at)
     elif action in {"booking_upsert", "booking_deleted"}:
         integration.last_signup_synced_at = _as_utc_naive(received_at)
-    elif action == "reconcile_complete":
+    elif action == "reconcile_complete" or (action in {"inventory_page", "inventory_complete"} and summary.get("status") == "complete"):
         integration.last_reconcile_synced_at = _as_utc_naive(received_at)
     integration.last_error_at = None
     integration.last_error_message = None
@@ -282,6 +289,12 @@ def _process_event_sync_payload_for_organization(
     received_at: datetime,
 ) -> dict[str, Any]:
     action = _required_text(payload, "action")
+    if action in {'inventory_page', 'inventory_complete'}:
+        from app.services.booking_inventory_service import process_booking_inventory, BookingInventoryError
+        try:
+            return process_booking_inventory(payload, organization_id, received_at)
+        except (BookingInventoryError, ValueError) as exc:
+            raise AocEventSyncPayloadError(str(exc)) from exc
     source = _optional_text(payload, "source") or AOC_EXTERNAL_SOURCE
     if source not in WORDPRESS_EVENT_SYNC_SOURCES:
         raise AocEventSyncPayloadError(f"Unsupported event sync source {source!r}.")
@@ -309,6 +322,12 @@ def _process_event_sync_payload_for_organization(
 
         if action in {"event_upsert", "event_deleted"}:
             event_payload = _required_dict(payload, "event")
+            source_modified = _to_utc_naive(_required_datetime(event_payload, 'modified_at'))
+            existing_event = Event.query.filter_by(external_source=source,
+                external_event_id=_required_text(event_payload, 'event_id')).first()
+            if existing_event is not None and existing_event.external_modified_at and source_modified < existing_event.external_modified_at:
+                summary.update(event_id=existing_event.id, ignored=True, reason='stale_source_revision')
+                return summary
             event = _upsert_event(event_payload, source, received_at_utc)
             summary["event_id"] = event.id
             if _event_should_schedule(event, received_at_utc) and action == "event_upsert":
@@ -380,6 +399,9 @@ def _upsert_event(payload: dict[str, Any], source: str, received_at: datetime) -
     event_date = _local_date(start_at, event_timezone)
 
     event = Event.query.filter_by(external_source=source, external_event_id=external_event_id).first()
+    source_modified = _optional_utc_naive_datetime(payload, 'modified_at')
+    if event is not None and event.external_modified_at and (source_modified is None or source_modified < event.external_modified_at):
+        return event
     if event is None:
         event = Event(title=title, date=event_date, external_source=source, external_event_id=external_event_id)
         db.session.add(event)
@@ -411,70 +433,23 @@ def _upsert_event(payload: dict[str, Any], source: str, received_at: datetime) -
 
 
 def _upsert_booking_registration(
-    event: Event,
-    payload: dict[str, Any],
-    source: str,
-    received_at: datetime,
+    event: Event, payload: dict[str, Any], source: str, received_at: datetime,
 ) -> tuple[EventRegistration | None, int | None, str | None]:
-    external_booking_id = _external_booking_id(payload)
-    raw_phone = _optional_text(payload, "phone")
-    if not raw_phone:
-        return None, None, f"Booking {external_booking_id} did not include a phone number."
-
-    phone = normalize_phone(raw_phone)
-    if not validate_phone(phone):
-        return None, None, f"Booking {external_booking_id} included invalid phone {raw_phone!r}."
-
-    name = _optional_text(payload, "name")
-    registration = EventRegistration.query.filter_by(
-        external_source=source,
-        external_booking_id=external_booking_id,
-    ).first()
-    if registration is None:
-        registration = EventRegistration.query.filter_by(event_id=event.id, phone=phone).first()
-    if registration is None:
-        registration = EventRegistration(
-            event_id=event.id,
-            name=name,
-            phone=phone,
-            external_source=source,
-            external_booking_id=external_booking_id,
-        )
-        db.session.add(registration)
-
-    previous_phone = registration.phone
-    registration.event_id = event.id
-    registration.name = name or registration.name
-    registration.phone = phone
-    registration.external_source = source
-    registration.external_booking_id = external_booking_id
-    registration.external_person_id = _optional_text(payload, "person_id")
-    registration.external_booking_status = _optional_text(payload, "status")
-    booking_spaces = _optional_int(payload, "spaces")
-    if booking_spaces is not None and booking_spaces < 0:
-        raise AocEventSyncPayloadError("AOC booking spaces must be zero or greater.")
-    registration.booking_spaces = booking_spaces
-    selections = _optional_selections(payload, "selections")
-    registration.selections_json = (
-        json.dumps(selections, ensure_ascii=False, sort_keys=True)
-        if selections
-        else None
-    )
-    registration.booking_comment = _optional_text(payload, "comment")
-    registration.external_updated_at = _optional_utc_naive_datetime(payload, "updated_at")
-    registration.synced_at = received_at
-
-    community_member = upsert_community_member_contact(name, phone)
-
-    _record_booking_permission(event, payload, source, phone, external_booking_id, received_at)
-    if previous_phone and previous_phone != phone:
-        _record_booking_withdrawal(
-            event, payload, source, previous_phone, external_booking_id,
-            received_at, reason='booking_phone_changed',
-        )
-
-    db.session.flush()
-    return registration, community_member.id, None
+    from app.services.booking_projection_service import upsert_booking
+    try:
+        booking = upsert_booking(event, payload, source, received_at,
+            source_scope=payload.get('source_scope', ''))
+    except ValueError as exc:
+        raise AocEventSyncPayloadError(str(exc)) from exc
+    registration = (db.session.get(EventRegistration, booking.projection_registration_id)
+                    if booking.projection_registration_id else None)
+    member = CommunityMember.query.filter_by(phone=booking.phone).first() if booking.phone else None
+    warning = None
+    if booking.contact_state == 'missing':
+        warning = f"Booking {booking.external_booking_id} did not include a phone number."
+    elif booking.contact_state == 'invalid':
+        warning = f"Booking {booking.external_booking_id} included an invalid phone number."
+    return registration, member.id if member else None, warning
 
 
 def _record_booking_permission(
@@ -499,6 +474,7 @@ def _record_booking_permission(
     if event_consent is False and community_consent is None:
         community_consent = False
     evidence_source = f'event_sync:{source}:{external_booking_id}'
+    revision_suffix = f":revision:{payload.get('source_revision', payload.get('revision'))}" if payload.get('source_revision', payload.get('revision')) is not None else ''
     confirmed_signup = organization_has_confirmed_signup_consent(event.organization_id)
     for purpose, flag, field in (
         ('event', event_consent, 'sms_consent'),
@@ -516,7 +492,7 @@ def _record_booking_permission(
             event_id=event.id if purpose == 'event' else None,
             decision=decision,
             source=evidence_source,
-            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{decision}',
+            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{decision}{revision_suffix}',
             occurred_at=occurred_at,
             verified=flag is True,
             metadata={
@@ -542,13 +518,14 @@ def _record_booking_withdrawal(
     from app.services.recipient_permission_service import record_permission_evidence
 
     occurred_at = _optional_utc_naive_datetime(payload, 'updated_at') or received_at
+    revision_suffix = f":revision:{payload.get('source_revision', payload.get('revision'))}" if payload.get('source_revision', payload.get('revision')) is not None else ''
     purposes = ('event', 'community') if reason == 'booking_phone_changed' else ('event',)
     for purpose in purposes:
         record_permission_evidence(
             event.organization_id, phone, purpose=purpose,
             event_id=event.id if purpose == 'event' else None,
             decision='denied', source=f'event_sync:{source}:{external_booking_id}',
-            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{reason}:{phone}',
+            evidence_key=f'{external_booking_id}:{occurred_at.isoformat()}:{reason}:{phone}{revision_suffix}',
             occurred_at=occurred_at,
             metadata={
                 'external_source': source, 'external_booking_id': external_booking_id,
@@ -571,40 +548,14 @@ def upsert_community_member_contact(name: str | None, phone: str) -> CommunityMe
     return community_member
 
 
-def _delete_event_registration_for_booking(
-    event: Event,
-    payload: dict[str, Any],
-    source: str,
-) -> int | None:
-    external_booking_id = _external_booking_id(payload)
-    registration = EventRegistration.query.filter_by(
-        external_source=source,
-        external_booking_id=external_booking_id,
-    ).first()
-    if registration is None:
-        raw_phone = _optional_text(payload, "phone")
-        phone = normalize_phone(raw_phone) if raw_phone else ""
-        if phone:
-            registration = EventRegistration.query.filter_by(event_id=event.id, phone=phone).first()
-    permission_phone = registration.phone if registration is not None else phone
-    if validate_phone(permission_phone):
-        # Canceling a booking withdraws event-specific eligibility. Preserve an
-        # independent community grant unless this payload also changes its signal.
-        if _optional_bool(payload, 'community_sms_consent') is not None or _optional_bool(payload, 'sms_consent') is False:
-            _record_booking_permission(
-                event, payload, source, permission_phone, external_booking_id,
-                utc_now(), purposes=('community',),
-            )
-        _record_booking_withdrawal(
-            event, payload, source, permission_phone, external_booking_id,
-            utc_now(), reason='booking_cancelled',
-        )
-    if registration is None:
-        return None
-    registration_id = registration.id
-    db.session.delete(registration)
-    db.session.flush()
-    return registration_id
+def _delete_event_registration_for_booking(event: Event, payload: dict[str, Any], source: str) -> int | None:
+    from app.services.booking_projection_service import upsert_booking
+    try:
+        booking = upsert_booking(event, payload, source, utc_now(),
+            source_scope=payload.get('source_scope', ''), deleted=True)
+    except ValueError as exc:
+        raise AocEventSyncPayloadError(str(exc)) from exc
+    return booking.projection_registration_id
 
 
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
@@ -908,9 +859,16 @@ def utc_now_for_aoc_sync() -> datetime:
     return utc_now().replace(tzinfo=None)
 
 
-def _event_sync_webhook_url(base_url: str, organization_slug: str) -> str:
+def _integration_provider(provider: str) -> str:
+    normalized = str(provider or "").strip().lower()
+    if normalized not in {WORDPRESS_PROVIDER, "app"}:
+        raise AocEventSyncPayloadError("Unsupported event sync provider.")
+    return normalized
+
+
+def _event_sync_webhook_url(base_url: str, organization_slug: str, provider: str = WORDPRESS_PROVIDER) -> str:
     normalized_base_url = base_url.rstrip("/")
-    return f"{normalized_base_url}/webhooks/event-sync/{organization_slug}/wordpress"
+    return f"{normalized_base_url}/webhooks/event-sync/{organization_slug}/{_integration_provider(provider)}"
 
 
 def _wordpress_setup_block(endpoint: str, has_secret: bool) -> str:

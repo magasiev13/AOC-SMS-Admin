@@ -1795,6 +1795,17 @@ class TwilioService:
                             'halted_status': halted_status,
                             'not_submitted_count': len(recipients) - len(results['details']),
                         }
+                    from app.services.audience_service import scheduled_recipient_submission_guard
+                    invitation_block = scheduled_recipient_submission_guard(scheduled, normalize_phone(phone), personalized_body)
+                    if invitation_block is not None:
+                        db.session.commit()
+                        if invitation_block.get('dispatch_halted'):
+                            return dict(results, dispatch_halted=True, halted_status='held',
+                                        not_submitted_count=len(recipients)-len(results['details']))
+                        result = dict(invitation_block, sid=None, account_sid=self.account_sid)
+                        results['details'].append(dict(result, phone=phone, name=name))
+                        results['failure_count'] += 1
+                        continue
                     scheduled.processing_started_at = utc_now().replace(tzinfo=None)
                 result = self.send_message(
                     phone,
@@ -1997,6 +2008,17 @@ class TwilioService:
                     ),
                     'logical_send_key': normalized_key,
                 }
+            from app.services.audience_service import scheduled_recipient_submission_guard
+            invitation_block = scheduled_recipient_submission_guard(scheduled, normalized_phone, body)
+            if invitation_block is not None:
+                # No provider call occurred. A held invitation can be reviewed
+                # and resumed with the same logical attempt and frozen audience.
+                attempt.status = 'queued' if invitation_block.get('dispatch_halted') else 'failed'
+                attempt.last_error = 'not_submitted: ' + str(invitation_block.get('error') or '')
+                attempt.resolved_at = None if attempt.status == 'queued' else utc_now().replace(tzinfo=None)
+                db.session.commit()
+                return dict(invitation_block, logical_send_key=normalized_key,
+                            sid=None, account_sid=self.account_sid, send_kind=normalized_send_kind)
             scheduled.processing_started_at = utc_now().replace(tzinfo=None)
             from app.services.audience_service import pre_event_reminder_block_reason
 

@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { renderedElementMetric, waitForRenderedDocument } = require('./helpers');
 
 async function login(page, username, password) {
   await page.goto('/login');
@@ -9,26 +10,28 @@ async function login(page, username, password) {
 }
 
 async function elementHeight(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+  return renderedElementMetric(locator, 'height');
 }
 
 async function elementTop(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+  return renderedElementMetric(locator, 'top');
 }
 
 async function elementBottom(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().bottom));
+  return renderedElementMetric(locator, 'bottom');
 }
 
 async function elementLeft(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().left));
+  return renderedElementMetric(locator, 'left');
 }
 
 async function backgroundColor(locator) {
+  await waitForRenderedDocument(locator.page());
   return locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 }
 
 async function centerDelta(container) {
+  await waitForRenderedDocument(container.page());
   return container.evaluate((containerElement) => {
     const childElement = containerElement.querySelector('.brand-icon__image');
     if (!childElement) {

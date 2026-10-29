@@ -41,6 +41,11 @@
                     <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
                 </div>
                 <div class="send-card__body">
+                    {% if composer_event %}<div class="alert alert-info" role="status">
+                        <strong>{{ composer_event.title|private_text }}</strong> · {{ 'Community announcement' if selected_target == 'community' else 'Message registered contacts' }}
+                        {% if related_communications.scheduled %}<details class="mt-2"><summary>Review {{ related_communications.scheduled|length }} related schedules before preparing another send</summary><ul class="mt-2 mb-0">{% for row in related_communications.scheduled %}<li>{{ row.label }} · {{ row.schedule.scheduled_at|localtime }} · {{ row.audience }} · {{ row.schedule.status|private_text }}</li>{% endfor %}</ul></details>{% else %}<div class="small mt-1">No related schedules.</div>{% endif %}
+                        <a class="small" href="{{ url_for('main.event_detail', event_id=composer_event.id, _anchor='messages') }}">Open event messages</a>
+                    </div>{% endif %}
                     {% if config.SAAS_MODE and current_organization and not can_send_messages %}
                     <div class="alert alert-warning" role="alert">
                         <strong>Live SMS is paused.</strong> {{ (send_disabled_reason)|private_text }}
@@ -51,6 +56,7 @@
                         <input type="hidden" name="require_review" value="1">
                         <input type="hidden" name="review_token" value="">
                         <input type="hidden" name="request_idempotency_key" value="{{ scheduled_request_idempotency_key }}">
+                        {% if context_event_id %}<input type="hidden" name="context_event_id" value="{{ context_event_id }}">{% endif %}
                         <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -84,7 +90,7 @@
                                        value="event" {% if selected_target == 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetEvent">
                                     <i class="bi bi-calendar-event me-1"></i>Event Blast
-                                    <span class="text-muted">(attendees with permission for this event)</span>
+                                    <span class="text-muted">(registered contacts with permission for this event)</span>
                                 </label>
                             </div>
                             <div class="form-text">
@@ -298,7 +304,7 @@
                         <div class="stat-card__label">Total Recipients</div>
                         <div class="stat-card__value">{{ total_recipients }}</div>
                         <div class="stat-card__meta">
-                            {{ community_count }} contactable community • {{ event_registration_count }} current RSVPs
+                            {{ community_count }} contactable community • {{ event_registration_count }} current event contacts
                         </div>
                     </div>
                 </div>
@@ -310,10 +316,10 @@
                         <div class="stat-card__label">Last Blast</div>
                         {% if latest_log %}
                         <div class="stat-card__value">
-                            {% if latest_log.failure_count == 0 %}Delivered{% else %}Partial{% endif %}
+                            {% if latest_log.status == 'processing' %}In progress{% elif latest_log.failure_count == 0 %}Submitted{% else %}Partial{% endif %}
                         </div>
                         <div class="stat-card__meta">
-                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} sent
+                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} provider accepted
                         </div>
                         {% else %}
                         <div class="stat-card__value">—</div>
@@ -322,11 +328,11 @@
                     </div>
                 </div>
 
-                <!-- Delivery Rate -->
+                <!-- Submission evidence is distinct from delivery receipts. -->
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Delivery Rate</div>
+                        <div class="stat-card__label">Provider acceptance</div>
                         {% if success_rate is not none %}
                         <div class="stat-card__value stat-card__value--rate">
                             <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
@@ -334,7 +340,7 @@
                         <div class="stat-card__progress">
                             <div class="stat-card__progress-bar" style="width: {{ success_rate }}%"></div>
                         </div>
-                        <div class="stat-card__meta">{{ failure_rate }}% failed</div>
+                        <div class="stat-card__meta">{{ latest_outcomes.delivered }} confirmed delivered · {{ latest_outcomes.delivery_failed }} delivery failures · {{ latest_outcomes.submission_failed }} submission failures · {{ latest_outcomes.unresolved }} unresolved</div>
                         {% else %}
                         <div class="stat-card__value">N/A</div>
                         <div class="stat-card__meta">No data yet</div>
@@ -437,7 +443,7 @@
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #8b5cf6"></span>
-                                Current event RSVPs ({{ event_registration_count }})
+                                Current event contacts ({{ event_registration_count }})
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #e2e8f0"></span>
@@ -966,7 +972,7 @@
             new Chart(audienceCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Community', 'Event RSVPs', 'Suppression'],
+                    labels: ['Community', 'Event contacts', 'Suppression'],
                     datasets: [{
                         data: [communityCount, eventCount, unsubCount],
                         backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],

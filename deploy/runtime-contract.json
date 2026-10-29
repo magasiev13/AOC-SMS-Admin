@@ -6,6 +6,9 @@
   "feedback_registration_isolation": true,
   "feedback_command_isolation": true,
   "staff_phone_privacy": true,
-  "schema_min": "028",
-  "schema_max": "028"
+  "booking_projection_isolation": true,
+  "complete_inventory_authority": true,
+  "explicit_feedback_invitation_authority": true,
+  "schema_min": "031",
+  "schema_max": "031"
 }

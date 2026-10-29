@@ -2,6 +2,16 @@ const { expect } = require('@playwright/test');
 
 const diagnosticsByPage = new WeakMap();
 
+async function waitForRenderedDocument(page) {
+  await page.waitForLoadState('load');
+  await page.evaluate(async () => { await document.fonts.ready; });
+}
+
+async function renderedElementMetric(locator, metric) {
+  await waitForRenderedDocument(locator.page());
+  return locator.evaluate((element, name) => Math.round(element.getBoundingClientRect()[name]), metric);
+}
+
 function installFailureDiagnostics(page) {
   const diagnostics = {
     consoleMessages: [],
@@ -213,4 +223,6 @@ module.exports = {
   organizationRow,
   startFakeCheckoutFromSetup,
   submitOwnerOnboarding,
+  waitForRenderedDocument,
+  renderedElementMetric,
 };

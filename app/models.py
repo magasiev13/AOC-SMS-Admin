@@ -1012,8 +1012,8 @@ class OrganizationEventSyncIntegration(db.Model):
     @validates("provider")
     def _normalize_provider(self, key, value):
         normalized = (value or "").strip().lower()
-        if normalized not in {"wordpress"}:
-            raise ValueError("Event sync provider must be wordpress.")
+        if normalized not in {"wordpress", "app"}:
+            raise ValueError("Event sync provider must be wordpress or app.")
         return normalized
 
     def __repr__(self):
@@ -1274,7 +1274,18 @@ class Event(db.Model):
 
     @property
     def attendee_count(self) -> int:
-        return sum(registration.capacity_spaces for registration in self.registrations)
+        """Compatibility name for reserved places; this is not check-in evidence."""
+        if self.id is None:
+            return sum(registration.capacity_spaces for registration in self.registrations)
+        bookings = EventBooking.query.filter_by(organization_id=self.organization_id, event_id=self.id).all()
+        linked_ids = {booking.projection_registration_id for booking in bookings if booking.projection_registration_id}
+        return sum(booking.party_size for booking in bookings if booking.is_active and booking.duplicate_of_id is None) + sum(
+            registration.capacity_spaces for registration in self.registrations if registration.id not in linked_ids
+        )
+
+    @property
+    def reserved_places(self) -> int:
+        return self.attendee_count
 
     def __repr__(self):
         return f'<Event {self.title}>'
@@ -1820,3 +1831,13 @@ class LoginAttempt(db.Model):
     def __repr__(self):
         username = self.username or "<ip-only>"
         return f'<LoginAttempt {self.client_ip}/{username} count={self.attempt_count}>'
+
+# Kept separate so invitation authority remains distinct from feedback answers.
+from app.feedback_invitation_models import FeedbackInvitation  # noqa: E402,F401
+
+
+# Booking identity is distinct from the current messaging-contact projection.
+from app.booking_models import EventBooking  # noqa: E402,F401
+
+# Reconciliation evidence and source authority are distinct from individual bookings.
+from app.booking_inventory_models import BookingInventory, BookingInventoryPage, EventRegistrationSource  # noqa: E402,F401

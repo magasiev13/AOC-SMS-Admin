@@ -694,23 +694,13 @@ def _sync_linked_event_registration(session: SurveySession) -> None:
     if not survey or not survey.linked_event_id:
         return
 
-    registration_name = _event_registration_name_for_session(session)
-    existing = EventRegistration.query.filter_by(
-        event_id=survey.linked_event_id,
-        phone=session.phone,
-    ).first()
-    if existing:
-        if registration_name and existing.name != registration_name:
-            existing.name = registration_name
+    from app.models import Event
+    from app.services.booking_projection_service import create_local_booking
+    event = Event.query.filter_by(id=survey.linked_event_id).first()
+    if event is None:
         return
-
-    db.session.add(
-        EventRegistration(
-            event_id=survey.linked_event_id,
-            name=registration_name,
-            phone=session.phone,
-        )
-    )
+    create_local_booking(event, _event_registration_name_for_session(session), session.phone,
+        source='registration_survey', external_booking_id=f'event:{event.id}:flow:{survey.id}:thread:{session.thread_id}')
 
 
 def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[SurveySession, list[str]]:

@@ -243,6 +243,8 @@
                     <td data-sort-value="{{ msg.status or 'sent' }}">
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
+                        {% elif msg.status == 'held' %}
+                        <span class="badge bg-warning text-dark">Held for review</span>
                         {% elif msg.status == 'processing' %}
                         <span class="badge bg-info text-dark">Processing</span>
                         {% elif msg.status == 'failed' %}
@@ -276,7 +278,7 @@
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
-                            {% if msg.status == 'processing' %}
+                            {% if msg.status in ['processing', 'held'] %}
                             <button type="button" class="btn btn-sm btn-outline-warning" aria-label="Cancel remaining scheduled messages" title="Cancel remaining sends"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
                                     data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">
@@ -292,7 +294,7 @@
                             <span class="small text-muted align-self-center">History retained</span>
                             {% endif %}
                         </div>
-                        {% if msg.status == 'processing' %}
+                        {% if msg.status in ['processing', 'held'] %}
                         <form id="cancel-scheduled-{{ msg.id }}" method="POST"
                               action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -350,7 +352,7 @@
                         aria-controls="scheduledPreview{{ msg.id }}">
                     <i class="bi bi-layout-sidebar-inset"></i> Preview
                 </button>
-                {% if msg.status == 'processing' %}
+                {% if msg.status in ['processing', 'held'] %}
                 <button type="button" class="btn btn-sm btn-outline-warning"
                         data-bs-toggle="modal" data-bs-target="#actionModal"
                         data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">

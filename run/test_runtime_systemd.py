@@ -227,7 +227,10 @@ ReadWritePaths={self.root}
     def build_release(self, name):
         paths = ['deploy/runtime_control.py', 'deploy/runtime-contract.json',
                  'app/saas_migrations/027_historical_usage_observation_boundary.py',
-                 'app/saas_migrations/028_event_feedback_context.py']
+                 'app/saas_migrations/028_event_feedback_context.py',
+                 'app/saas_migrations/029_event_booking_ledger.py',
+                 'app/saas_migrations/030_booking_inventories.py',
+                 'app/saas_migrations/031_feedback_invitations.py']
         for relative in paths:
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)

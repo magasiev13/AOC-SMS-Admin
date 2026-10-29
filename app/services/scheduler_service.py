@@ -435,10 +435,18 @@ def send_scheduled_messages(app):
                 scheduled.id,
                 processing_started_at.isoformat() if processing_started_at else 'unknown',
             )
-            scheduled.status = 'failed'
-            scheduled.error_message = 'Message processing timed out'
-            scheduled.sent_at = now
-            scheduled.next_retry_at = None
+            if scheduled.automation_source == 'feedback_invitation':
+                # Resume the original frozen snapshot and durable attempt keys.
+                # Accepted and uncertain provider submissions are never repeated.
+                scheduled.status = 'pending'
+                scheduled.processing_started_at = None
+                scheduled.next_retry_at = now
+                scheduled.error_message = 'Execution interrupted; resuming the original invitation snapshot.'
+            else:
+                scheduled.status = 'failed'
+                scheduled.error_message = 'Message processing timed out'
+                scheduled.sent_at = now
+                scheduled.next_retry_at = None
         if stuck_processing:
             db.session.commit()
             logger.info("[Scheduler] Marked %d stuck message(s) as failed", stuck_count)
@@ -475,6 +483,25 @@ def send_scheduled_messages(app):
             scheduled = lock_scheduled_message(scheduled_id, scheduled_organization_id)
             if scheduled is None or scheduled.status != 'pending':
                 db.session.commit()
+                continue
+            from app.services.feedback_invitation_service import prepare_due_invitation
+            try:
+                with organization_context(scheduled_organization_id):
+                    if not prepare_due_invitation(scheduled):
+                        db.session.commit()
+                        continue
+                # Freeze and approval are committed before an execution claim.
+                # A crash on either side cannot expand the audience on retry.
+                db.session.commit()
+            except Exception:
+                # This preparation has not submitted to a provider. Roll back
+                # only its transaction; earlier schedules remain committed and
+                # an unrelated due message must still get its own attempt.
+                db.session.rollback()
+                logger.exception(
+                    '[Scheduler] Invitation preparation failed for message id=%d organization_id=%s; continuing other due messages.',
+                    scheduled_id, scheduled_organization_id,
+                )
                 continue
             processed_count += 1
             logger.info(

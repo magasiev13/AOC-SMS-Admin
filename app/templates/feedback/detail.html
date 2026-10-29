@@ -18,10 +18,19 @@
         <div class="workspace-panel__header"><div><h2 class="workspace-panel__title">Invite this event audience</h2><p class="workspace-panel__meta">Keyword <code>{{ feedback_display(flow.trigger_keyword) }}</code> · <span class="badge bg-{{ 'success' if flow.is_active else 'secondary' }}">{{ 'Active' if flow.is_active else 'Paused' }}</span></p></div></div>
         <div class="workspace-panel__body">
             <p class="mb-3" style="white-space: pre-wrap; overflow-wrap: anywhere;">{{ feedback_display(invitation) }}</p>
-            {% if flow.is_active %}{% if not can_view_contact_numbers and feedback_display(invitation) != invitation %}<p class="text-muted mb-0" role="status">An owner needs to prepare this invitation because its saved text includes a protected contact number.</p>{% else %}<a class="btn btn-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id, feedback_id=flow.id, _anchor='message_body') }}">Review invitation</a><p class="form-text mb-0">Opens the composer with this event selected. Nothing sends until you review and confirm; actual opt-outs are excluded.</p>{% endif %}
+            {% if flow.is_active %}{% if not can_view_contact_numbers and feedback_display(invitation) != invitation %}<p class="text-muted mb-0" role="status">An owner needs to prepare this invitation because its saved text includes a protected contact number.</p>{% else %}<a class="btn btn-primary" href="{{ url_for('event_feedback.invite', event_id=event.id, survey_id=flow.id) }}">Review invitation</a><p class="form-text mb-0">Choose an audience and an explicit send time, then review and confirm. Saving this feedback form schedules nothing.</p>{% endif %}
             {% else %}<p class="text-muted mb-0">This feedback is paused. Edit it to accept new conversations before inviting people.</p>{% endif %}
         </div>
     </section>
+    {% if invitations %}<section class="workspace-panel"><div class="workspace-panel__header"><h2 class="workspace-panel__title">Invitations</h2></div><div class="workspace-panel__body">
+        {% for item in invitations %}<article class="border-bottom pb-3 mb-3"><div class="d-flex flex-wrap justify-content-between gap-2"><h3 class="h6">Invitation #{{ item.id }} · {{ 'Registered contacts' if item.audience_rule == 'registered_contacts' else 'Contactable community' }}</h3><span class="badge bg-{{ 'warning text-dark' if item.status == 'held' else 'secondary' }}">{{ item.status|capitalize }}</span></div>
+            <p class="small mb-1">{{ item.scheduled_local }} ({{ item.timezone }})</p>
+            <p class="small mb-1">{{ item.recipient_count if item.recipient_count is not none else 'Audience resolves when due' }}{% if item.recipient_count is not none %} frozen recipients{% endif %} · {{ item.accepted }} provider accepted · {{ item.unresolved }} unresolved · {{ item.failed }} failed</p>
+            {% if item.hold_reason %}<p class="small mb-1" role="status">{{ feedback_display(item.hold_reason) }}</p>{% endif %}
+            {% if item.status == 'held' %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_feedback.review_held', event_id=event.id, survey_id=flow.id, invitation_id=item.id) }}">Review held invitation</a>{% endif %}
+            {% if item.message_log_id %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.log_detail', log_id=item.message_log_id) }}">View outcome evidence</a>{% endif %}
+        </article>{% endfor %}
+    </div></section>{% else %}<p class="small text-muted" role="status">No invitation has been scheduled. Choose an audience and timing through Review invitation when you are ready.</p>{% endif %}
     <section class="collection-panel">
         <div class="collection-panel__header"><div><h2 class="collection-panel__title">Responses</h2><p class="collection-panel__meta">Newest conversations first. Existing questions and answers retain their original event context.</p></div></div>
         {% if summary.rows %}

@@ -437,15 +437,16 @@ def _import_legacy_rows_into_organization(
         mapped_event_id = event_id_map.get(int(legacy_event_id)) if legacy_event_id is not None else None
         if mapped_event_id is None:
             continue
-        db.session.add(
-            EventRegistration(
+        imported_registration = EventRegistration(
                 organization_id=organization.id,
                 event_id=mapped_event_id,
                 name=_row_value(row, "name"),
                 phone=_row_value(row, "phone"),
                 created_at=_parse_datetime(_row_value(row, "created_at")) or utc_now(),
-            )
         )
+        db.session.add(imported_registration)
+        from app.services.booking_projection_service import project_legacy_registration
+        project_legacy_registration(imported_registration, row['id'])
         counts["event_registrations"] += 1
 
     for row in _legacy_rows(legacy_connection, "unsubscribed_contacts"):
@@ -1379,6 +1380,8 @@ def sync_legacy_sqlite_snapshot_into_existing_org(
                         "event_registrations",
                         "updated" if _apply_model_values(existing_registration, values) else "skipped",
                     )
+                from app.services.booking_projection_service import project_legacy_registration
+                project_legacy_registration(existing_registration, row['id'])
 
             for row in legacy_inbox_messages:
                 legacy_thread_id = _row_value(row, "thread_id")

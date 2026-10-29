@@ -1,0 +1,26 @@
+<section class="collection-panel" id="messages" aria-labelledby="event-messages-heading">
+    <div class="collection-panel__header"><div><h2 class="collection-panel__title" id="event-messages-heading">Messages</h2><p class="collection-panel__meta">Review related schedules before preparing another send. Reminder defaults remain two weeks, one week, one day and event day to the community.</p></div></div>
+    <div class="card-list">
+        {% for row in communications.scheduled %}{% set scheduled = row.schedule %}<article class="card-list-item">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2"><h3 class="h6 mb-1">{{ row.label }}</h3><span class="badge bg-{{ 'warning text-dark' if scheduled.status in ['pending','held'] else 'secondary' }}">{{ scheduled.status|private_text }}</span></div>
+            <p class="small text-muted mb-2"><time>{{ scheduled.scheduled_at|localtime }}</time> · {{ row.audience }} · Schedule #{{ scheduled.id }}</p>
+            <p class="text-break mb-2" style="white-space:pre-wrap">{{ scheduled.message_body|private_text }}</p>
+            {% if row.outcome %}<p class="small mb-2">{{ row.outcome.accepted }} provider accepted · {{ row.outcome.delivered }} confirmed delivered · {{ row.outcome.submission_failed }} submission failures · {{ row.outcome.delivery_failed }} delivery failures · {{ row.outcome.unresolved }} unresolved</p>{% endif %}
+            {% if scheduled.error_message %}<p class="small text-muted">{{ scheduled.error_message|private_text }}</p>{% endif %}
+            {% if row.invitation %}<a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_feedback.review_held' if scheduled.status == 'held' else 'event_feedback.detail', event_id=event.id, survey_id=row.invitation.survey_id, **({'invitation_id':row.invitation.id} if scheduled.status == 'held' else {})) }}">{{ 'Review held invitation' if scheduled.status == 'held' else 'View invitation and responses' }}</a>{% endif %}
+            {% if scheduled.status in ['pending','processing','held'] %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.scheduled_list') }}">Manage schedule</a>{% endif %}
+            {% if scheduled.message_log_id %}<a class="small" href="{{ url_for('main.log_detail', log_id=scheduled.message_log_id) }}">View send evidence</a>{% endif %}
+        </article>{% else %}<div class="card-list-item">No schedules are associated with this event. Creating or editing feedback does not schedule an invitation.</div>{% endfor %}
+        {% for row in communications.logs %}<article class="card-list-item">
+            <h3 class="h6"><a href="{{ url_for('main.log_detail', log_id=row.log.id) }}">Send #{{ row.log.id }}</a> · {{ row.log.created_at|localtime }}</h3>
+            <p class="small text-muted mb-2">{{ 'Contactable community' if row.log.target == 'community' else 'Registered contacts' }}{% if row.log.test_mode %} · Internal test{% endif %}</p>
+            <p class="text-break mb-2">{{ row.log.message_body|private_text }}</p>
+            <p class="small mb-0">{{ row.outcome.accepted }} provider accepted · {{ row.outcome.delivered }} confirmed delivered · {{ row.outcome.submission_failed }} submission failures · {{ row.outcome.delivery_failed }} delivery failures · {{ row.outcome.unresolved }} unresolved</p>
+        </article>{% endfor %}
+    </div>
+    <div class="collection-panel__body small text-muted">Times use your selected browser timezone. Provider acceptance confirms submission; delivery requires a provider receipt. A missing receipt remains unresolved.</div>
+</section>
+<section class="collection-panel" id="feedback" aria-labelledby="event-feedback-heading">
+    <div class="collection-panel__header"><div><h2 class="collection-panel__title" id="event-feedback-heading">Feedback</h2><p class="collection-panel__meta">Optional for every event. Choose the audience, timing and invitation deliberately; creating a form sends nothing.</p></div><a class="btn btn-sm btn-outline-primary" href="{{ url_for('event_feedback.index', event_id=event.id) }}">Manage feedback</a></div>
+    <div class="card-list">{% for flow in feedback_forms %}<article class="card-list-item"><h3 class="h6"><a href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">{{ flow.name|private_text }}</a></h3><p class="small text-muted mb-0">{{ 'Active' if flow.is_active else 'Paused' }} · {{ flow.questions|length }} questions · View invitation status and responses</p></article>{% else %}<div class="card-list-item">No feedback form for this event. <a href="{{ url_for('event_feedback.create', event_id=event.id) }}">Create an optional feedback form</a>.</div>{% endfor %}</div>
+</section>

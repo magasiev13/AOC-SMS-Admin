@@ -25,7 +25,7 @@ for (const width of [1440, 390]) {
     try {
       await page.getByLabel('Date (optional)').fill('2000-01-01');
       await page.getByRole('button', { name: 'Update Event', exact: true }).click();
-      await expect(page.getByRole('link', { name: 'Send follow-up / feedback' })).toBeVisible();
+      await expect(page.locator('[data-page-actions]').getByRole('link', { name: 'Message registrants' })).toBeVisible();
       await page.goto('/events');
       await expect(page.locator('.collection-panel--results')).not.toContainText('Acme Spring Launch');
       const history = page.getByRole('navigation', { name: 'Event view' }).getByRole('link', { name: 'Past events', exact: true });
@@ -36,7 +36,7 @@ for (const width of [1440, 390]) {
       await noOverflow(page);
       await page.screenshot({ path: testInfo.outputPath(`past-events-${width}.png`), fullPage: false });
       await page.goto(detail);
-      await page.getByRole('link', { name: 'Send follow-up / feedback' }).click();
+      await page.getByRole('link', { name: 'Message registrants' }).last().click();
       await expect(page.getByLabel('Event Blast', { exact: false })).toBeChecked();
       await expect(page.getByLabel('Select Event')).toHaveValue(detail.split('/').pop());
       await expect(page.getByText('Past event follow-up:', { exact: false })).toBeVisible();

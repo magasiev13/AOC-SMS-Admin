@@ -809,6 +809,37 @@ def main() -> None:
                 metadata={'proof': 'Synthetic explicit event opt-in for the isolated browser fixture.'},
             )
 
+        # Explicit old held invitations are isolated browser fixtures. Event
+        # and form creation itself still creates no invitation or schedule.
+        from app.services.event_feedback_service import defaults_for_event, save_event_feedback
+        from app.services.feedback_invitation_service import (
+            approve_invitation, build_review, context_digest, hold_invitation,
+        )
+        from app.tenant import organization_context
+        import json
+        with organization_context(active_org.id):
+            for role in ('owner', 'staff'):
+                for width in (1440, 390):
+                    form_values=defaults_for_event(acme_event)
+                    form_values.update(name=f'Expired held recovery {role} {width}',
+                                       trigger_keyword=f'HELD{role.upper()}{width}')
+                    flow=save_event_feedback(acme_event,form_values)
+                    db.session.flush()
+                    values={'audience_rule':'community','timing':'now','timezone':'UTC',
+                            'message_body':f'If you joined the launch, reply {flow.trigger_keyword} to share feedback.'}
+                    approval_key=f'held-browser-{role}-{width}'
+                    reviewed=build_review(acme_event,flow,values,owner,approval_key)
+                    invitation=approve_invitation(acme_event,flow,values,owner,approval_key,reviewed['review_token'])
+                    old=(now-timedelta(days=2)).replace(tzinfo=None)
+                    invitation.scheduled_message.scheduled_at=old
+                    invitation.approved_at=old
+                    invitation.context_digest=context_digest(acme_event,flow,invitation.scheduled_message)
+                    history=json.loads(invitation.approval_history_json)
+                    history[0].update(scheduled_at=old.isoformat(),approved_at=old.isoformat())
+                    invitation.approval_history_json=json.dumps(history)
+                    hold_invitation(invitation,invitation.scheduled_message,'Awaiting explicit browser-fixture operator review.')
+                    db.session.flush()
+
         from app.models import InboxThread, InboxMessage
         reply_thread = InboxThread(organization_id=active_org.id, phone='+17205550101', contact_name='Maya Chen', last_message_at=now)
         db.session.add(reply_thread)

@@ -69,7 +69,7 @@ def cancellation_result(*, status: str | None, account_sid: str | None, send_kin
 
 def apply_scheduled_cancellation(scheduled) -> bool:
     """Apply only while locked, without committing the caller's transaction."""
-    if scheduled.status not in {"pending", "processing"}:
+    if scheduled.status not in {"pending", "processing", "held"}:
         return False
     was_processing = scheduled.status == "processing"
     scheduled.status = "cancelled"

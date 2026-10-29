@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Event Sync - {{ product_name }}{% endblock %}
+{% block title %}App integrations - {{ product_name }}{% endblock %}
 
-{% block page_title %}Event Sync{% endblock %}
+{% block page_title %}App integrations{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>Event Sync</span>
+<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>App integrations</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -19,23 +19,25 @@
 {% set setup_block = integration_view.setup_block.replace('PASTE_GENERATED_SECRET_HERE', generated_secret).replace('GENERATE_AND_PASTE_SECRET_HERE', generated_secret) if generated_secret else integration_view.setup_block %}
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <nav class="d-flex flex-wrap gap-2" aria-label="Integration types"><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'app' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='app') }}">Connected apps</a><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'wordpress' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='wordpress') }}">WordPress</a></nav>
 
     <div class="workspace-detail-layout">
         <div class="workspace-detail-main">
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">WordPress connection</h2>
-                        <p class="workspace-panel__meta">Events Manager and WPForms changes will sync after this connection is enabled on both sides.</p>
+                        <h2 class="workspace-panel__title">{{ 'App connection' if integration_view.provider == 'app' else 'WordPress connection' }}</h2>
+                        <p class="workspace-panel__meta">{% if integration_view.provider == 'app' %}Connect an event platform, registration form or business application using the signed event and booking contract. The connection belongs to this workspace.{% else %}Events Manager and WPForms changes will sync after this connection is enabled on both sides.{% endif %}</p>
                     </div>
                 </div>
 
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="provider" value="{{ integration_view.provider }}">
                     <div class="workspace-panel__body">
                         <div class="form-check form-switch mb-4">
                             <input class="form-check-input" type="checkbox" role="switch" id="eventSyncEnabled" name="enabled" {% if integration_view.enabled %}checked{% endif %}>
-                            <label class="form-check-label" for="eventSyncEnabled">Enable WordPress event sync</label>
+                            <label class="form-check-label" for="eventSyncEnabled">{{ 'Enable app integration' if integration_view.provider == 'app' else 'Enable WordPress event sync' }}</label>
                         </div>
 
                         <div class="mb-3">
@@ -49,17 +51,18 @@
                             <input class="form-control font-monospace" type="text" readonly value="{{ generated_secret }}">
                         </div>
                         {% elif not integration_view.has_secret %}
-                        <div class="alert alert-info" role="alert">Saving this page with sync enabled will generate the WordPress secret.</div>
+                        <div class="alert alert-info" role="alert">Saving this page with the connection enabled will generate its signing secret.</div>
                         {% endif %}
 
                         <div class="mb-0">
-                            <label class="form-label" for="wordpressSetupBlock">WordPress setup block</label>
+                            <label class="form-label" for="wordpressSetupBlock">{{ 'App connection contract' if integration_view.provider == 'app' else 'WordPress setup block' }}</label>
                             <textarea class="form-control font-monospace" id="wordpressSetupBlock" rows="5" readonly>{{ setup_block }}</textarea>
+                            {% if integration_view.provider == 'app' and integration_view.source_namespace_prefix %}<div class="form-text">Source identities from this connection begin with <code>{{ integration_view.source_namespace_prefix }}</code>. Use the complete source identity when connecting multiple apps to one event's registration roster.</div>{% endif %}
                         </div>
                     </div>
 
                     <div class="workspace-panel__footer">
-                        <div class="text-muted small">Install the WordPress helper plugin, paste the endpoint and secret there, then future events will sync automatically.</div>
+                        <div class="text-muted small">{% if integration_view.provider == 'app' %}Configure this endpoint and signing secret in your app or adapter. Event and booking updates do not approve roster coverage or create feedback invitations.{% else %}Install the WordPress helper plugin and configure its endpoint, signing secret and event form bindings.{% endif %}</div>
                         <div class="workspace-form-actions">
                             <button type="submit" class="btn btn-primary">Save settings</button>
                         </div>
@@ -97,9 +100,10 @@
                     </div>
                 </div>
                 <div class="workspace-panel__body">
-                    <p class="workspace-callout__copy mb-3">Rotate the secret if the WordPress configuration was shared too broadly or replaced.</p>
+                    <p class="workspace-callout__copy mb-3">Rotate this connection's secret if its configuration was shared too broadly or replaced.</p>
                     <form method="POST" action="{{ url_for('main.event_sync_rotate_secret') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="provider" value="{{ integration_view.provider }}">
                         <button type="submit" class="btn btn-outline-danger w-100">Rotate secret</button>
                     </form>
                 </div>

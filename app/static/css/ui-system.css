@@ -476,3 +476,14 @@
     grid-template-columns: 1fr;
   }
 }
+/* Keep the event's four distinct counts readable without burying its navigation. */
+@media (max-width: 767.98px) {
+    .event-workspace .workspace-summary__stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .event-workspace .workspace-summary__stat {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+}

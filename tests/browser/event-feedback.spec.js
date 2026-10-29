@@ -62,13 +62,23 @@ for (const width of [1440, 390]) {
     const feedbackPath = new URL(page.url()).pathname;
     await page.getByRole('link', { name: 'Review invitation', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByLabel('Event Blast', { exact: false })).toBeChecked();
-    await expect(page.getByLabel('Message', { exact: true })).toHaveValue(new RegExp(keyword));
-    await page.getByRole('button', { name: /^Send (Now|Message)$/ }).click();
-    const review = page.getByRole('dialog', { name: 'Review send', exact: true });
-    await expect(review).toBeVisible();
-    await expect(review.locator('[data-review="audience"]')).toHaveText('Acme Spring Launch');
-    await page.keyboard.press('Escape'); // The invitation is reviewed, not sent.
+    await expect(page.getByLabel('Registered contacts', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
+    await expect(page.getByLabel('Send now', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Choose a date and time', { exact: true })).not.toBeChecked();
+    // This fixture intentionally has unverified historical roster coverage.
+    // A community invitation is a separate, explicit audience decision.
+    await page.getByLabel('Contactable community', { exact: true }).check();
+    await page.getByLabel('Send now', { exact: true }).check();
+    await page.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review invitation', exact: true })).toBeVisible();
+    await expect(page.locator('[data-review="audience"]')).toHaveText('Contactable community');
+    await expect(page.locator('[data-review="timing"]')).toHaveText('Send now');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    // Exercise keyboard return to the editable composer without approving a send.
+    await page.getByRole('button', { name: 'Edit invitation', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
 
     const phone = width === 390 ? '+17205558039' : '+17205558044';
     // A recipient can still be in an old signup when the new invitation
@@ -106,4 +116,37 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`event-feedback-staff-${width}.png`), fullPage: false });
   });
+}
+
+
+for (const width of [1440, 390]) {
+  for (const role of ['owner', 'staff']) {
+    test(`expired held invitation requires reviewed send-now choice for ${role} at ${width}px`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await login(page, `${role}@browser.test`, role === 'owner' ? 'Owner-pass1!' : 'Staff-pass1!');
+      await page.goto('/events/1/feedback');
+      await page.getByRole('link', { name: `Expired held recovery ${role} ${width}`, exact: true }).click();
+      await page.getByRole('link', { name: 'Review held invitation', exact: true }).click();
+      await expect(page.getByText('The original send window has expired.', { exact: false })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toHaveCount(0);
+      await expect(page.locator('input[name="review_token"]')).toHaveCount(0);
+      await page.getByRole('link', { name: 'Review sending now', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-review="timing"]')).toHaveText('Send now after this confirmation');
+      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toBeVisible();
+      if (role === 'staff') {
+        const html = await page.content();
+        for (const phone of ['+17205550101', '+17205550102', '+15550001111']) expect(html).not.toContain(phone);
+      }
+      await page.waitForLoadState('load');
+      await page.evaluate(async () => { await document.fonts.ready; });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: info.outputPath(`expired-held-${role}-${width}.png`), fullPage: false });
+      await page.getByRole('button', { name: 'Confirm send now', exact: true }).click();
+      await expect(page).toHaveURL(/\/events\/1\/feedback\/\d+$/);
+      await expect(page.getByText('Invitation reviewed for sending now.', { exact: false })).toBeVisible();
+      await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Review held invitation', exact: true })).toHaveCount(0);
+    });
+  }
 }
