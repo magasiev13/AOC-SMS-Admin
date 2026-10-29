@@ -2617,12 +2617,13 @@ def _event_detail_surface_view(
     sendable_count: int,
     unsubscribed_count: int,
     is_current: bool = True,
+    roster: dict | None = None,
 ) -> dict:
+    roster = roster or {}
     return _surface_view(
         eyebrow='Events',
         title=event.title,
-        copy=('Review registrations, add attendees, and import CSV updates from one page.' if is_current
-              else 'Review retained attendance and eligible contacts for an intentional follow-up or feedback request.'),
+        copy='Understand bookings, reach your audience, and follow up from one event workspace.',
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(
@@ -2631,11 +2632,11 @@ def _event_detail_surface_view(
             ),
         ],
         stats=[
-            _surface_stat('Booking contacts', registration_count, 'Unique phone registrations'),
-            _surface_stat('Attendees', attendee_count, 'Total party size'),
-            _surface_stat('Sendable' if is_current else 'Follow-up eligible', sendable_count,
-                          'Eligible event SMS recipients' if is_current else 'Eligible for an explicit event follow-up'),
-            _surface_stat('Not eligible', unsubscribed_count, 'Opt-outs, suppressions, or missing permission'),
+            _surface_stat('Bookings', roster.get('bookings', 0), 'Separate active registrations or transactions'),
+            _surface_stat('Reserved places', roster.get('reserved_places', attendee_count), 'Booked places; attendance needs separate check-in'),
+            _surface_stat('Reachable contacts', sendable_count, 'Eligible SMS destinations, counted once'),
+            _surface_stat('Missing contact details', roster.get('missing_contact_details', 0) + roster.get('invalid_contact_details', 0),
+                          'Bookings retained without a usable SMS destination'),
         ],
     )
 
@@ -2816,11 +2817,11 @@ def _event_sync_surface_view(
     )
     return _surface_view(
         eyebrow='Integrations',
-        title='Event sync',
-        copy='Connect a WordPress event site once and let future events and signups update automatically.',
+        title='App integrations',
+        copy='Connect registration and event apps to this workspace. Each source retains its booking identities and reconciliation evidence.',
         meta=_organization_meta_items(organization),
         stats=[
-            _surface_stat('Status', enabled_label, 'WordPress webhook'),
+            _surface_stat('Status', enabled_label, 'Connected app' if integration_view['provider'] == 'app' else 'WordPress connection'),
             _surface_stat(
                 'Secret',
                 'Ready' if integration_view['has_secret'] else 'Not generated',
@@ -2847,11 +2848,11 @@ def _settings_surface_view(organization: Organization) -> dict:
 def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
     cards = [
         {
-            'title': 'Event Sync',
-            'description': 'Find the WordPress webhook endpoint, rotate the signing secret, and review sync health.',
+            'title': 'App integrations',
+            'description': 'Connect event and registration apps, manage signing secrets, and review sync health.',
             'icon': 'bi-arrow-repeat',
-            'href': url_for('main.event_sync_settings'),
-            'action': 'Open Event Sync',
+            'href': url_for('main.event_sync_settings', provider='app'),
+            'action': 'Open integrations',
         },
         {
             'title': 'Test Recipients',
@@ -2957,7 +2958,7 @@ def _workspace_summary_view(
             {
                 'label': 'Recipients',
                 'value': total_recipients,
-                'meta': f"{community_count or 0} community · {event_registration_count or 0} RSVPs",
+                'meta': f"{community_count or 0} community · {event_registration_count or 0} event contacts",
             }
         )
     if pending_scheduled_count is not None:
@@ -4233,7 +4234,7 @@ def _send_review_intent(form):
     if target not in {'community', 'event'}:
         raise SendReviewInputError('Choose a community or event audience.')
     try:
-        event_id = int(form.get('event_id') or 0) if target == 'event' else None
+        event_id = int(form.get('event_id') or 0) if target == 'event' else (int(form.get('context_event_id') or 0) or None)
     except (TypeError, ValueError) as exc:
         raise SendReviewInputError('Choose a valid event.') from exc
     if target == 'event' and not event_id:
@@ -4259,7 +4260,7 @@ def _create_send_review(form):
     if saas_mode_enabled() and not organization_can_transmit_messages(_current_organization()):
         raise SendReviewInputError('Workspace billing and messaging must both be active before reviewing a send.')
     intent = _send_review_intent(form)
-    event = _tenant_get_or_404(Event, intent['event_id']) if intent['target'] == 'event' else None
+    event = _tenant_get_or_404(Event, intent['event_id']) if intent['event_id'] else None
     test_data = None
     if intent['test_mode']:
         try:
@@ -4296,7 +4297,7 @@ def _create_send_review(form):
     profile = _current_organization().messaging_profile if _current_organization() is not None else None
     return {
         'review_token': freeze_review(current_user, _current_organization_id(), key, intent, recipients),
-        'audience': 'Internal test recipients' if intent['test_mode'] else (event.title if event is not None else 'Community'),
+        'audience': 'Internal test recipients' if intent['test_mode'] else (event.title if event is not None and intent['target'] == 'event' else 'Community'),
         'eligible': len(recipients), 'excluded': sum(counts.values()), 'reasons': counts,
         'sender': profile.from_number if profile is not None and profile.from_number else 'Configured messaging service',
         'sample': render_message_template(intent['message_body'], recipients[0]),
@@ -4312,6 +4313,8 @@ def _create_send_review(form):
 @login_required
 @require_roles('admin', 'social_manager')
 def dashboard_send_review():
+    if request.form.get('feedback_id'):
+        return jsonify({'error': 'Open the event feedback invitation composer to choose and review its audience and timing.'}), 400
     try:
         return jsonify(_create_send_review(request.form))
     except SendReviewInputError as exc:
@@ -4354,6 +4357,12 @@ def dashboard():
     selection = request.form if request.method == 'POST' else request.args
     selected_target = selection.get('target', 'community')
     selected_event_id = selection.get('event_id', type=int) if selected_target == 'event' else None
+    context_event_id = selection.get('context_event_id', type=int) if selected_target == 'community' else None
+    composer_event = None
+    if context_event_id or selected_event_id:
+        composer_event = Event.query.filter_by(id=context_event_id or selected_event_id).first()
+        if composer_event is None and request.method == 'GET':
+            abort(404)
     selected_past_event = None
     feedback_invitation = None
     feedback_id = selection.get('feedback_id', type=int)
@@ -4363,16 +4372,10 @@ def dashboard():
         from app.services.event_feedback_service import get_event_feedback_or_404, feedback_invitation_text
         feedback_event = _tenant_get_or_404(Event, selected_event_id)
         feedback_flow = get_event_feedback_or_404(feedback_event, feedback_id)
-        if not feedback_flow.is_active:
-            flash('This feedback flow is archived. Activate it before inviting replies.', 'warning')
-        else:
-            feedback_invitation = feedback_invitation_text(feedback_flow, feedback_event)
-            if (not can_view_phone_numbers()
-                    and redact_phone_numbers(feedback_invitation) != feedback_invitation):
-                # This is saved server content, rather than text entered by
-                # this operator. Do not disclose it or silently turn a masked
-                # draft into a different outgoing invitation.
-                abort(403, description='An owner must prepare this invitation because its saved text includes a protected contact number.')
+        saved_invitation = feedback_invitation_text(feedback_flow, feedback_event)
+        if not can_view_phone_numbers() and redact_phone_numbers(saved_invitation) != saved_invitation:
+            abort(403, description='An owner must prepare this invitation because its saved text includes a protected contact number.')
+        return redirect(url_for('event_feedback.invite', event_id=feedback_event.id, survey_id=feedback_flow.id))
     if selected_event_id and selected_event_id not in {event.id for event in events}:
         # Past audiences remain available through an explicit history/follow-up
         # action. Event dates do not withdraw permission or rewrite a saved send.
@@ -4530,6 +4533,10 @@ def dashboard():
             failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
 
         chart_data = build_chart_data()
+        from app.services.event_workspace_service import submission_outcomes
+        latest_outcomes = submission_outcomes(latest_log)
+        from app.services.event_workspace_service import event_communications
+        related_communications = event_communications(composer_event) if composer_event is not None else None
         users_missing_email = []
         saved_test_recipients = []
         if organization is not None:
@@ -4561,6 +4568,10 @@ def dashboard():
             'pending_scheduled_count': pending_scheduled_count,
             'success_rate': success_rate,
             'failure_rate': failure_rate,
+            'latest_outcomes': latest_outcomes,
+            'composer_event': composer_event,
+            'context_event_id': context_event_id,
+            'related_communications': related_communications,
             'chart_data': chart_data,
             'inbound_count_7d': inbound_count_7d,
             'unread_threads_count': unread_threads_count,
@@ -4632,6 +4643,11 @@ def dashboard():
         message_body = normalize_sms_body(request.form.get('message_body', '').strip())
         target = request.form.get('target', 'community')
         event_id = request.form.get('event_id', type=int)
+        if target == 'community':
+            event_id = request.form.get('context_event_id', type=int)
+        if event_id and Event.query.filter_by(id=event_id).first() is None:
+            flash('The selected event is unavailable in this workspace. Choose an event. Review this send again; your message has been kept.', 'error')
+            return render_dashboard()
         test_mode = request.form.get('test_mode') == 'on'
         test_recipient_selection_mode = normalize_test_recipient_selection_mode(
             request.form.get('test_recipient_selection_mode')
@@ -4702,7 +4718,7 @@ def dashboard():
 
         durable_intent = {
             'message_body': final_message, 'target': target,
-            'event_id': event_id if target == 'event' else None,
+            'event_id': event_id,
             'test_mode': bool(test_mode),
             'test_recipient_selection_mode': test_recipient_selection_mode if test_mode else None,
             'test_recipient_phone': normalize_phone(test_recipient_phone) if test_mode else None,
@@ -4820,7 +4836,7 @@ def dashboard():
                         same_request = bool(
                             existing_scheduled.message_body == final_message
                             and existing_scheduled.target == target
-                            and existing_scheduled.event_id == (event_id if target == 'event' else None)
+                            and existing_scheduled.event_id == event_id
                             and existing_scheduled.scheduled_at == scheduled_utc
                             and bool(existing_scheduled.test_mode) == bool(test_mode)
                         )
@@ -4852,7 +4868,7 @@ def dashboard():
                 scheduled = ScheduledMessage(
                     message_body=final_message,
                     target=target,
-                    event_id=event_id if target == 'event' else None,
+                    event_id=event_id,
                     scheduled_at=scheduled_utc,
                     test_mode=test_mode,
                     test_recipient_selection_mode=(
@@ -4951,7 +4967,7 @@ def dashboard():
         send_fingerprint = build_blast_send_fingerprint(
             organization_id=_current_organization_id() if saas_mode_enabled() else None,
             target=target,
-            event_id=event_id if target == 'event' else None,
+            event_id=event_id,
             test_mode=test_mode,
             final_message=final_message,
             recipient_data=recipient_data,
@@ -5022,7 +5038,7 @@ def dashboard():
         log = MessageLog(
             message_body=final_message,
             target=target,
-            event_id=event_id if target == 'event' else None,
+            event_id=event_id,
             status='processing',
             test_mode=test_mode,
             total_recipients=len(recipient_data),
@@ -5732,9 +5748,12 @@ def event_sync_settings():
         abort(404)
 
     generated_secret = None
+    provider = request.values.get('provider', 'wordpress')
+    if provider not in {'wordpress', 'app'}:
+        abort(404)
 
     def render_page(*, one_time_secret: str | None = None):
-        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'))
+        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'), provider=provider)
         return render_template(
             'settings/event_sync.html',
             organization=organization,
@@ -5750,6 +5769,7 @@ def event_sync_settings():
                 organization.id,
                 enabled,
                 current_user.id,
+                provider=provider,
             )
             db.session.commit()
         except (RuntimeError, ValueError) as exc:
@@ -5760,7 +5780,7 @@ def event_sync_settings():
                 flash('Event sync settings updated.', 'success')
                 return render_page(one_time_secret=new_secret)
             flash('Event sync settings updated.', 'success')
-            return redirect(url_for('main.event_sync_settings'))
+            return redirect(url_for('main.event_sync_settings', provider=provider))
 
     return render_page(one_time_secret=generated_secret)
 
@@ -5776,15 +5796,19 @@ def event_sync_rotate_secret():
     if organization is None:
         abort(404)
 
+    provider = request.form.get('provider', 'wordpress')
+    if provider not in {'wordpress', 'app'}:
+        abort(404)
+
     try:
-        _, generated_secret = rotate_event_sync_secret(organization.id, current_user.id)
+        _, generated_secret = rotate_event_sync_secret(organization.id, current_user.id, provider=provider)
         db.session.commit()
     except (RuntimeError, ValueError) as exc:
         db.session.rollback()
         flash(str(exc), 'error')
     else:
-        flash('Event sync secret rotated. Update WordPress with the new secret before the next event change.', 'success')
-        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'))
+        flash('Signing secret rotated. Update the connected app with the new secret before its next sync.', 'success')
+        integration_view = event_sync_setup_view(organization, request.url_root.rstrip('/'), provider=provider)
         return render_template(
             'settings/event_sync.html',
             organization=organization,
@@ -5792,7 +5816,7 @@ def event_sync_rotate_secret():
             generated_secret=generated_secret,
             surface_view=_event_sync_surface_view(organization, integration_view),
         )
-    return redirect(url_for('main.event_sync_settings'))
+    return redirect(url_for('main.event_sync_settings', provider=provider))
 
 
 @bp.route('/settings/event-sync/status')
@@ -5806,14 +5830,17 @@ def event_sync_status():
     if organization is None:
         abort(404)
 
+    provider = request.args.get('provider', 'wordpress')
+    if provider not in {'wordpress', 'app'}:
+        abort(404)
     integration = OrganizationEventSyncIntegration.query.filter_by(
         organization_id=organization.id,
-        provider='wordpress',
+        provider=provider,
     ).first()
     return jsonify(
         {
             'enabled': integration.enabled if integration is not None else False,
-            'provider': 'wordpress',
+            'provider': provider,
             'last_event_synced_at': integration.last_event_synced_at.isoformat() if integration is not None and integration.last_event_synced_at else None,
             'last_signup_synced_at': integration.last_signup_synced_at.isoformat() if integration is not None and integration.last_signup_synced_at else None,
             'last_reconcile_synced_at': integration.last_reconcile_synced_at.isoformat() if integration is not None and integration.last_reconcile_synced_at else None,
@@ -7441,7 +7468,10 @@ def _event_sync_resource_metadata(
             raise AocEventSyncPayloadError(
                 'Event-sync booking mutations require a booking id.'
             )
-        resource_key = f'booking:{provider}:{external_id}'
+        source = str(payload.get('source') or 'aoc-wordpress').strip()
+        scope = str(booking_payload.get('source_scope') or '').strip()
+        identity = json.dumps([source, provider, scope, external_id], separators=(',', ':'))
+        resource_key = 'booking:' + hashlib.sha256(identity.encode('utf-8')).hexdigest()
         revision_value = booking_payload.get('updated_at')
     elif action.startswith('event_'):
         external_id = str(event_payload.get('event_id') or '').strip()
@@ -7449,7 +7479,8 @@ def _event_sync_resource_metadata(
             raise AocEventSyncPayloadError(
                 'Event-sync event mutations require an event id.'
             )
-        resource_key = f'event:{external_id}'
+        source = str(payload.get('source') or 'aoc-wordpress').strip()
+        resource_key = 'event:' + hashlib.sha256(json.dumps([source, external_id]).encode('utf-8')).hexdigest()
         revision_value = event_payload.get('modified_at')
     else:
         resource_key = action or None
@@ -7526,7 +7557,9 @@ def _claim_external_webhook_delivery(
         db.session.add(delivery_record)
         db.session.flush()
 
-    if resource_key and source_revision_at is not None:
+    booking_payload = payload.get('booking') if isinstance(payload.get('booking'), dict) else {}
+    has_booking_revision = booking_payload.get('source_revision') is not None
+    if resource_key and source_revision_at is not None and not has_booking_revision:
         newer_delivery = (
             ExternalWebhookDelivery.query
             .filter(
@@ -7591,7 +7624,7 @@ def event_sync_webhook(organization_slug, provider):
             )
             ledger_delivery_id = f'{integration.organization_id}:{delivery_id}'
             delivery_record, stored_response = _claim_external_webhook_delivery(
-                provider='event_sync',
+                provider=f'event_sync_app:{integration.id}' if integration.provider == 'app' else 'event_sync',
                 delivery_id=ledger_delivery_id,
                 organization_id=integration.organization_id,
                 payload_digest=hashlib.sha256(body).hexdigest(),
@@ -8270,6 +8303,11 @@ def event_add():
 @bp.route('/events/<int:event_id>')
 @login_required
 def event_detail(event_id):
+    from app.booking_models import EventBooking
+    from app.services.booking_inventory_service import event_roster_coverage
+    from app.services.booking_projection_service import roster_summary
+    from app.services.event_feedback_service import feedback_query
+    from app.services.event_workspace_service import event_communications
     event = _tenant_get_or_404(Event, event_id)
     is_current = event_is_current(event)
     registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(
@@ -8284,6 +8322,12 @@ def event_detail(event_id):
     blocked_phones = unsubscribed_phones | suppressed_phones
     blocked_phones |= {phone for phone, status in permission_statuses.items() if not status.allowed}
     attendee_count = sum(reg.capacity_spaces for reg in registrations)
+    roster = roster_summary(event)
+    coverage = event_roster_coverage(event)
+    booking_page = max(1, request.args.get('booking_page', 1, type=int))
+    booking_query = EventBooking.query.filter_by(event_id=event.id).order_by(EventBooking.id.desc())
+    booking_total = booking_query.count()
+    bookings = booking_query.offset((booking_page - 1) * 100).limit(100).all()
     return render_template(
         'events/detail.html',
         event=event,
@@ -8293,6 +8337,13 @@ def event_detail(event_id):
         permission_statuses=permission_statuses,
         can_review_permission=_current_user_is_workspace_owner(),
         event_is_current=is_current,
+        roster=roster,
+        coverage=coverage,
+        bookings=bookings,
+        booking_page=booking_page,
+        booking_total=booking_total,
+        communications=event_communications(event),
+        feedback_forms=feedback_query(event).order_by(SurveyFlow.id.desc()).limit(20).all(),
         surface_view=_event_detail_surface_view(
             event,
             registration_count=len(registrations),
@@ -8300,6 +8351,7 @@ def event_detail(event_id):
             sendable_count=len({reg.phone for reg in registrations} - blocked_phones),
             unsubscribed_count=len(blocked_phones),
             is_current=is_current,
+            roster=roster,
         ),
     )
 
@@ -8314,6 +8366,81 @@ def event_registration_permission_review(event_id, registration_id):
     if registration.event_id != event.id:
         abort(404)
     return _review_recipient_permission(registration, purpose='event', event=event)
+
+
+@bp.route('/events/<int:event_id>/registration-sources', methods=['POST'])
+@login_required
+def event_registration_source_review(event_id):
+    if not can_view_phone_numbers():
+        abort(403)
+    from app.services.booking_inventory_service import configure_event_source, review_local_source
+    event = _tenant_get_or_404(Event, event_id)
+    try:
+        action = request.form.get('action')
+        verified = action in {'verify', 'review_local'}
+        if verified and request.form.get('compared_with_source') != '1':
+            raise ValueError('Compare the booking identities and reserved places with the source, then confirm the comparison.')
+        if action == 'review_local':
+            review_local_source(event, request.form.get('source'), request.form.get('source_scope', ''), actor_user_id=current_user.id)
+        else:
+            configure_event_source(event, request.form.get('source'), request.form.get('source_scope'),
+                                   actor_user_id=current_user.id, verified=verified)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'error')
+    else:
+        flash('Source comparison approved.' if verified else 'Source saved with unverified coverage.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event.id, _anchor='overview'))
+
+
+@bp.route('/events/<int:event_id>/bookings/<int:booking_id>/cancel', methods=['POST'])
+@login_required
+def event_booking_cancel(event_id, booking_id):
+    if not can_view_phone_numbers():
+        abort(403)
+    from app.models import EventBooking
+    from app.services.booking_projection_service import LOCAL_SOURCES, cancel_booking
+    event = _tenant_get_or_404(Event, event_id)
+    booking = _tenant_get_or_404(EventBooking, booking_id)
+    if booking.event_id != event.id:
+        abort(404)
+    if booking.source not in LOCAL_SOURCES or booking.legacy_evidence:
+        flash('Cancel source-managed bookings at their registration source. Historical evidence remains retained for comparison.', 'warning')
+    else:
+        cancel_booking(booking, utc_now(), reason='operator_cancelled')
+        db.session.commit()
+        flash('Booking cancelled. Other bookings sharing this contact remain eligible under their own permission rules.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event.id, _anchor='registrations'))
+
+
+@bp.route('/events/<int:event_id>/bookings/<int:booking_id>/duplicate', methods=['POST'])
+@login_required
+def event_booking_duplicate(event_id, booking_id):
+    if not can_view_phone_numbers():
+        abort(403)
+    from app.models import EventBooking
+    from app.services.booking_projection_service import link_duplicate_booking, unlink_duplicate_booking
+    event = _tenant_get_or_404(Event, event_id)
+    booking = _tenant_get_or_404(EventBooking, booking_id)
+    if booking.event_id != event.id:
+        abort(404)
+    try:
+        if request.form.get('action') == 'unlink':
+            unlink_duplicate_booking(booking)
+        else:
+            primary_id = request.form.get('primary_booking_id', type=int)
+            if not primary_id or request.form.get('same_transaction') != '1':
+                raise ValueError('Select the primary booking and confirm both records represent the same transaction.')
+            primary = _tenant_get_or_404(EventBooking, primary_id)
+            link_duplicate_booking(booking, primary)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'error')
+    else:
+        flash('Booking representation updated. Both source records and their history are retained.', 'success')
+    return redirect(url_for('main.event_detail', event_id=event.id, _anchor='registrations'))
 
 
 @bp.route('/events/<int:event_id>/edit', methods=['GET', 'POST'])
@@ -8355,6 +8482,10 @@ def event_edit(event_id):
 @require_roles('admin')
 def event_delete(event_id):
     event = _tenant_get_or_404(Event, event_id)
+    from app.models import EventBooking, EventRegistrationSource, BookingInventory
+    if any(model.query.filter_by(event_id=event.id).first() is not None for model in (EventBooking, EventRegistrationSource, BookingInventory)):
+        flash('This event has retained booking or source history. Keep it in Past events rather than deleting it.', 'warning')
+        return redirect(url_for('main.event_detail', event_id=event.id))
     from app.services.event_feedback_service import event_has_feedback
     if event_has_feedback(event):
         flash('This event has feedback history. Keep it in Past events rather than deleting it.', 'warning')
@@ -8383,6 +8514,10 @@ def events_bulk_delete():
         return redirect(url_for('main.events_list'))
 
     events = Event.query.filter(Event.id.in_(event_ids)).all()
+    from app.models import EventBooking, EventRegistrationSource, BookingInventory
+    if any(model.query.filter(model.event_id.in_([event.id for event in events])).first() is not None for model in (EventBooking, EventRegistrationSource, BookingInventory)):
+        flash('No events were deleted. A selected event has retained booking or source history; keep it in Past events.', 'warning')
+        return redirect(url_for('main.events_list'))
     from app.services.event_feedback_service import event_has_feedback
     if any(event_has_feedback(event) for event in events):
         flash('No events were deleted. A selected event has feedback history; keep it in Past events.', 'warning')
@@ -8403,36 +8538,26 @@ def event_register(event_id):
     name = request.form.get('name', '').strip() or None
     phone = request.form.get('phone', '').strip()
     
-    if not phone:
-        flash('Phone number is required.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
-    
-    phone = normalize_phone(phone)
-    if not validate_phone(phone):
-        flash('Invalid phone number format.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
-
-    if UnsubscribedContact.query.filter_by(phone=phone).first():
+    normalized_phone = normalize_phone(phone)
+    if normalized_phone and UnsubscribedContact.query.filter_by(phone=normalized_phone).first():
         flash('This number is currently unsubscribed and will not receive messages.', 'warning')
-    
-    # Check if already registered for this event
-    existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
-    if existing:
-        flash('This phone number is already registered for this event.', 'error')
+
+    try:
+        booking_spaces = int(request.form.get('party_size', '1'))
+        if not 0 <= booking_spaces <= 100000:
+            raise ValueError()
+    except (TypeError, ValueError):
+        flash('Reserved places must be a whole number between 0 and 100,000.', 'error')
         return redirect(url_for('main.event_detail', event_id=event_id))
-    
-    booking_spaces = 0 if request.form.get('included_in_paid_order') == '1' else 1
-    registration = EventRegistration(
-        event_id=event_id,
-        name=name,
-        phone=phone,
-        booking_spaces=booking_spaces,
-    )
-    db.session.add(registration)
-    upsert_community_member_contact(name, phone)
+    if request.form.get('included_in_paid_order') == '1':
+        booking_spaces = 0
+    from app.services.booking_projection_service import create_local_booking
+    create_local_booking(event, name, phone, party_size=booking_spaces)
+    if normalized_phone and validate_phone(normalized_phone):
+        upsert_community_member_contact(name, normalized_phone)
     db.session.commit()
     
-    flash('Registration added.', 'success')
+    flash('Booking added. Eligible contact numbers are counted once for event messaging.', 'success')
     return redirect(url_for('main.event_detail', event_id=event_id))
 
 
@@ -8444,7 +8569,13 @@ def event_unregister(event_id, registration_id):
     if not registration:
         flash('Registration not found for this event.', 'error')
         return redirect(url_for('main.event_detail', event_id=event_id))
-    db.session.delete(registration)
+    from app.services.booking_projection_service import cancel_registration_bookings
+    try:
+        cancel_registration_bookings(registration)
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), 'warning')
+        return redirect(url_for('main.event_detail', event_id=event_id))
     db.session.commit()
     flash('Registration removed.', 'success')
     return redirect(url_for('main.event_detail', event_id=event_id))
@@ -8508,8 +8639,8 @@ def event_import_registrations(event_id):
                 already_registered += 1
                 continue
 
-            registration = EventRegistration(event_id=event_id, name=rec['name'], phone=phone)
-            db.session.add(registration)
+            from app.services.booking_projection_service import create_local_booking
+            create_local_booking(event, rec['name'], phone, source='csv_import', external_booking_id='contact:' + phone)
             added += 1
 
         db.session.commit()
@@ -8840,8 +8971,10 @@ def scheduled_list():
             MessageDispatchAttempt.scheduled_message_id,
         ).filter(MessageDispatchAttempt.scheduled_message_id.in_(past_ids)).distinct().all()
     } if past_ids else set()
-    protected_delete_ids = retained_history_ids | {
-        message.id for message in past if message.status in {'pending', 'processing'}
+    from app.models import FeedbackInvitation
+    invitation_schedule_ids = {row[0] for row in FeedbackInvitation.query.with_entities(FeedbackInvitation.scheduled_message_id).all()}
+    protected_delete_ids = retained_history_ids | invitation_schedule_ids | {
+        message.id for message in past if message.status in {'pending', 'processing', 'held'}
     }
 
     return render_template(
@@ -8867,7 +9000,7 @@ def scheduled_cancel(scheduled_id):
         abort(404)
     if not apply_scheduled_cancellation(scheduled):
         db.session.commit()
-        flash('Only pending or processing messages can be cancelled.', 'error')
+        flash('Only pending, processing or held messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
     db.session.commit()
     flash('Scheduled message cancelled. Already submitted messages may still complete.', 'success')
@@ -8879,15 +9012,19 @@ def scheduled_cancel(scheduled_id):
 @require_roles('admin')
 def scheduled_delete(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
-    from app.models import MessageDispatchAttempt
+    from app.models import MessageDispatchAttempt, FeedbackInvitation
     from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
-    if scheduled.status in {'pending', 'processing'}:
+    if scheduled.status in {'pending', 'processing', 'held'}:
         db.session.commit()
         flash('Cancel this scheduled message before deleting it.', 'error')
+        return redirect(url_for('main.scheduled_list'))
+    if FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None:
+        db.session.commit()
+        flash('This schedule has retained feedback invitation history and cannot be deleted.', 'error')
         return redirect(url_for('main.scheduled_list'))
     if MessageDispatchAttempt.query.filter_by(scheduled_message_id=scheduled.id).first() is not None:
         db.session.commit()
@@ -8914,7 +9051,7 @@ def scheduled_bulk_delete():
         flash('Invalid selection.', 'error')
         return redirect(url_for('main.scheduled_list'))
     
-    from app.models import MessageDispatchAttempt
+    from app.models import MessageDispatchAttempt, FeedbackInvitation
     from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     selected = _tenant_bulk_filter(
@@ -8927,7 +9064,7 @@ def scheduled_bulk_delete():
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
         if scheduled is None:
             continue
-        if scheduled.status in {'pending', 'processing'} or MessageDispatchAttempt.query.filter_by(
+        if scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
             scheduled_message_id=scheduled.id,
         ).first() is not None:
             protected += 1

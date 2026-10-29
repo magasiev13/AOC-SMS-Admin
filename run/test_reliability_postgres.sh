@@ -36,6 +36,7 @@ cd "${REPO_ROOT}"
   tests/test_durable_reply_races.py tests/test_inbound_inactive_consent.py \
   tests/test_scheduled_cancellation_safety.py tests/test_recipient_permissions.py \
   tests/test_ux_recovery.py tests/test_historical_recovery_safety.py tests/test_daily_audiences.py \
-  tests/test_event_feedback.py tests/test_staff_contact_privacy.py \
+  tests/test_event_feedback.py tests/test_feedback_invitations.py tests/test_event_workspace.py tests/test_event_communication_schema.py tests/test_staff_contact_privacy.py \
+  tests/test_booking_projection.py tests/test_booking_inventory.py tests/test_app_registration_sync.py \
   tests/test_keyword_legacy_editing.py tests/test_inbox_keyword_origin.py \
   tests/test_inbox_keyword_origin_ui.py tests/test_pr_comment_recovery.py "$@"

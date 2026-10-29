@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Twinevia Event Sync
  * Description: Syncs WordPress Events Manager events, bookings, and WPForms signups to Twinevia.
- * Version: 1.0.0
+ * Version: 2.0.0
  * Author: Twinevia
  */
 
@@ -32,7 +32,7 @@ function twinevia_event_sync_enabled(): bool {
 		return true === TWINEVIA_EVENT_SYNC_ENABLED;
 	}
 
-	return '1' === (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_ENABLED, '0' );
+	return (bool) apply_filters( 'twinevia_event_sync_enabled', '1' === (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_ENABLED, '0' ) );
 }
 
 function twinevia_event_sync_webhook_url(): string {
@@ -40,7 +40,7 @@ function twinevia_event_sync_webhook_url(): string {
 		return trim( (string) TWINEVIA_EVENT_SYNC_WEBHOOK_URL );
 	}
 
-	return trim( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_URL, '' ) );
+	return trim( (string) apply_filters( 'twinevia_event_sync_webhook_url', get_option( TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_URL, '' ) ) );
 }
 
 function twinevia_event_sync_webhook_secret(): string {
@@ -48,7 +48,7 @@ function twinevia_event_sync_webhook_secret(): string {
 		return trim( (string) TWINEVIA_EVENT_SYNC_WEBHOOK_SECRET );
 	}
 
-	return trim( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_SECRET, '' ) );
+	return trim( (string) apply_filters( 'twinevia_event_sync_webhook_secret', get_option( TWINEVIA_EVENT_SYNC_OPTION_WEBHOOK_SECRET, '' ) ) );
 }
 
 function twinevia_event_sync_ready(): bool {
@@ -116,6 +116,9 @@ function twinevia_event_sync_deliver_payload( array $payload, string $delivery_i
 				'X-Twinevia-Timestamp'   => $timestamp,
 				'X-Twinevia-Signature'   => 'sha256=' . $signature,
 				'X-Twinevia-Delivery-ID' => $delivery_id,
+				'X-AOC-Timestamp' => $timestamp,
+				'X-AOC-Signature' => 'sha256=' . $signature,
+				'X-AOC-Delivery-ID' => $delivery_id,
 			],
 			'body'    => $body,
 		]
@@ -276,7 +279,7 @@ function twinevia_event_sync_dispatch_event_post( int $post_id ): void {
 	twinevia_event_sync_send_payload(
 		[
 			'action' => 'event_upsert',
-			'source' => 'wordpress_events_manager',
+			'source' => twinevia_event_sync_source( 'events_manager' ),
 			'event'  => $payload,
 		]
 	);
@@ -305,7 +308,7 @@ function twinevia_event_sync_delete_event_post( int $post_id, WP_Post $post ): v
 		twinevia_event_sync_send_payload(
 			[
 				'action' => 'event_deleted',
-				'source' => 'wordpress_events_manager',
+				'source' => twinevia_event_sync_source( 'events_manager' ),
 				'event'  => twinevia_event_sync_event_payload_from_post_id( $post_id ),
 			]
 		);
@@ -455,11 +458,11 @@ function twinevia_event_sync_booking_sms_consent( object $booking ): bool {
 		$booking,
 		[ 'twinevia_sms_consent', 'sms_consent', 'text_message_consent' ]
 	);
-	return '' !== twinevia_event_sync_consent_text_version()
-		&& twinevia_event_sync_affirmative_value( $value );
+	return (bool) apply_filters( 'twinevia_event_sync_booking_sms_consent', '' !== twinevia_event_sync_consent_text_version()
+		&& twinevia_event_sync_affirmative_value( $value ), $booking );
 }
 
-function twinevia_event_sync_booking_payload( object $booking ): array {
+function twinevia_event_sync_booking_payload( object $booking, ?string $snapshot_at = null ): array {
 	$post_id = twinevia_event_sync_booking_event_post_id( $booking );
 	if ( 0 >= $post_id ) {
 		throw new RuntimeException( 'Booking event post not found.' );
@@ -471,13 +474,14 @@ function twinevia_event_sync_booking_payload( object $booking ): array {
 	if ( 0 >= $booking_id ) {
 		throw new RuntimeException( 'Booking ID not found.' );
 	}
-	return [
+	$payload = [
 		'action'  => 'booking_upsert',
-		'source'  => 'wordpress_events_manager',
+		'source'  => twinevia_event_sync_source( 'events_manager' ),
 		'event'   => twinevia_event_sync_event_payload_from_post_id( $post_id ),
 		'booking' => [
 			'provider'   => 'events_manager',
 			'booking_id' => (string) $booking_id,
+			'source_scope' => 'events_manager:' . (string) ( $booking->event_id ?? 0 ),
 			'status'     => twinevia_event_sync_booking_status_text( $status_code ),
 			'active'     => twinevia_event_sync_booking_is_active( $status_code ),
 			'person_id'  => 0 < $user_id ? (string) $user_id : '',
@@ -491,6 +495,9 @@ function twinevia_event_sync_booking_payload( object $booking ): array {
 			'updated_at' => current_time( DATE_ATOM ),
 		],
 	];
+	$payload = (array) apply_filters( 'twinevia_event_sync_booking_payload', $payload, $booking );
+	$payload['booking'] = twinevia_event_sync_version_booking( $payload['booking'], $snapshot_at );
+	return $payload;
 }
 
 function twinevia_event_sync_sync_booking( object $booking, string $action ): void {
@@ -501,6 +508,11 @@ function twinevia_event_sync_sync_booking( object $booking, string $action ): vo
 	try {
 		$payload = twinevia_event_sync_booking_payload( $booking );
 		$payload['action'] = $action;
+		if ( 'booking_deleted' === $action ) {
+			$payload['booking']['active'] = false;
+			$payload['booking']['status'] = 'deleted';
+			$payload['booking'] = twinevia_event_sync_version_booking( $payload['booking'] );
+		}
 		twinevia_event_sync_send_payload( $payload );
 	} catch ( Throwable $exception ) {
 		twinevia_event_sync_log_error( 'Could not sync Events Manager booking.', [ 'error' => $exception->getMessage() ] );
@@ -522,10 +534,10 @@ add_action( 'em_booking_deleted', 'twinevia_event_sync_booking_deleted', 20, 1 )
 function twinevia_event_sync_wpforms_event_map(): array {
 	$raw = trim( (string) get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP, '' ) );
 	if ( '' === $raw ) {
-		return [];
+		return (array) apply_filters( 'twinevia_event_sync_wpforms_event_map', [] );
 	}
 	$decoded = json_decode( $raw, true );
-	return is_array( $decoded ) ? $decoded : [];
+	return (array) apply_filters( 'twinevia_event_sync_wpforms_event_map', is_array( $decoded ) ? $decoded : [] );
 }
 
 function twinevia_event_sync_wpforms_consent_field_map(): array {
@@ -743,29 +755,8 @@ function twinevia_event_sync_wpforms_process_complete( array $fields, array $ent
 
 function twinevia_event_sync_sync_wpforms_entry( int $entry_id, int $form_id, array $fields, array $entry, int $post_id ): void {
 	try {
-		$consent_field_id = twinevia_event_sync_wpforms_consent_field_id( $form_id );
-		twinevia_event_sync_send_payload(
-			[
-				'action'  => 'booking_upsert',
-				'source'  => 'wordpress_wpforms',
-				'event'   => twinevia_event_sync_event_payload_from_post_id( $post_id ),
-				'booking' => [
-					'provider'    => 'wpforms',
-					'booking_id'  => (string) $entry_id,
-					'status'      => (string) ( $entry['status'] ?? 'completed' ),
-					'active'      => true,
-					'person_id'   => isset( $entry['user_id'] ) ? (string) $entry['user_id'] : '',
-					'name'        => twinevia_event_sync_wpforms_submission_name( $fields ),
-					'phone'       => twinevia_event_sync_wpforms_submission_phone( $fields ),
-					'spaces'      => 1,
-					'updated_at'  => current_time( DATE_ATOM ),
-					'sms_consent' => twinevia_event_sync_wpforms_submission_sms_consent( $fields, $consent_field_id ),
-					'sms_consent_source' => 0 < $consent_field_id ? 'wpforms:field:' . $consent_field_id : '',
-					'sms_consent_text_version' => twinevia_event_sync_consent_text_version(),
-					'sms_consent_captured_at' => (string) ( $entry['date_modified'] ?? current_time( DATE_ATOM ) ),
-				],
-			]
-		);
+		$payload = twinevia_event_sync_wpforms_payload( $entry_id, $form_id, $fields, $entry, $post_id );
+		twinevia_event_sync_send_payload( $payload );
 	} catch ( Throwable $exception ) {
 		twinevia_event_sync_log_error( 'Could not sync WPForms signup.', [ 'form_id' => $form_id, 'entry_id' => $entry_id, 'error' => $exception->getMessage() ] );
 	}
@@ -833,10 +824,11 @@ function twinevia_event_sync_reconcile_future_events(): void {
 				twinevia_event_sync_send_payload(
 					[
 						'action' => 'event_upsert',
-						'source' => 'wordpress_events_manager',
+						'source' => twinevia_event_sync_source( 'events_manager' ),
 						'event'  => $event_payload,
 					]
 				);
+				twinevia_event_sync_inventory_event( absint( (string) $post_id ) );
 			} catch ( Throwable $exception ) {
 				twinevia_event_sync_log_error( 'Could not reconcile event.', [ 'post_id' => $post_id, 'error' => $exception->getMessage() ] );
 			}
@@ -851,7 +843,7 @@ function twinevia_event_sync_reconcile_future_events(): void {
 		twinevia_event_sync_send_payload(
 			[
 				'action' => 'reconcile_complete',
-				'source' => 'wordpress_events_manager',
+				'source' => twinevia_event_sync_source( 'events_manager' ),
 			]
 		);
 	} finally {
@@ -1059,9 +1051,16 @@ function twinevia_event_sync_admin_page(): void {
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	WP_CLI::add_command(
 		'twinevia-event-sync reconcile',
-		function (): void {
+		function ( array $args, array $assoc_args ): void {
+			if ( isset( $assoc_args['event-post-id'] ) ) {
+				twinevia_event_sync_inventory_event( absint( (string) $assoc_args['event-post-id'] ), isset( $assoc_args['form-id'] ) ? absint( (string) $assoc_args['form-id'] ) : 0 );
+				WP_CLI::success( 'Complete event inventory queued. Authority still requires source comparison in Twinevia.' );
+				return;
+			}
 			twinevia_event_sync_reconcile_future_events();
 			WP_CLI::success( 'Twinevia future event reconciliation completed.' );
 		}
 	);
 }
+
+require_once __DIR__ . '/twinevia-booking-inventory.php';

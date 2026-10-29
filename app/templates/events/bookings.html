@@ -1,0 +1,29 @@
+<section class="collection-panel" aria-labelledby="event-bookings-heading">
+    <div class="collection-panel__header"><div><h2 class="collection-panel__title" id="event-bookings-heading">Registrations</h2><p class="collection-panel__meta">Every source booking keeps its own identity, status and reserved places, even when bookings share a contact.</p></div></div>
+    {% if bookings %}<div class="card-list">
+        {% for booking in bookings %}<article class="card-list-item">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div><h3 class="h6 mb-1">{{ contact_label(booking.name, booking.id, 'Booking') }}</h3><div class="small text-muted">Booking #{{ booking.id }} · {{ booking.party_size }} reserved {{ 'place' if booking.party_size == 1 else 'places' }}</div></div>
+                <span class="badge bg-{{ 'secondary' if not booking.is_active else ('warning text-dark' if booking.status in ['pending','submitted'] else 'success') }}">{{ booking.status|private_text }}</span>
+            </div>
+            <div class="small text-muted mt-2 text-break">{% if can_view_contact_numbers %}{{ booking.source|private_text }}{% if booking.source_scope %} · {{ booking.source_scope|private_text }}{% endif %} · Source record {{ booking.external_booking_id|private_text }}{% else %}{{ 'App integration' if booking.source.startswith('app:') else ('WordPress registration' if booking.source in ['aoc-wordpress','wordpress_wpforms','wordpress_events_manager'] else {'manual':'Manual booking','csv_import':'CSV import','registration_survey':'Registration survey'}.get(booking.source,'Registration source')) }}{% endif %}{% if booking.legacy_evidence %} · Legacy evidence, unverified identity{% endif %}{% if booking.duplicate_of_id %} · Linked to booking #{{ booking.duplicate_of_id }}{% endif %}</div>
+            {% if can_view_contact_numbers and booking.phone %}<div class="small mt-1"><code>{{ booking.phone }}</code></div>{% endif %}
+            {% if booking.contact_state != 'valid' %}<div class="small mt-1">{{ 'Missing contact details' if booking.contact_state == 'missing' else 'Invalid contact details' }}; booking retained without this SMS destination.</div>{% endif %}
+            {% if booking.selection_summary %}<div class="small mt-1">Bringing: {{ booking.selection_summary|private_text }}</div>{% endif %}
+            {% if booking.comment %}<div class="small mt-1">{{ booking.comment|private_text }}</div>{% endif %}
+            {% if booking.cancelled_at %}<div class="small mt-1">Cancelled {{ booking.cancelled_at|localtime }}; history retained.</div>{% endif %}
+            {% if can_view_contact_numbers and booking.is_active and not booking.legacy_evidence and booking.source in ['manual','csv_import','registration_survey'] %}<form class="mt-2" method="post" action="{{ url_for('main.event_booking_cancel', event_id=event.id, booking_id=booking.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit" data-confirm="Cancel only this booking? Other bookings sharing its contact will remain.">Cancel booking</button></form>{% endif %}
+            {% if can_view_contact_numbers %}<details class="mt-2"><summary class="small">Link another representation of the same transaction</summary>
+                <form method="post" class="mt-2" action="{{ url_for('main.event_booking_duplicate', event_id=event.id, booking_id=booking.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% if booking.duplicate_of_id %}<button class="btn btn-sm btn-outline-secondary" name="action" value="unlink" type="submit">Keep as a separate booking</button>{% else %}
+                    <label class="form-label small" for="primary-booking-{{ booking.id }}">Primary booking record ID</label><input class="form-control form-control-sm" id="primary-booking-{{ booking.id }}" name="primary_booking_id" type="number" min="1" required>
+                    <div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="same-booking-{{ booking.id }}" name="same_transaction" value="1" required><label class="form-check-label small" for="same-booking-{{ booking.id }}">These records represent the same transaction. A shared phone alone does not establish this.</label></div>
+                    <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Link duplicate representation</button>{% endif %}
+                </form>
+            </details>{% endif %}
+        </article>{% endfor %}
+    </div>
+    {% if booking_total > 100 %}<nav class="collection-panel__body d-flex justify-content-between flex-wrap gap-2" aria-label="Booking pages"><span>Page {{ booking_page }} · {{ booking_total }} records</span><div>{% if booking_page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.event_detail', event_id=event.id, booking_page=booking_page-1, _anchor='registrations') }}">Previous</a>{% endif %}{% if booking_page*100 < booking_total %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.event_detail', event_id=event.id, booking_page=booking_page+1, _anchor='registrations') }}">Next</a>{% endif %}</div></nav>{% endif %}
+    {% else %}<div class="collection-panel__body"><p class="mb-0">No source booking identities yet. Existing messaging contacts remain below as legacy evidence until they can be compared with the registration source.</p></div>{% endif %}
+</section>

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Request feedback - {{ product_name }}{% endblock %}
+{% block page_title %}Request feedback{% endblock %}
+{% block breadcrumbs %}<a href="{{ url_for('main.events_list') }}">Events</a> / <a href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">{{ feedback_display(flow.name) }}</a> / <span>Invitation</span>{% endblock %}
+{% block content %}
+<div class="workspace-shell">
+    <section class="workspace-summary"><div class="workspace-summary__body"><h2 class="workspace-summary__title">{{ feedback_display(event.title) }}</h2><p class="workspace-summary__copy">Choose who to invite and when. Feedback never changes names, bookings or registrations. Saving an event or form creates no invitation.</p></div></section>
+    {% if related_invitations %}<section class="workspace-panel"><div class="workspace-panel__body"><h2 class="h6">Related invitations</h2>{% for item in related_invitations %}<p class="small mb-1">#{{ item.id }} · {{ item.audience_rule|replace('_', ' ')|capitalize }} · {{ item.scheduled_local }} ({{ item.timezone }}) · {{ item.status }}</p>{% endfor %}<p class="form-text mb-0">Review these existing sends before confirming another invitation.</p></div></section>{% endif %}
+    <section class="workspace-panel"><div class="workspace-panel__body">
+    {% if review %}
+        <h2 class="h5">Review invitation</h2>
+        {% include 'send/review_details.html' %}
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% for key, value in form_data.items() %}{% if key not in ['csrf_token', 'review_token', 'edit_review'] %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
+            <input type="hidden" name="review_token" value="{{ review.review_token }}">
+            <div class="d-flex flex-wrap gap-2 mt-3"><button class="btn btn-primary" type="submit">{{ review.confirmation_label }}</button><button class="btn btn-outline-secondary" name="edit_review" value="1" type="submit">Edit invitation</button></div>
+        </form>
+    {% else %}
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="approval_key" value="{{ form_data.approval_key }}">
+            <fieldset class="mb-4"><legend class="h6">Audience</legend>
+                <div class="form-check"><input class="form-check-input" type="radio" name="audience_rule" id="invite-registered" value="registered_contacts" required {% if form_data.audience_rule == 'registered_contacts' %}checked{% endif %}><label class="form-check-label" for="invite-registered">Registered contacts</label></div>
+                <p class="form-text mt-1">Requires verified roster coverage. Eligible contacts resolve when due, including later registrations.</p>
+                <div class="form-check"><input class="form-check-input" type="radio" name="audience_rule" id="invite-community" value="community" required {% if form_data.audience_rule == 'community' %}checked{% endif %}><label class="form-check-label" for="invite-community">Contactable community</label></div>
+                <p class="form-text mt-1">This can include people who did not attend. Keep the message conditional.</p>
+            </fieldset>
+            <div class="mb-4"><label class="form-label" for="invite-body">Invitation message</label><textarea class="form-control" id="invite-body" name="message_body" rows="5" maxlength="1600" required>{{ form_data.message_body }}</textarea></div>
+            <fieldset class="mb-3"><legend class="h6">Timing</legend><div class="form-check"><input class="form-check-input" type="radio" name="timing" id="invite-now" value="now" required {% if form_data.timing == 'now' %}checked{% endif %}><label class="form-check-label" for="invite-now">Send now</label></div><div class="form-check"><input class="form-check-input" type="radio" name="timing" id="invite-later" value="later" required {% if form_data.timing == 'later' %}checked{% endif %}><label class="form-check-label" for="invite-later">Choose a date and time</label></div></fieldset>
+            <div class="row g-3 mb-4"><div class="col-sm-4"><label class="form-label" for="invite-date">Date</label><input class="form-control" type="date" id="invite-date" name="schedule_date" value="{{ form_data.schedule_date }}"></div><div class="col-sm-3"><label class="form-label" for="invite-time">Time</label><input class="form-control" type="time" id="invite-time" name="schedule_time" value="{{ form_data.schedule_time }}"></div><div class="col-sm-5"><label class="form-label" for="invite-timezone">Timezone</label><input class="form-control" id="invite-timezone" name="timezone" value="{{ form_data.timezone }}" placeholder="America/Denver" required><p class="form-text">Use a timezone name such as America/Denver or UTC.</p></div></div>
+            <button class="btn btn-primary" type="submit">Review invitation</button>
+        </form>
+    {% endif %}
+    </div></section>
+</div>
+{% endblock %}

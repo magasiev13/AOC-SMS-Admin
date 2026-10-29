@@ -43,7 +43,7 @@ def freeze_review(user, organization_id, form_key, intent, recipients):
     return _signer().dumps({'version': 2, 'encrypted': encrypted})
 
 
-def reviewed_recipients(token, user, organization_id, form_key, intent):
+def reviewed_recipients(token, user, organization_id, form_key, intent, *, allow_empty=False):
     try:
         payload = _signer().loads(token, max_age=900)
     except SignatureExpired as exc:
@@ -62,6 +62,6 @@ def reviewed_recipients(token, user, organization_id, form_key, intent):
     if not isinstance(payload, dict) or payload.get('actor') != _actor(user, organization_id) or payload.get('key') != form_key or payload.get('intent') != intent:
         raise ValueError('The message, audience, timing or signed-in account changed. Review this send again.')
     recipients = payload.get('recipients')
-    if not isinstance(recipients, list) or not recipients or any(not isinstance(row, dict) or not row.get('phone') for row in recipients):
+    if not isinstance(recipients, list) or (not recipients and not allow_empty) or any(not isinstance(row, dict) or not row.get('phone') for row in recipients):
         raise ValueError('The reviewed audience is unavailable. Review the audience again.')
     return recipients

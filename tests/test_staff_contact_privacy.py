@@ -714,7 +714,7 @@ def test_feedback_prefill_never_discloses_protected_saved_text_or_changes_its_in
         assert response.status_code == 403
         assert_no_private_numbers(w, response)
     workspace_login(w, 'owner')
-    owner = w.client.get('/dashboard', query_string=form)
+    owner = w.client.get('/dashboard', query_string=form, follow_redirects=True)
     assert owner.status_code == 200
     protected = '+17205550444' if protected_source == 'event_title' else '17205550555'
     assert protected.encode() in owner.data

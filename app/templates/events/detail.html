@@ -15,7 +15,7 @@
 {% block page_actions %}
 <a href="{{ url_for('event_feedback.index', event_id=event.id) }}" class="btn btn-outline-primary page-action-secondary">Event feedback</a>
 <a href="{{ url_for('main.dashboard', target='event', event_id=event.id) }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-chat-dots me-1"></i>{{ 'Message attendees' if event_is_current else 'Send follow-up / feedback' }}
+    <i class="bi bi-chat-dots me-1"></i>Message registrants
 </a>
 <a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-pencil me-1"></i>Edit
@@ -30,16 +30,26 @@
 
 {% block content %}
 {% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and dataset exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
-<div class="workspace-shell">
+<div class="workspace-shell event-workspace">
+    <nav class="d-flex flex-wrap gap-2" aria-label="Event workspace sections">
+        <a class="btn btn-sm btn-outline-primary" href="#overview">Overview</a><a class="btn btn-sm btn-outline-primary" href="#registrations">Registrations</a><a class="btn btn-sm btn-outline-primary" href="#messages">Messages</a><a class="btn btn-sm btn-outline-primary" href="#feedback">Feedback</a>
+    </nav>
     {% if not event_is_current %}<div class="alert alert-info" role="status">This event is in history. Its registrations are excluded from the current RSVP total, and remain available for an intentional follow-up or feedback request. Existing opt-outs and suppressions still apply.</div>{% endif %}
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div class="workspace-detail-layout">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        <a class="btn btn-outline-primary" href="{{ url_for('main.dashboard', target='community', context_event_id=event.id) }}">Announce to community</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id) }}">Message registrants</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('event_feedback.index', event_id=event.id) }}">Request feedback</a>
+    </div>
+    {% include 'events/overview.html' %}
+    <div class="workspace-detail-layout" id="registrations">
         <div class="workspace-detail-main">
+            {% include 'events/bookings.html' %}
             <section class="collection-panel collection-panel--results">
                 <div class="collection-panel__header">
                     <div>
-                        <h2 class="collection-panel__title">Registrations</h2>
-                        <p class="collection-panel__meta">Review booking contacts, party sizes, potluck commitments, and SMS eligibility.</p>
+                        <h2 class="collection-panel__title">Messaging contacts</h2>
+                        <p class="collection-panel__meta">One destination per event. Shared bookings contribute their reserved places without duplicating messages.</p>
                     </div>
                 </div>
                 <div class="table-responsive d-none d-lg-block">
@@ -76,7 +86,7 @@
                             {% set is_unsubscribed = reg.phone in unsubscribed_phones %}
                             {% set is_suppressed = reg.phone in suppressed_phones %}
                             <tr>
-                                <td data-sort-value="{{ (reg.name or '')|private_text }}">{{ contact_label(reg.name, reg.id, 'Attendee') }}</td>
+                                <td data-sort-value="{{ (reg.name or '')|private_text }}">{{ contact_label(reg.name, reg.id, 'Contact') }}</td>
                                 {% if can_view_contact_numbers %}<td data-sort-value="{{ reg.phone }}"><code>{{ reg.phone }}</code></td>{% endif %}
                                 <td data-sort-value="{{ reg.capacity_spaces }}">{{ reg.capacity_spaces }}</td>
                                 <td data-sort-value="{{ (reg.selection_summary)|private_text }}">{{ (reg.selection_summary or '-')|private_text }}</td>
@@ -116,7 +126,7 @@
                                     {{ ui.empty_state(
                                         'bi-people',
                                         'No registrations yet',
-                                        'Add attendees manually or import a CSV to populate this event.'
+                                        'Add bookings manually or import a CSV to populate this event.'
                                     ) }}
                                 </td>
                             </tr>
@@ -132,7 +142,7 @@
                         <div class="card-list-item">
                             <div class="d-flex justify-content-between align-items-start gap-2">
                                 <div>
-                                    <h6 class="mb-1">{{ contact_label(reg.name, reg.id, 'Attendee') }}</h6>
+                                    <h6 class="mb-1">{{ contact_label(reg.name, reg.id, 'Contact') }}</h6>
                                     {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ reg.phone }}</code></div>{% endif %}
                                     <div class="text-muted small">Capacity spaces: {{ reg.capacity_spaces }}</div>
                                     <div class="text-muted small">Bringing: {{ (reg.selection_summary or '-')|private_text }}</div>
@@ -160,7 +170,7 @@
                     {{ ui.empty_state(
                         'bi-people',
                         'No registrations yet',
-                        'Add attendees manually or import a CSV to populate this event.'
+                        'Add bookings manually or import a CSV to populate this event.'
                     ) }}
                     {% endif %}
                 </div>
@@ -172,8 +182,8 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Add registration</h2>
-                        <p class="workspace-panel__meta">Save a single attendee without leaving this event.</p>
+                        <h2 class="workspace-panel__title">Add booking</h2>
+                        <p class="workspace-panel__meta">Save one booking and its group size. A shared phone does not merge booking identities.</p>
                     </div>
                 </div>
                 <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
@@ -184,8 +194,13 @@
                             <input type="text" class="form-control" id="registration_name" name="name" placeholder="Board member or guest" autocomplete="name">
                         </div>
                         <div class="mb-3">
-                            <label for="registration_phone" class="form-label">Phone number</label>
-                            <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel" required>
+                            <label for="registration_phone" class="form-label">Phone number (optional)</label>
+                            <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel">
+                            <div class="form-text">Missing or invalid contact details keep the booking, with no unsupported SMS destination.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="registration_party_size" class="form-label">Reserved places</label>
+                            <input class="form-control" id="registration_party_size" name="party_size" type="number" value="1" min="0" max="100000" required>
                         </div>
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" value="1" id="included_in_paid_order" name="included_in_paid_order">
@@ -229,5 +244,6 @@
             </section>
         </aside>{% endif %}
     </div>
+    {% include 'events/messages.html' %}
 </div>
 {% endblock %}

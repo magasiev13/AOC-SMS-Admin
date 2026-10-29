@@ -167,3 +167,22 @@ See [docs/deployment.md](docs/deployment.md) for the SaaS production guide.
 ## Naming Note
 
 User-facing docs refer to the product as `Twinevia`. The primary SaaS runtime now uses the `twinevia-saas` family for service units, deploy roots, logs, queue names, restart helpers, Unix account defaults, and the canonical `twinevia-saas-dbdoctor` wrapper. The retained `saas-dbdoctor` alias remains an intentional compatibility surface. External repo/worktree naming is out of repo scope.
+# Event and registration app integrations
+
+Twinevia's event communication workflow supports organization-scoped application
+connections as well as WordPress. In **Settings → App integrations**, an owner
+can configure a signed app endpoint and signing secret. Connected applications
+retain independent transaction identities and source scopes; sharing a phone
+never merges bookings. Complete inventories and explicit source comparison
+establish roster coverage. Manual rosters have their own deliberate review.
+
+The event workspace brings together Overview, Registrations, Messages and
+Feedback. Bookings, reserved places and eligible SMS contacts are distinct;
+attendance requires separate check-in evidence. Feedback invitations require
+an explicit audience, time and confirmation and remain separate from registration.
+
+See [the integration contract and standard-library client](docs/registration-integration-protocol.md),
+[booking and contact semantics](docs/event-bookings.md), and
+[feedback invitation approval and recovery](docs/feedback-invitations.md).
+External products require an adapter to their own event and transaction data;
+this contract does not imply prebuilt connectors for every vendor.

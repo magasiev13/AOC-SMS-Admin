@@ -62,13 +62,23 @@ for (const width of [1440, 390]) {
     const feedbackPath = new URL(page.url()).pathname;
     await page.getByRole('link', { name: 'Review invitation', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByLabel('Event Blast', { exact: false })).toBeChecked();
-    await expect(page.getByLabel('Message', { exact: true })).toHaveValue(new RegExp(keyword));
-    await page.getByRole('button', { name: /^Send (Now|Message)$/ }).click();
-    const review = page.getByRole('dialog', { name: 'Review send', exact: true });
-    await expect(review).toBeVisible();
-    await expect(review.locator('[data-review="audience"]')).toHaveText('Acme Spring Launch');
-    await page.keyboard.press('Escape'); // The invitation is reviewed, not sent.
+    await expect(page.getByLabel('Registered contacts', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
+    await expect(page.getByLabel('Send now', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Choose a date and time', { exact: true })).not.toBeChecked();
+    // This fixture intentionally has unverified historical roster coverage.
+    // A community invitation is a separate, explicit audience decision.
+    await page.getByLabel('Contactable community', { exact: true }).check();
+    await page.getByLabel('Send now', { exact: true }).check();
+    await page.getByRole('button', { name: 'Review invitation', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review invitation', exact: true })).toBeVisible();
+    await expect(page.locator('[data-review="audience"]')).toHaveText('Contactable community');
+    await expect(page.locator('[data-review="timing"]')).toHaveText('Send now');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    // Exercise keyboard return to the editable composer without approving a send.
+    await page.getByRole('button', { name: 'Edit invitation', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
 
     const phone = width === 390 ? '+17205558039' : '+17205558044';
     // A recipient can still be in an old signup when the new invitation

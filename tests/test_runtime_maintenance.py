@@ -127,10 +127,10 @@ def runtime(tmp_path, monkeypatch):
     binary.chmod(0o755)
     (binary_dir / 'python3').symlink_to(sys.executable)
     sudo = binary_dir / 'sudo'
-    sudo.write_text('#!' + sys.executable + '\nimport os,sys\nargs=sys.argv[1:]\nwhile args and args[0].startswith("-"):\n option=args.pop(0)\n if option in {"-u","-g"}:args.pop(0)\nif os.environ.get("FAKE_SUDO_ENV_RESET")=="1":\n keep={k:v for k,v in os.environ.items() if k in {"PATH","FAKE_SYSTEMCTL_STATE","FAKE_SUDO_ENV_RESET","PYTHON_DOTENV_DISABLED","PYTHONPATH"}}\n os.environ.clear();os.environ.update(keep)\nos.execvp(args[0],args)\n')
+    sudo.write_text('#!/usr/bin/env python3\nimport os,sys\nargs=sys.argv[1:]\nwhile args and args[0].startswith("-"):\n option=args.pop(0)\n if option in {"-u","-g"}:args.pop(0)\nif os.environ.get("FAKE_SUDO_ENV_RESET")=="1":\n keep={k:v for k,v in os.environ.items() if k in {"PATH","FAKE_SYSTEMCTL_STATE","FAKE_SUDO_ENV_RESET","PYTHON_DOTENV_DISABLED","PYTHONPATH"}}\n os.environ.clear();os.environ.update(keep)\nos.execvp(args[0],args)\n')
     sudo.chmod(0o755)
     install = binary_dir / 'install'
-    install.write_text('#!' + sys.executable + '''
+    install.write_text('''#!/usr/bin/env python3
 import os,shutil,sys
 from pathlib import Path
 args=sys.argv[1:];files=[];mode=None
@@ -180,6 +180,9 @@ def _release(root, name, *, schema='028', feedback_command_guard=True):
     contract = root / 'deploy/runtime-contract.json'
     shutil.copyfile(REPOSITORY / 'deploy/runtime-contract.json', contract)
     value = json.loads(contract.read_text())
+    # This fixture models historical 027/028 releases independently of the
+    # current application's expanded schema contract.
+    value.update(schema_min=schema, schema_max=schema)
     if schema == '027':
         value.update(schema_min='027', schema_max='027')
         value.pop('feedback_registration_isolation', None)
@@ -1240,7 +1243,12 @@ def test_real_systemd_inventory_guard_handles_clean_no_matches_but_rejects_uncer
     configuration.write_text(json.dumps(responses))
     calls = tmp_path / 'calls.jsonl'
     binary = tmp_path / 'systemctl'
-    binary.write_text('#!' + sys.executable + '''
+    # A shebang cannot contain the project venv's path when it has spaces.
+    # Resolve the running interpreter through an owned path without spaces.
+    interpreter = tmp_path / 'python3'
+    interpreter.symlink_to(sys.executable)
+    monkeypatch.setenv('PATH', str(tmp_path) + os.pathsep + os.environ.get('PATH', ''))
+    binary.write_text('''#!/usr/bin/env python3
 import json,os,sys
 from pathlib import Path
 with Path(os.environ['OWNED_INVENTORY_CALLS']).open('a') as output:

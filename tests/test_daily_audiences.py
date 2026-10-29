@@ -216,7 +216,7 @@ def test_past_event_history_has_explicit_feedback_composer_without_reapproval(da
     assert 'Past feedback gathering' not in current
     assert 'Past feedback gathering' in history
     detail = daily.client.get(f'/events/{past.id}').get_data(as_text=True)
-    assert 'Send follow-up / feedback' in detail
+    assert 'Message registrants' in detail and 'Request feedback' in detail
     response, context = context_for(daily, f'/dashboard?target=event&event_id={past.id}')
     assert context['selected_past_event'].id == past.id
     assert context['selected_event_id'] == past.id

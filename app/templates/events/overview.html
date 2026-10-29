@@ -1,0 +1,52 @@
+<section class="workspace-panel" id="overview" aria-labelledby="event-overview-heading">
+    <div class="workspace-panel__header"><div>
+        <h2 class="workspace-panel__title" id="event-overview-heading">Overview</h2>
+        <p class="workspace-panel__meta">Bookings reserve places. Attendance requires separate check-in evidence.</p>
+    </div></div>
+    <div class="workspace-panel__body">
+        <dl class="row mb-0">
+            <dt class="col-sm-4">Registration coverage</dt>
+            <dd class="col-sm-8"><span class="badge bg-{{ 'success' if coverage.trustworthy else 'warning text-dark' }}">{{ 'Verified roster' if coverage.trustworthy else 'Unverified coverage' }}</span>
+                {% if coverage.reason %}<p class="small mt-2 mb-1">{{ coverage.reason|private_text }}</p>{% endif %}
+                {% if roster.legacy_records %}<span class="small text-muted">{{ roster.legacy_records }} legacy records are retained as historical evidence.</span>{% endif %}
+            </dd>
+            <dt class="col-sm-4">Last complete sync</dt><dd class="col-sm-8">{{ coverage.last_complete_at|localtime if coverage.last_complete_at else 'No complete event inventory verified' }}</dd>
+            <dt class="col-sm-4">Booking status</dt><dd class="col-sm-8">{{ roster.confirmed_bookings }} confirmed · {{ roster.pending_bookings }} pending. Pending bookings retain the source's existing inclusion rules.</dd>
+            <dt class="col-sm-4">Not eligible</dt><dd class="col-sm-8">{{ registrations|length - surface_view.stats[2].value|int }} messaging contacts excluded by opt-outs, suppression or permission rules.</dd>
+            {% if event.external_url and event.external_url.startswith(('https://', 'http://')) %}<dt class="col-sm-4">Source event</dt><dd class="col-sm-8"><a href="{{ event.external_url|private_text }}" target="_blank" rel="noopener noreferrer">Open source event <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a></dd>{% endif %}
+            <dt class="col-sm-4">Next scheduled message</dt><dd class="col-sm-8">{% if communications.next_message %}{{ communications.next_message.label }} · {{ communications.next_message.schedule.scheduled_at|localtime }} · {{ communications.next_message.audience }} <a href="#messages">Review messages</a>{% else %}No pending message for this event{% endif %}</dd>
+            {% if communications.attention %}<dt class="col-sm-4">Needs attention</dt><dd class="col-sm-8"><a href="#messages">{{ communications.attention|length }} {{ 'message needs' if communications.attention|length == 1 else 'messages need' }} review</a>. Existing accepted and unresolved outcomes remain in the send evidence.</dd>{% endif %}
+        </dl>
+        {% if not coverage.trustworthy %}<p class="small text-muted mt-3 mb-0">Scheduled invitations to registered contacts stay on hold until the roster has been compared with a complete source inventory. A community invitation requires its own deliberate audience review.</p>{% endif %}
+        {% if can_view_contact_numbers %}
+        <details class="mt-3">
+            <summary class="fw-semibold">Registration source comparison</summary>
+            <p class="small text-muted mt-2">Select the event's registration sources. Approve each only after comparing a complete inventory with the source. Saving a source does not reconcile or remove records.</p>
+            {% for source in coverage.unconfigured_sources if source.source in ['manual','csv_import','registration_survey'] %}
+            <form class="border-bottom py-3" method="post" action="{{ url_for('main.event_registration_source_review', event_id=event.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="source" value="{{ source.source }}"><input type="hidden" name="source_scope" value="{{ source.source_scope }}"><input type="hidden" name="action" value="review_local">
+                <p class="fw-semibold mb-1">{{ {'manual':'Manually entered bookings','csv_import':'Imported booking contacts','registration_survey':'Registration survey'}.get(source.source) }}</p>
+                <div class="form-check mb-2"><input type="checkbox" class="form-check-input" id="local-compare-{{ loop.index }}" name="compared_with_source" value="1" required><label class="form-check-label" for="local-compare-{{ loop.index }}">I compared these bookings and reserved places with our registration records. This local ledger is the source of record.</label></div>
+                <button class="btn btn-sm btn-outline-primary" type="submit">Approve local roster</button>
+            </form>
+            {% endfor %}
+            {% for source in coverage.sources %}
+            <div class="border-bottom py-3">
+                <p class="mb-1"><strong>{{ source.source|private_text }}</strong> · {{ source.source_scope|private_text }}</p>
+                <p class="small text-muted">{{ source.coverage_status|private_text }} · {{ 'Authority enabled' if source.authority_enabled else 'Awaiting source comparison' }}{% if source.last_complete_at %} · Complete {{ source.last_complete_at|localtime }}{% endif %}</p>
+                {% if not source.authority_enabled %}<form method="post" action="{{ url_for('main.event_registration_source_review', event_id=event.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="source" value="{{ source.source }}"><input type="hidden" name="source_scope" value="{{ source.source_scope }}"><input type="hidden" name="action" value="verify">
+                    <div class="form-check mb-2"><input type="checkbox" class="form-check-input" id="source-compare-{{ source.id }}" name="compared_with_source" value="1" required><label class="form-check-label" for="source-compare-{{ source.id }}">I compared this event's booking identities, statuses and reserved places with the source.</label></div>
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Approve source comparison</button>
+                </form>{% endif %}
+            </div>
+            {% endfor %}
+            <form method="post" class="mt-3" action="{{ url_for('main.event_registration_source_review', event_id=event.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="configure">
+                <div class="row g-2"><div class="col-sm-6"><label for="registration-source" class="form-label">Registration source</label><input class="form-control" id="registration-source" name="source" maxlength="80" placeholder="Connected app source identity" required></div><div class="col-sm-6"><label class="form-label" for="registration-scope">Source scope</label><input class="form-control" id="registration-scope" name="source_scope" placeholder="Form or registration collection identity" maxlength="160" required></div></div>
+                <button class="btn btn-sm btn-outline-secondary mt-2" type="submit">Save unverified source</button>
+            </form>
+        </details>
+        {% endif %}
+    </div>
+</section>
