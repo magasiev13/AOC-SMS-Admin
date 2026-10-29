@@ -244,9 +244,26 @@ def _sync_source_permission(event, booking, payload, old_phone, received_at):
         _record_booking_permission, _record_booking_withdrawal, upsert_community_member_contact,
     )
     permission_identity = f'ledger:{booking.id}' if booking.source_scope else booking.external_booking_id
+    community_signal = payload.get('community_sms_consent')
+    has_community_signal = isinstance(community_signal, bool)
     if booking.is_active and booking.phone:
         upsert_community_member_contact(booking.name, booking.phone)
-        _record_booking_permission(event, payload, booking.source, booking.phone, permission_identity, received_at)
+        # Keep explicit community-purpose evidence independent from the event
+        # booking's active state, without recording it twice on an active row.
+        purposes = ('event',) if has_community_signal else ('event', 'community')
+        _record_booking_permission(event, payload, booking.source, booking.phone, permission_identity, received_at,
+                                   purposes=purposes)
+    if has_community_signal:
+        # A deletion can carry an explicit community-purpose signal even when
+        # its phone was omitted (retained) or explicitly cleared in this update.
+        # A positive signal cannot invent a destination after a contact clear.
+        destination = booking.phone or (old_phone if community_signal is False else None)
+        if destination:
+            # Preserve each organization's existing consent contract. In
+            # particular AOC's owner-confirmed signup policy retains raw false
+            # source fields without treating them as a verified broad opt-out.
+            _record_booking_permission(event, payload, booking.source, destination,
+                                       permission_identity, received_at, purposes=('community',))
     withdrawn_phone = old_phone if old_phone and old_phone != booking.phone else (booking.phone if not booking.is_active else None)
     if withdrawn_phone:
         sibling = EventBooking.query.filter_by(organization_id=event.organization_id,

@@ -352,3 +352,124 @@ def test_unscoped_wordpress_identity_matching_uses_provider_and_event_not_phone(
         upsert_booking(other_event,{'provider':'wpforms','booking_id':'same-id','phone':'+17205550135',
             'updated_at':'2026-06-23T20:00:00Z'},'aoc-wordpress',datetime.now(timezone.utc))
     assert EventBooking.query.count()==2
+
+
+def _signed_app_consent_fixture(case, *, confirmed_signup=False):
+    from cryptography.fernet import Fernet
+    from app.services.aoc_event_sync_service import configure_event_sync_integration
+    from tests.test_app_registration_sync import payload, post as app_post
+    case.organization.name='Independent company'
+    case.organization.slug='independent-company'
+    case.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[case.organization.slug] if confirmed_signup else []
+    case.app.config['TWILIO_CREDENTIAL_ENCRYPTION_KEY']=Fernet.generate_key().decode()
+    case.integration,case.app_secret=configure_event_sync_integration(case.organization.id,True,None,provider='app')
+    case.db.session.commit()
+    data=payload(case,'consented-order')
+    data['booking']['community_sms_consent']=True
+    assert app_post(case,data).status_code==200
+    return data,app_post
+
+
+@pytest.mark.parametrize('contact_update',[{}, {'phone':''}, {'phone':'invalid-number'}])
+def test_signed_cancellation_explicit_community_withdrawal_applies_with_missing_or_cleared_phone(case,contact_update):
+    from app.models import EventBooking,RecipientPermissionEvidence
+    from app.services.recipient_permission_service import recipient_permission_status,filter_permission_recipients
+    data,app_post=_signed_app_consent_fixture(case)
+    phone=data['booking']['phone'];event=case.Event.query.one()
+    assert recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+    deleted={**data,'action':'booking_deleted','booking':{
+        'booking_id':data['booking']['booking_id'],'source_scope':data['booking']['source_scope'],
+        'source_revision':2,'updated_at':'2026-06-23T18:01:00Z','community_sms_consent':False,**contact_update}}
+    response=app_post(case,deleted)
+    assert response.status_code==200,response.get_data(as_text=True)
+    assert not EventBooking.query.one().is_active
+    assert case.EventRegistration.query.count()==0
+    status=recipient_permission_status(case.organization.id,phone,purpose='community')
+    assert status.decision=='denied' and not status.allowed
+    allowed,skipped,_=filter_permission_recipients([{'phone':phone,'name':'Former booking contact'}],
+        organization_id=case.organization.id,purpose='community')
+    assert allowed==[] and len(skipped)==1
+    newest=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event').order_by(RecipientPermissionEvidence.id.desc()).first()
+    assert newest is None or newest.decision!='granted'
+    community=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='community').filter(
+        RecipientPermissionEvidence.source.like('event_sync:%')).order_by(RecipientPermissionEvidence.id.desc()).first()
+    assert community.decision=='denied'
+
+
+def test_plain_cancellation_preserves_independent_community_permission_and_sibling_event_audience(case):
+    from app.services.recipient_permission_service import recipient_permission_status,record_permission_evidence
+    from app.models import EventBooking
+    data,app_post=_signed_app_consent_fixture(case)
+    phone=data['booking']['phone'];event=case.Event.query.one()
+    sibling={**data,'booking':{**data['booking'],'booking_id':'other-active-order'}}
+    assert app_post(case,sibling).status_code==200
+    record_permission_evidence(case.organization.id,phone,purpose='community',decision='granted',
+        source='owner_review',evidence_key='independent-community-grant',verified=True,
+        occurred_at=datetime(2026,6,23,18,0,30,tzinfo=timezone.utc),
+        metadata={'proof':'Separately retained community signup reviewed by the owner.'})
+    case.db.session.commit()
+    deleted={**data,'action':'booking_deleted','booking':{'booking_id':data['booking']['booking_id'],
+        'source_scope':data['booking']['source_scope'],'source_revision':2,'updated_at':'2026-06-23T18:01:00Z'}}
+    assert app_post(case,deleted).status_code==200
+    assert recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+    assert recipient_permission_status(case.organization.id,phone,purpose='event',event_id=event.id).allowed
+    assert case.EventRegistration.query.one().phone==phone
+    assert EventBooking.query.filter_by(is_active=True).count()==1
+
+
+def test_explicit_community_withdrawal_does_not_remove_another_booking_event_permission(case):
+    from app.services.recipient_permission_service import recipient_permission_status
+    data,app_post=_signed_app_consent_fixture(case)
+    phone=data['booking']['phone'];event=case.Event.query.one()
+    sibling={**data,'booking':{**data['booking'],'booking_id':'remaining-order'}}
+    assert app_post(case,sibling).status_code==200
+    deleted={**data,'action':'booking_deleted','booking':{'booking_id':data['booking']['booking_id'],
+        'source_scope':data['booking']['source_scope'],'source_revision':2,'updated_at':'2026-06-23T18:01:00Z',
+        'community_sms_consent':False}}
+    assert app_post(case,deleted).status_code==200
+    assert not recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+    assert recipient_permission_status(case.organization.id,phone,purpose='event',event_id=event.id).allowed
+    assert case.EventRegistration.query.one().phone==phone
+    # A later sibling event update without a community signal is not a new opt-in.
+    sibling['booking'].pop('community_sms_consent')
+    sibling['booking'].update(source_revision=2,updated_at='2026-06-23T18:02:00Z')
+    assert app_post(case,sibling).status_code==200
+    assert not recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+    assert recipient_permission_status(case.organization.id,phone,purpose='event',event_id=event.id).allowed
+
+
+def test_cancelled_record_can_record_explicit_community_permission_without_new_event_grant_and_STOP_wins(case):
+    from app.services.recipient_permission_service import recipient_permission_status,record_permission_evidence
+    from app.models import RecipientPermissionEvidence
+    data,app_post=_signed_app_consent_fixture(case)
+    phone=data['booking']['phone'];event=case.Event.query.one()
+    deleted={**data,'action':'booking_deleted','booking':{'booking_id':data['booking']['booking_id'],
+        'source_scope':data['booking']['source_scope'],'source_revision':2,'updated_at':'2026-06-23T18:01:00Z',
+        'community_sms_consent':False}}
+    assert app_post(case,deleted).status_code==200
+    record_permission_evidence(case.organization.id,phone,purpose='all',decision='denied',source='inbound_stop',
+        evidence_key='owned-stop',occurred_at=datetime(2026,6,23,18,2,tzinfo=timezone.utc))
+    case.db.session.commit()
+    count_before=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()
+    deleted['booking'].update(source_revision=3,updated_at='2026-06-23T18:03:00Z',community_sms_consent=True,sms_consent=True)
+    assert app_post(case,deleted).status_code==200
+    assert RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()==count_before
+    status=recipient_permission_status(case.organization.id,phone,purpose='community')
+    assert not status.allowed and status.reason=='permission_revoked'
+
+
+def test_confirmed_signup_contract_retains_raw_false_on_deletion_without_inventing_broad_optout(case):
+    import json
+    from app.models import RecipientPermissionEvidence
+    from app.services.recipient_permission_service import recipient_permission_status
+    data,app_post=_signed_app_consent_fixture(case,confirmed_signup=True)
+    phone=data['booking']['phone']
+    deleted={**data,'action':'booking_deleted','booking':{'booking_id':data['booking']['booking_id'],
+        'source_scope':data['booking']['source_scope'],'source_revision':2,'updated_at':'2026-06-23T18:01:00Z',
+        'community_sms_consent':False}}
+    assert app_post(case,deleted).status_code==200
+    assert recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+    entries=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='community').order_by(RecipientPermissionEvidence.id.desc()).all()
+    assert any(json.loads(entry.metadata_json or '{}').get('community_sms_consent') is False and
+        json.loads(entry.metadata_json or '{}').get('consent_basis')=='confirmed_community_signup' for entry in entries)
+    assert not any(entry.source.startswith('booking_community:') for entry in entries)

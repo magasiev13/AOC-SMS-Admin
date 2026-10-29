@@ -1,5 +1,6 @@
 """Event operators see independent bookings and evidence-based communication."""
 import json
+import io
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -125,6 +126,27 @@ def test_app_integration_setup_is_workspace_owner_scoped(feedback):
     assert f'/webhooks/event-sync/{f.org.slug}/app'.encode() in page.data
     assert b'X-Twinevia-Signature' in page.data
     assert f.m.ScheduledMessage.query.count() == 0
+
+
+def test_recurring_contact_csv_imports_into_separate_events_and_replays_once(feedback):
+    f = feedback
+    later = f.m.Event(organization_id=f.org.id, title='Next company workshop')
+    f.db.session.add(later)
+    f.db.session.commit()
+    csv = b'name,phone\nRecurring participant,+17205550145\n'
+    for event in (f.event, later, f.event):
+        result = f.client.post(f'/events/{event.id}/import', data={
+            'file': (io.BytesIO(csv), 'registrations.csv'),
+        }, content_type='multipart/form-data', follow_redirects=True)
+        assert result.status_code == 200
+        assert b'could not be imported' not in result.data
+    with f.organization_context(f.org.id):
+        bookings = f.m.EventBooking.query.filter_by(source='csv_import').all()
+        assert len(bookings) == 2
+        assert {booking.event_id for booking in bookings} == {f.event.id, later.id}
+        assert len({booking.external_booking_id for booking in bookings}) == 2
+        assert f.m.EventRegistration.query.count() == 2
+        assert f.event.reserved_places == later.reserved_places == 1
 
 
 def test_empty_configured_event_is_retained_instead_of_deletion_error(feedback):

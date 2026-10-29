@@ -8640,7 +8640,8 @@ def event_import_registrations(event_id):
                 continue
 
             from app.services.booking_projection_service import create_local_booking
-            create_local_booking(event, rec['name'], phone, source='csv_import', external_booking_id='contact:' + phone)
+            create_local_booking(event, rec['name'], phone, source='csv_import',
+                                 external_booking_id=f'event:{event.id}:contact:{phone}')
             added += 1
 
         db.session.commit()
