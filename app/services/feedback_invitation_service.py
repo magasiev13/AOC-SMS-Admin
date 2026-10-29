@@ -245,6 +245,15 @@ def prepare_due_invitation(schedule):
         if not rows:
             hold_invitation(invitation, schedule, 'No eligible contacts remain. Review the event audience before resuming.')
             return False
+        # Late contacts and personalized Unicode names can change the segment
+        # estimate since approval, even when the recipient count still fits.
+        # Check the exact due audience before freezing execution authority.
+        from app.routes import _blast_limit_error
+        from app.utils import analyze_personalized_sms_blast
+        limit_error = _blast_limit_error(analyze_personalized_sms_blast(schedule.message_body, rows))
+        if limit_error:
+            hold_invitation(invitation, schedule, limit_error)
+            return False
         snapshot = _json(rows)
         max_bytes = int(current_app.config.get('RECIPIENT_SNAPSHOT_MAX_BYTES', 1024*1024) or 1024*1024)
         if len(snapshot.encode()) > max_bytes:

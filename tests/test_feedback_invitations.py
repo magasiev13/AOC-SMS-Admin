@@ -19,7 +19,7 @@ def contact(f, phone='+17205550145', *, event=True):
     return row
 
 
-def setup(f, *, audience='community', timing='now'):
+def setup(f, *, audience='community', timing='now', message_body=None):
     from app.services import feedback_invitation_service as invitations
     f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug]
     flow=create_flow(f)
@@ -27,7 +27,7 @@ def setup(f, *, audience='community', timing='now'):
     later=f.m.utc_now()+timedelta(days=2)
     values={'audience_rule':audience, 'timing':timing, 'timezone':'UTC',
         'schedule_date':later.strftime('%Y-%m-%d'), 'schedule_time':later.strftime('%H:%M'),
-        'message_body':f'If you joined us, reply {flow.trigger_keyword} to share feedback.'}
+        'message_body':message_body if message_body is not None else f'If you joined us, reply {flow.trigger_keyword} to share feedback.'}
     key=uuid4().hex
     with f.organization_context(f.org.id):
         with patch.object(invitations,'roster_hold_reason',return_value=None):
@@ -412,3 +412,51 @@ def test_unexpected_preparation_error_rolls_back_only_current_schedule_and_conti
     assert all(item.status=='sent' and item.message_log_id for item in others)
     assert f.provider.client.messages.create.call_count==2
     assert f.m.MessageDispatchAttempt.query.filter_by(scheduled_message_id=invitation.scheduled_message_id).count()==0
+
+
+
+def test_late_unicode_personalization_over_segment_limit_holds_before_freezing_and_other_send_executes(feedback):
+    from app.services.scheduler_service import send_scheduled_messages
+    from app.utils import analyze_personalized_sms_blast
+    f=feedback
+    f.app.config['SEND_MAX_SEGMENTS']=2
+    body='Hi {name}: '+('A'*100)
+    s,flow,row,values,key,review,invitation=setup(f,message_body=body)
+    assert review['eligible']==1 and review['segments']==1
+    late=contact(f,'+17205550146',event=False)
+    late.name='山田';f.db.session.commit()
+    estimate=analyze_personalized_sms_blast(body,[{'phone':row.phone,'name':row.name},
+                                               {'phone':late.phone,'name':late.name}])
+    assert estimate['unique_recipients']==2 < f.app.config['SEND_MAX_RECIPIENTS']
+    assert estimate['total_segments']==3 > f.app.config['SEND_MAX_SEGMENTS']
+    following=f.m.ScheduledMessage(organization_id=f.org.id,scheduled_at=f.m.utc_now().replace(tzinfo=None),
+        message_body='Another reviewed send',target='community',status='pending',
+        test_recipient_snapshot_json=json.dumps([{'phone':row.phone,'name':row.name}]))
+    f.db.session.add(following);f.db.session.commit()
+    with patch('app.services.scheduler_service.get_twilio_service',return_value=f.provider),patch('app.services.twilio_service.time.sleep'):
+        send_scheduled_messages(f.app)
+    f.db.session.expire_all()
+    assert invitation.scheduled_message.status=='held'
+    assert '3 SMS segments' in invitation.hold_reason and 'limit is 2' in invitation.hold_reason
+    assert invitation.snapshot_frozen_at is None and invitation.recipient_count is None
+    assert invitation.scheduled_message.test_recipient_snapshot_json is None
+    assert f.m.MessageDispatchAttempt.query.filter_by(scheduled_message_id=invitation.scheduled_message_id).count()==0
+    assert following.status=='sent'
+    assert f.provider.client.messages.create.call_count==1
+    assert f.provider.client.messages.create.call_args.kwargs['body']==following.message_body
+    # It remains recoverable through the existing explicit held-review path.
+    # Once the configured limit permits the reviewed three-segment audience,
+    # the same invitation freezes and executes once rather than needing a copy.
+    f.app.config['SEND_MAX_SEGMENTS']=3
+    with f.organization_context(f.org.id):
+        held=s.held_review(f.event,flow,invitation,f.owner)
+        assert held['segments']==3
+        s.resume_held(f.event,flow,invitation,f.owner,held['review_token'])
+        f.db.session.commit()
+    with patch('app.services.scheduler_service.get_twilio_service',return_value=f.provider),patch('app.services.twilio_service.time.sleep'):
+        send_scheduled_messages(f.app);send_scheduled_messages(f.app)
+    f.db.session.expire_all()
+    assert invitation.scheduled_message.status=='sent'
+    assert invitation.recipient_count==2 and invitation.snapshot_frozen_at is not None
+    assert f.m.FeedbackInvitation.query.count()==1
+    assert f.provider.client.messages.create.call_count==3
