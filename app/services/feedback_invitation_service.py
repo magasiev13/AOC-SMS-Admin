@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import current_app
@@ -333,12 +333,22 @@ def invitation_history(event, flow=None):
     return rows
 
 
-def held_review(event, flow, invitation, actor):
+def held_window_expired(schedule):
+    """Use the same configured lag boundary as the ordinary scheduler."""
+    minutes = current_app.config.get('SCHEDULED_MESSAGE_MAX_LAG')
+    return bool(minutes and minutes > 0 and schedule.scheduled_at < _now() - timedelta(minutes=minutes))
+
+
+def held_review(event, flow, invitation, actor, *, resume_timing='original'):
     from app.services.send_review_service import freeze_review
     from app.utils import analyze_personalized_sms_blast, render_message_template
     schedule = invitation.scheduled_message
     if schedule.status != 'held':
         raise SendReviewInputError('This invitation is no longer held. Refresh its status.')
+    if resume_timing not in {'original', 'now'}:
+        raise SendReviewInputError('Choose the original timing or explicitly review sending now.')
+    if resume_timing == 'original' and held_window_expired(schedule):
+        raise SendReviewInputError('The original send window has expired. Choose Review sending now, then confirm a new send time.')
     if not flow.is_active:
         raise SendReviewInputError('Activate the feedback form before reviewing its invitation.')
     if invitation.audience_rule == 'registered_contacts':
@@ -360,24 +370,25 @@ def held_review(event, flow, invitation, actor):
     intent = {'resume_invitation':invitation.id,
               'context_digest':context_digest(event, flow, schedule),
               'snapshot_digest':invitation.snapshot_digest,
-              'audience_rule':invitation.audience_rule}
+              'audience_rule':invitation.audience_rule, 'resume_timing':resume_timing}
     estimate = analyze_personalized_sms_blast(schedule.message_body, rows)
     return {'review_token':freeze_review(actor, event.organization_id, f'invitation-resume:{invitation.id}', intent, rows),
         'intent':intent, 'late_bound':invitation.snapshot_frozen_at is None,
         'audience':'Registered contacts' if invitation.audience_rule == 'registered_contacts' else 'Contactable community',
         'eligible':len(rows), 'excluded':0, 'sender':'Configured messaging service',
-        'segments':estimate['total_segments'], 'timing':'Resume when due after this review',
+        'segments':estimate['total_segments'],
+        'timing':'Send now after this confirmation' if resume_timing == 'now' else 'Resume when due after this review',
         'sample':render_message_template(schedule.message_body, rows[0]),
-        'confirmation_label':'Confirm reviewed invitation',
+        'confirmation_label':'Confirm send now' if resume_timing == 'now' else 'Confirm reviewed invitation',
         'audience_policy':'The audience rule stays unchanged. Accepted and unresolved provider evidence is retained. An existing frozen snapshot cannot gain recipients.'}
 
 
-def resume_held(event, flow, invitation, actor, token):
+def resume_held(event, flow, invitation, actor, token, *, resume_timing='original'):
     from app.services.scheduled_cancellation_service import lock_scheduled_message
     from app.services.send_review_service import reviewed_recipients
     schedule = lock_scheduled_message(invitation.scheduled_message_id, event.organization_id)
     invitation = FeedbackInvitation.query.filter_by(id=invitation.id, organization_id=event.organization_id).populate_existing().with_for_update().one()
-    review = held_review(event, flow, invitation, actor)
+    review = held_review(event, flow, invitation, actor, resume_timing=resume_timing)
     reviewed_recipients(token, actor, event.organization_id, f'invitation-resume:{invitation.id}', review['intent'])
     if invitation.snapshot_frozen_at:
         try:
@@ -397,6 +408,11 @@ def resume_held(event, flow, invitation, actor, token):
             raise ValueError()
     except (TypeError, ValueError) as exc:
         raise SendReviewInputError('The retained approval history must be restored before resuming.') from exc
+    previous_scheduled_at = schedule.scheduled_at
+    if resume_timing == 'now':
+        # This is new persistent timing authority only after its separate,
+        # token-bound review. The original audience and dispatch keys stay.
+        schedule.scheduled_at = _now()
     invitation.context_digest=context_digest(event, flow, schedule)
     invitation.form_version=form_version(flow)
     invitation.approved_by_user_id, invitation.approved_at=actor.id, _now()
@@ -404,7 +420,8 @@ def resume_held(event, flow, invitation, actor, token):
         'form_version':invitation.form_version, 'context_digest':invitation.context_digest,
         'intent_digest':_digest(review['intent']), 'message_digest':invitation.message_digest,
         'audience_rule':invitation.audience_rule, 'snapshot_digest':invitation.snapshot_digest,
-        'timezone':invitation.timezone, 'scheduled_at':schedule.scheduled_at.isoformat()})
+        'timezone':invitation.timezone, 'scheduled_at':schedule.scheduled_at.isoformat(),
+        'previous_scheduled_at':previous_scheduled_at.isoformat(), 'resume_timing':resume_timing})
     invitation.approval_history_json=_json(history)
     invitation.status='frozen' if invitation.snapshot_frozen_at else 'approved'
     invitation.hold_reason=None

@@ -45,6 +45,12 @@ frozen audience, outcome evidence and dispatch identities. Once execution has
 begun, changed message content must be restored to its original approved body
 before resuming; a replacement invitation needs a separate explicit review.
 
+If the original send window has expired, choose **Review sending now** and then
+**Confirm send now** to approve a new execution time. This keeps the same
+invitation, any frozen audience and accepted or uncertain dispatch evidence;
+approval history retains both execution times. Confirming an old original-time
+review after its window expires is rejected with an explanation.
+
 Feedback detail lists invitation identity, chosen audience/timezone, status, frozen
 recipient denominator and accepted/failed/unresolved outcomes, with a link to its
 message log. Provider acceptance and confirmed delivery remain separate evidence.

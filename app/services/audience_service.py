@@ -130,3 +130,35 @@ def pre_event_reminder_block_reason(scheduled, *, now=None):
     if not event_is_current(event, now=now):
         return 'The event has ended or is no longer current; its automatic reminder was not submitted.'
     return None
+
+
+def scheduled_event_recipient_block_reason(scheduled, phone):
+    """Check current membership while the caller holds the provider-boundary lock.
+
+    Consent and registration are independent. In particular, an organization's
+    broad signup permission does not keep a cancelled booking in an event send.
+    Test sends retain their separately reviewed test-recipient allowlist.
+    """
+    if scheduled.test_mode or scheduled.target != 'event':
+        return None
+    if not scheduled.event_id:
+        return 'The scheduled registrant message has no retained event context.'
+    registration = event_registrations_query(current_only=False, contactable_only=False,
+        organization_id=scheduled.organization_id).filter_by(
+            event_id=scheduled.event_id, phone=phone,
+        ).populate_existing().with_for_update().first()
+    if registration is None:
+        return 'Registration was cancelled or its destination changed before submission.'
+    return None
+
+
+def scheduled_recipient_submission_guard(scheduled, phone, body=None):
+    """Preserve invitation authority, then validate an ordinary event audience."""
+    from app.services.feedback_invitation_service import submission_guard
+    invitation_block = submission_guard(scheduled, phone, body)
+    if invitation_block is not None:
+        return invitation_block
+    reason = scheduled_event_recipient_block_reason(scheduled, phone)
+    if reason:
+        return {'success': False, 'status': 'skipped', 'error': reason}
+    return None

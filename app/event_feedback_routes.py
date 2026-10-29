@@ -179,7 +179,7 @@ def invite(event_id, survey_id):
 @require_roles('admin', 'social_manager')
 def review_held(event_id, survey_id, invitation_id):
     from app.models import FeedbackInvitation
-    from app.services.feedback_invitation_service import held_review, resume_held
+    from app.services.feedback_invitation_service import held_review, held_window_expired, resume_held
     event = _event(event_id)
     flow = get_event_feedback_or_404(event, survey_id)
     invitation = FeedbackInvitation.query.filter_by(id=invitation_id,
@@ -188,16 +188,25 @@ def review_held(event_id, survey_id, invitation_id):
     saved_body = invitation.scheduled_message.message_body
     if not can_view_phone_numbers() and redact_phone_numbers(saved_body) != saved_body:
         abort(403)
+    expired_window = held_window_expired(invitation.scheduled_message)
+    resume_timing = request.form.get('resume_timing', 'original') if request.method == 'POST' else request.args.get('resume_timing', 'original')
+    review = None
     try:
-        review = held_review(event, flow, invitation, current_user)
+        # An expired GET offers a deliberate new timing choice before creating
+        # any review token. Posting an old timing still validates and rejects.
+        if not (request.method == 'GET' and expired_window and resume_timing == 'original'
+                and invitation.scheduled_message.status == 'held'):
+            review = held_review(event, flow, invitation, current_user, resume_timing=resume_timing)
         if request.method == 'POST':
-            resume_held(event, flow, invitation, current_user, request.form.get('review_token', ''))
+            resume_held(event, flow, invitation, current_user, request.form.get('review_token', ''),
+                        resume_timing=resume_timing)
             db.session.commit()
-            flash('Invitation reviewed. Its original execution evidence and frozen audience are retained.', 'success')
+            flash(('Invitation reviewed for sending now. ' if resume_timing == 'now' else 'Invitation reviewed. ')
+                  + 'Its original execution evidence and frozen audience are retained.', 'success')
             return redirect(url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id))
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), 'error')
         return redirect(url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id))
     return render_template('feedback/held_review.html', event=event, flow=flow, invitation=invitation,
-        review=review, **_display_context())
+        review=review, expired_window=expired_window, resume_timing=resume_timing, **_display_context())

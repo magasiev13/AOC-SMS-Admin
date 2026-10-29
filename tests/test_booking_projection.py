@@ -1,11 +1,14 @@
 """Booking identity/seat acceptance across the signed integration and projection."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import importlib
+import json
 import logging
+from unittest.mock import patch
 
 import pytest
 
 from tests.test_aoc_event_sync import TestAocEventSyncWebhook as _AocFixture
+from tests.test_event_feedback import feedback
 
 
 @pytest.fixture
@@ -339,6 +342,129 @@ def test_scope_recovery_does_not_reinterpret_numeric_or_generic_unscoped_identit
     assert scoped.id!=old_id
     assert EventBooking.query.filter_by(id=old_id).one().source_scope==''
     assert EventBooking.query.filter_by(id=old_id).one().source_revision==revision
+
+
+def _linked_source_pair(f, *, secondary_phone=None, confirmed_signup=False):
+    from app.services.booking_projection_service import upsert_booking
+    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug] if confirmed_signup else []
+    now=f.m.utc_now()
+    base={'phone':'+17205550251','sms_consent':True,'community_sms_consent':True,
+          'spaces':1,'source_revision':1,'updated_at':(now-timedelta(minutes=10)).isoformat()}
+    primary=upsert_booking(f.event,{**base,'booking_id':'primary'},'fixture-bookings',now,source_scope='orders:fixture')
+    secondary=upsert_booking(f.event,{**base,'booking_id':'secondary','phone':secondary_phone or base['phone']},
+        'fixture-bookings',now,source_scope='orders:fixture')
+    return primary,secondary
+
+
+def _ordinary_event_snapshot(f, phone):
+    schedule=f.m.ScheduledMessage(organization_id=f.org.id,event_id=f.event.id,target='event',
+        message_body='Ordinary scheduled event message',status='pending',
+        scheduled_at=f.m.utc_now().replace(tzinfo=None)-timedelta(minutes=1),test_mode=False,
+        test_recipient_snapshot_json=json.dumps([{'phone':phone,'name':'Saved event contact'}]))
+    f.db.session.add(schedule);f.db.session.commit()
+    return schedule
+
+
+def _run_ordinary_event_scheduler(f):
+    from app.services.scheduler_service import send_scheduled_messages
+    with patch('app.services.scheduler_service.get_twilio_service',return_value=f.provider),patch('app.services.twilio_service.time.sleep'):
+        send_scheduled_messages(f.app)
+    f.db.session.expire_all()
+
+
+@pytest.mark.parametrize('confirmed_signup',[False,True])
+def test_primary_cancellation_and_late_linked_duplicate_updates_cannot_send_old_event_snapshot(feedback,confirmed_signup):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking
+    from app.services.recipient_permission_service import recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,confirmed_signup=confirmed_signup)
+        phone=primary.phone
+        link_duplicate_booking(secondary,primary)
+        schedule=_ordinary_event_snapshot(f,phone)
+        upsert_booking(f.event,{'booking_id':'primary','source_revision':2,
+            'updated_at':(f.m.utc_now()-timedelta(minutes=2)).isoformat()},'fixture-bookings',
+            f.m.utc_now(),source_scope='orders:fixture',deleted=True)
+        f.db.session.commit()
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==0
+    assert f.m.EventRegistration.query.filter_by(event_id=f.event.id).count()==0
+    assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+
+    with f.organization_context(f.org.id):
+        upsert_booking(f.event,{'booking_id':'secondary','phone':phone,'sms_consent':True,
+            'community_sms_consent':True,'source_revision':2,'updated_at':f.m.utc_now().isoformat()},
+            'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        f.db.session.commit()
+        _ordinary_event_snapshot(f,phone)
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==0
+    assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+
+
+def test_independent_active_booking_keeps_event_snapshot_eligible_after_linked_primary_cancellation(feedback):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking
+    from app.services.recipient_permission_service import recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,confirmed_signup=True)
+        phone=primary.phone
+        link_duplicate_booking(secondary,primary)
+        upsert_booking(f.event,{'booking_id':'independent','phone':phone,'spaces':2,
+            'sms_consent':True,'community_sms_consent':True,'source_revision':1,
+            'updated_at':(f.m.utc_now()-timedelta(minutes=5)).isoformat()},
+            'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        _ordinary_event_snapshot(f,phone)
+        upsert_booking(f.event,{'booking_id':'primary','source_revision':2,
+            'updated_at':(f.m.utc_now()-timedelta(minutes=2)).isoformat()},'fixture-bookings',
+            f.m.utc_now(),source_scope='orders:fixture',deleted=True)
+        f.db.session.commit()
+    _run_ordinary_event_scheduler(f);_run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==1
+    assert f.m.EventRegistration.query.filter_by(event_id=f.event.id,phone=phone).count()==1
+    assert recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+
+
+def test_link_to_inactive_primary_removes_secondary_destination_and_unlink_restores_saved_event_consent(feedback):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking,unlink_duplicate_booking
+    from app.services.recipient_permission_service import recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,secondary_phone='+17205550252')
+        phone=secondary.phone
+        upsert_booking(f.event,{'booking_id':'primary','source_revision':2,
+            'updated_at':(f.m.utc_now()-timedelta(minutes=2)).isoformat()},'fixture-bookings',
+            f.m.utc_now(),source_scope='orders:fixture',deleted=True)
+        schedule=_ordinary_event_snapshot(f,phone)
+        link_duplicate_booking(secondary,primary);f.db.session.commit()
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==0
+    assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+    with f.organization_context(f.org.id):
+        unlink_duplicate_booking(secondary);f.db.session.commit()
+    assert recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+
+
+def test_unlink_does_not_regrant_an_explicit_event_withdrawal(feedback):
+    from app.services.booking_projection_service import link_duplicate_booking,unlink_duplicate_booking
+    from app.services.recipient_permission_service import record_permission_evidence,recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,secondary_phone='+17205550253')
+        phone=secondary.phone
+        link_duplicate_booking(secondary,primary)
+        assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+        assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+        record_permission_evidence(f.org.id,phone,purpose='event',event_id=f.event.id,
+            decision='denied',source='owner_review',evidence_key='explicit-event-withdrawal',occurred_at=f.m.utc_now())
+        unlink_duplicate_booking(secondary);f.db.session.commit()
+    assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
 
 
 @pytest.mark.parametrize('revision', [None, 7])

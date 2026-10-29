@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app import db
-from app.models import Event, EventBooking, EventRegistration, utc_now
+from app.models import Event, EventBooking, EventRegistration, RecipientPermissionEvidence, utc_now
 from app.tenant import get_current_organization_id, tenant_scope_is_active
 from app.utils import normalize_phone, validate_phone
 
@@ -264,22 +264,25 @@ def _retain_cancellation(booking, received_at, reason):
 
 
 def _sync_source_permission(event, booking, payload, old_phone, received_at):
-    if booking.source in LOCAL_SOURCES:
-        return
     from app.services.aoc_event_sync_service import (
         _record_booking_permission, _record_booking_withdrawal, upsert_community_member_contact,
     )
+    local_source = booking.source in LOCAL_SOURCES
+    if local_source and not event.organization_id:
+        return
+    contributes = booking.is_active and booking.duplicate_of_id is None and booking.contact_state == 'valid'
     permission_identity = f'ledger:{booking.id}' if booking.source_scope else booking.external_booking_id
     community_signal = payload.get('community_sms_consent')
     has_community_signal = isinstance(community_signal, bool)
-    if booking.is_active and booking.phone:
+    if not local_source and booking.is_active and booking.phone:
         upsert_community_member_contact(booking.name, booking.phone)
         # Keep explicit community-purpose evidence independent from the event
         # booking's active state, without recording it twice on an active row.
-        purposes = ('event',) if has_community_signal else ('event', 'community')
-        _record_booking_permission(event, payload, booking.source, booking.phone, permission_identity, received_at,
-                                   purposes=purposes)
-    if has_community_signal:
+        purposes = (('event',) if contributes else ()) + (() if has_community_signal else ('community',))
+        if purposes:
+            _record_booking_permission(event, payload, booking.source, booking.phone, permission_identity, received_at,
+                                       purposes=purposes)
+    if not local_source and has_community_signal:
         # A deletion can carry an explicit community-purpose signal even when
         # its phone was omitted (retained) or explicitly cleared in this update.
         # A positive signal cannot invent a destination after a contact clear.
@@ -290,14 +293,63 @@ def _sync_source_permission(event, booking, payload, old_phone, received_at):
             # source fields without treating them as a verified broad opt-out.
             _record_booking_permission(event, payload, booking.source, destination,
                                        permission_identity, received_at, purposes=('community',))
-    withdrawn_phone = old_phone if old_phone and old_phone != booking.phone else (booking.phone if not booking.is_active else None)
-    if withdrawn_phone:
-        sibling = EventBooking.query.filter_by(organization_id=event.organization_id,
-            event_id=event.id, is_active=True, phone=withdrawn_phone).filter(EventBooking.id != booking.id).first()
-        if sibling is None:
-            _record_booking_withdrawal(event, payload, booking.source, withdrawn_phone,
-                permission_identity, received_at,
-                reason='booking_phone_changed' if old_phone != booking.phone else 'booking_cancelled')
+    withdrawals = []
+    if old_phone and old_phone != booking.phone:
+        # Community contact identity keeps its existing source policy. A linked
+        # duplicate may still supply community consent while contributing no
+        # event place or registrant destination.
+        community_sibling = EventBooking.query.filter_by(organization_id=event.organization_id,
+            event_id=event.id, is_active=True, phone=old_phone).filter(EventBooking.id != booking.id).first()
+        reason = ('booking_event_destination_changed' if local_source or community_sibling is not None
+                  else 'booking_phone_changed')
+        withdrawals.append((old_phone, reason))
+    if booking.phone and not contributes:
+        withdrawals.append((booking.phone, 'booking_linked_duplicate' if booking.duplicate_of_id is not None else 'booking_cancelled'))
+    for phone, reason in withdrawals:
+        if not _has_event_contributor(event, phone):
+            _record_booking_withdrawal(event, payload, booking.source, phone,
+                permission_identity, received_at, reason=reason)
+
+
+def _has_event_contributor(event, phone):
+    return EventBooking.query.filter_by(organization_id=event.organization_id, event_id=event.id,
+        is_active=True, duplicate_of_id=None, contact_state='valid', phone=phone).first() is not None
+
+
+def _restore_duplicate_event_permission(event, booking):
+    """Restore retained event consent; structural holds cannot erase real opt-outs."""
+    if not event.organization_id or not booking.phone or not booking.is_active or booking.contact_state != 'valid':
+        return
+    from app.services.recipient_permission_service import (
+        _evaluate_permission, _confirmed_signup_status, organization_has_confirmed_signup_consent,
+        record_permission_evidence,
+    )
+    entries = RecipientPermissionEvidence.query.filter_by(organization_id=event.organization_id,
+        phone=booking.phone).filter(RecipientPermissionEvidence.purpose.in_(('event', 'all'))).all()
+    retained = []
+    for entry in entries:
+        if entry.purpose == 'event' and entry.scope_key != f'event:{event.id}':
+            continue
+        try:
+            metadata = json.loads(entry.metadata_json or '{}')
+        except (TypeError, ValueError):
+            metadata = {}
+        if (entry.purpose == 'event' and entry.decision == 'denied' and entry.source.startswith('event_sync:')
+                and isinstance(metadata, dict) and metadata.get('reason') in {
+                    'booking_cancelled', 'booking_linked_duplicate', 'booking_event_destination_changed'}):
+            continue
+        retained.append(entry)
+    scope_key = f'event:{event.id}'
+    status = (_confirmed_signup_status(retained, purpose='event', scope_key=scope_key)
+              if organization_has_confirmed_signup_consent(event.organization_id)
+              else _evaluate_permission(retained, purpose='event', scope_key=scope_key))
+    if not status.allowed and not (status.decision == 'unknown' and booking.sms_consent is True):
+        return
+    now = _naive(utc_now())
+    record_permission_evidence(event.organization_id, booking.phone, purpose='event', event_id=event.id,
+        decision='granted', source='booking_duplicate_review', evidence_key=f'unlinked:{booking.id}:{now.isoformat()}',
+        occurred_at=now, verified=True, metadata={'proof':'Retained event-purpose consent restored after explicit duplicate unlink.',
+            'retained_evidence_id':status.evidence_id, 'booking_id':booking.id})
 
 
 def apply_booking_permission_transitions(event, transitions):
@@ -487,6 +539,11 @@ def link_duplicate_booking(booking, primary):
     booking.duplicate_of_id = primary.id
     db.session.flush()
     reconcile_event_projection(event)
+    if event.organization_id and booking.phone and not _has_event_contributor(event, booking.phone):
+        from app.services.aoc_event_sync_service import _record_booking_withdrawal
+        identity = f'ledger:{booking.id}' if booking.source_scope else booking.external_booking_id
+        _record_booking_withdrawal(event, {}, booking.source, booking.phone, identity,
+                                  _naive(utc_now()), reason='booking_linked_duplicate')
 
 
 def unlink_duplicate_booking(booking):
@@ -495,9 +552,12 @@ def unlink_duplicate_booking(booking):
     _lock_event(event)
     booking = EventBooking.query.filter_by(id=booking.id,organization_id=event.organization_id,
         event_id=event.id).populate_existing().one()
+    was_duplicate = booking.duplicate_of_id is not None
     booking.duplicate_of_id = None
     db.session.flush()
     reconcile_event_projection(event)
+    if was_duplicate:
+        _restore_duplicate_event_permission(event, booking)
     return booking
 
 

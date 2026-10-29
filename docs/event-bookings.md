@@ -72,6 +72,11 @@ bookings can contribute to one current SMS destination. Cancelling or correcting
 one transaction removes only that contribution; another active booking preserves
 the shared contact. A blank or invalid replacement number removes the unsupported
 destination while retaining the booking and reserved places.
+Linked duplicates never count as surviving event contributions or independently
+grant event eligibility. Linking or unlinking retains community permission and
+genuine opt-outs. Real scheduled registrant messages recheck the current contact
+projection immediately before each provider submission, separately from consent;
+approved test-recipient allowlists retain their existing behavior.
 Inventory batches seed old evidence once and rebuild the projection once after
 their complete records and absence decisions have been applied. Ordinary single
 transaction updates continue rebuilding immediately in the same transaction.

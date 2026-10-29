@@ -117,3 +117,36 @@ for (const width of [1440, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`event-feedback-staff-${width}.png`), fullPage: false });
   });
 }
+
+
+for (const width of [1440, 390]) {
+  for (const role of ['owner', 'staff']) {
+    test(`expired held invitation requires reviewed send-now choice for ${role} at ${width}px`, async ({ page }, info) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await login(page, `${role}@browser.test`, role === 'owner' ? 'Owner-pass1!' : 'Staff-pass1!');
+      await page.goto('/events/1/feedback');
+      await page.getByRole('link', { name: `Expired held recovery ${role} ${width}`, exact: true }).click();
+      await page.getByRole('link', { name: 'Review held invitation', exact: true }).click();
+      await expect(page.getByText('The original send window has expired.', { exact: false })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toHaveCount(0);
+      await expect(page.locator('input[name="review_token"]')).toHaveCount(0);
+      await page.getByRole('link', { name: 'Review sending now', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('[data-review="timing"]')).toHaveText('Send now after this confirmation');
+      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toBeVisible();
+      if (role === 'staff') {
+        const html = await page.content();
+        for (const phone of ['+17205550101', '+17205550102', '+15550001111']) expect(html).not.toContain(phone);
+      }
+      await page.waitForLoadState('load');
+      await page.evaluate(async () => { await document.fonts.ready; });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
+      await page.screenshot({ path: info.outputPath(`expired-held-${role}-${width}.png`), fullPage: false });
+      await page.getByRole('button', { name: 'Confirm send now', exact: true }).click();
+      await expect(page).toHaveURL(/\/events\/1\/feedback\/\d+$/);
+      await expect(page.getByText('Invitation reviewed for sending now.', { exact: false })).toBeVisible();
+      await expect(page.getByText('Pending', { exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Review held invitation', exact: true })).toHaveCount(0);
+    });
+  }
+}

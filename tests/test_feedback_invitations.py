@@ -460,3 +460,181 @@ def test_late_unicode_personalization_over_segment_limit_holds_before_freezing_a
     assert invitation.recipient_count==2 and invitation.snapshot_frozen_at is not None
     assert f.m.FeedbackInvitation.query.count()==1
     assert f.provider.client.messages.create.call_count==3
+
+
+def _held_at(f, service, invitation, scheduled_at):
+    schedule=invitation.scheduled_message
+    schedule.scheduled_at=scheduled_at
+    schedule.status='held'
+    invitation.hold_reason='Awaiting explicit operator review.'
+    invitation.context_digest=service.context_digest(f.event,invitation.survey,schedule)
+    history=json.loads(invitation.approval_history_json)
+    history[0]['scheduled_at']=scheduled_at.isoformat()
+    invitation.approval_history_json=json.dumps(history)
+    f.db.session.commit()
+    return schedule
+
+
+def test_expired_held_invitation_requires_deliberate_new_timing_choice(feedback):
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+    old=f.m.utc_now().replace(tzinfo=None)-timedelta(hours=2)
+    schedule=_held_at(f,s,invitation,old)
+    with f.organization_context(f.org.id):
+        with pytest.raises(ValueError,match='original send window has expired'):
+            s.held_review(f.event,flow,invitation,f.owner)
+        with pytest.raises(ValueError,match='original send window has expired'):
+            s.resume_held(f.event,flow,invitation,f.owner,'old-token',resume_timing='original')
+    assert schedule.status=='held' and schedule.scheduled_at==old
+    assert f.provider.client.messages.create.call_count==0
+
+
+def test_original_review_cannot_silently_become_send_now_or_resume_after_lag_expires(feedback):
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+    original=f.m.utc_now().replace(tzinfo=None)
+    schedule=_held_at(f,s,invitation,original)
+    with f.organization_context(f.org.id),patch.object(s,'_now',return_value=original+timedelta(minutes=30)):
+        held=s.held_review(f.event,flow,invitation,f.owner)
+        with pytest.raises(ValueError,match='changed'):
+            s.resume_held(f.event,flow,invitation,f.owner,held['review_token'],resume_timing='now')
+    with f.organization_context(f.org.id),patch.object(s,'_now',return_value=original+timedelta(minutes=61)):
+        with pytest.raises(ValueError,match='original send window has expired'):
+            s.resume_held(f.event,flow,invitation,f.owner,held['review_token'])
+    assert schedule.status=='held' and schedule.scheduled_at==original
+    assert len(json.loads(invitation.approval_history_json))==1
+
+
+def test_explicit_send_now_recovers_expired_hold_and_retains_both_approval_times(feedback):
+    from app.services.scheduler_service import send_scheduled_messages
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+    old=f.m.utc_now().replace(tzinfo=None)-timedelta(hours=2)
+    schedule=_held_at(f,s,invitation,old)
+    before=f.m.utc_now().replace(tzinfo=None)
+    with f.organization_context(f.org.id):
+        reviewed=s.held_review(f.event,flow,invitation,f.owner,resume_timing='now')
+        assert reviewed['confirmation_label']=='Confirm send now'
+        assert 'Send now' in reviewed['timing']
+        s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'],resume_timing='now')
+        f.db.session.commit()
+        assert schedule.status=='pending' and schedule.scheduled_at>=before
+        history=json.loads(invitation.approval_history_json)
+        assert history[0]['scheduled_at']==old.isoformat()
+        assert history[-1]['previous_scheduled_at']==old.isoformat()
+        assert history[-1]['scheduled_at']==schedule.scheduled_at.isoformat()
+        assert history[-1]['resume_timing']=='now'
+    with patch('app.services.scheduler_service.get_twilio_service',return_value=f.provider),patch('app.services.twilio_service.time.sleep'):
+        send_scheduled_messages(f.app);send_scheduled_messages(f.app)
+    f.db.session.expire_all()
+    assert schedule.status=='sent' and invitation.recipient_count==1
+    assert f.provider.client.messages.create.call_count==1
+    assert f.m.FeedbackInvitation.query.count()==1
+
+
+def test_expired_partial_frozen_invitation_preserves_attempts_and_excludes_late_contacts(feedback):
+    from app.services.scheduler_service import send_scheduled_messages
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    second=contact(f,'+17205550146',event=False)
+    third=contact(f,'+17205550147',event=False)
+    schedule=invitation.scheduled_message
+    original_provider=f.provider.client.messages.create.side_effect
+    call_number=0
+    def partial_provider(**params):
+        nonlocal call_number
+        call_number+=1
+        if call_number==2:raise ConnectionError('owned lost provider acknowledgement')
+        return original_provider(**params)
+    with f.organization_context(f.org.id):
+        assert s.prepare_due_invitation(schedule)
+        schedule.status='processing';f.db.session.commit()
+        frozen=schedule.test_recipient_snapshot_json
+        frozen_at=invitation.snapshot_frozen_at
+        rows=json.loads(frozen)
+        f.provider.client.messages.create.side_effect=partial_provider
+        partial=f.provider.send_bulk_with_attempts(rows[:2],schedule.message_body,f'scheduled:{schedule.id}',None,schedule.id,0,'blast')
+        assert partial['success_count']==1 and partial['failure_count']==1
+        original_attempts={a.logical_send_key:(a.status,a.provider_message_sid) for a in f.m.MessageDispatchAttempt.query.filter_by(scheduled_message_id=schedule.id)}
+        assert sorted(state[0] for state in original_attempts.values())==['ambiguous','sent']
+        f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+        old=f.m.utc_now().replace(tzinfo=None)-timedelta(hours=2)
+        _held_at(f,s,invitation,old)
+        late=contact(f,'+17205550148',event=False)
+        reviewed=s.held_review(f.event,flow,invitation,f.owner,resume_timing='now')
+        s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'],resume_timing='now')
+        f.db.session.commit()
+        assert schedule.test_recipient_snapshot_json==frozen
+        assert invitation.snapshot_frozen_at==frozen_at and invitation.recipient_count==3
+    f.provider.client.messages.create.side_effect=original_provider
+    with patch('app.services.scheduler_service.get_twilio_service',return_value=f.provider),patch('app.services.twilio_service.time.sleep'):
+        send_scheduled_messages(f.app);send_scheduled_messages(f.app)
+    f.db.session.expire_all()
+    # Two original provider calls (one uncertain), then only the untouched third
+    # recipient. Retiming cannot change the schedule/phone/body dispatch keys.
+    assert f.provider.client.messages.create.call_count==3
+    assert late.phone not in [call.kwargs['to'] for call in f.provider.client.messages.create.call_args_list]
+    for key,state in original_attempts.items():
+        attempt=f.m.MessageDispatchAttempt.query.filter_by(logical_send_key=key).one()
+        assert (attempt.status,attempt.provider_message_sid)==state
+    assert f.m.MessageDispatchAttempt.query.filter_by(scheduled_message_id=schedule.id).count()==3
+    assert schedule.test_recipient_snapshot_json==frozen and invitation.recipient_count==3
+    assert schedule.status=='failed'  # The original ambiguous evidence remains unresolved.
+
+
+def test_retiming_a_frozen_invitation_rejects_changed_body_before_time_mutation(feedback):
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+    with f.organization_context(f.org.id):
+        schedule=invitation.scheduled_message
+        assert s.prepare_due_invitation(schedule);f.db.session.commit()
+        old=f.m.utc_now().replace(tzinfo=None)-timedelta(hours=2)
+        _held_at(f,s,invitation,old)
+        schedule.message_body='Changed frozen message';f.db.session.commit()
+        reviewed=s.held_review(f.event,flow,invitation,f.owner,resume_timing='now')
+        with pytest.raises(ValueError,match='Restore its original message'):
+            s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'],resume_timing='now')
+        assert schedule.scheduled_at==old and schedule.status=='held'
+
+
+@pytest.mark.parametrize('actor',['owner','staff'])
+def test_expired_held_route_requires_explicit_review_now_then_confirmation(feedback,actor):
+    import re
+    from html import unescape
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f)
+    f.app.config['SCHEDULED_MESSAGE_MAX_LAG']=60
+    old=f.m.utc_now().replace(tzinfo=None)-timedelta(hours=2)
+    schedule=_held_at(f,s,invitation,old)
+    client=f.client if actor=='owner' else f.staff_client
+    path=f'/events/{f.event.id}/feedback/{flow.id}/invitations/{invitation.id}/review'
+    choice=client.get(path)
+    assert choice.status_code==200 and b'Review sending now' in choice.data
+    assert b'name="review_token"' not in choice.data
+    assert b'Confirm send now' not in choice.data
+    assert schedule.scheduled_at==old and schedule.status=='held'
+    rejected=client.post(path,data={'resume_timing':'original','review_token':'old-token'})
+    assert rejected.status_code==302
+    page=client.get(path+'?resume_timing=now')
+    assert page.status_code==200 and b'Confirm send now' in page.data
+    token=unescape(re.search(r'name="review_token" value="([^"]+)"',page.get_data(as_text=True)).group(1))
+    assert row.phone.encode() not in page.data
+    assert schedule.scheduled_at==old and schedule.status=='held'
+    response=client.post(path,data={'resume_timing':'now','review_token':token})
+    assert response.status_code==302
+    f.db.session.expire_all()
+    assert schedule.status=='pending' and schedule.scheduled_at>old
+    assert 'sending now' in client.get(response.location).get_data(as_text=True)
+
+
+def test_nonexpired_original_review_preserves_original_future_time(feedback):
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f,timing='later')
+    original=invitation.scheduled_message.scheduled_at
+    schedule=_held_at(f,s,invitation,original)
+    with f.organization_context(f.org.id):
+        reviewed=s.held_review(f.event,flow,invitation,f.owner)
+        assert reviewed['confirmation_label']=='Confirm reviewed invitation'
+        assert reviewed['intent']['resume_timing']=='original'
+        s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'])
+        f.db.session.commit()
+    assert schedule.status=='pending' and schedule.scheduled_at==original
+    assert json.loads(invitation.approval_history_json)[-1]['resume_timing']=='original'
+    assert f.provider.client.messages.create.call_count==0

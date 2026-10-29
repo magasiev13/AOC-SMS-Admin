@@ -1795,8 +1795,8 @@ class TwilioService:
                             'halted_status': halted_status,
                             'not_submitted_count': len(recipients) - len(results['details']),
                         }
-                    from app.services.feedback_invitation_service import submission_guard
-                    invitation_block = submission_guard(scheduled, normalize_phone(phone), personalized_body)
+                    from app.services.audience_service import scheduled_recipient_submission_guard
+                    invitation_block = scheduled_recipient_submission_guard(scheduled, normalize_phone(phone), personalized_body)
                     if invitation_block is not None:
                         db.session.commit()
                         if invitation_block.get('dispatch_halted'):
@@ -2008,8 +2008,8 @@ class TwilioService:
                     ),
                     'logical_send_key': normalized_key,
                 }
-            from app.services.feedback_invitation_service import submission_guard
-            invitation_block = submission_guard(scheduled, normalized_phone, body)
+            from app.services.audience_service import scheduled_recipient_submission_guard
+            invitation_block = scheduled_recipient_submission_guard(scheduled, normalized_phone, body)
             if invitation_block is not None:
                 # No provider call occurred. A held invitation can be reviewed
                 # and resumed with the same logical attempt and frozen audience.
