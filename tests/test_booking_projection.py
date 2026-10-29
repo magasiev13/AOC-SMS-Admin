@@ -710,3 +710,81 @@ def test_registration_survey_relink_keeps_each_event_booking_and_same_event_repe
     assert f.m.EventRegistration.query.filter_by(event_id=f.event.id).one().id==first_registration_id
     assert all(row.party_size==1 for row in f.m.EventBooking.query.all())
     assert all(session.purpose=='survey' and session.feedback_event_id is None for session in f.m.SurveySession.query.all())
+
+
+@pytest.mark.parametrize('later_signal',['unchanged','missing',True])
+def test_linked_source_event_withdrawal_survives_unlink_and_blocks_ordinary_snapshot(feedback,later_signal):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking,unlink_duplicate_booking
+    from app.services.recipient_permission_service import recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,secondary_phone='+17205550261')
+        phone=secondary.phone
+        link_duplicate_booking(secondary,primary)
+        grants_before=f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()
+        data={'booking_id':'secondary','phone':phone,'source_revision':2,'sms_consent':False,
+              'community_sms_consent':True,'updated_at':f.m.utc_now().isoformat()}
+        upsert_booking(f.event,data,'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        if later_signal!='unchanged':
+            data.update(source_revision=3,updated_at=f.m.utc_now().isoformat())
+            if later_signal=='missing':data.pop('sms_consent')
+            else:data['sms_consent']=later_signal
+            upsert_booking(f.event,data,'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        assert f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()==grants_before
+        unlink_duplicate_booking(secondary);f.db.session.commit()
+        _ordinary_event_snapshot(f,phone)
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==0
+    assert not recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+    negatives=f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='denied').all()
+    assert any(json.loads(row.metadata_json or '{}').get('sms_consent') is False and
+               json.loads(row.metadata_json or '{}').get('reason') is None for row in negatives)
+
+
+def test_later_verified_owner_reoptin_can_restore_event_consent_even_when_saved_source_flag_is_false(feedback):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking,unlink_duplicate_booking
+    from app.services.recipient_permission_service import record_permission_evidence,recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,secondary_phone='+17205550262')
+        phone=secondary.phone
+        link_duplicate_booking(secondary,primary)
+        upsert_booking(f.event,{'booking_id':'secondary','phone':phone,'source_revision':2,'sms_consent':False,
+            'community_sms_consent':True,'updated_at':f.m.utc_now().isoformat()},
+            'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        assert secondary.sms_consent is False
+        record_permission_evidence(f.org.id,phone,purpose='event',event_id=f.event.id,decision='granted',
+            source='owner_review',evidence_key='genuine-later-event-reoptin',occurred_at=f.m.utc_now(),verified=True,
+            metadata={'proof':'Owner verified a later explicit event-purpose opt-in.'})
+        unlink_duplicate_booking(secondary);f.db.session.commit()
+        _ordinary_event_snapshot(f,phone)
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==1
+    assert recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed
+
+
+@pytest.mark.parametrize('stop_before_unlink',[False,True])
+def test_confirmed_signup_raw_false_on_linked_duplicate_creates_no_event_grant_and_STOP_still_wins(feedback,stop_before_unlink):
+    from app.services.booking_projection_service import upsert_booking,link_duplicate_booking,unlink_duplicate_booking
+    from app.services.recipient_permission_service import record_permission_evidence,recipient_permission_status
+    f=feedback
+    with f.organization_context(f.org.id):
+        primary,secondary=_linked_source_pair(f,secondary_phone='+17205550263',confirmed_signup=True)
+        phone=secondary.phone
+        link_duplicate_booking(secondary,primary)
+        grants_before=f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()
+        upsert_booking(f.event,{'booking_id':'secondary','phone':phone,'source_revision':2,'sms_consent':False,
+            'community_sms_consent':True,'updated_at':f.m.utc_now().isoformat()},
+            'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        assert secondary.sms_consent is False
+        assert f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()==grants_before
+        assert recipient_permission_status(f.org.id,phone,purpose='community').allowed
+        if stop_before_unlink:
+            record_permission_evidence(f.org.id,phone,purpose='all',decision='denied',source='inbound_stop',
+                evidence_key='actual-stop-before-unlink',occurred_at=f.m.utc_now())
+        unlink_duplicate_booking(secondary);f.db.session.commit()
+        _ordinary_event_snapshot(f,phone)
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==(0 if stop_before_unlink else 1)
+    assert recipient_permission_status(f.org.id,phone,purpose='event',event_id=f.event.id).allowed is not stop_before_unlink

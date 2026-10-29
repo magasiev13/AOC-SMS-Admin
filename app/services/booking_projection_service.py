@@ -282,6 +282,17 @@ def _sync_source_permission(event, booking, payload, old_phone, received_at):
         if purposes:
             _record_booking_permission(event, payload, booking.source, booking.phone, permission_identity, received_at,
                                        purposes=purposes)
+    if not local_source and payload.get('sms_consent') is False and not (contributes and booking.phone):
+        from app.services.recipient_permission_service import organization_has_confirmed_signup_consent
+        # A real source-field withdrawal survives duplicate/cancellation holds
+        # and cannot later be mistaken for their reversible eligibility denial.
+        # The confirmed signup contract retains raw false without turning this
+        # noncontributing record into a positive event grant.
+        if not organization_has_confirmed_signup_consent(event.organization_id):
+            destination = booking.phone or old_phone
+            if destination:
+                _record_booking_permission(event, payload, booking.source, destination,
+                                           permission_identity, received_at, purposes=('event',))
     if not local_source and has_community_signal:
         # A deletion can carry an explicit community-purpose signal even when
         # its phone was omitted (retained) or explicitly cleared in this update.
