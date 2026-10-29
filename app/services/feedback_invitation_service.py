@@ -89,8 +89,8 @@ def invitation_intent(event, flow, values):
 
 
 def roster_hold_reason(event):
-    from app.services.booking_projection_service import roster_summary
-    if not roster_summary(event).get('coverage_verified'):
+    from app.services.booking_inventory_service import event_roster_coverage
+    if not event_roster_coverage(event).get('trustworthy'):
         return ('The event roster is not verified. Complete an event-specific source reconciliation and compare '
                 'its coverage before reviewing this registrant invitation. Community requires a separate explicit review.')
     return None

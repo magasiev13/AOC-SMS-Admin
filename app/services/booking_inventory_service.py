@@ -10,6 +10,9 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 
+from sqlalchemy import func
+from sqlalchemy.orm import aliased
+
 from app import db
 from app.booking_inventory_models import BookingInventory, BookingInventoryPage, EventRegistrationSource
 from app.models import Event, EventRegistration, utc_now
@@ -119,26 +122,40 @@ def event_roster_coverage(event):
     from app.booking_models import EventBooking
     sources = EventRegistrationSource.query.filter_by(
         organization_id=event.organization_id, event_id=event.id,
-    ).order_by(EventRegistrationSource.id).all()
-    ledger_rows = EventBooking.query.filter_by(organization_id=event.organization_id, event_id=event.id).all()
-    ledger_by_id = {row.id: row for row in ledger_rows}
-    def resolved_legacy(row):
-        target = ledger_by_id.get(row.duplicate_of_id)
-        return bool(target is not None and not target.legacy_evidence and target.duplicate_of_id is None)
-    legacy_count = sum(1 for row in ledger_rows if row.legacy_evidence and not resolved_legacy(row))
+    ).order_by(EventRegistrationSource.id).populate_existing().all()
+    # This is checked immediately before every invitation submission. Keep the
+    # result bounded by source scopes; never materialize the ledger or contacts.
+    target = aliased(EventBooking)
+    resolved_legacy = db.session.query(target.id).filter(
+        target.organization_id == event.organization_id, target.event_id == event.id,
+        target.id == EventBooking.duplicate_of_id,
+        target.legacy_evidence.is_(False), target.duplicate_of_id.is_(None),
+    ).exists()
+    legacy_count = db.session.query(func.count(EventBooking.id)).filter(
+        EventBooking.organization_id == event.organization_id, EventBooking.event_id == event.id,
+        EventBooking.legacy_evidence.is_(True), ~resolved_legacy,
+    ).scalar()
     linked_ids = db.session.query(EventBooking.projection_registration_id).filter(
-        EventBooking.organization_id == event.organization_id,
-        EventBooking.event_id == event.id,
+        EventBooking.organization_id == event.organization_id, EventBooking.event_id == event.id,
         EventBooking.projection_registration_id.isnot(None),
     )
-    untracked = EventRegistration.query.filter(
+    # Any retained link tracks a registration, including inactive/duplicate
+    # evidence. Keep the NULL-free ID set in SQL so the database can build it
+    # once rather than probing the ledger separately for every registration.
+    untracked = db.session.query(func.count(EventRegistration.id)).filter(
         EventRegistration.organization_id == event.organization_id,
-        EventRegistration.event_id == event.id,
-        ~EventRegistration.id.in_(linked_ids),
-    ).count()
-    configured_scopes = {(s.source, s.source_scope) for s in sources}
-    ledger_scopes = {(row.source, row.source_scope) for row in ledger_rows if row.is_active and row.duplicate_of_id is None}
-    missing_scopes = ledger_scopes - configured_scopes
+        EventRegistration.event_id == event.id, ~EventRegistration.id.in_(linked_ids),
+    ).scalar()
+    configured_scope = db.session.query(EventRegistrationSource.id).filter(
+        EventRegistrationSource.organization_id == event.organization_id,
+        EventRegistrationSource.event_id == event.id,
+        EventRegistrationSource.source == EventBooking.source,
+        EventRegistrationSource.source_scope == EventBooking.source_scope,
+    ).exists()
+    missing_scopes = db.session.query(EventBooking.source, EventBooking.source_scope).filter(
+        EventBooking.organization_id == event.organization_id, EventBooking.event_id == event.id,
+        EventBooking.is_active.is_(True), EventBooking.duplicate_of_id.is_(None), ~configured_scope,
+    ).distinct().order_by(EventBooking.source, EventBooking.source_scope).all()
     trustworthy = bool(sources) and all(s.authority_enabled and s.coverage_status == 'complete' for s in sources) and not legacy_count and not untracked and not missing_scopes
     reason = None if trustworthy else (
         'Historical registration identities still need comparison with the source.' if legacy_count or untracked

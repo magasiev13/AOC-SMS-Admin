@@ -576,10 +576,12 @@ def roster_summary(event):
     active = _active_bookings(event)
     legacy_rows = EventRegistration.query.filter_by(organization_id=event.organization_id, event_id=event.id).count()
     all_bookings = EventBooking.query.filter_by(organization_id=event.organization_id, event_id=event.id).all()
+    projection_ids = {item.projection_registration_id for item in all_bookings}
+    linked_projection_ids = {value for value in projection_ids if value}
     by_id = {item.id:item for item in all_bookings}
     unresolved_legacy = [item for item in all_bookings if item.legacy_evidence and not (
         item.duplicate_of_id in by_id and not by_id[item.duplicate_of_id].legacy_evidence)]
-    unlinked_legacy = max(0, legacy_rows - len({item.projection_registration_id for item in all_bookings if item.projection_registration_id}))
+    unlinked_legacy = max(0, legacy_rows - len(linked_projection_ids))
     pending = [item for item in active if item.status in {'pending', 'submitted'}]
     from app.services.audience_service import event_registrations_query
     contact_rows = event_registrations_query(organization_id=event.organization_id, current_only=False).filter_by(event_id=event.id).all()
@@ -596,7 +598,7 @@ def roster_summary(event):
     except ImportError:
         coverage = {'trustworthy': False, 'status': 'unverified', 'reason': 'A complete source inventory has not been reviewed.'}
     return {'bookings': len(active) + unlinked_legacy,
-        'reserved_places': sum(item.party_size for item in active) + sum(row.capacity_spaces for row in EventRegistration.query.filter_by(organization_id=event.organization_id,event_id=event.id).all() if row.id not in {item.projection_registration_id for item in all_bookings}),
+        'reserved_places': sum(item.party_size for item in active) + sum(row.capacity_spaces for row in EventRegistration.query.filter_by(organization_id=event.organization_id,event_id=event.id).all() if row.id not in projection_ids),
         'pending_bookings': len(pending), 'confirmed_bookings': len(active) - len(pending),
         'reachable_contacts': reachable, 'missing_contact_details': sum(item.contact_state == 'missing' for item in active),
         'supplied_contacts': legacy_rows, 'permission_restricted_contacts': len(contact_rows) - reachable,

@@ -638,3 +638,60 @@ def test_nonexpired_original_review_preserves_original_future_time(feedback):
     assert schedule.status=='pending' and schedule.scheduled_at==original
     assert json.loads(invitation.approval_history_json)[-1]['resume_timing']=='original'
     assert f.provider.client.messages.create.call_count==0
+
+
+def test_large_roster_authority_guard_reads_coverage_without_contact_or_ledger_models(feedback, monkeypatch):
+    """A provider boundary must not rebuild a 5,000-contact display summary."""
+    from sqlalchemy import event as sql_event
+    from app.services import recipient_permission_service
+    f=feedback;s,flow,row,values,key,review,invitation=setup(f,audience='registered_contacts')
+    organization_id,event_id=f.org.id,f.event.id
+    f.db.session.bulk_insert_mappings(f.m.EventRegistration,[{
+        'organization_id':organization_id,'event_id':event_id,'phone':f'+1720{index:07d}',
+        'name':'Large roster contact',
+    } for index in range(4999)])
+    registrations=f.db.session.query(f.m.EventRegistration.id).filter_by(event_id=event_id).all()
+    f.db.session.bulk_insert_mappings(f.m.EventBooking,[{
+        'organization_id':organization_id,'event_id':event_id,'source':'manual','source_scope':'',
+        'external_booking_id':f'large-{registration_id}','projection_registration_id':registration_id,
+        'is_active':True,'legacy_evidence':False,
+    } for registration_id, in registrations])
+    source=f.m.EventRegistrationSource(organization_id=organization_id,event_id=event_id,
+        source='manual',source_scope='',authority_enabled=True,coverage_status='complete',
+        last_complete_at=f.m.utc_now().replace(tzinfo=None))
+    f.db.session.add(source);f.db.session.commit()
+    # Resolve relationship reads before measuring only the authority decision.
+    schedule=invitation.scheduled_message
+    assert invitation.event.id==event_id and invitation.survey.id==flow.id
+    def unexpected_permissions(*args,**kwargs):
+        pytest.fail('Coverage authority must not recalculate per-contact permissions.')
+    monkeypatch.setattr(recipient_permission_service,'filter_permission_recipients',unexpected_permissions)
+    statements=[];result_sizes=[];loaded=[]
+    def record_sql(connection,cursor,statement,parameters,context,executemany):
+        if statement.lstrip().lower().startswith('select'):
+            statements.append(statement.lower())
+            result_sizes.append(cursor.rowcount)
+    def record_load(instance,context):
+        loaded.append(type(instance).__name__)
+    sql_event.listen(f.db.engine,'after_cursor_execute',record_sql)
+    for model in (f.m.EventBooking,f.m.EventRegistration):
+        sql_event.listen(model,'load',record_load)
+    try:
+        with f.organization_context(organization_id):
+            assert s.validate_authority(invitation,schedule) is None
+    finally:
+        sql_event.remove(f.db.engine,'after_cursor_execute',record_sql)
+        for model in (f.m.EventBooking,f.m.EventRegistration):
+            sql_event.remove(model,'load',record_load)
+    assert not loaded
+    assert len(statements)<=6
+    assert all(size<=1 for size in result_sizes if size>=0)
+    # Coverage queries may return source records, counts and distinct scopes.
+    # No ledger/contact payload, phone or permission-evidence rows are selected.
+    for statement in statements:
+        selected=statement.split('from',1)[0]
+        assert 'event_bookings.phone' not in selected and 'event_registrations.phone' not in selected
+        assert 'recipient_permission_evidence' not in statement
+        if 'from event_bookings' in statement or 'from event_registrations ' in statement:
+            assert selected.startswith('select count(') or selected.startswith('select distinct event_bookings.source ')
+    assert f.provider.client.messages.create.call_count==0

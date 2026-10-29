@@ -390,3 +390,144 @@ def test_scoped_wordpress_inventory_cannot_move_an_unscoped_identity_to_another_
     assert case._signed_post(complete,None,None).status_code==400
     assert EventBooking.query.count()==1
     assert (EventBooking.query.one().event_id,EventBooking.query.one().source_scope)==(original_event_id,'')
+
+
+def coverage_fixture(case):
+    """A reviewed source can own an empty event; no synthetic roster import."""
+    from app.models import EventRegistrationSource
+    event=case.Event(organization_id=case.organization.id,title='Coverage evidence')
+    case.db.session.add(event);case.db.session.flush()
+    when=datetime(2026,6,23,19)
+    source=EventRegistrationSource(organization_id=case.organization.id,event_id=event.id,
+        source='application',source_scope='form:one',authority_enabled=True,
+        coverage_status='complete',last_complete_at=when)
+    case.db.session.add(source);case.db.session.flush()
+    return event,source
+
+
+def coverage_booking(case,event,key,**changes):
+    from app.models import EventBooking
+    values={'organization_id':event.organization_id,'event_id':event.id,
+        'source':'application','source_scope':'form:one','external_booking_id':key,
+        'is_active':False,'legacy_evidence':False}
+    values.update(changes)
+    row=EventBooking(**values)
+    case.db.session.add(row);case.db.session.flush()
+    return row
+
+
+@pytest.mark.parametrize('target_state,unresolved',[
+    ('primary',0),('cancelled_primary',0),('missing',1),('legacy',2),
+    ('duplicate',1),('other_event',1),('other_organization',1),
+])
+def test_coverage_legacy_resolution_requires_same_event_primary_identity(case,target_state,unresolved):
+    from app.services.booking_inventory_service import event_roster_coverage
+    event,source=coverage_fixture(case)
+    target_event=event
+    if target_state in {'other_event','other_organization'}:
+        target_event=case.Event(organization_id=(case.other_organization.id if target_state=='other_organization'
+                                               else case.organization.id),title='Other identity context')
+        case.db.session.add(target_event);case.db.session.flush()
+    primary=None
+    if target_state!='missing':
+        primary=coverage_booking(case,target_event,'primary',is_active=target_state=='primary',
+            legacy_evidence=target_state=='legacy')
+        if target_state=='duplicate':
+            root=coverage_booking(case,event,'primary-of-primary')
+            primary.duplicate_of_id=root.id
+    # Cancelled unresolved history still matters; a cancelled primary can
+    # nevertheless prove that two historical identities represent one booking.
+    coverage_booking(case,event,'historical',legacy_evidence=True,
+        duplicate_of_id=primary.id if primary else None)
+    result=event_roster_coverage(event)
+    assert result['legacy_evidence_count']==unresolved
+    assert result['trustworthy']==(unresolved==0)
+    assert bool(result['reason'] and 'Historical' in result['reason'])==(unresolved>0)
+
+
+def test_coverage_untracked_registration_uses_any_same_event_retained_link(case):
+    from app.services.booking_inventory_service import event_roster_coverage
+    event,source=coverage_fixture(case)
+    registrations=[case.EventRegistration(organization_id=event.organization_id,event_id=event.id,
+        phone=f'+172055504{index:02d}') for index in range(3)]
+    case.db.session.add_all(registrations);case.db.session.flush()
+    primary=coverage_booking(case,event,'inactive-link',projection_registration_id=registrations[0].id)
+    coverage_booking(case,event,'duplicate-link',duplicate_of_id=primary.id,
+        projection_registration_id=registrations[1].id)
+    coverage_booking(case,event,'null-link')
+    other=case.Event(organization_id=event.organization_id,title='Unrelated event')
+    case.db.session.add(other);case.db.session.flush()
+    coverage_booking(case,other,'wrong-event-link',projection_registration_id=registrations[2].id)
+    result=event_roster_coverage(event)
+    assert result['legacy_evidence_count']==1 and not result['trustworthy']
+    assert 'Historical' in result['reason']
+    coverage_booking(case,event,'final-retained-link',projection_registration_id=registrations[2].id)
+    assert event_roster_coverage(event)['trustworthy']
+
+
+def test_coverage_missing_scopes_include_noncontactable_active_primary_only(case):
+    from app.services.booking_inventory_service import event_roster_coverage
+    event,source=coverage_fixture(case)
+    primary=coverage_booking(case,event,'primary',is_active=True)
+    coverage_booking(case,event,'invalid',is_active=True,source_scope='form:invalid',
+        phone=None,contact_state='invalid',party_size=0)
+    coverage_booking(case,event,'same-scope',is_active=True,source_scope='form:invalid')
+    coverage_booking(case,event,'missing',is_active=True,source_scope='form:missing',contact_state='missing')
+    coverage_booking(case,event,'inactive',source_scope='form:inactive')
+    coverage_booking(case,event,'duplicate',is_active=True,source_scope='form:duplicate',duplicate_of_id=primary.id)
+    result=event_roster_coverage(event)
+    assert result['unconfigured_source_count']==2
+    assert result['unconfigured_sources']==[
+        {'source':'application','source_scope':'form:invalid'},
+        {'source':'application','source_scope':'form:missing'},
+    ]
+    assert 'unconfigured' in result['reason'] and not result['trustworthy']
+
+
+@pytest.mark.parametrize('status,authority,reason',[
+    ('complete',True,None),('complete',False,'explicitly approve'),
+    ('unverified',True,'explicitly approve'),('receiving',True,'explicitly approve'),
+    ('conflict',True,'share a watermark'),('ambiguous',True,'changed at the inventory watermark'),
+])
+def test_coverage_requires_every_configured_source_even_when_empty(case,status,authority,reason):
+    from app.models import EventRegistrationSource
+    from app.services.booking_inventory_service import event_roster_coverage
+    event,source=coverage_fixture(case)
+    later=source.last_complete_at+timedelta(hours=1)
+    second=EventRegistrationSource(organization_id=event.organization_id,event_id=event.id,
+        source='another-application',source_scope='form:empty',coverage_status=status,
+        authority_enabled=authority,last_complete_at=later)
+    case.db.session.add(second);case.db.session.flush()
+    result=event_roster_coverage(event)
+    assert result['trustworthy']==(reason is None)
+    assert result['last_complete_at']==source.last_complete_at
+    if reason:assert reason in result['reason']
+    second.last_complete_at=None
+    assert event_roster_coverage(event)['last_complete_at'] is None
+    case.db.session.delete(source);case.db.session.delete(second);case.db.session.flush()
+    result=event_roster_coverage(event)
+    assert not result['trustworthy'] and result['last_complete_at'] is None
+
+
+def test_coverage_reason_priority_and_fresh_source_state_between_guards(case):
+    from app.models import EventRegistrationSource,EventBooking
+    from app.services.booking_inventory_service import event_roster_coverage
+    event,source=coverage_fixture(case)
+    case.db.session.commit()
+    assert event_roster_coverage(event)['trustworthy']
+    # A separate committed mutation must defeat even an already-loaded source
+    # identity in the worker's ORM session. No cached approval is sufficient.
+    source_id,event_id,organization_id=source.id,event.id,event.organization_id
+    with case.db.engine.begin() as connection:
+        connection.execute(EventRegistrationSource.__table__.update().where(
+            EventRegistrationSource.id==source_id).values(coverage_status='conflict'))
+    assert source.coverage_status=='complete'
+    assert 'share a watermark' in event_roster_coverage(event)['reason']
+    with case.db.engine.begin() as connection:
+        connection.execute(EventBooking.__table__.insert().values(organization_id=organization_id,
+            event_id=event_id,source='new-app',source_scope='form:new',external_booking_id='late',is_active=True))
+    assert 'unconfigured' in event_roster_coverage(event)['reason']
+    coverage_booking(case,event,'unresolved',legacy_evidence=True)
+    assert 'Historical' in event_roster_coverage(event)['reason']
+    source.coverage_status='ambiguous';case.db.session.flush()
+    assert 'Historical' in event_roster_coverage(event)['reason']
