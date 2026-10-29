@@ -273,6 +273,10 @@ def _sync_source_permission(event, booking, payload, old_phone, received_at):
     contributes = booking.is_active and booking.duplicate_of_id is None and booking.contact_state == 'valid'
     permission_identity = f'ledger:{booking.id}' if booking.source_scope else booking.external_booking_id
     community_signal = payload.get('community_sms_consent')
+    # Match the source permission helper's fallback on every booking state;
+    # cancellation and duplicate exclusion must not discard a real withdrawal.
+    if community_signal is None and payload.get('sms_consent') is False:
+        community_signal = False
     has_community_signal = isinstance(community_signal, bool)
     if not local_source and booking.is_active and booking.phone:
         upsert_community_member_contact(booking.name, booking.phone)

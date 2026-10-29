@@ -67,6 +67,14 @@ A distinct booking ID always represents a distinct transaction, even when two
 transactions share a destination. A booking identity cannot move to another event.
 Connecting an application does not create message schedules.
 
+Supply both consent fields when their purposes differ. Under the standard source
+policy, `sms_consent: false` with omitted or null `community_sms_consent` also
+records a community-purpose denial, including on a deleted booking. An explicit
+community value takes precedence over that inference. Booking cancellation alone
+does not withdraw community permission. Organizations with an owner-confirmed
+signup policy retain their configured contract; explicit STOP and verified
+operator opt-outs continue to apply independently.
+
 To attach another source to an existing event, the owner first configures that
 source and scope on the event. The application can then send
 `event.target_event_id` with the existing Twinevia event ID. The exact authenticated

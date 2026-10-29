@@ -588,6 +588,73 @@ def test_signed_cancellation_explicit_community_withdrawal_applies_with_missing_
     assert community.decision=='denied'
 
 
+@pytest.mark.parametrize('community_signal',['omitted',None])
+@pytest.mark.parametrize('contact_update',[{}, {'phone':''}])
+def test_signed_cancellation_infers_community_withdrawal_from_sms_false(case,community_signal,contact_update):
+    from app.models import EventBooking,RecipientPermissionEvidence
+    from app.services.recipient_permission_service import recipient_permission_status,filter_permission_recipients
+    data,app_post=_signed_app_consent_fixture(case)
+    phone=data['booking']['phone']
+    booking=EventBooking.query.one()
+    original_id=booking.id
+    grants_before=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()
+    deleted={**data,'action':'booking_deleted','booking':{
+        'booking_id':data['booking']['booking_id'],'source_scope':data['booking']['source_scope'],
+        'source_revision':2,'updated_at':'2026-06-23T18:01:00Z','sms_consent':False,**contact_update}}
+    if community_signal!='omitted':
+        deleted['booking']['community_sms_consent']=community_signal
+    response=app_post(case,deleted)
+    assert response.status_code==200,response.get_data(as_text=True)
+    booking=EventBooking.query.one()
+    assert booking.id==original_id and not booking.is_active and booking.sms_consent is False
+    assert booking.cancellation_history and case.EventRegistration.query.count()==0
+    assert RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()==grants_before
+    status=recipient_permission_status(case.organization.id,phone,purpose='community')
+    assert status.decision=='denied' and not status.allowed
+    allowed,skipped,_=filter_permission_recipients([{'phone':phone,'name':'Saved community contact'}],
+        organization_id=case.organization.id,purpose='community')
+    assert allowed==[] and len(skipped)==1
+    signals=RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='community',decision='denied').all()
+    assert any(json.loads(row.metadata_json or '{}').get('sms_consent') is False and
+               json.loads(row.metadata_json or '{}').get('community_sms_consent') is None and
+               json.loads(row.metadata_json or '{}').get('applied_community_decision') is False for row in signals)
+
+
+@pytest.mark.parametrize('confirmed_signup,community_signal,allowed',[
+    (False,'omitted',False),(False,None,False),(False,True,True),
+    (True,'omitted',True),(True,None,True),
+])
+def test_cancelled_source_sms_false_obeys_community_contract_at_snapshot_submission(
+        feedback,confirmed_signup,community_signal,allowed):
+    from app.services.booking_projection_service import upsert_booking
+    from app.services.recipient_permission_service import recipient_permission_status
+    f=feedback
+    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug] if confirmed_signup else []
+    phone='+17205550264'
+    with f.organization_context(f.org.id):
+        upsert_booking(f.event,{'booking_id':'community-contract','phone':phone,'sms_consent':True,
+            'community_sms_consent':True,'source_revision':1,
+            'updated_at':(f.m.utc_now()-timedelta(minutes=10)).isoformat()},
+            'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture')
+        schedule=f.m.ScheduledMessage(organization_id=f.org.id,target='community',
+            message_body='Previously approved community message',status='pending',
+            scheduled_at=f.m.utc_now().replace(tzinfo=None)-timedelta(minutes=1),test_mode=False,
+            test_recipient_snapshot_json=json.dumps([{'phone':phone,'name':'Saved community contact'}]))
+        f.db.session.add(schedule);f.db.session.flush()
+        grants_before=f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()
+        deleted={'booking_id':'community-contract','source_revision':2,'sms_consent':False,
+                 'updated_at':(f.m.utc_now()-timedelta(minutes=2)).isoformat()}
+        if community_signal!='omitted':
+            deleted['community_sms_consent']=community_signal
+        upsert_booking(f.event,deleted,'fixture-bookings',f.m.utc_now(),source_scope='orders:fixture',deleted=True)
+        assert f.m.EventRegistration.query.filter_by(event_id=f.event.id).count()==0
+        assert f.m.RecipientPermissionEvidence.query.filter_by(phone=phone,purpose='event',decision='granted').count()==grants_before
+        f.db.session.commit()
+    _run_ordinary_event_scheduler(f)
+    assert f.provider.client.messages.create.call_count==int(allowed)
+    assert recipient_permission_status(f.org.id,phone,purpose='community').allowed is allowed
+
+
 def test_plain_cancellation_preserves_independent_community_permission_and_sibling_event_audience(case):
     from app.services.recipient_permission_service import recipient_permission_status,record_permission_evidence
     from app.models import EventBooking
