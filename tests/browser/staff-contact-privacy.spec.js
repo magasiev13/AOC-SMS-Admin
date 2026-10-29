@@ -20,6 +20,11 @@ function publicReviewPayload(token) {
 }
 
 async function privateRenderedPage(page, phones = fixturePhones) {
+  // A keyboard navigation can commit its URL before styles and fonts settle.
+  // Inspect the loaded document, then retain a real width assertion that still
+  // fails for persistent overflow rather than sampling the unstyled response.
+  await page.waitForLoadState('load');
+  await page.evaluate(async () => { await document.fonts.ready; });
   await expect(page).toHaveTitle(/Twinevia/);
   await expect(page.locator('main')).not.toBeEmpty();
   await expect(page.locator('vite-error-overlay, nextjs-portal, #webpack-dev-server-client-overlay')).toHaveCount(0);
@@ -29,7 +34,10 @@ async function privateRenderedPage(page, phones = fixturePhones) {
     expect(source).not.toContain(phone.slice(1));
     expect(source).not.toContain(phone.slice(-10));
   }
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await expect.poll(
+    () => page.evaluate(() => document.documentElement.scrollWidth - innerWidth),
+    { message: 'The rendered private page must fit its viewport after navigation.' },
+  ).toBeLessThanOrEqual(1);
 }
 
 async function noExportControls(page) {
