@@ -294,6 +294,72 @@ def test_postgres_inventory_rechecks_a_preloaded_booking_after_event_lock(case):
     assert stale.source_revision == 10 and stale.is_active
 
 
+@pytest.mark.parametrize('source_scope',['','orders:scoped'])
+def test_batch_destination_swap_preserves_raw_and_scoped_projection_identities(case,source_scope):
+    from app.models import EventBooking
+    from app.services.booking_projection_service import (
+        upsert_booking,reconcile_event_projection,apply_booking_permission_transitions,
+    )
+    post(case,'anchor',None,spaces=0)
+    event=case.Event.query.one()
+    phones=('+17205550236','+17205550237')
+    for key,phone in zip(('first','second'),phones):
+        upsert_booking(event,{'booking_id':key,'phone':phone,'spaces':2,'sms_consent':True,
+            'source_revision':1,'updated_at':'2026-06-23T18:00:00Z'},'other-application',
+            datetime.now(timezone.utc),source_scope=source_scope)
+    case.db.session.commit()
+    original={row.phone:row.id for row in case.EventRegistration.query.all()}
+    transitions=[]
+    for key,phone in zip(('first','second'),reversed(phones)):
+        booking=upsert_booking(event,{'booking_id':key,'phone':phone,'spaces':2,'sms_consent':True,
+            'source_revision':2,'updated_at':'2026-06-23T19:00:00Z'},'other-application',
+            datetime.now(timezone.utc),source_scope=source_scope,project=False,seed_legacy=False,sync_permissions=False)
+        transitions.append(booking._permission_transition)
+    apply_booking_permission_transitions(event,transitions)
+    reconcile_event_projection(event,seed_legacy=False)
+    assert {row.phone:row.id for row in case.EventRegistration.query.all()}==original
+    for booking in EventBooking.query.filter_by(source='other-application').all():
+        row=case.EventRegistration.query.filter_by(phone=booking.phone).one()
+        expected=f'ledger:{booking.id}' if source_scope else booking.external_booking_id
+        assert row.external_booking_id==expected and row.id==original[booking.phone]
+
+
+@pytest.mark.parametrize('source,revision',[('aoc-wordpress',7),('other-application',None)])
+def test_scope_recovery_does_not_reinterpret_numeric_or_generic_unscoped_identities(case,source,revision):
+    from app.models import EventBooking
+    from app.services.booking_projection_service import upsert_booking
+    post(case,'anchor',None,spaces=0)
+    event=case.Event.query.one()
+    payload={'booking_id':'deliberate-unscoped','phone':'+17205550243','spaces':3,
+             'updated_at':'2026-06-23T18:00:00Z','source_revision':revision}
+    old=upsert_booking(event,payload,source,datetime.now(timezone.utc))
+    old_id=old.id
+    payload.update(source_revision=8,updated_at='2026-06-23T19:00:00Z')
+    scoped=upsert_booking(event,payload,source,datetime.now(timezone.utc),source_scope='orders:new')
+    assert scoped.id!=old_id
+    assert EventBooking.query.filter_by(id=old_id).one().source_scope==''
+    assert EventBooking.query.filter_by(id=old_id).one().source_revision==revision
+
+
+@pytest.mark.parametrize('revision', [None, 7])
+def test_generic_scopes_keep_independent_booking_ids_across_events(case, revision):
+    from app.models import EventBooking
+    from app.services.booking_projection_service import upsert_booking
+    post(case, 'anchor', None, spaces=0)
+    first_event = case.Event.query.one()
+    other_event = case.Event(organization_id=case.organization.id, title='Another company event')
+    case.db.session.add(other_event)
+    case.db.session.flush()
+    payload = {'booking_id':'store-local-id', 'phone':'+17205550244', 'spaces':3,
+               'updated_at':'2026-06-23T18:00:00Z', 'source_revision':revision}
+    old = upsert_booking(first_event, payload, 'other-application', datetime.now(timezone.utc))
+    scoped = upsert_booking(other_event, {**payload, 'source_revision':8}, 'other-application',
+                            datetime.now(timezone.utc), source_scope='another-store')
+    assert old.id != scoped.id and old.event_id == first_event.id and scoped.event_id == other_event.id
+    assert EventBooking.query.filter_by(id=old.id).one().source_scope == ''
+    assert EventBooking.query.filter_by(id=scoped.id).one().source_scope == 'another-store'
+
+
 def test_queued_unscoped_wordpress_callback_reuses_identity_without_revision_downgrade(case):
     from app.models import EventBooking
     post(case,'cutover-entry','+17205550131',provider='wpforms',source_scope='wpforms:123',

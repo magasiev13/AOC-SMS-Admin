@@ -258,3 +258,135 @@ def test_multipage_inventory_projects_once_with_linear_query_bound(case,monkeypa
     assert EventBooking.query.count()==125
     assert case.EventRegistration.query.count()==1
     assert case.EventRegistration.query.one().booking_spaces==250
+
+
+@pytest.mark.parametrize('reverse_records',[False,True])
+def test_complete_inventory_can_swap_two_booking_destinations_without_replacing_contact_ids(case,reverse_records):
+    from app.models import EventBooking
+    from app.services.booking_projection_service import upsert_booking
+    first_phone,second_phone='+17205550231','+17205550232'
+    mutation(case,booking(case,'swap-first',first_phone,spaces=3,source_revision=1))
+    mutation(case,booking(case,'swap-second',second_phone,spaces=5,source_revision=1))
+    event=case.Event.query.one()
+    unrelated=upsert_booking(event,{'booking_id':'unrelated-transaction','phone':'+17205550233',
+        'name':'Unrelated contact','spaces':4,'sms_consent':True,'updated_at':'2026-06-23T18:10:00Z'},
+        'other-application',datetime.now(timezone.utc),source_scope='orders:separate')
+    legacy=case.EventRegistration(organization_id=case.organization.id,event_id=event.id,
+        phone='+17205550234',name='Legacy evidence',booking_spaces=2)
+    case.db.session.add(legacy);case.db.session.commit()
+    original_ids={row.phone:row.id for row in case.EventRegistration.query.all()}
+    unrelated_identity=(unrelated.id,unrelated.source,unrelated.source_scope,unrelated.external_booking_id,
+                        unrelated.projection_registration_id)
+    records=[booking(case,'swap-first',second_phone,spaces=3,source_revision=2,updated_at='2026-06-23T19:00:00Z'),
+             booking(case,'swap-second',first_phone,spaces=5,source_revision=2,updated_at='2026-06-23T19:00:00Z')]
+    if reverse_records:
+        records.reverse()
+    pages,complete=inventory(case,records,key='swap-roster',watermark='2026-06-23T20:00:00Z')
+    send(case,pages[0])
+    assert send(case,complete)['status']=='complete'
+    case.db.session.expire_all()
+    registrations={row.phone:row for row in case.EventRegistration.query.all()}
+    assert {phone:row.id for phone,row in registrations.items()}==original_ids
+    assert registrations[first_phone].booking_spaces==5 and registrations[second_phone].booking_spaces==3
+    first=EventBooking.query.filter_by(external_booking_id='events_manager:swap-first').one()
+    second=EventBooking.query.filter_by(external_booking_id='events_manager:swap-second').one()
+    assert (first.phone,first.projection_registration_id)==(second_phone,original_ids[second_phone])
+    assert (second.phone,second.projection_registration_id)==(first_phone,original_ids[first_phone])
+    assert registrations[second_phone].external_booking_id==f'ledger:{first.id}'
+    assert registrations[first_phone].external_booking_id==f'ledger:{second.id}'
+    assert unrelated_identity==(unrelated.id,unrelated.source,unrelated.source_scope,unrelated.external_booking_id,
+                                unrelated.projection_registration_id)
+    assert registrations['+17205550233'].booking_spaces==4
+    assert registrations['+17205550234'].name=='Legacy evidence' and registrations['+17205550234'].booking_spaces==2
+    from app.services.recipient_permission_service import recipient_permission_status
+    assert recipient_permission_status(case.organization.id,first_phone,purpose='event',event_id=event.id).allowed
+    assert recipient_permission_status(case.organization.id,second_phone,purpose='event',event_id=event.id).allowed
+
+
+def test_complete_inventory_clear_and_cancellation_keep_explicit_consent_decisions(case):
+    from app.models import EventBooking
+    from app.services.recipient_permission_service import recipient_permission_status
+    case.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[]
+    phone='+17205550235'
+    mutation(case,booking(case,'clear-contact',phone,spaces=3,source_revision=1,community_sms_consent=True))
+    mutation(case,booking(case,'retained-contact',phone,spaces=5,source_revision=1,community_sms_consent=True))
+    event=case.Event.query.one()
+    records=[booking(case,'clear-contact','',spaces=3,source_revision=2,community_sms_consent=False,
+                     updated_at='2026-06-23T19:00:00Z'),
+             booking(case,'retained-contact',phone,spaces=5,source_revision=2,community_sms_consent=True,
+                     updated_at='2026-06-23T19:00:00Z')]
+    pages,complete=inventory(case,records,key='clear-roster',watermark='2026-06-23T20:00:00Z')
+    send(case,pages[0]);assert send(case,complete)['status']=='complete'
+    assert case.EventRegistration.query.one().phone==phone
+    assert case.EventRegistration.query.one().booking_spaces==5
+    assert recipient_permission_status(case.organization.id,phone,purpose='event',event_id=event.id).allowed
+    assert not recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+
+    # A later complete roster omits the final contactable booking, preserving
+    # the explicit community withdrawal while removing its event contribution.
+    records[0].update(source_revision=3,updated_at='2026-06-23T20:00:00Z')
+    pages,complete=inventory(case,records[:1],key='cancel-roster',watermark='2026-06-23T21:00:00Z')
+    send(case,pages[0]);assert send(case,complete)['status']=='complete'
+    assert case.EventRegistration.query.count()==0
+    assert not EventBooking.query.filter_by(external_booking_id='events_manager:retained-contact').one().is_active
+    assert not recipient_permission_status(case.organization.id,phone,purpose='event',event_id=event.id).allowed
+    assert not recipient_permission_status(case.organization.id,phone,purpose='community').allowed
+
+
+def test_old_unscoped_wordpress_callback_is_recovered_by_later_scoped_inventory(case):
+    from app.models import EventBooking
+    old=case._booking_payload('old-then-scoped','+17205550238')
+    send(case,{'action':'booking_upsert','source':'aoc-wordpress','event':case._event_payload(),'booking':old})
+    retained=EventBooking.query.one()
+    original_id=retained.id
+    projection_id=case.EventRegistration.query.one().id
+    assert not retained.legacy_evidence and retained.source_scope=='' and retained.source_revision is None
+    record=booking(case,'old-then-scoped','+17205550238',source_revision=2,spaces=7,
+                   updated_at='2026-06-23T19:00:00Z')
+    pages,complete=inventory(case,[record],key='recover-old-callback',watermark='2026-06-23T20:00:00Z')
+    send(case,pages[0]);assert send(case,complete)['status']=='complete'
+    assert EventBooking.query.count()==1
+    retained=EventBooking.query.one()
+    assert retained.id==original_id and retained.source_scope=='events_manager:54' and retained.source_revision==2
+    assert retained.party_size==7 and case.EventRegistration.query.one().booking_spaces==7
+    assert case.EventRegistration.query.one().id==projection_id
+    # A delayed old integration callback cannot remove its established scope or
+    # downgrade a numeric source revision, even with a later replay-time stamp.
+    old.update(phone='+17205550239',updated_at='2026-06-23T21:00:00Z')
+    send(case,{'action':'booking_upsert','source':'aoc-wordpress','event':case._event_payload(),'booking':old})
+    assert EventBooking.query.count()==1
+    assert EventBooking.query.one().source_scope=='events_manager:54'
+    assert EventBooking.query.one().phone=='+17205550238'
+
+
+def test_older_inventory_does_not_adopt_or_replace_unscoped_wordpress_state(case):
+    from app.models import EventBooking
+    old=case._booking_payload('old-newer-than-snapshot','+17205550240')
+    old.update(updated_at='2026-06-23T19:00:00Z',spaces=7)
+    send(case,{'action':'booking_upsert','source':'aoc-wordpress','event':case._event_payload(),'booking':old})
+    original=EventBooking.query.one().id
+    stale=booking(case,'old-newer-than-snapshot','+17205550241',source_revision=2,spaces=1,
+                  updated_at='2026-06-23T18:30:00Z')
+    pages,complete=inventory(case,[stale],key='stale-adoption',watermark='2026-06-23T20:00:00Z')
+    send(case,pages[0]);send(case,complete)
+    retained=EventBooking.query.one()
+    assert (retained.id,retained.source_scope,retained.source_revision,retained.phone,retained.party_size)==(
+        original,'',None,'+17205550240',7)
+
+
+def test_scoped_wordpress_inventory_cannot_move_an_unscoped_identity_to_another_event(case):
+    from app.models import EventBooking
+    old=case._booking_payload('old-bound-event','+17205550242')
+    send(case,{'action':'booking_upsert','source':'aoc-wordpress','event':case._event_payload(),'booking':old})
+    original=EventBooking.query.one()
+    original_event_id=original.event_id
+    moved=booking(case,'old-bound-event','+17205550242',source_revision=2,updated_at='2026-06-23T19:00:00Z')
+    moved['source_scope']='events_manager:other-event'
+    pages,complete=inventory(case,[moved],key='wrong-event',watermark='2026-06-23T20:00:00Z')
+    for item in [*pages,complete]:
+        item['inventory']['source_scope']='events_manager:other-event'
+        item['event']={**item['event'],'event_id':'other-event'}
+    send(case,pages[0])
+    assert case._signed_post(complete,None,None).status_code==400
+    assert EventBooking.query.count()==1
+    assert (EventBooking.query.one().event_id,EventBooking.query.one().source_scope)==(original_event_id,'')

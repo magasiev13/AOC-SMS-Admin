@@ -276,7 +276,9 @@ def process_booking_inventory(payload, organization_id, received_at, *, source_n
 
 def _finish_inventory(inventory, event, received_at):
     from app.booking_models import EventBooking
-    from app.services.booking_projection_service import upsert_booking, cancel_booking, reconcile_event_projection
+    from app.services.booking_projection_service import (
+        upsert_booking, cancel_booking, reconcile_event_projection, apply_booking_permission_transitions,
+    )
     page_metadata = BookingInventoryPage.query.with_entities(
         BookingInventoryPage.id, BookingInventoryPage.page_number, BookingInventoryPage.payload_digest,
     ).filter_by(inventory_id=inventory.id).order_by(BookingInventoryPage.page_number).all()
@@ -322,13 +324,16 @@ def _finish_inventory(inventory, event, received_at):
     from app.services.booking_projection_service import ensure_legacy_bookings
     ensure_legacy_bookings(event)
     seen = set()
+    permission_transitions = []
     for page_meta in page_metadata:
         page = db.session.get(BookingInventoryPage, page_meta.id)
         for record in json.loads(page.records_json):
             booking = upsert_booking(event, record, inventory.source, received_at,
                 source_scope=inventory.source_scope, source_revision=record.get('source_revision'),
-                project=False, seed_legacy=False)
+                project=False, seed_legacy=False, sync_permissions=False)
             seen.add(booking.id)
+            if booking._ledger_applied:
+                permission_transitions.append(booking._permission_transition)
     candidates = EventBooking.query.filter_by(organization_id=event.organization_id, event_id=event.id,
         source=inventory.source, source_scope=inventory.source_scope, is_active=True, legacy_evidence=False).all()
     ambiguous_absence = False
@@ -342,8 +347,12 @@ def _finish_inventory(inventory, event, received_at):
             # source-wide timestamp captured in the same clock tick.
             ambiguous_absence = True
             continue
-        cancel_booking(booking, received_at, source_updated_at=inventory.watermark,
-                       reason='complete_inventory_missing', project=False)
+        if cancel_booking(booking, received_at, source_updated_at=inventory.watermark,
+                          reason='complete_inventory_missing', project=False, sync_permissions=False):
+            permission_transitions.append(booking._permission_transition)
+    # Contact corrections and cancellations see every source transaction's final
+    # state. A same-timestamp destination swap must not create a transient denial.
+    apply_booking_permission_transitions(event, permission_transitions)
     reconcile_event_projection(event, seed_legacy=False)
     inventory.status = 'complete'
     inventory.completed_at = received_at

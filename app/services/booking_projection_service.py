@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app import db
@@ -19,6 +20,22 @@ from app.utils import normalize_phone, validate_phone
 ACTIVE_STATUSES = {'active', 'approved', 'pending', 'reserved', 'submitted', 'completed', 'paid', 'confirmed', 'legacy'}
 CANCELLED_STATUSES = {'cancelled', 'canceled', 'rejected', 'deleted', 'inactive'}
 LOCAL_SOURCES = {'manual', 'csv_import', 'registration_survey', 'legacy', 'legacy_import'}
+
+
+@dataclass(frozen=True, repr=False)
+class BookingPermissionTransition:
+    """Explicit transaction-local effect; source payloads are never display data."""
+    booking_id: int
+    organization_id: int | None
+    event_id: int
+    payload_json: str
+    old_phone: str | None
+    received_at: datetime
+
+
+def _permission_transition(event, booking, payload, old_phone, received_at):
+    return BookingPermissionTransition(booking.id, event.organization_id, event.id,
+        json.dumps(payload, sort_keys=True, default=str), old_phone, _naive(received_at))
 
 
 def _naive(value):
@@ -112,7 +129,7 @@ def ensure_legacy_bookings(event):
 
 
 def upsert_booking(event, payload, source, received_at, source_scope='', source_revision=None, deleted=False,
-                   *, project=True, seed_legacy=True):
+                   *, project=True, seed_legacy=True, sync_permissions=True):
     """Apply one source revision, retaining cancellation tombstones and seats."""
     _lock_event(event)
     if seed_legacy:
@@ -145,6 +162,7 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
     received_at = _naive(received_at or utc_now())
     booking = EventBooking.query.filter_by(organization_id=event.organization_id, source=source,
         source_scope=source_scope, external_booking_id=key).populate_existing().first()
+    adopting_scope = False
     # Old in-flight WordPress callbacks omit scope. Once an identity has been
     # recovered, reuse its unique retained scope instead of cloning a booking.
     # Provider is part of the canonical key; phone never participates in lookup.
@@ -165,10 +183,16 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
     # Earlier plugin versions did not include a form scope. Recover that exact
     # identity only when its event matches, without moving historical entries.
     if booking is None and source_scope:
-        legacy = EventBooking.query.filter_by(organization_id=event.organization_id, source=source,
-            source_scope='', external_booking_id=key, legacy_evidence=True).populate_existing().first()
-        if legacy is not None and legacy.event_id == event.id:
-            booking = legacy
+        unscoped = EventBooking.query.filter_by(organization_id=event.organization_id, source=source,
+            source_scope='', external_booking_id=key).populate_existing().first()
+        if unscoped is not None:
+            wordpress_source = source in {'aoc-wordpress', 'wordpress_events_manager', 'wordpress_wpforms'}
+            if wordpress_source and unscoped.event_id != event.id:
+                raise ValueError('A retained booking identity cannot move to a different event.')
+            compatible_wordpress = wordpress_source and unscoped.source_revision is None
+            if unscoped.event_id == event.id and (unscoped.legacy_evidence or compatible_wordpress):
+                booking = unscoped
+                adopting_scope = True
     if booking is not None and booking.event_id != event.id:
         raise ValueError('A retained booking identity cannot move to a different event.')
     status = str(payload.get('status') or 'active').strip().lower()[:30]
@@ -176,7 +200,7 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
     if booking is not None and not _is_newer(booking, revision, updated_at, reactivating=active and not booking.is_active):
         booking._ledger_applied = False
         return booking
-    if booking is not None and booking.legacy_evidence and source_scope:
+    if booking is not None and source_scope and (booking.legacy_evidence or adopting_scope):
         booking.source_scope = source_scope
     raw_spaces = payload.get('spaces', payload.get('party_size', 1))
     try:
@@ -225,7 +249,9 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
     db.session.flush()
     if project:
         reconcile_event_projection(event, seed_legacy=False)
-    _sync_source_permission(event, booking, payload, old_phone, received_at)
+    booking._permission_transition = _permission_transition(event, booking, payload, old_phone, received_at)
+    if sync_permissions:
+        _sync_source_permission(event, booking, payload, old_phone, received_at)
     return booking
 
 
@@ -274,7 +300,23 @@ def _sync_source_permission(event, booking, payload, old_phone, received_at):
                 reason='booking_phone_changed' if old_phone != booking.phone else 'booking_cancelled')
 
 
-def cancel_booking(booking, received_at, source_revision=None, source_updated_at=None, reason='inventory_missing', *, project=True):
+def apply_booking_permission_transitions(event, transitions):
+    """Apply a complete batch's explicit effects against its final booking state."""
+    _lock_event(event)
+    db.session.flush()
+    for transition in transitions:
+        if not isinstance(transition, BookingPermissionTransition) or (
+                transition.organization_id != event.organization_id or transition.event_id != event.id):
+            raise ValueError('Booking permission transition belongs to another event or organization.')
+        booking = EventBooking.query.filter_by(id=transition.booking_id,
+            organization_id=event.organization_id, event_id=event.id).populate_existing().first()
+        if booking is None:
+            raise ValueError('Booking permission transition has no retained booking.')
+        _sync_source_permission(event, booking, json.loads(transition.payload_json),
+            transition.old_phone, transition.received_at)
+
+
+def cancel_booking(booking, received_at, source_revision=None, source_updated_at=None, reason='inventory_missing', *, project=True, sync_permissions=True):
     """Withdraw one contribution only when it is no newer than the inventory."""
     event = Event.query.filter_by(id=booking.event_id, organization_id=booking.organization_id).first()
     if event is None:
@@ -302,9 +344,11 @@ def cancel_booking(booking, received_at, source_revision=None, source_updated_at
     db.session.flush()
     if project:
         reconcile_event_projection(event, seed_legacy=False)
-    _sync_source_permission(event, booking,
-        {'updated_at': booking.source_updated_at.replace(tzinfo=timezone.utc).isoformat()} if booking.source_updated_at else {},
-        booking.phone, _naive(received_at))
+    permission_payload = ({'updated_at': booking.source_updated_at.replace(tzinfo=timezone.utc).isoformat()}
+                          if booking.source_updated_at else {})
+    booking._permission_transition = _permission_transition(event, booking, permission_payload, booking.phone, received_at)
+    if sync_permissions:
+        _sync_source_permission(event, booking, permission_payload, booking.phone, _naive(received_at))
     return True
 
 
@@ -332,6 +376,21 @@ def reconcile_event_projection(event, *, seed_legacy=True):
                 booking.projection_registration_id = None
             db.session.delete(row)
     db.session.flush()
+    identities = {}
+    for phone, bookings in grouped.items():
+        representative = bookings[0]
+        source = representative.source[:50] if len(bookings) == 1 and representative.source not in LOCAL_SOURCES else None
+        booking_id = ((f'ledger:{representative.id}' if representative.source_scope or len(representative.external_booking_id) > 80
+            else representative.external_booking_id) if source else None)
+        identities[phone] = (source, booking_id)
+        row = by_phone.get(phone)
+        if row is not None and (row.external_source, row.external_booking_id) != (source, booking_id):
+            # A complete snapshot can exchange destinations between bookings.
+            # Release every changed compatibility identity before assigning any
+            # of them to another retained contact row in the same transaction.
+            row.external_source = None
+            row.external_booking_id = None
+    db.session.flush()
     for phone, bookings in grouped.items():
         row = by_phone.get(phone)
         if row is None:
@@ -344,9 +403,7 @@ def reconcile_event_projection(event, *, seed_legacy=True):
         row.name = next((item.name for item in latest if item.name), None)
         # Preserve literal source identity on a singleton for compatibility;
         # combined contacts deliberately carry no fabricated booking identity.
-        row.external_source = representative.source[:50] if len(bookings) == 1 and representative.source not in LOCAL_SOURCES else None
-        row.external_booking_id = ((f'ledger:{representative.id}' if representative.source_scope or len(representative.external_booking_id) > 80
-            else representative.external_booking_id) if row.external_source else None)
+        row.external_source, row.external_booking_id = identities[phone]
         row.external_person_id = representative.external_person_id if len(bookings) == 1 else None
         row.external_booking_status = 'pending' if all(item.status == 'pending' for item in bookings) else representative.status
         row.booking_spaces = sum(item.party_size for item in bookings)
