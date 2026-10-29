@@ -665,3 +665,48 @@ def test_confirmed_signup_contract_retains_raw_false_on_deletion_without_inventi
     assert any(json.loads(entry.metadata_json or '{}').get('community_sms_consent') is False and
         json.loads(entry.metadata_json or '{}').get('consent_basis')=='confirmed_community_signup' for entry in entries)
     assert not any(entry.source.startswith('booking_community:') for entry in entries)
+
+
+def test_registration_survey_relink_keeps_each_event_booking_and_same_event_repeats_idempotent(feedback):
+    from tests.test_event_feedback import input_message,drain
+    f=feedback
+    flow=f.m.SurveyFlow(organization=f.org,name='Reusable registration',trigger_keyword='RELINK RSVP',linked_event=f.event)
+    flow.set_questions(['Your name?'])
+    second=f.m.Event(organization=f.org,title='Second registration event')
+    f.db.session.add_all([flow,second]);f.db.session.commit()
+
+    def complete(name):
+        assert input_message(f,flow.trigger_keyword)['status']=='survey_started'
+        drain(f)
+        assert input_message(f,name)['status']=='survey_response'
+        drain(f)
+
+    complete('First event attendee')
+    first=f.m.EventBooking.query.filter_by(event_id=f.event.id,source='registration_survey').one()
+    first_id,first_registration_id=first.id,first.projection_registration_id
+    complete('Updated first attendee')
+    assert f.m.EventBooking.query.count()==1
+    assert f.m.EventBooking.query.one().id==first_id
+    assert f.m.EventRegistration.query.one().id==first_registration_id
+    assert f.m.EventRegistration.query.one().name=='Updated first attendee'
+    flow.linked_event_id=second.id;f.db.session.commit()
+    complete('Second event attendee')
+    assert f.m.EventBooking.query.count()==2
+    first=f.m.EventBooking.query.filter_by(id=first_id).one()
+    second_booking=f.m.EventBooking.query.filter_by(event_id=second.id,source='registration_survey').one()
+    second_id,second_registration_id=second_booking.id,second_booking.projection_registration_id
+    assert first.event_id==f.event.id and first.name=='Updated first attendee'
+    assert first.projection_registration_id==first_registration_id
+    assert first.external_booking_id!=second_booking.external_booking_id
+    complete('Updated second attendee')
+    assert f.m.EventBooking.query.count()==2
+    assert f.m.EventBooking.query.filter_by(id=second_id).one().name=='Updated second attendee'
+    assert f.m.EventRegistration.query.filter_by(event_id=second.id).one().id==second_registration_id
+    flow.linked_event_id=f.event.id;f.db.session.commit()
+    complete('Returning first attendee')
+    assert f.m.EventBooking.query.count()==2
+    assert f.m.EventBooking.query.filter_by(id=first_id).one().name=='Returning first attendee'
+    assert f.m.EventBooking.query.filter_by(id=second_id).one().name=='Updated second attendee'
+    assert f.m.EventRegistration.query.filter_by(event_id=f.event.id).one().id==first_registration_id
+    assert all(row.party_size==1 for row in f.m.EventBooking.query.all())
+    assert all(session.purpose=='survey' and session.feedback_event_id is None for session in f.m.SurveySession.query.all())

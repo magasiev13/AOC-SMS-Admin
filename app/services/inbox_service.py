@@ -700,7 +700,7 @@ def _sync_linked_event_registration(session: SurveySession) -> None:
     if event is None:
         return
     create_local_booking(event, _event_registration_name_for_session(session), session.phone,
-        source='registration_survey', external_booking_id=f'flow:{survey.id}:thread:{session.thread_id}')
+        source='registration_survey', external_booking_id=f'event:{event.id}:flow:{survey.id}:thread:{session.thread_id}')
 
 
 def _start_survey(survey: SurveyFlow, thread: InboxThread, phone: str) -> tuple[SurveySession, list[str]]:

@@ -95,7 +95,7 @@ restrictions. Supplied contacts lacking permission remain separate from missing
 phone details and are shown as restricted contacts.
 
 Manual writes and contact imports use `create_local_booking`. Registration surveys
-use their flow and opaque conversation IDs so restarting the same RSVP updates its
+use their event, flow and opaque conversation IDs so restarting the same RSVP updates its
 existing contribution; a different form retains a separate contribution. Event
 feedback never enters this registration path. Legacy snapshot imports go through
 `project_legacy_registration` and remain unverified historical evidence.
