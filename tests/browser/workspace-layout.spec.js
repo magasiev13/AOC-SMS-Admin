@@ -3,14 +3,15 @@ const {
   attachFailureDiagnostics,
   installFailureDiagnostics,
   login,
+  renderedElementMetric,
 } = require('./helpers');
 
 async function elementHeight(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
+  return renderedElementMetric(locator, 'height');
 }
 
 async function elementTop(locator) {
-  return locator.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+  return renderedElementMetric(locator, 'top');
 }
 
 test.beforeEach(async ({ page }) => {

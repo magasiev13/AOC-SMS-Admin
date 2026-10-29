@@ -6,15 +6,80 @@ function twinevia_event_sync_source( string $provider ): string {
 	return (string) apply_filters( 'twinevia_event_sync_source', 'wpforms' === $provider ? 'wordpress_wpforms' : 'wordpress_events_manager', $provider );
 }
 
+function twinevia_event_sync_checked_wpforms_map(): array {
+	global $wpdb;
+	$raw = get_option( TWINEVIA_EVENT_SYNC_OPTION_WPFORMS_EVENT_MAP, '' );
+	if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not read the form event mapping.' ); }
+	if ( ! is_scalar( $raw ) || ( '' !== trim( (string) $raw ) && ! is_array( json_decode( (string) $raw, true ) ) ) ) {
+		throw new RuntimeException( 'The configured form event mapping must be a valid JSON object.' );
+	}
+	$map = twinevia_event_sync_wpforms_event_map();
+	if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not read the form event mapping.' ); }
+	$normalized = [];
+	foreach ( $map as $form_id => $post_id ) {
+		if ( ! ctype_digit( (string) $form_id ) || (int) $form_id < 1
+			|| ! ( is_int( $post_id ) || is_string( $post_id ) ) || ! ctype_digit( (string) $post_id ) || (int) $post_id < 1 ) {
+			throw new RuntimeException( 'Configured form and event identifiers must be positive integers.' );
+		}
+		$normalized[(int) $form_id] = (int) $post_id;
+	}
+	return $normalized;
+}
+
+function twinevia_event_sync_initial_form_event( int $form_id, int $candidate_post_id ): int {
+	global $wpdb;
+	$map = twinevia_event_sync_checked_wpforms_map();
+	if ( isset( $map[$form_id] ) ) {
+		$resolved = $map[$form_id];
+	} else {
+		// Inspect every published/scheduled event, including past dates. A local
+		// inventory's embedded form is only a candidate, never a binding proof.
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT ID, post_content FROM {$wpdb->posts} WHERE post_type = %s
+			AND post_status IN ('publish', 'future') ORDER BY ID",
+			twinevia_event_sync_event_post_type()
+		), ARRAY_A );
+		if ( ! is_array( $rows ) || '' !== $wpdb->last_error ) {
+			throw new RuntimeException( 'Could not inspect the complete set of event form embeddings.' );
+		}
+		$matches = [];
+		foreach ( $rows as $row ) {
+			if ( ! isset( $row['ID'], $row['post_content'] ) || ! is_string( $row['post_content'] ) ) {
+				throw new RuntimeException( 'An event form embedding could not be inspected.' );
+			}
+			if ( in_array( $form_id, twinevia_event_sync_wpforms_form_ids_from_content( $row['post_content'] ), true ) ) {
+				$matches[] = absint( (string) $row['ID'] );
+			}
+		}
+		$matches = array_values( array_unique( $matches ) );
+		if ( 1 !== count( $matches ) ) {
+			throw new RuntimeException( 'The form event binding is missing or ambiguous; configure an explicit event mapping.' );
+		}
+		$resolved = $matches[0];
+	}
+	if ( $candidate_post_id < 1 || $resolved !== $candidate_post_id ) {
+		throw new RuntimeException( 'The form belongs to a different event; retain its configured source binding.' );
+	}
+	// Validate the selected Events Manager record before any persistent binding.
+	twinevia_event_sync_event_payload_from_post_id( $resolved );
+	if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not verify the form event metadata.' ); }
+	return $resolved;
+}
+
 function twinevia_event_sync_bound_event( int $entry_id, int $form_id, int $candidate_post_id ): int {
+	global $wpdb;
 	$entry_key = 'twinevia_entry_event_' . $form_id . '_' . $entry_id;
 	$bound_entry = absint( (string) get_option( $entry_key, '0' ) );
+	if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not read the retained entry event binding.' ); }
 	if ( 0 < $bound_entry ) { return $bound_entry; }
 	// A form is one event source. Reusing it requires an explicit migration/new form,
 	// never reinterpreting its old entries through a newly changed option map.
 	$bound_form = absint( (string) get_post_meta( $form_id, '_twinevia_event_post_id', true ) );
+	if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not read the retained form event binding.' ); }
 	if ( 0 === $bound_form && 0 < $candidate_post_id ) {
-		add_post_meta( $form_id, '_twinevia_event_post_id', $candidate_post_id, true );
+		$verified_post_id = twinevia_event_sync_initial_form_event( $form_id, $candidate_post_id );
+		add_post_meta( $form_id, '_twinevia_event_post_id', $verified_post_id, true );
+		if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not persist the verified form event binding.' ); }
 		$bound_form = absint( (string) get_post_meta( $form_id, '_twinevia_event_post_id', true ) );
 	}
 	if ( 0 >= $bound_form ) { throw new RuntimeException( 'This form has no verified event binding.' ); }
@@ -142,13 +207,17 @@ function twinevia_event_sync_inventory_event( int $post_id, int $form_id = 0 ): 
 			}
 			$scopes[] = [ twinevia_event_sync_source( 'events_manager' ), 'events_manager:' . $event['event_id'], $bookings ];
 		}
-		$map = twinevia_event_sync_wpforms_event_map();
+		$map = twinevia_event_sync_checked_wpforms_map();
 		$post = get_post( $post_id );
+		if ( ! $post instanceof WP_Post || '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not inspect the selected event form content.' ); }
 		foreach ( twinevia_event_sync_wpforms_form_ids_from_content( (string) $post->post_content ) as $embedded_form ) {
 			if ( ! isset( $map[ $embedded_form ] ) ) { $map[ $embedded_form ] = $post_id; }
 		}
 		if ( 0 < $form_id ) { $map = [ $form_id => $post_id ]; }
 		foreach ( $map as $mapped_form => $mapped_post ) {
+			$retained = absint( (string) get_post_meta( (int) $mapped_form, '_twinevia_event_post_id', true ) );
+			if ( '' !== $wpdb->last_error ) { throw new RuntimeException( 'Could not inspect a retained form binding.' ); }
+			if ( ( $retained && $retained !== $post_id ) || ( ! $retained && (int) $mapped_post !== $post_id ) ) { continue; }
 			$bound = twinevia_event_sync_bound_event( 0, (int) $mapped_form, (int) $mapped_post );
 			if ( $bound !== $post_id ) { continue; }
 			$entries = $wpdb->get_results( $wpdb->prepare( 'SELECT entry_id,form_id,user_id,status,fields,date_modified FROM ' . twinevia_event_sync_wpforms_entries_table() . ' WHERE form_id = %d ORDER BY entry_id', (int) $mapped_form ), ARRAY_A );

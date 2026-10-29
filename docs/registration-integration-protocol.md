@@ -127,6 +127,11 @@ new event. A party-size field can be selected with the
 `twinevia_event_sync_wpforms_party_size_fields` filter. Separate forms remain
 separate booking sources.
 
+An unbound form needs an explicit event map or exactly one matching published or
+scheduled event page, including past dates. Shared forms require an explicit
+mapping. Ambiguous discovery or a failed source read stops the inventory before
+establishing a first binding or emitting completion proof.
+
 Run an event-specific complete inventory, including a past event, with:
 
 ```sh
