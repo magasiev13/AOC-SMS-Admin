@@ -45,7 +45,7 @@
                 <div class="workspace-panel__header">
                     <div>
                         <h2 class="workspace-panel__title" id="permission-review-title">Record an owner review</h2>
-                        <p class="workspace-panel__meta">Keep the source, time, and evidence behind this decision.</p>
+                        <p class="workspace-panel__meta">Save the current decision and where you track permission.</p>
                     </div>
                 </div>
                 <form method="POST">
@@ -72,24 +72,14 @@
                             <input class="form-control" id="permission-source" name="source_label" value="{{ form_values.source_label }}" maxlength="160" required aria-describedby="permission-source-help">
                             <div class="form-text" id="permission-source-help">For example, a named opt-in form, signed request, or retained message. A name or phone directory alone is insufficient.</div>
                         </div>
-                        <div class="mb-3">
-                            <label for="permission-time" class="form-label">Evidence time (UTC)</label>
-                            <input class="form-control" type="datetime-local" id="permission-time" name="occurred_at" value="{{ form_values.occurred_at }}" required aria-describedby="permission-time-help">
-                            <div class="form-text" id="permission-time-help">Use the time permission was received or withdrawn. For an unknown decision, use the review time. An older grant cannot override a later refusal.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="permission-proof" class="form-label">Evidence notes</label>
-                            <textarea class="form-control" id="permission-proof" name="proof" rows="4" maxlength="4000" aria-describedby="permission-proof-help">{{ form_values.proof }}</textarea>
-                            <div class="form-text" id="permission-proof-help">Required for a grant. Describe what this person agreed to and where the original evidence is retained. Keep passwords and payment details out of these notes.</div>
-                        </div>
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="permission-verified" name="verified" value="1" {% if form_values.verified == '1' %}checked{% endif %}>
-                            <label class="form-check-label" for="permission-verified">I verified that this person explicitly agreed to {{ scope_label }} at this phone number.</label>
+                            <label class="form-check-label" for="permission-verified">I verified that this person currently agrees to {{ scope_label }} at this phone number.</label>
                             <div class="form-text">Required when recording a grant.</div>
                         </div>
                     </div>
                     <div class="workspace-panel__footer">
-                        <p class="small text-muted mb-0">This appends an audit record and preserves the contact and earlier evidence.</p>
+                        <p class="small text-muted mb-0">The review time is saved automatically. Earlier records are preserved.</p>
                         <div class="workspace-form-actions">
                             <button class="btn btn-primary" type="submit">Save permission review</button>
                             <a class="btn btn-outline-secondary" href="{{ back_url }}">Cancel</a>
@@ -105,9 +95,9 @@
                     {% for item in history %}
                     <div class="{% if not loop.last %}border-bottom pb-3 mb-3{% endif %}">
                         <p class="fw-semibold mb-1">{{ item.entry.decision|capitalize }}{% if item.entry.purpose == 'all' %} — transport{% endif %}</p>
-                        <p class="small text-muted mb-1">{{ item.entry.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
+                        <p class="small text-muted mb-1">{% if item.metadata.get('time_basis') == 'owner_review' %}Reviewed {% endif %}{{ item.entry.occurred_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</p>
                         <p class="small text-break mb-1">{{ item.metadata.get('source_label') or item.entry.source }}</p>
-                        {% if item.metadata.get('proof') %}<p class="small text-break mb-1">{{ item.metadata.get('proof') }}</p>{% endif %}
+                        {% if item.metadata.get('proof') and item.metadata.get('time_basis') != 'owner_review' %}<p class="small text-break mb-1">{{ item.metadata.get('proof') }}</p>{% endif %}
                         {% if item.metadata.get('actor_user_id') %}<p class="small text-muted mb-0">Reviewed by workspace user #{{ item.metadata.get('actor_user_id') }}</p>{% endif %}
                     </div>
                     {% else %}

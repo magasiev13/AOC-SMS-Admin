@@ -372,17 +372,18 @@ class TestRecipientPermissions(unittest.TestCase):
         token = re.search(r'name="review_token" value="([^"]+)"', response.get_data(as_text=True)).group(1)
         return {
             'review_token': token, 'decision': 'granted', 'source_label': 'Retained opt-in form',
-            'proof': 'Contact explicitly requested these SMS updates; original form is retained.',
-            'occurred_at': self.now.strftime('%Y-%m-%dT%H:%M:%S'), 'verified': '1',
+            'verified': '1',
         }
 
-    def test_owner_review_requires_source_proof_attestation_and_valid_time(self):
+    def test_owner_review_requires_source_and_attestation_without_time_or_notes(self):
         user, member, _event, _registration = self.review_fixture()
         path = f'/community/{member.id}/permission'
         data = self.review_form(path)
+        html = self.client.get(path).get_data(as_text=True)
+        self.assertNotIn('name="occurred_at"', html)
+        self.assertNotIn('name="proof"', html)
         invalid_fields = [
-            {'source_label': ''}, {'proof': ''}, {'verified': ''},
-            {'occurred_at': ''}, {'occurred_at': '2099-01-01T00:00'},
+            {'source_label': ''}, {'source_label': 'x' * 161}, {'verified': ''},
             {'decision': 'all'},
         ]
         for change in invalid_fields:
@@ -390,8 +391,8 @@ class TestRecipientPermissions(unittest.TestCase):
                 response = self.client.post(path, data={**data, **change})
                 self.assertEqual(response.status_code, 422)
                 self.assertIn(b'The review was not saved.', response.data)
-                if 'proof' not in change:
-                    self.assertIn(data['proof'].encode(), response.data)
+                if 'source_label' not in change:
+                    self.assertIn(data['source_label'].encode(), response.data)
                 self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 0)
         self.assertEqual(self.client.post(path, data=data).status_code, 302)
         self.assertTrue(self.status().allowed)
@@ -401,6 +402,8 @@ class TestRecipientPermissions(unittest.TestCase):
         self.assertEqual(metadata['actor_user_id'], user.id)
         self.assertEqual(metadata['source_label'], data['source_label'])
         self.assertTrue(metadata['verified_attestation'])
+        self.assertEqual(metadata['time_basis'], 'owner_review')
+        self.assertIn('current explicit permission', metadata['proof'])
         self.assertEqual(self.models.CommunityMember.query.count(), 1)
         self.assertIn(b'Current permission status: granted', self.client.get(path).data)
 
@@ -411,7 +414,7 @@ class TestRecipientPermissions(unittest.TestCase):
         self.assertEqual(self.client.post(path, data=data).status_code, 302)
         self.assertEqual(self.client.post(path, data=data).status_code, 302)
         self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 1)
-        self.assertEqual(self.client.post(path, data={**data, 'proof': 'Different proof'}).status_code, 422)
+        self.assertEqual(self.client.post(path, data={**data, 'source_label': 'Different source'}).status_code, 422)
         self.assertEqual(self.client.post(path, data={**data, 'decision': 'denied'}).status_code, 422)
         self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 1)
         self.assertTrue(self.status().allowed)
@@ -425,18 +428,30 @@ class TestRecipientPermissions(unittest.TestCase):
                 self.assertEqual(response.status_code, 302)
                 self.assertEqual(response.headers['Location'], path)
 
-    def test_review_uses_evidence_time_instead_of_review_time_to_override_denial(self):
+    def test_review_uses_save_time_and_replay_cannot_override_a_later_denial(self):
         _user, member, _event, _registration = self.review_fixture()
         self.record(decision='denied', source='booking_refusal', at=2)
         self.db.session.commit()
         path = f'/community/{member.id}/permission'
         data = self.review_form(path)
-        self.assertEqual(self.client.post(path, data=data).status_code, 302)
-        self.assertEqual(self.status().reason, 'permission_denied')
-        later = self.review_form(path)
-        later['occurred_at'] = (self.now + timedelta(seconds=3)).strftime('%Y-%m-%dT%H:%M:%S')
-        self.assertEqual(self.client.post(path, data=later).status_code, 302)
+        # Retired fields from a stale page cannot set the review time or proof.
+        data.update(occurred_at='2099-01-01T00:00', proof='Untrusted retired notes')
+        review_time = self.now + timedelta(seconds=3)
+        with patch('app.services.recipient_permission_service.utc_now', return_value=review_time):
+            self.assertEqual(self.client.post(path, data=data).status_code, 302)
         self.assertTrue(self.status().allowed)
+        review = self.models.RecipientPermissionEvidence.query.filter_by(source='owner_review').one()
+        self.assertEqual(review.occurred_at, review_time.replace(tzinfo=None))
+        self.assertEqual(review.recorded_at, review_time.replace(tzinfo=None))
+        self.assertNotIn('Untrusted retired notes', review.metadata_json)
+
+        self.record(decision='denied', source='booking_refusal', at=4)
+        self.db.session.commit()
+        with patch('app.services.recipient_permission_service.utc_now', return_value=self.now + timedelta(seconds=5)):
+            self.assertEqual(self.client.post(path, data=data).status_code, 302)
+        self.assertEqual(self.status().reason, 'permission_denied')
+        self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 3)
+        self.assertEqual(review.occurred_at, review_time.replace(tzinfo=None))
 
     def test_event_review_only_grants_that_event_and_registration_must_match(self):
         _user, _member, event, registration = self.review_fixture()
@@ -489,10 +504,25 @@ class TestRecipientPermissions(unittest.TestCase):
         self.assertEqual(self.models.RecipientPermissionEvidence.query.count(), 0)
 
     def test_review_token_binds_phone_and_rejects_forgery(self):
-        _user, member, _event, _registration = self.review_fixture()
+        import hashlib
+        import hmac
+
+        user, member, _event, _registration = self.review_fixture()
         path = f'/community/{member.id}/permission'
         data = self.review_form(path)
         self.assertEqual(self.client.post(path, data={**data, 'review_token': 'a' * 32 + '.' + 'b' * 64}).status_code, 409)
+        # An authentic form from the retired historical-evidence workflow must reload.
+        nonce = data['review_token'].partition('.')[0]
+        retired_payload = json.dumps([
+            self.org.id, user.id, user.session_nonce, 'community', None,
+            member.id, member.phone, nonce,
+        ], separators=(',', ':'))
+        retired_signature = hmac.new(
+            self.app.secret_key.encode(), retired_payload.encode(), hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(self.client.post(path, data={
+            **data, 'review_token': f'{nonce}.{retired_signature}',
+        }).status_code, 409)
         member.phone = '+17205550999'
         self.db.session.commit()
         self.assertEqual(self.client.post(path, data=data).status_code, 409)
