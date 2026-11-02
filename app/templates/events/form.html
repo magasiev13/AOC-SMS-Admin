@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "includes/ui_macros.html" as ui %}
 
 {% block title %}{{ 'Edit' if event else 'Create' }} Event - {{ product_name }}{% endblock %}
 
@@ -13,19 +12,13 @@
 
 {% block content %}
 <div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div class="workspace-form-layout workspace-form-layout--centered">
         <div class="workspace-form-main">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if event else 'Create' }} Event</h2>
-                        <p class="workspace-panel__meta">Set the event name and optional date used in sends and registrations.</p>
-                    </div>
-                </div>
+            <div class="workspace-panel">
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
+                        <p class="text-muted mb-4">Set the event title and optional date used in messages and registrations.</p>
                         <div class="mb-3">
                             <label for="title" class="form-label">Event Title <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="title" name="title" required
@@ -55,7 +48,7 @@
                         </div>
                     </div>
                 </form>
-            </section>
+            </div>
         </div>
     </div>
 </div>
