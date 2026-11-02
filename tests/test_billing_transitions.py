@@ -1,7 +1,7 @@
 """Organization-owned billing transitions; Stripe is replaced only at its API boundary."""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import timedelta
+from datetime import timedelta, timezone
 import json
 import os
 from threading import Barrier, Event
@@ -832,8 +832,15 @@ def usage_settlement(billing, monkeypatch):
 
     subscription = organization(billing).subscription
     subscription.status, subscription.stripe_customer_id = 'active', 'cus_usage_owner'
-    start, end = twilio_service.previous_billing_period_window()
+    now = billing.models.utc_now()
+    start, end = twilio_service.previous_billing_period_window(reference_time=now)
     start, end = start.replace(tzinfo=None), end.replace(tzinfo=None)
+    # Recovery starts after the normal grace period, even on the first days of
+    # a month. Keep aggregation and posting on the same closed billing period.
+    grace_hours = int(billing.app.config.get('BILLING_USAGE_SETTLEMENT_GRACE_HOURS', 72) or 72)
+    settlement_now = max(now, end.replace(tzinfo=timezone.utc) + timedelta(hours=grace_hours + 1))
+    monkeypatch.setattr(billing.service, 'utc_now', lambda: settlement_now)
+    monkeypatch.setattr(twilio_service, 'utc_now', lambda: settlement_now)
     period = billing.models.OrganizationUsageBillingPeriod(
         organization_id=billing.organization_id, period_start=start, period_end=end,
         included_units=1000, used_units=1005, overage_units=5, sell_amount=Decimal('0.15'), status='pending',
