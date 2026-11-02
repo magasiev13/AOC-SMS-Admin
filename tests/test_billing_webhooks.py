@@ -643,7 +643,12 @@ class TestStripeWebhookHardening(unittest.TestCase):
         from app.services.twilio_service import previous_billing_period_window
 
         self.subscription.stripe_customer_id = "cus_test_123"
-        period_start, period_end = previous_billing_period_window()
+        # Recovery is exercised only after the normal settlement grace period.
+        # The most recently closed month is still too recent on its first days.
+        grace_hours = int(self.app.config.get("BILLING_USAGE_SETTLEMENT_GRACE_HOURS", 72) or 72)
+        period_start, period_end = previous_billing_period_window(
+            reference_time=self.utc_now() - timedelta(hours=grace_hours + 1)
+        )
         period = self.OrganizationUsageBillingPeriod(
             organization_id=self.organization.id,
             period_start=period_start,

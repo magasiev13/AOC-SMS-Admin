@@ -3215,14 +3215,6 @@ a:focus-visible {
     gap: 0.5rem 0.75rem;
   }
 
-  .setup-callout .billing-plan-facts > div:nth-child(n + 3) {
-    display: none;
-  }
-
-  .setup-panel .setup-callout .billing-plan-facts {
-    display: none;
-  }
-
   .setup-panel .billing-plan-options {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.5rem;
@@ -3238,6 +3230,10 @@ a:focus-visible {
 
   .setup-panel .billing-plan-option__meta {
     display: none;
+  }
+
+  .setup-panel .billing-plan-options--single .billing-plan-option__meta {
+    display: block;
   }
 
   .setup-panel .billing-plan-options legend {

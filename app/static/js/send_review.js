@@ -1,11 +1,5 @@
 (() => {
     'use strict';
-    const overview = document.getElementById('workspaceOverview');
-    const wide = window.matchMedia('(min-width: 992px)');
-    if (overview) {
-        overview.open = wide.matches;
-        wide.addEventListener('change', event => { overview.open = event.matches; });
-    }
     const form = document.getElementById('sendForm');
     const dialog = document.getElementById('sendReviewModal');
     const confirm = document.getElementById('confirmReviewedSend');
@@ -30,7 +24,12 @@
         event.stopImmediatePropagation();
         if (pending) return;
         pending = true;
+        const buttonContent = sendButton?.innerHTML;
         sendButton?.setAttribute('aria-busy', 'true');
+        if (sendButton) {
+            sendButton.disabled = true;
+            sendButton.textContent = 'Preparing Review…';
+        }
         error.classList.add('d-none');
         form.querySelector('[name="review_token"]').value = '';
         captured = fingerprint();
@@ -49,6 +48,10 @@
         } finally {
             pending = false;
             sendButton?.removeAttribute('aria-busy');
+            if (sendButton) {
+                sendButton.innerHTML = buttonContent;
+                sendButton.disabled = false;
+            }
         }
     }, true);
     confirm.addEventListener('click', () => {

@@ -232,7 +232,7 @@ class TestLogsRoutes(unittest.TestCase):
         response = self.client.get(f"/logs/{log_id}", follow_redirects=False)
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertIn("Message Log Details", html)
+        self.assertIn("Message Details", html)
 
     def test_log_detail_does_not_warn_for_empty_details_array(self) -> None:
         self._login()
@@ -283,7 +283,7 @@ class TestLogsRoutes(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        self.assertIn("Message Details", response.get_data(as_text=True))
         mock_queue.enqueue.assert_called_once()
         self.assertEqual(mock_queue.enqueue.call_args.kwargs["job_timeout"], 1800)
         retry = mock_queue.enqueue.call_args.kwargs["retry"]
@@ -394,7 +394,7 @@ class TestLogsRoutes(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        self.assertIn("Message Details", response.get_data(as_text=True))
         self.assertEqual(mock_queue.enqueue.call_count, 1)
         current_org_logs = self.MessageLog.query.filter_by(organization_id=self.organization.id).all()
         self.assertEqual(len(current_org_logs), 1)
@@ -429,7 +429,7 @@ class TestLogsRoutes(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Message Log Details", response.get_data(as_text=True))
+        self.assertIn("Message Details", response.get_data(as_text=True))
         mock_queue.enqueue.assert_called_once()
 
     def test_dashboard_send_normalizes_message_body_before_persisting_and_queueing(self) -> None:

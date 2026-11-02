@@ -6,12 +6,12 @@
 {% block page_title %}Scheduled Messages{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Scheduled</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Scheduled Messages</span>
 {% endblock %}
 
 {% block page_actions %}
 <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">
-    <i class="bi bi-plus-lg me-1"></i>Schedule from Dashboard
+    <i class="bi bi-plus-lg me-1"></i>Schedule a Message
 </a>
 {% endblock %}
 
@@ -23,8 +23,8 @@
         'Search scheduled messages',
         search,
         'Search scheduled messages',
-        'Search scheduled messages',
-        'Review queued and completed sends in one place.',
+        'Search Scheduled Messages',
+        'Review upcoming messages and past send results.',
         'scheduledTables,scheduledPastTable'
     ) }}
 
@@ -34,8 +34,8 @@
         <h6 class="mb-0"><i class="bi bi-hourglass-split me-2"></i>Pending ({{ pending|length }})</h6>
         <div class="d-flex align-items-center gap-3">
             <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-                <button type="button" class="btn btn-outline-secondary" id="pendingSelectAllBtn">Select all</button>
-                <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="pendingSelectAllBtn">Select All</button>
+                <button type="button" class="btn btn-outline-secondary" id="pendingSelectNoneBtn">Select None</button>
             </div>
             <div class="bulk-selection-actions" id="pendingBulkSelectionActions">
                 <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
@@ -43,7 +43,7 @@
                 </span>
                 <button type="button" class="btn btn-sm btn-warning" id="pendingBulkCancelBtn"
                         data-bs-toggle="modal" data-bs-target="#pendingBulkCancelModal">
-                    <i class="bi bi-x-circle me-1"></i>Cancel selected
+                    <i class="bi bi-x-circle me-1"></i>Cancel Selected
                 </button>
             </div>
         </div>
@@ -57,13 +57,13 @@
                     </th>
                     <th data-sort-type="date">
                         <button type="button" class="sort-button" data-sort-key="scheduled">
-                            <span>Scheduled For</span>
+                            <span>Scheduled for</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
                     <th data-sort-type="enum">
                         <button type="button" class="sort-button" data-sort-key="target">
-                            <span>Target</span>
+                            <span>Audience</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
@@ -166,10 +166,10 @@
     <div class="card-body py-5">
         {{ ui.empty_state(
             'bi-clock',
-            'No upcoming scheduled messages' if past else 'No scheduled messages',
-            'Schedule a message to send at a specific time. Past scheduled messages are listed below.' if past else 'Schedule a message to send at a specific time.',
-            url_for('main.dashboard'),
-            'Schedule from Dashboard'
+            'No Matching Upcoming Messages' if search and past else ('No Matching Scheduled Messages' if search else ('No Upcoming Scheduled Messages' if past else 'No Scheduled Messages Yet')),
+            ('Try a different search. Matching past messages are listed below.' if past else 'Try a different search to find scheduled messages.') if search else ('Choose a date and time when you prepare a message. Past messages are listed below.' if past else 'Choose a date and time when you prepare a message.'),
+            url_for('main.scheduled_list') if search else url_for('main.dashboard'),
+            'Clear Search' if search else 'Schedule a Message'
         ) }}
     </div>
 </div>
@@ -183,8 +183,8 @@
         <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Processing and Past Messages</h6>
         <div class="d-flex align-items-center gap-3">
             <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-                <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select all</button>
-                <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select none</button>
+                <button type="button" class="btn btn-outline-secondary" id="pastSelectAllBtn">Select All</button>
+                <button type="button" class="btn btn-outline-secondary" id="pastSelectNoneBtn">Select None</button>
             </div>
             <div class="bulk-selection-actions" id="pastBulkSelectionActions">
                 <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
@@ -192,7 +192,7 @@
                 </span>
                 <button type="button" class="btn btn-sm btn-danger" id="pastBulkDeleteBtn"
                         data-bs-toggle="modal" data-bs-target="#pastBulkDeleteModal">
-                    <i class="bi bi-trash me-1"></i>Delete selected
+                    <i class="bi bi-trash me-1"></i>Delete Selected
                 </button>
             </div>
         </div>
@@ -206,7 +206,7 @@
                     </th>
                     <th data-sort-type="date">
                         <button type="button" class="sort-button" data-sort-key="scheduled">
-                            <span>Scheduled For</span>
+                            <span>Scheduled for</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
@@ -218,7 +218,7 @@
                     </th>
                     <th data-sort-type="enum">
                         <button type="button" class="sort-button" data-sort-key="target">
-                            <span>Target</span>
+                            <span>Audience</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
@@ -255,7 +255,7 @@
                         <span class="badge bg-secondary">Cancelled</span>
                         {% endif %}
                         {% if msg.message_log_id %}
-                        <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Log</a>
+                        <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="ms-1 small">View Message Details</a>
                         {% endif %}
                         {% if msg.error_message %}
                         <div class="small text-muted text-break mt-2">{{ (msg.error_message)|private_text }}</div>
@@ -279,7 +279,7 @@
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
                             {% if msg.status in ['processing', 'held'] %}
-                            <button type="button" class="btn btn-sm btn-outline-warning" aria-label="Cancel remaining scheduled messages" title="Cancel remaining sends"
+                            <button type="button" class="btn btn-sm btn-outline-warning" aria-label="Cancel remaining scheduled messages" title="Cancel Remaining Sends"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
                                     data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">
                                 <i class="bi bi-x-circle"></i>
@@ -356,7 +356,7 @@
                 <button type="button" class="btn btn-sm btn-outline-warning"
                         data-bs-toggle="modal" data-bs-target="#actionModal"
                         data-action="Cancel remaining sends" data-form-id="cancel-scheduled-{{ msg.id }}">
-                    <i class="bi bi-x-circle"></i> Cancel remaining sends
+                    <i class="bi bi-x-circle"></i> Cancel Remaining Sends
                 </button>
                 {% elif msg.id not in protected_delete_ids|default([]) %}
                 <button type="button" class="btn btn-sm btn-outline-danger"
@@ -368,7 +368,7 @@
                 <span class="small text-muted align-self-center">History retained</span>
                 {% endif %}
                 {% if msg.message_log_id %}
-                <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="btn btn-sm btn-outline-secondary">View Log</a>
+                <a href="{{ url_for('main.log_detail', log_id=msg.message_log_id) }}" class="btn btn-sm btn-outline-secondary">View Message Details</a>
                 {% endif %}
             </div>
         </div>
@@ -381,7 +381,7 @@
     {% for msg in (pending or []) + (past or []) %}
     <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="scheduledPreview{{ msg.id }}" aria-labelledby="scheduledPreviewTitle{{ msg.id }}">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="scheduledPreviewTitle{{ msg.id }}">Scheduled preview</h5>
+            <h5 class="offcanvas-title" id="scheduledPreviewTitle{{ msg.id }}">Scheduled Message Preview</h5>
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close preview"></button>
         </div>
         <div class="offcanvas-body">
@@ -435,7 +435,7 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button>
-                <button type="submit" form="pendingBulkCancelForm" class="btn btn-warning">Yes, cancel</button>
+                <button type="submit" form="pendingBulkCancelForm" class="btn btn-warning">Cancel Messages</button>
             </div>
         </div>
     </div>
@@ -482,8 +482,8 @@
             const action = button.getAttribute('data-action') || 'Delete';
             const formId = button.getAttribute('data-form-id');
             
-            document.getElementById('actionModalTitle').textContent = 'Confirm ' + action;
-            document.getElementById('actionModalText').textContent = action + ' this scheduled message?';
+            document.getElementById('actionModalTitle').textContent = action === 'Cancel remaining sends' ? 'Cancel Remaining Sends' : 'Confirm ' + action;
+            document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action + ' this scheduled message?';
             formToSubmit = document.getElementById(formId);
         });
         

@@ -1,21 +1,22 @@
 {% extends "auth/base.html" %}
 
-{% block title %}Workspace Setup Pending - {{ product_name }}{% endblock %}
-{% block page_title %}Workspace Setup Pending{% endblock %}
+{% block title %}Messaging Setup In Progress - {{ product_name }}{% endblock %}
+{% block page_title %}Messaging Setup In Progress{% endblock %}
 {% block auth_main_class %}auth-setup-main{% endblock %}
 {% block breadcrumbs %}<span>Setup</span>{% endblock %}
 {% block page_actions %}
-<form method="POST" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-outline-secondary btn-sm">Logout</button></form>
+<a href="{{ url_for('main.help_center') }}" class="btn btn-outline-secondary btn-sm page-action-primary">Help &amp; Getting Started</a>
+<form method="POST" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit" class="btn btn-outline-secondary btn-sm">Sign Out Everywhere</button></form>
 {% endblock %}
 
 {% block content %}
 <section class="setup-shell">
     <div class="setup-hero">
         <div class="setup-hero__copy">
-            <div class="login-kicker">Workspace access</div>
+            <div class="login-kicker">Workspace Access</div>
             <h1 class="setup-hero__title">{{ organization.name|private_text }}</h1>
             <p class="setup-hero__text">
-                This workspace is still being activated. You will get the full {{ product_name }} workspace automatically as soon as it is ready.
+                Your workspace is available. Live messaging is waiting for setup to finish.
             </p>
         </div>
     </div>
@@ -23,16 +24,20 @@
         <section class="app-card setup-panel">
             <div class="setup-panel__header">
                 <div>
-                    <div class="setup-panel__kicker">Waiting on owner setup</div>
-                    <h2>We’ll unlock the workspace automatically.</h2>
+                    <div class="setup-panel__kicker">Your Next Step</div>
+                    <h2>Open Your Workspace</h2>
                 </div>
             </div>
             <p class="setup-panel__copy">
-                An owner or platform admin is finishing activation. You can sign back in later and continue from the workspace when setup is complete.
+                Your workspace owner handles billing and organization details. Twinevia support handles the messaging connection and approval.
             </p>
             <p class="text-muted mb-0">
-                No action is needed from this account right now.
+                You do not need to change setup settings. You can use the workspace now, or check whether live messaging is ready.
             </p>
+            <div class="setup-actions mt-3">
+                <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary">Open Workspace</a>
+                <a href="{{ url_for('main.setup_pending') }}" class="btn btn-outline-secondary">Check Setup Status</a>
+            </div>
         </section>
     </div>
 </section>

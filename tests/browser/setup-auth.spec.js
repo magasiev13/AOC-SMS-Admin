@@ -45,7 +45,7 @@ async function expectSetupShell(page, { step, heading }) {
   await expect(page.locator('.setup-steps')).toBeVisible();
   await expect(page.locator('.setup-step.is-current')).toHaveCount(1);
   await expect(page.locator('.setup-panel').first()).toBeVisible();
-  await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+  await expect(page.locator('.setup-panel').first().getByRole('heading', { name: heading })).toBeVisible();
 
   const setupShell = page.locator('[data-setup-shell]');
   if (await setupShell.count()) {
@@ -110,10 +110,10 @@ test('owner with incomplete setup lands on the setup runway', async ({ page }) =
   await login(page, 'trial-owner@browser.test', 'TrialOwner-pass1!');
 
   await expect(page).toHaveURL(/\/setup$/);
-  await expect(page.getByText('Owner setup')).toBeVisible();
-  await expectSetupShell(page, { step: 'billing', heading: 'Activate billing' });
+  await expect(page.getByText('Owner Setup')).toBeVisible();
+  await expectSetupShell(page, { step: 'billing', heading: 'Activate Billing' });
   await expect(page.getByRole('heading', { name: 'Setup Runway Bakery' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start subscription' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start Subscription' })).toBeVisible();
 });
 
 test('platform-managed owner setup preserves compliance and review structure on desktop', async ({ page }) => {
@@ -121,14 +121,17 @@ test('platform-managed owner setup preserves compliance and review structure on 
   await login(page, 'trial-owner@browser.test', 'TrialOwner-pass1!');
 
   await page.goto('/setup?step=compliance');
-  await expectSetupShell(page, { step: 'compliance', heading: 'Business profile and compliance' });
-  await expect(page.locator('form.setup-form-grid')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Validate and save business profile' })).toBeVisible();
-  await expect(page.getByText('Current submission source')).toBeVisible();
+  await expectSetupShell(page, { step: 'compliance', heading: 'Organization Details' });
+  await expect(page.locator('form[data-organization-setup]')).toBeVisible();
+  await expect(page.locator('[data-organization-step]')).toHaveCount(5);
+  await expect(page.locator('[data-organization-step="organization"]')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Organization Details' })).toBeHidden();
+  await expect(page.locator('[data-organization-step="signup"]')).toContainText('Current Submission Source');
 
   await page.goto('/setup?step=review');
-  await expectSetupShell(page, { step: 'review', heading: 'Review and submit' });
-  await expect(page.getByRole('link', { name: 'Edit business profile' })).toBeVisible();
+  await expectSetupShell(page, { step: 'review', heading: 'Review and Submit' });
+  await expect(page.getByRole('link', { name: 'Edit Organization Details' })).toBeVisible();
   await expect(page.locator('input[name="declaration_accepted"]')).toHaveCount(1);
 });
 
@@ -137,30 +140,35 @@ test('platform-managed owner launch wait state keeps the setup shell on desktop'
   await login(page, 'pending-a2p-owner@browser.test', 'PendingA2P-pass1!');
 
   await page.goto('/setup');
-  await expectSetupShell(page, { step: 'launch', heading: 'Await Twilio review' });
-  await expect(page.getByText('Launch readiness')).toBeVisible();
-  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Refresh status' })).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open workspace' })).toHaveCount(0);
+  await expectSetupShell(page, { step: 'launch', heading: /review|approval/i });
+  await expect(page.locator('[data-setup-technical-details]')).not.toHaveAttribute('open');
+  await page.locator('[data-setup-technical-details] > summary').click();
+  await expect(page.getByText('Messaging Readiness', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Recent Twilio Activity/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh Status' })).toBeVisible();
+  await page.getByRole('link', { name: 'Open Workspace', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByText('Live SMS is paused.')).toBeVisible();
+  await expect(page.locator('#sendBtn')).toBeDisabled();
 });
 
 test('customer-managed owner with pending activation lands on the read-only setup runway', async ({ page }) => {
   await login(page, 'customer-managed-owner@browser.test', 'CustomerManaged-pass1!');
 
   await expect(page).toHaveURL(/\/setup$/);
-  await expect(page.getByText('Owner setup')).toBeVisible();
-  await expectSetupShell(page, { step: 'provider', heading: 'External Twilio activation' });
+  await expect(page.getByText('Owner Setup')).toBeVisible();
+  await expectSetupShell(page, { step: 'provider', heading: 'Connect Your Messaging Account' });
   await expect(page.getByRole('heading', { name: 'Customer Managed Bakery' })).toBeVisible();
-  await expect(page.getByText('Workspace owners are read-only here')).toBeVisible();
+  await expect(page.getByText('What Happens Next')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('Legal business name');
-  await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
+  await expect(page.locator('input[name="action"][value="submit_onboarding"]')).toHaveCount(0);
 });
 
 test('customer-managed owner with active messaging lands in the workspace', async ({ page }) => {
   await login(page, 'customer-managed-ready@browser.test', 'CustomerManagedReady-pass1!');
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
 });
 
 test('live setup launch state keeps the open-workspace action visible', async ({ page }) => {
@@ -168,27 +176,34 @@ test('live setup launch state keeps the open-workspace action visible', async ({
   await login(page, 'customer-managed-ready@browser.test', 'CustomerManagedReady-pass1!');
 
   await page.goto('/setup');
-  await expectSetupShell(page, { step: 'launch', heading: 'Workspace is live' });
-  await expect(page.getByRole('link', { name: 'Open workspace' })).toBeVisible();
+  await expectSetupShell(page, { step: 'launch', heading: 'Messaging Is Ready' });
+  await expect(page.getByRole('link', { name: 'Open Workspace' })).toBeVisible();
 });
 
-test('mobile setup keeps the first primary action in the first viewport across billing provider and live states', async ({ page }) => {
+test('mobile setup shows billing disclosures before checkout and keeps activation actions reachable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
 
   await login(page, 'trial-owner@browser.test', 'TrialOwner-pass1!');
   await page.goto('/setup?step=billing');
-  await expectSetupShell(page, { step: 'billing', heading: 'Activate billing' });
-  await expectWithinFirstViewport(page, page.getByRole('button', { name: 'Start subscription' }));
+  await expectSetupShell(page, { step: 'billing', heading: 'Activate Billing' });
+  const facts = page.locator('.setup-panel .billing-plan-facts');
+  await expect(facts).toBeVisible();
+  await expect(facts.getByText('$149.99 setup fee due at checkout', { exact: true })).toBeVisible();
+  await expect(facts.getByText('$0.03 per segment', { exact: true })).toBeVisible();
+  const checkout = page.getByRole('button', { name: 'Start Subscription' });
+  expect((await box(facts)).y + (await box(facts)).height).toBeLessThan((await box(checkout)).y);
+  await checkout.scrollIntoViewIfNeeded();
+  await expect(checkout).toBeInViewport();
 
   await login(page, 'customer-managed-owner@browser.test', 'CustomerManaged-pass1!');
   await page.goto('/setup');
-  await expectSetupShell(page, { step: 'provider', heading: 'External Twilio activation' });
-  await expectWithinFirstViewport(page, page.getByRole('link', { name: 'View billing' }));
+  await expectSetupShell(page, { step: 'provider', heading: 'Connect Your Messaging Account' });
+  await expectWithinFirstViewport(page, page.getByRole('link', { name: 'View Billing' }));
 
   await login(page, 'customer-managed-ready@browser.test', 'CustomerManagedReady-pass1!');
   await page.goto('/setup');
-  await expectSetupShell(page, { step: 'launch', heading: 'Workspace is live' });
-  await expectWithinFirstViewport(page, page.getByRole('link', { name: 'Open workspace' }));
+  await expectSetupShell(page, { step: 'launch', heading: 'Messaging Is Ready' });
+  await expectWithinFirstViewport(page, page.getByRole('link', { name: 'Open Workspace' }));
 });
 
 test('platform-managed staff pending setup stays read-only and points to owner setup', async ({ page }) => {
@@ -204,14 +219,19 @@ test('platform-managed staff pending setup stays read-only and points to owner s
 
   await expect(page.locator('.setup-shell')).toBeVisible();
   await expect(page.locator('.setup-steps')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
-  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
-  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Open Your Workspace' })).toBeVisible();
+  await expect(page.getByText('Your workspace is available. Live messaging is waiting for setup to finish.')).toBeVisible();
+  await expect(page.getByText('You do not need to change setup settings. You can use the workspace now, or check whether live messaging is ready.')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('The owner is still finishing billing or compliance.');
   await expect(page.locator('body')).not.toContainText('Billing status:');
   await expect(page.locator('.setup-panel form')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Legal business name');
-  await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
+  await expect(page.locator('input[name="action"][value="submit_onboarding"]')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Check Setup Status', exact: true }).click();
+  await expect(page).toHaveURL(/\/setup\/pending$/);
+  await page.getByRole('link', { name: 'Open Workspace', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.locator('#sendBtn')).toBeDisabled();
 });
 
 test('customer-managed staff pending setup stays read-only and points to external activation', async ({ page }) => {
@@ -227,15 +247,20 @@ test('customer-managed staff pending setup stays read-only and points to externa
 
   await expect(page.locator('.setup-shell')).toBeVisible();
   await expect(page.locator('.setup-steps')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
-  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
-  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Open Your Workspace' })).toBeVisible();
+  await expect(page.getByText('Your workspace is available. Live messaging is waiting for setup to finish.')).toBeVisible();
+  await expect(page.getByText('You do not need to change setup settings. You can use the workspace now, or check whether live messaging is ready.')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('customer-managed Twilio connection');
   await expect(page.locator('body')).not.toContainText('External messaging:');
   await expect(page.locator('body')).not.toContainText('Billing status:');
   await expect(page.locator('.setup-panel form')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Legal business name');
-  await expect(page.locator('body')).not.toContainText('Submit for Twilio review');
+  await expect(page.locator('input[name="action"][value="submit_onboarding"]')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Check Setup Status', exact: true }).click();
+  await expect(page).toHaveURL(/\/setup\/pending$/);
+  await page.getByRole('link', { name: 'Open Workspace', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.locator('#sendBtn')).toBeDisabled();
 });
 
 test('managed pilot replaces self-serve signup with a resource-safe application', async ({ page }) => {

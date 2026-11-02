@@ -13,8 +13,8 @@ from app.services.delivery_status_service import project_log_delivery
 
 
 REMINDER_LABELS = {
-    'two_week': 'Two weeks before', 'seven_day': 'One week before',
-    'one_day': 'One day before', 'day_of': 'Event day',
+    'two_week': 'Two Weeks Before', 'seven_day': 'One Week Before',
+    'one_day': 'One Day Before', 'day_of': 'Event Day',
 }
 
 
@@ -92,9 +92,9 @@ def event_communications(event):
         kind = candidate_kind if candidate_kind == row.automation_kind else None
         invitation = invitation_by_schedule.get(row.id)
         rows.append({
-            'schedule': row, 'label': 'Feedback invitation' if invitation is not None else (REMINDER_LABELS[kind] if kind else 'Scheduled message'),
+            'schedule': row, 'label': 'Feedback Invitation' if invitation is not None else (REMINDER_LABELS[kind] if kind else 'Scheduled Message'),
             'invitation': invitation,
-            'audience': 'Contactable community' if row.target == 'community' else 'Registered contacts',
+            'audience': 'Contact List' if row.target == 'community' else 'Event Registrants',
             'outcome': submission_outcomes(log_by_id.get(row.message_log_id)),
         })
     next_message = next((row for row in rows if row['schedule'].status in {'pending', 'processing'}), None)

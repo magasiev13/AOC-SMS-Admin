@@ -71,7 +71,7 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
 
   await expect(firstRow.getByRole('link', { name: 'Access' })).toBeVisible();
   await expect(firstRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
-  await expect(firstRow.getByRole('button', { name: 'More actions' })).toBeVisible();
+  await expect(firstRow.getByRole('button', { name: 'More Actions' })).toBeVisible();
   await expect(firstRow.getByText('Manage Access')).toHaveCount(0);
   await expect(firstRow.getByText('Manage provider')).toHaveCount(0);
   await expect(firstRow.getByText('View checklist')).toHaveCount(0);

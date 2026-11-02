@@ -1,0 +1,60 @@
+{# Shared by the desktop sidebar and mobile menu. Keep route selection here. #}
+{% set endpoint = request.endpoint or '' %}
+{% set is_help = endpoint == 'main.help_center' %}
+{% set is_security = endpoint.startswith('main.security_events') %}
+{% set is_users = endpoint.startswith('main.users_') %}
+{% set is_settings = endpoint == 'main.settings_home' or endpoint.startswith('main.event_sync_') or endpoint.startswith('main.test_recipients_') or endpoint.startswith('main.billing_') or endpoint.startswith('main.team_') or is_users or is_security %}
+{% set is_events = endpoint.startswith('event_feedback.') or endpoint.startswith('main.events_') or (endpoint.startswith('main.event_') and not endpoint.startswith('main.event_sync_')) %}
+{% set is_automations = endpoint.startswith('main.keyword_rule') or endpoint.startswith('main.survey_flow') %}
+{% set is_history = endpoint.startswith('main.logs_') or endpoint.startswith('main.log_') %}
+{% set group_label_class = 'text-body-secondary' if mobile_navigation else 'text-white-50' %}
+{% macro navigation_link(label, destination, icon, active=false) -%}
+<a class="app-nav-link{% if active %} active{% endif %}" href="{{ url_for(destination) }}"{% if active %} aria-current="page"{% endif %}>
+    <i class="bi {{ icon }} me-2" aria-hidden="true"></i><span>{{ label }}</span>
+</a>
+{%- endmacro %}
+
+{% if platform_user %}
+<div class="app-nav-group w-100" role="group" aria-label="Platform">
+    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">Platform</div>
+    <div class="nav flex-column gap-1">
+        {{ navigation_link('Platform', 'main.platform_home', 'bi-grid-1x2', endpoint == 'main.platform_home') }}
+        {{ navigation_link('Organizations', 'main.platform_organizations_list', 'bi-buildings', endpoint.startswith('main.platform_organizations')) }}
+        {{ navigation_link('Pilot Requests', 'main.platform_pilot_applications', 'bi-inbox', endpoint.startswith('main.platform_pilot_application')) }}
+        {{ navigation_link('Users', 'main.users_list', 'bi-person-gear', is_users) }}
+        {{ navigation_link('Security', 'main.security_events', 'bi-shield-lock', is_security) }}
+    </div>
+</div>
+{% else %}
+<div class="app-nav-group w-100" role="group" aria-label="Messaging">
+    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">Messaging</div>
+    <div class="nav flex-column gap-1">
+        {{ navigation_link('Send a Message', 'main.dashboard', 'bi-send', endpoint in ('main.dashboard', 'main.dashboard_send_review', 'main.dashboard_audience_preview')) }}
+        {{ navigation_link('Inbox', 'main.inbox_list', 'bi-chat-left-text', endpoint.startswith('main.inbox_')) }}
+        {{ navigation_link('Automations', 'main.keyword_rules_list', 'bi-magic', is_automations) }}
+        {{ navigation_link('Scheduled Messages', 'main.scheduled_list', 'bi-clock', endpoint.startswith('main.scheduled_')) }}
+        {{ navigation_link('Message History', 'main.logs_list', 'bi-journal-text', is_history) }}
+    </div>
+</div>
+<div class="app-nav-group w-100" role="group" aria-label="Contacts &amp; Events">
+    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">Contacts &amp; Events</div>
+    <div class="nav flex-column gap-1">
+        {{ navigation_link('Contacts', 'main.community_list', 'bi-people', endpoint.startswith('main.community_')) }}
+        {{ navigation_link('Events', 'main.events_list', 'bi-calendar-event', is_events) }}
+        {{ navigation_link('Opt-Outs & Blocks', 'main.unsubscribed_list', 'bi-person-x', endpoint.startswith('main.unsubscribed_')) }}
+    </div>
+</div>
+{% endif %}
+<div class="app-nav-group w-100" role="group" aria-label="{{ 'Help' if platform_user else 'Workspace' }}">
+    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">{{ 'Help' if platform_user else 'Workspace' }}</div>
+    <div class="nav flex-column gap-1">
+        {% if workspace_settings_visible %}
+        {{ navigation_link('Settings', 'main.settings_home', 'bi-gear', is_settings) }}
+        {% endif %}
+        {% if legacy_admin_tools_visible %}
+        {{ navigation_link('Users', 'main.users_list', 'bi-person-gear', is_users) }}
+        {{ navigation_link('Security', 'main.security_events', 'bi-shield-lock', is_security) }}
+        {% endif %}
+        {{ navigation_link('Help & Getting Started', 'main.help_center', 'bi-question-circle', is_help) }}
+    </div>
+</div>

@@ -514,7 +514,7 @@ def test_explicit_send_now_recovers_expired_hold_and_retains_both_approval_times
     before=f.m.utc_now().replace(tzinfo=None)
     with f.organization_context(f.org.id):
         reviewed=s.held_review(f.event,flow,invitation,f.owner,resume_timing='now')
-        assert reviewed['confirmation_label']=='Confirm send now'
+        assert reviewed['confirmation_label']=='Confirm Send Now'
         assert 'Send now' in reviewed['timing']
         s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'],resume_timing='now')
         f.db.session.commit()
@@ -607,14 +607,14 @@ def test_expired_held_route_requires_explicit_review_now_then_confirmation(feedb
     client=f.client if actor=='owner' else f.staff_client
     path=f'/events/{f.event.id}/feedback/{flow.id}/invitations/{invitation.id}/review'
     choice=client.get(path)
-    assert choice.status_code==200 and b'Review sending now' in choice.data
+    assert choice.status_code==200 and b'Review Sending Now' in choice.data
     assert b'name="review_token"' not in choice.data
-    assert b'Confirm send now' not in choice.data
+    assert b'Confirm Send Now' not in choice.data
     assert schedule.scheduled_at==old and schedule.status=='held'
     rejected=client.post(path,data={'resume_timing':'original','review_token':'old-token'})
     assert rejected.status_code==302
     page=client.get(path+'?resume_timing=now')
-    assert page.status_code==200 and b'Confirm send now' in page.data
+    assert page.status_code==200 and b'Confirm Send Now' in page.data
     token=unescape(re.search(r'name="review_token" value="([^"]+)"',page.get_data(as_text=True)).group(1))
     assert row.phone.encode() not in page.data
     assert schedule.scheduled_at==old and schedule.status=='held'
@@ -631,7 +631,7 @@ def test_nonexpired_original_review_preserves_original_future_time(feedback):
     schedule=_held_at(f,s,invitation,original)
     with f.organization_context(f.org.id):
         reviewed=s.held_review(f.event,flow,invitation,f.owner)
-        assert reviewed['confirmation_label']=='Confirm reviewed invitation'
+        assert reviewed['confirmation_label']=='Confirm Reviewed Invitation'
         assert reviewed['intent']['resume_timing']=='original'
         s.resume_held(f.event,flow,invitation,f.owner,reviewed['review_token'])
         f.db.session.commit()

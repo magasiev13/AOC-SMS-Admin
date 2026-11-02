@@ -93,7 +93,7 @@ class TestCommunitySearchSidebar(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.data.decode("utf-8", errors="ignore")
         self.assertIn("+17202345027", html)
-        self.assertNotIn("No community members found", html)
+        self.assertNotIn("No Matching Contacts", html)
 
     def test_community_search_matches_formatted_phone(self) -> None:
         self._login()
@@ -101,7 +101,7 @@ class TestCommunitySearchSidebar(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.data.decode("utf-8", errors="ignore")
         self.assertIn("+17202345027", html)
-        self.assertNotIn("No community members found", html)
+        self.assertNotIn("No Matching Contacts", html)
 
     def test_community_search_matches_digits_only_phone(self) -> None:
         self._login()
@@ -109,7 +109,7 @@ class TestCommunitySearchSidebar(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.data.decode("utf-8", errors="ignore")
         self.assertIn("+17205550123", html)
-        self.assertNotIn("No community members found", html)
+        self.assertNotIn("No Matching Contacts", html)
 
 
 if __name__ == "__main__":

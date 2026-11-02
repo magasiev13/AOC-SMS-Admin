@@ -364,8 +364,8 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
 
-        self.assertIn("Select a thread to view messages", html)
-        self.assertNotIn("Back to threads", html)
+        self.assertIn("Select a Conversation", html)
+        self.assertNotIn("Back to Conversations", html)
         self.assertIn(f'thread={first.id}', html)
         self.assertIn(f'thread={second.id}', html)
 
@@ -417,7 +417,7 @@ class TestInboxRoutes(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn("keyword hidden", html)
         self.assertIn("inactive", html)
-        self.assertIn("Show historical keyword", html)
+        self.assertIn("Show Historical Keyword", html)
         self.assertIn("Historical keyword: <code>INACTIVE KEY</code>", html)
 
     def test_inbox_message_hides_deleted_keyword_with_reveal(self) -> None:
@@ -441,7 +441,7 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
         self.assertIn("keyword hidden", html)
-        self.assertIn("Show historical keyword", html)
+        self.assertIn("Show Historical Keyword", html)
         self.assertIn("Historical keyword: <code>DELETED KEY</code>", html)
 
     def test_inbox_thread_update_contact_name(self) -> None:
@@ -673,11 +673,11 @@ class TestInboxRoutes(unittest.TestCase):
         response = self.client.get(f"/inbox?thread={thread.id}")
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertEqual(html.count("Delete Thread"), 1)
-        self.assertNotIn("Delete Selected", html)
-        self.assertIn("Delete selected messages", html)
+        self.assertEqual(html.count("Delete Conversation"), 2)  # Desktop and mobile controls use the same action.
+        self.assertNotRegex(html, r">(?:\s*<i\b[^>]*></i>)?\s*Delete Selected\s*</(?:button|a)>")
+        self.assertIn("Delete Selected Messages", html)
         self.assertIn('id="bulkMessageDeleteButton"', html)
-        self.assertIn('aria-label="Delete selected messages" disabled', html)
+        self.assertIn('aria-label="Delete Selected Messages" disabled', html)
         self.assertNotIn("selectAllThreads", html)
         self.assertNotIn("bulkThreadDeleteForm", html)
         self.assertNotIn(f"/inbox/messages/{message.id}/delete", html)

@@ -37,16 +37,16 @@
     {% set new_event_date_value = '' %}
 {% endif %}
 
-{% block title %}{{ 'Edit' if is_edit else 'Add' }} Survey Flow - {{ product_name }}{% endblock %}
+{% block title %}{{ 'Edit' if is_edit else 'Add' }} Survey - {{ product_name }}{% endblock %}
 
-{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Survey Flow{% endblock %}
+{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Survey{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.survey_flows_list') }}">Survey Flows</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <a href="{{ url_for('main.survey_flows_list') }}">Surveys</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
 {% endblock %}
 
 {% block content %}
-<div class="alert alert-info" role="note">An event-linked registration survey uses its first answer as the attendee name. For ratings or comments, open the event and choose <strong>Event feedback</strong>; feedback never changes registrations.</div>
+<div class="alert alert-info" role="note">An event-linked registration survey uses its first answer as the attendee name. For ratings or comments, open the event and choose <strong>Event Feedback</strong>; feedback never changes registrations.</div>
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div class="workspace-form-layout workspace-form-layout--with-side">
@@ -54,7 +54,7 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} survey flow</h2>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} Survey</h2>
                         <p class="workspace-panel__meta">Set the trigger keyword, prompts, completion message, and optional event registration sync.</p>
                     </div>
                 </div>
@@ -187,7 +187,7 @@
                         <div class="text-muted small">Edits take effect immediately for new inbound matches on this keyword.</div>
                         <div class="workspace-form-actions">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save me-1"></i>Save survey flow
+                                <i class="bi bi-save me-1"></i>Save Survey
                             </button>
                             <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary">Cancel</a>
                         </div>
@@ -199,11 +199,11 @@
         <aside class="workspace-form-side">
             <div class="workspace-callout-stack">
                 <section class="workspace-callout">
-                    <h3 class="workspace-callout__title">Trigger behavior</h3>
-                    <p class="workspace-callout__copy">The trigger keyword must stay unique across keyword automations and survey flows so inbound replies start the right workflow.</p>
+                    <h3 class="workspace-callout__title">Trigger Behavior</h3>
+                    <p class="workspace-callout__copy">The trigger keyword must stay unique across automatic replies and surveys so inbound replies start the right workflow.</p>
                 </section>
                 <section class="workspace-callout">
-                    <h3 class="workspace-callout__title">Event sync</h3>
+                    <h3 class="workspace-callout__title">Event Registration</h3>
                     <p class="workspace-callout__copy">Use event sync when completed responses should also create or update registrations on an event page.</p>
                 </section>
             </div>

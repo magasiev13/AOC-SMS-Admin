@@ -7,15 +7,14 @@
 {% block page_title %}{{ (event.title)|private_text }}{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
 <a href="{{ url_for('main.events_list') }}">Events</a> /
 <span>{{ (event.title)|private_text }}</span>
 {% endblock %}
 
 {% block page_actions %}
-<a href="{{ url_for('event_feedback.index', event_id=event.id) }}" class="btn btn-outline-primary page-action-secondary">Event feedback</a>
 <a href="{{ url_for('main.dashboard', target='event', event_id=event.id) }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-chat-dots me-1"></i>Message registrants
+    <i class="bi bi-chat-dots me-1"></i>Message Registrants
 </a>
 <a href="{{ url_for('main.event_edit', event_id=event.id) }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-pencil me-1"></i>Edit
@@ -24,32 +23,101 @@
     <i class="bi bi-download me-1"></i>Export CSV
 </a>{% endif %}
 <a href="{{ url_for('main.events_list', view='current' if event_is_current else 'past') }}" class="btn btn-outline-secondary page-action-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Back
+    <i class="bi bi-arrow-left me-1"></i>Back to Events
 </a>
 {% endblock %}
 
 {% block content %}
 {% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and dataset exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
-<div class="workspace-shell event-workspace">
-    <nav class="d-flex flex-wrap gap-2" aria-label="Event workspace sections">
-        <a class="btn btn-sm btn-outline-primary" href="#overview">Overview</a><a class="btn btn-sm btn-outline-primary" href="#registrations">Registrations</a><a class="btn btn-sm btn-outline-primary" href="#messages">Messages</a><a class="btn btn-sm btn-outline-primary" href="#feedback">Feedback</a>
+<div class="workspace-shell event-workspace" data-event-sections>
+    {% if not event_is_current %}<div class="alert alert-info" role="status">This event is outside the current audience. Its registrations and feedback are kept for review or follow-up. Opt-outs and blocks still apply.</div>{% endif %}
+    <section class="event-summary" aria-label="Event Summary">
+        <p class="event-summary__date"><i class="bi bi-calendar-event me-1" aria-hidden="true"></i>{{ event.date.strftime('%b %d, %Y') if event.date else 'Date not set' }}</p>
+        <div class="workspace-summary__stats workspace-summary__stats--4" aria-label="Workspace highlights">
+            {% for stat in surface_view.stats %}<div class="workspace-summary__stat">
+                <div class="workspace-summary__stat-label">{{ stat.label|private_text }}</div>
+                <div class="workspace-summary__stat-value">{{ stat.value }}</div>
+                {% if stat.meta %}<div class="workspace-summary__stat-meta">{{ stat.meta|private_text }}</div>{% endif %}
+            </div>{% endfor %}
+        </div>
+    </section>
+    <nav class="event-section-nav" aria-label="Event workspace sections" data-event-section-nav>
+        <a class="btn btn-outline-primary" href="#overview" data-event-section-link aria-controls="overview">Overview</a>
+        <a class="btn btn-outline-primary" href="#registrations" data-event-section-link aria-controls="registrations">Registrations</a>
+        <a class="btn btn-outline-primary" href="#messages" data-event-section-link aria-controls="messages">Messages</a>
+        <a class="btn btn-outline-primary" href="#feedback" data-event-section-link aria-controls="feedback">Feedback</a>
     </nav>
-    {% if not event_is_current %}<div class="alert alert-info" role="status">This event is in history. Its registrations are excluded from the current RSVP total, and remain available for an intentional follow-up or feedback request. Existing opt-outs and suppressions still apply.</div>{% endif %}
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div class="d-flex flex-wrap gap-2 mb-3">
-        <a class="btn btn-outline-primary" href="{{ url_for('main.dashboard', target='community', context_event_id=event.id) }}">Announce to community</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('main.dashboard', target='event', event_id=event.id) }}">Message registrants</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('event_feedback.index', event_id=event.id) }}">Request feedback</a>
-    </div>
     {% include 'events/overview.html' %}
-    <div class="workspace-detail-layout" id="registrations">
+    <section class="event-section-panel" id="registrations" aria-labelledby="event-registrations-heading" data-event-panel>
+        <header class="event-section-intro">
+            <h2 class="workspace-panel__title" id="event-registrations-heading">Registrations</h2>
+            <p class="workspace-panel__meta">Bookings track reserved places. Messaging contacts are listed separately below.</p>
+        </header>
+    <div class="workspace-detail-layout event-registration-layout">
+        {% if can_view_contact_numbers %}<aside class="event-registration-tools" aria-label="Registration Tools">
+            <details class="workspace-panel event-registration-tool" data-event-registration-tool>
+                <summary>Add Booking</summary>
+                <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="workspace-panel__body">
+                        <p class="small text-muted">Save a booking and its group size. Bookings that share a phone number remain separate.</p>
+                        <div class="mb-3">
+                            <label for="registration_name" class="form-label">Name (Optional)</label>
+                            <input type="text" class="form-control" id="registration_name" name="name" placeholder="Contact or guest name" autocomplete="name">
+                        </div>
+                        <div class="mb-3">
+                            <label for="registration_phone" class="form-label">Phone Number (Optional)</label>
+                            <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel">
+                            <div class="form-text">The booking is saved even without valid contact details, but it cannot receive messages.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="registration_party_size" class="form-label">Reserved Places</label>
+                            <input class="form-control" id="registration_party_size" name="party_size" type="number" value="1" min="0" max="100000" required>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" value="1" id="included_in_paid_order" name="included_in_paid_order">
+                            <label class="form-check-label" for="included_in_paid_order">
+                                Guest is already included in a paid order
+                            </label>
+                            <div class="form-text">Adds the phone to the directory without consuming another capacity space.</div>
+                        </div>
+                    </div>
+                    <div class="workspace-panel__footer">
+                        <div class="text-muted small">The phone number is used for event sends and response tracking.</div>
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-primary">Add Registration</button>
+                        </div>
+                    </div>
+                </form>
+            </details>
+
+            <details class="workspace-panel event-registration-tool" data-event-registration-tool>
+                <summary>Import CSV</summary>
+                <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="workspace-panel__body">
+                        <p class="small text-muted">Bulk add registrations from a saved contact export or attendee list.</p>
+                        <div class="mb-3">
+                            <label for="registrations_file" class="form-label">CSV File</label>
+                            <input type="file" class="form-control" id="registrations_file" name="file" accept=".csv" aria-label="Upload CSV" required>
+                        </div>
+                        <div class="text-muted small">Supported columns: phone only, name + phone, or first + last + phone.</div>
+                    </div>
+                    <div class="workspace-panel__footer">
+                        <div class="workspace-form-actions">
+                            <button type="submit" class="btn btn-outline-primary">Import CSV</button>
+                        </div>
+                    </div>
+                </form>
+            </details>
+        </aside>{% endif %}
         <div class="workspace-detail-main">
             {% include 'events/bookings.html' %}
             <section class="collection-panel collection-panel--results">
                 <div class="collection-panel__header">
                     <div>
-                        <h2 class="collection-panel__title">Messaging contacts</h2>
-                        <p class="collection-panel__meta">One destination per event. Shared bookings contribute their reserved places without duplicating messages.</p>
+                        <h3 class="collection-panel__title">Messaging Contacts</h3>
+                        <p class="collection-panel__meta">Each eligible contact is included once per send. Separate bookings still count toward reserved places.</p>
                     </div>
                 </div>
                 <div class="table-responsive d-none d-lg-block">
@@ -93,7 +161,7 @@
                                 <td data-sort-value="{{ (reg.booking_comment or '')|private_text }}">{{ (reg.booking_comment or '-')|private_text }}</td>
                                 <td data-sort-value="{{ 'Blocked' if is_unsubscribed or is_suppressed else permission_statuses[reg.phone].decision }}">
                                     {{ permissions.permission_badge(permission_statuses[reg.phone], is_unsubscribed, is_suppressed) }}
-                                    {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review permission</a></div>{% endif %}
+                                    {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review Permission</a></div>{% endif %}
                                 </td>
                                 <td>
                                     <div class="row-actions" data-row-actions>
@@ -149,7 +217,7 @@
                                     {% if reg.booking_comment %}<div class="text-muted small">Comment: {{ (reg.booking_comment)|private_text }}</div>{% endif %}
                                     <div class="mt-2">
                                         Event SMS: {{ permissions.permission_badge(permission_statuses[reg.phone], is_unsubscribed, is_suppressed) }}
-                                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review permission</a></div>{% endif %}
+                                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.event_registration_permission_review', event_id=event.id, registration_id=reg.id) }}">Review Permission</a></div>{% endif %}
                                     </div>
                                 </div>
                             </div>
@@ -174,76 +242,23 @@
                     ) }}
                     {% endif %}
                 </div>
-                {{ ui.collection_footer(registrations|length, 'registration') }}
+                <nav class="collection-panel__footer d-flex justify-content-between align-items-center gap-3 flex-wrap" aria-label="Messaging Contact Pages">
+                    <span class="text-muted">{% if registration_total %}Showing {{ (contact_page - 1) * 100 + 1 }}–{{ (contact_page - 1) * 100 + registrations|length }} of {{ registration_total }} messaging contacts{% else %}No messaging contacts{% endif %}</span>
+                    {% if contact_pages > 1 %}<div class="d-flex gap-2">
+                        {% if contact_page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.event_detail', event_id=event.id, contact_page=contact_page-1, booking_page=booking_page, _anchor='registrations') }}">Previous Contacts</a>{% endif %}
+                        {% if contact_page < contact_pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.event_detail', event_id=event.id, contact_page=contact_page+1, booking_page=booking_page, _anchor='registrations') }}">Next Contacts</a>{% endif %}
+                    </div>{% endif %}
+                </nav>
             </section>
         </div>
 
-        {% if can_view_contact_numbers %}<aside class="workspace-detail-side">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">Add booking</h2>
-                        <p class="workspace-panel__meta">Save one booking and its group size. A shared phone does not merge booking identities.</p>
-                    </div>
-                </div>
-                <form method="POST" action="{{ url_for('main.event_register', event_id=event.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="workspace-panel__body">
-                        <div class="mb-3">
-                            <label for="registration_name" class="form-label">Name (optional)</label>
-                            <input type="text" class="form-control" id="registration_name" name="name" placeholder="Board member or guest" autocomplete="name">
-                        </div>
-                        <div class="mb-3">
-                            <label for="registration_phone" class="form-label">Phone number (optional)</label>
-                            <input type="tel" class="form-control" id="registration_phone" name="phone" placeholder="+15551234567" autocomplete="tel">
-                            <div class="form-text">Missing or invalid contact details keep the booking, with no unsupported SMS destination.</div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="registration_party_size" class="form-label">Reserved places</label>
-                            <input class="form-control" id="registration_party_size" name="party_size" type="number" value="1" min="0" max="100000" required>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" value="1" id="included_in_paid_order" name="included_in_paid_order">
-                            <label class="form-check-label" for="included_in_paid_order">
-                                Guest is already included in a paid order
-                            </label>
-                            <div class="form-text">Adds the phone to the directory without consuming another capacity space.</div>
-                        </div>
-                    </div>
-                    <div class="workspace-panel__footer">
-                        <div class="text-muted small">The phone number is used for event sends and response tracking.</div>
-                        <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">Add registration</button>
-                        </div>
-                    </div>
-                </form>
-            </section>
 
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">Import CSV</h2>
-                        <p class="workspace-panel__meta">Bulk add registrations from a saved contact export or attendee list.</p>
-                    </div>
-                </div>
-                <form method="POST" action="{{ url_for('main.event_import_registrations', event_id=event.id) }}" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="workspace-panel__body">
-                        <div class="mb-3">
-                            <label for="registrations_file" class="form-label">CSV file</label>
-                            <input type="file" class="form-control" id="registrations_file" name="file" accept=".csv" aria-label="Upload CSV" required>
-                        </div>
-                        <div class="text-muted small">Supported columns: phone only, name + phone, or first + last + phone.</div>
-                    </div>
-                    <div class="workspace-panel__footer">
-                        <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-outline-primary">Import CSV</button>
-                        </div>
-                    </div>
-                </form>
-            </section>
-        </aside>{% endif %}
     </div>
+    </section>
     {% include 'events/messages.html' %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/event-sections.js', v=app_version) }}"></script>
 {% endblock %}

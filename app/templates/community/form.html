@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}{{ 'Edit' if member else 'Add' }} Community Member - {{ product_name }}{% endblock %}
+{% block title %}{{ 'Edit' if member else 'Add' }} Contact - {{ product_name }}{% endblock %}
 
-{% block page_title %}{{ 'Edit' if member else 'Add' }} Community Member{% endblock %}
+{% block page_title %}{{ 'Edit' if member else 'Add' }} Contact{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.community_list') }}">Community</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.community_list') }}">Contacts</a> /
 <span>{{ 'Edit' if member else 'Add' }}</span>
 {% endblock %}
 
@@ -19,15 +19,15 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if member else 'Add' }} community member</h2>
-                        <p class="workspace-panel__meta">Save the contact name and phone used for workspace sends.</p>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if member else 'Add' }} Contact</h2>
+                        <p class="workspace-panel__meta">Save the name and phone number for this contact.</p>
                     </div>
                 </div>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
                         <div class="mb-3">
-                            <label for="name" class="form-label">Name (optional)</label>
+                            <label for="name" class="form-label">Name (Optional)</label>
                             <input type="text" class="form-control{{ ' is-invalid' if field_errors.get('name') else '' }}" id="name" name="name" autocomplete="name" maxlength="100"
                                    value="{{ form_values.name }}" {% if field_errors.get('name') %}aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}
                                    placeholder="Enter first and last name (e.g. John Doe)">
@@ -35,19 +35,19 @@
                         </div>
 
                         <div class="mb-0">
-                            <label for="phone" class="form-label">Phone number <span class="text-danger">*</span></label>
+                            <label for="phone" class="form-label">Phone Number <span class="text-danger">*</span></label>
                             <input type="tel" class="form-control{{ ' is-invalid' if field_errors.get('phone') else '' }}" id="phone" name="phone" autocomplete="tel" required
                                    value="{{ form_values.phone }}" {% if field_errors.get('phone') %}aria-invalid="true" aria-describedby="phone-error" autofocus{% endif %}
                                    placeholder="+1234567890 or (303) 555-1234">
                             {% if field_errors.get('phone') %}<div class="invalid-feedback" id="phone-error" role="alert">{{ field_errors.phone }}</div>{% endif %}
-                            <div class="form-text">Any format is accepted and stored as E.164.</div>
+                            <div class="form-text">Include a country code for international numbers. Formatting is handled automatically.</div>
                         </div>
                     </div>
                     <div class="workspace-panel__footer">
-                        <div class="text-muted small">Use the phone number this contact should receive messages on.</div>
+                        <div class="text-muted small">Saving a contact does not grant SMS permission. Review permission before sending.</div>
                         <div class="workspace-form-actions">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-check-lg me-1"></i>{{ 'Update' if member else 'Add' }} Member
+                                <i class="bi bi-check-lg me-1"></i>{{ 'Update' if member else 'Add' }} Contact
                             </button>
                             <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-secondary">Cancel</a>
                         </div>

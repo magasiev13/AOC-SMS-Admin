@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
-{% block title %}Review held invitation - {{ product_name }}{% endblock %}
-{% block page_title %}Review held invitation{% endblock %}
+{% block title %}Review Held Invitation - {{ product_name }}{% endblock %}
+{% block page_title %}Review Held Invitation{% endblock %}
 {% block content %}
 <section class="workspace-panel"><div class="workspace-panel__body">
     <h2 class="h5">{{ feedback_display(event.title) }} · Invitation #{{ invitation.id }}</h2>
@@ -14,10 +14,10 @@
             <button class="btn btn-primary" type="submit">{{ review.confirmation_label }}</button>
         </form>
     {% elif expired_window %}
-        <p class="alert alert-warning" role="status">The original send window has expired. Review sending now to choose a new send time. Nothing sends until you review and confirm.</p>
+        <p class="alert alert-warning" role="status">The original send window has expired. Choose Review Sending Now to select a new send time. Nothing sends until you review and confirm.</p>
         <p class="small text-muted">Original time: {{ invitation.scheduled_message.scheduled_at|localtime }}. Existing accepted or uncertain submissions and any frozen audience are retained.</p>
-        <a class="btn btn-primary" href="{{ url_for('event_feedback.review_held', event_id=event.id, survey_id=flow.id, invitation_id=invitation.id, resume_timing='now') }}">Review sending now</a>
+        <a class="btn btn-primary" href="{{ url_for('event_feedback.review_held', event_id=event.id, survey_id=flow.id, invitation_id=invitation.id, resume_timing='now') }}">Review Sending Now</a>
     {% endif %}
-    <a class="btn btn-outline-secondary mt-3" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">Back to feedback</a>
+    <a class="btn btn-outline-secondary mt-3" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">Back to Feedback</a>
 </div></section>
 {% endblock %}

@@ -60,7 +60,7 @@ def rendered(workspace, thread):
 
 def assert_historical(html, keyword='JOIN'):
     assert f'• keyword: <code>{keyword}</code>' not in html
-    assert 'Show historical keyword' in html
+    assert 'Show Historical Keyword' in html
     assert f'Historical keyword: <code>{keyword}</code>' in html
 
 
@@ -82,7 +82,7 @@ def test_current_active_recorded_origin_keeps_visible_keyword(workspace, kind):
     thread, _ = message(workspace, kind=kind, origin=origin)
     html = rendered(workspace, thread)
     assert '• keyword: <code>JOIN</code>' in html
-    assert 'Show historical keyword' not in html
+    assert 'Show Historical Keyword' not in html
 
 
 @pytest.mark.parametrize('kind', ['keyword', 'survey'])
@@ -159,5 +159,5 @@ def test_current_origin_comparison_normalizes_legacy_whitespace(workspace, kind)
     workspace.db.session.commit()
     html = rendered(workspace, thread)
     assert '• keyword: <code>join  code</code>' in html
-    assert 'Show historical keyword' not in html
+    assert 'Show Historical Keyword' not in html
 

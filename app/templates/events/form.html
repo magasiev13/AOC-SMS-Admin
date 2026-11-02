@@ -6,7 +6,7 @@
 {% block page_title %}{{ 'Edit' if event else 'Create' }} Event{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
 <a href="{{ url_for('main.events_list') }}">Events</a> /
 <span>{{ 'Edit' if event else 'Create' }}</span>
 {% endblock %}
@@ -19,7 +19,7 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if event else 'Create' }} event</h2>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if event else 'Create' }} Event</h2>
                         <p class="workspace-panel__meta">Set the event name and optional date used in sends and registrations.</p>
                     </div>
                 </div>
@@ -27,7 +27,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
                         <div class="mb-3">
-                            <label for="title" class="form-label">Event title <span class="text-danger">*</span></label>
+                            <label for="title" class="form-label">Event Title <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="title" name="title" required
                                    value="{{ (event.title if event else '')|private_text }}"
                                    placeholder="Community Meeting">
@@ -39,7 +39,7 @@
                                    value="{{ event.date.strftime('%Y-%m-%d') if event and event.date else '' }}">
                         </div>
                         <div class="mb-0">
-                            <label for="sms_location_note" class="form-label">SMS location note (optional)</label>
+                            <label for="sms_location_note" class="form-label">SMS Location Note (Optional)</label>
                             <textarea class="form-control" id="sms_location_note" name="sms_location_note" rows="3"
                                       placeholder="West Side Pavilion next to the nature center">{{ (event.sms_location_note if event and event.sms_location_note else '')|private_text }}</textarea>
                             <div class="form-text">Included in the automated day-of event reminder.</div>

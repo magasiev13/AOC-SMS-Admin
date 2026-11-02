@@ -47,38 +47,39 @@ for (const width of [1440, 390]) {
       await page.getByRole('link', { name: 'Acme Spring Launch', exact: true }).click();
     }
     const eventPath = new URL(page.url()).pathname;
+    await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Registrations', exact: true }).click();
     const registrationCount = await page.locator('.table-responsive tbody tr').count();
     const registrationNames = await page.locator('.table-responsive tbody tr td:first-child').allTextContents();
-    if (width === 390) await page.locator('[data-page-actions-toggle]').click();
-    await page.getByRole('link', { name: 'Event feedback', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Feedback forms', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Feedback', exact: true }).click();
+    await page.getByRole('link', { name: 'Manage Feedback', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Feedback Forms', exact: true })).toBeVisible();
     await page.goto(`${eventPath}/feedback/new`);
-    await page.getByLabel('Feedback name', { exact: true }).fill(`Community celebration feedback ${width}`);
+    await page.getByLabel('Feedback Name', { exact: true }).fill(`Community celebration feedback ${width}`);
     const keyword = `EVENTFB${width}`;
-    await page.getByLabel('Reply keyword').fill(keyword);
+    await page.getByLabel('Reply Keyword').fill(keyword);
     await page.getByLabel('Questions', { exact: true }).fill('Rate this event from 1 to 5?\nWhat would you improve?');
-    await page.getByRole('button', { name: 'Create feedback', exact: true }).click();
+    await page.getByRole('button', { name: 'Create Feedback', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Responses', exact: true })).toBeVisible();
     const feedbackPath = new URL(page.url()).pathname;
-    await page.getByRole('link', { name: 'Review invitation', exact: true }).focus();
+    await page.getByRole('link', { name: 'Review Invitation', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByLabel('Registered contacts', { exact: true })).toBeChecked();
-    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
-    await expect(page.getByLabel('Send now', { exact: true })).not.toBeChecked();
-    await expect(page.getByLabel('Choose a date and time', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Event Registrants', { exact: true })).toBeChecked();
+    await expect(page.getByLabel('Invitation Message', { exact: true })).toHaveValue(new RegExp(keyword));
+    await expect(page.getByLabel('Send Now', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Choose a Date and Time', { exact: true })).not.toBeChecked();
     // This fixture intentionally has unverified historical roster coverage.
     // A community invitation is a separate, explicit audience decision.
-    await page.getByLabel('Contactable community', { exact: true }).check();
-    await page.getByLabel('Send now', { exact: true }).check();
-    await page.getByRole('button', { name: 'Review invitation', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Review invitation', exact: true })).toBeVisible();
-    await expect(page.locator('[data-review="audience"]')).toHaveText('Contactable community');
+    await page.getByLabel('Contact List', { exact: true }).check();
+    await page.getByLabel('Send Now', { exact: true }).check();
+    await page.getByRole('button', { name: 'Review Invitation', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Review Invitation', exact: true })).toBeVisible();
+    await expect(page.locator('[data-review="audience"]')).toHaveText('Contact List');
     await expect(page.locator('[data-review="timing"]')).toHaveText('Send now');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     // Exercise keyboard return to the editable composer without approving a send.
-    await page.getByRole('button', { name: 'Edit invitation', exact: true }).focus();
+    await page.getByRole('button', { name: 'Edit Invitation', exact: true }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByLabel('Invitation message', { exact: true })).toHaveValue(new RegExp(keyword));
+    await expect(page.getByLabel('Invitation Message', { exact: true })).toHaveValue(new RegExp(keyword));
 
     const phone = width === 390 ? '+17205558039' : '+17205558044';
     // A recipient can still be in an old signup when the new invitation
@@ -90,7 +91,7 @@ for (const width of [1440, 390]) {
     await page.getByLabel('Questions (one per line)', { exact: true }).fill('What is your attendee name?');
     await page.getByLabel('Link to an existing event', { exact: true }).check();
     await page.getByLabel('Select event', { exact: true }).selectOption(eventPath.split('/').pop());
-    await page.getByRole('button', { name: 'Save survey flow', exact: true }).click();
+    await page.getByRole('button', { name: 'Save Survey', exact: true }).click();
     await postFakeInbound(page, { phone, body: oldKeyword, width, ordinal: 0 });
     await waitForSavedReply(page, width, 'What is your attendee name?');
     await postFakeInbound(page, { phone, body: keyword, width, ordinal: 1 });
@@ -104,6 +105,7 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`event-feedback-owner-${width}.png`), fullPage: false });
     await page.goto(eventPath);
+    await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Registrations', exact: true }).click();
     await expect(page.locator('.table-responsive tbody tr')).toHaveCount(registrationCount);
     expect(await page.locator('.table-responsive tbody tr td:first-child').allTextContents()).toEqual(registrationNames);
 
@@ -126,14 +128,14 @@ for (const width of [1440, 390]) {
       await login(page, `${role}@browser.test`, role === 'owner' ? 'Owner-pass1!' : 'Staff-pass1!');
       await page.goto('/events/1/feedback');
       await page.getByRole('link', { name: `Expired held recovery ${role} ${width}`, exact: true }).click();
-      await page.getByRole('link', { name: 'Review held invitation', exact: true }).click();
+      await page.getByRole('link', { name: 'Review Held Invitation', exact: true }).click();
       await expect(page.getByText('The original send window has expired.', { exact: false })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Confirm Send Now', exact: true })).toHaveCount(0);
       await expect(page.locator('input[name="review_token"]')).toHaveCount(0);
-      await page.getByRole('link', { name: 'Review sending now', exact: true }).focus();
+      await page.getByRole('link', { name: 'Review Sending Now', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(page.locator('[data-review="timing"]')).toHaveText('Send now after this confirmation');
-      await expect(page.getByRole('button', { name: 'Confirm send now', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Confirm Send Now', exact: true })).toBeVisible();
       if (role === 'staff') {
         const html = await page.content();
         for (const phone of ['+17205550101', '+17205550102', '+15550001111']) expect(html).not.toContain(phone);
@@ -142,11 +144,11 @@ for (const width of [1440, 390]) {
       await page.evaluate(async () => { await document.fonts.ready; });
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth-innerWidth)).toBeLessThanOrEqual(1);
       await page.screenshot({ path: info.outputPath(`expired-held-${role}-${width}.png`), fullPage: false });
-      await page.getByRole('button', { name: 'Confirm send now', exact: true }).click();
+      await page.getByRole('button', { name: 'Confirm Send Now', exact: true }).click();
       await expect(page).toHaveURL(/\/events\/1\/feedback\/\d+$/);
       await expect(page.getByText('Invitation reviewed for sending now.', { exact: false })).toBeVisible();
       await expect(page.getByText('Pending', { exact: true })).toBeVisible();
-      await expect(page.getByRole('link', { name: 'Review held invitation', exact: true })).toHaveCount(0);
+      await expect(page.getByRole('link', { name: 'Review Held Invitation', exact: true })).toHaveCount(0);
     });
   }
 }

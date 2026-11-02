@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }} - {{ product_name }}{% endblock %}
+{% block title %}Send a Message - {{ product_name }}{% endblock %}
 
-{% block page_title %}{{ 'Workspace' if config.SAAS_MODE and current_organization else 'Dashboard' }}{% endblock %}
+{% block page_title %}Send a Message{% endblock %}
 
 {% block breadcrumbs %}
-<span>Overview</span>
+<span>Messaging</span>
 {% endblock %}
 
 {% block content %}
 <div class="workspace-shell">
     {% if config.SAAS_MODE and current_organization %}
-    <details class="dashboard-overview" id="workspaceOverview" open>
-    <summary class="btn btn-outline-secondary mb-2">Workspace overview</summary>
+    <details class="dashboard-overview" id="workspaceOverview">
+    <summary class="btn btn-outline-secondary mb-2">Workspace Status and Usage</summary>
     {% call ui.workspace_summary(workspace_summary) %}
     {% if current_user_is_workspace_owner %}
     <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
@@ -38,13 +38,13 @@
         <section class="mb-4 dashboard-section dashboard-section-send">
             <div class="send-card">
                 <div class="send-card__header">
-                    <h5><i class="bi bi-send-fill me-2"></i>Send SMS Blast</h5>
+                    <h2 class="h5"><i class="bi bi-send-fill me-2"></i>Write Your Message</h2>
                 </div>
                 <div class="send-card__body">
                     {% if composer_event %}<div class="alert alert-info" role="status">
-                        <strong>{{ composer_event.title|private_text }}</strong> · {{ 'Community announcement' if selected_target == 'community' else 'Message registered contacts' }}
-                        {% if related_communications.scheduled %}<details class="mt-2"><summary>Review {{ related_communications.scheduled|length }} related schedules before preparing another send</summary><ul class="mt-2 mb-0">{% for row in related_communications.scheduled %}<li>{{ row.label }} · {{ row.schedule.scheduled_at|localtime }} · {{ row.audience }} · {{ row.schedule.status|private_text }}</li>{% endfor %}</ul></details>{% else %}<div class="small mt-1">No related schedules.</div>{% endif %}
-                        <a class="small" href="{{ url_for('main.event_detail', event_id=composer_event.id, _anchor='messages') }}">Open event messages</a>
+                        <strong>{{ composer_event.title|private_text }}</strong> · {{ 'Contact List Announcement' if selected_target == 'community' else 'Event Registrant Message' }}
+                        {% if related_communications.scheduled %}<details class="mt-2"><summary>Review {{ related_communications.scheduled|length }} Related Schedules Before Sending</summary><ul class="mt-2 mb-0">{% for row in related_communications.scheduled %}<li>{{ row.label }} · {{ row.schedule.scheduled_at|localtime }} · {{ row.audience }} · {{ row.schedule.status|private_text }}</li>{% endfor %}</ul></details>{% else %}<div class="small mt-1">No related schedules.</div>{% endif %}
+                        <a class="small" href="{{ url_for('main.event_detail', event_id=composer_event.id, _anchor='messages') }}">Open Event Messages</a>
                     </div>{% endif %}
                     {% if config.SAAS_MODE and current_organization and not can_send_messages %}
                     <div class="alert alert-warning" role="alert">
@@ -64,15 +64,14 @@
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
                                       placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
-                            <div class="form-text">
-                                <span><span id="charCount">0</span> / 1600 characters</span>
-                                <span class="ms-2">Encoding: <span id="messageEncoding">GSM-7</span></span>
-                                <span class="ms-2">Per message: <span id="segmentCount">0</span> segment(s)</span>
-                                <span class="ms-2"><span id="charsToNextSegment">160</span> characters until the next segment</span>
-                                <span class="ms-2">Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</span>
-                            </div>
-                            <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
+                            <div class="form-text"><span id="charCount">0</span> / 1600 characters. Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</div>
                             <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
+                            <details class="message-usage mt-2">
+                                <summary>How SMS Usage Is Calculated</summary>
+                                <div class="form-text">Long messages use more than one SMS unit per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
+                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS unit(s) per message · <span id="charsToNextSegment">160</span> characters until the next unit</div>
+                                <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
+                            </details>
                         </div>
 
                         <div class="mb-3">
@@ -81,20 +80,20 @@
                                 <input class="form-check-input" type="radio" name="target" id="targetCommunity"
                                        value="community" {% if selected_target != 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetCommunity">
-                                    <i class="bi bi-people me-1"></i>Community Blast
-                                    <span class="text-muted">{{ '(community signup list)' if confirmed_community_signup_consent else '(contacts with community permission)' }}</span>
+                                    <i class="bi bi-people me-1"></i>Contact List
+                                    <span class="text-muted">(eligible contacts with list permission)</span>
                                 </label>
                             </div>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetEvent"
                                        value="event" {% if selected_target == 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetEvent">
-                                    <i class="bi bi-calendar-event me-1"></i>Event Blast
+                                    <i class="bi bi-calendar-event me-1"></i>Event Registrants
                                     <span class="text-muted">(registered contacts with permission for this event)</span>
                                 </label>
                             </div>
                             <div class="form-text">
-                                {% if confirmed_community_signup_consent %}Community signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
+                                {% if confirmed_community_signup_consent %}Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
                             </div>
                             <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
                         </div>
@@ -117,7 +116,7 @@
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" {% if request.method != 'POST' or request.form.get('include_unsubscribe') == 'on' %}checked{% endif %}>
                                 <label class="form-check-label" for="includeUnsubscribe">
-                                    <i class="bi bi-shield-check me-1"></i><strong>Include unsubscribe option</strong>
+                                    <i class="bi bi-shield-check me-1"></i><strong>Include Unsubscribe Option</strong>
                                     <span class="text-muted">- Appends "Reply STOP to unsubscribe"</span>
                                 </label>
                             </div>
@@ -125,14 +124,14 @@
 
                         <details class="advanced-options mb-3" {% if request.form.get('schedule_later') == 'on' or request.form.get('test_mode') == 'on' %}open{% endif %}>
                             <summary class="advanced-options__summary">
-                                <i class="bi bi-sliders me-2"></i>Advanced options
+                                <i class="bi bi-sliders me-2"></i>Delivery Options
                             </summary>
                             <div class="mt-3">
                                 <div class="mb-3">
                                     <div class="form-check">
                                         <input class="form-check-input" type="checkbox" name="schedule_later" id="scheduleLater" {% if request.form.get('schedule_later') == 'on' %}checked{% endif %}>
                                         <label class="form-check-label" for="scheduleLater">
-                                            <i class="bi bi-clock me-1"></i><strong>Schedule for later</strong>
+                                            <i class="bi bi-clock me-1"></i><strong>Schedule for Later</strong>
                                         </label>
                                     </div>
                                     <div class="form-text">
@@ -153,7 +152,7 @@
                                         </div>
                                     </div>
                                     <div class="form-text">
-                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. The scheduler checks every 5 seconds in development, 30 seconds in production.
+                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. Scheduled messages begin processing at or shortly after this time.
                                     </div>
                                 </div>
 
@@ -171,7 +170,7 @@
                                         </div>
                                         <div class="text-muted small">
                                             {% if current_user_is_workspace_owner %}
-                                            <a href="{{ url_for('main.test_recipients_settings') }}" class="btn btn-sm btn-outline-secondary">Manage test recipients</a>
+                                            <a href="{{ url_for('main.test_recipients_settings') }}" class="btn btn-sm btn-outline-secondary">Manage Test Recipients</a>
                                             {% elif saved_test_recipient_count %}
                                             {{ saved_test_recipient_count }} saved test recipient{{ '' if saved_test_recipient_count == 1 else 's' }}
                                             {% else %}
@@ -248,10 +247,10 @@
 
                         <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
-                                <i class="bi bi-send-fill me-2"></i>{{ 'SMS Pending Approval' if config.SAAS_MODE and current_organization and not can_send_messages else 'Send Now' }}
+                                <i class="bi bi-send-fill me-2"></i>{{ 'Messaging Setup In Progress' if config.SAAS_MODE and current_organization and not can_send_messages else 'Review Message' }}
                             </button>
                             {% if config.SAAS_MODE and current_organization and not can_send_messages %}
-                            <div class="form-text text-center">The compose form stays available so you can prepare the first blast while workspace activation finishes.</div>
+                            <div class="form-text text-center">You can draft a message while setup is in progress. Live sending becomes available when setup is complete.</div>
                             {% endif %}
                         </div>
                     </form>
@@ -263,20 +262,20 @@
         <aside class="workspace-command-side">
             {% if config.SAAS_MODE and current_organization and users_missing_email and current_user.is_admin %}
             <div class="workspace-callout workspace-callout--warning" role="alert">
-                <div class="workspace-callout__title">Email cleanup needed</div>
+                <div class="workspace-callout__title">Email Cleanup Needed</div>
                 <p class="workspace-callout__copy">
                     {{ users_missing_email|length }} workspace user{{ '' if users_missing_email|length == 1 else 's' }} {{ 'is' if users_missing_email|length == 1 else 'are' }} missing an email address.
                     Password reset and invite recovery stay limited until those records are updated.
                 </p>
                 <div class="workspace-callout__actions">
-                    <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review users</a>
+                    <a href="{{ url_for('main.users_list') }}" class="btn btn-outline-secondary">Review Users</a>
                 </div>
             </div>
             {% endif %}
 
             {% if config.SAAS_MODE and current_organization and not can_send_messages %}
             <div class="workspace-callout workspace-callout--warning" role="status">
-                <div class="workspace-callout__title">Workspace activation in progress</div>
+                <div class="workspace-callout__title">Workspace Activation in Progress</div>
                 <p class="workspace-callout__copy">
                     {% if current_user_is_workspace_owner %}
                     {{ (send_disabled_reason or 'Finish setup to unlock live SMS sending.')|private_text }}
@@ -286,7 +285,7 @@
                 </p>
                 {% if current_user_is_workspace_owner %}
                 <div class="workspace-callout__actions">
-                    <a href="{{ url_for('main.setup') }}" class="btn btn-outline-primary">Review setup</a>
+                    <a href="{{ url_for('main.setup') }}" class="btn btn-outline-primary">Review Setup</a>
                 </div>
                 {% endif %}
             </div>
@@ -304,7 +303,7 @@
                         <div class="stat-card__label">Total Recipients</div>
                         <div class="stat-card__value">{{ total_recipients }}</div>
                         <div class="stat-card__meta">
-                            {{ community_count }} contactable community • {{ event_registration_count }} current event contacts
+                            {{ community_count }} in Contact List • {{ event_registration_count }} current event contacts
                         </div>
                     </div>
                 </div>
@@ -313,7 +312,7 @@
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--{% if latest_log and latest_log.failure_count == 0 %}success{% elif latest_log %}warning{% else %}dark{% endif %} h-100">
                         <i class="bi bi-send-check-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Last Blast</div>
+                        <div class="stat-card__label">Last Message</div>
                         {% if latest_log %}
                         <div class="stat-card__value">
                             {% if latest_log.status == 'processing' %}In progress{% elif latest_log.failure_count == 0 %}Submitted{% else %}Partial{% endif %}
@@ -323,7 +322,7 @@
                         </div>
                         {% else %}
                         <div class="stat-card__value">—</div>
-                        <div class="stat-card__meta">No blasts sent yet</div>
+                        <div class="stat-card__meta">No messages sent yet</div>
                         {% endif %}
                     </div>
                 </div>
@@ -332,7 +331,7 @@
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Provider acceptance</div>
+                        <div class="stat-card__label">Provider Acceptance</div>
                         {% if success_rate is not none %}
                         <div class="stat-card__value stat-card__value--rate">
                             <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
@@ -355,7 +354,7 @@
                         <div class="stat-card__label">Scheduled</div>
                         <div class="stat-card__value">{{ pending_scheduled_count }}</div>
                         <div class="stat-card__meta">
-                            <a href="{{ url_for('main.scheduled_list') }}">View queue →</a>
+                            <a href="{{ url_for('main.scheduled_list') }}">View Scheduled Messages →</a>
                         </div>
                     </div>
                 </div>
@@ -368,37 +367,37 @@
                 <div class="col-lg-7">
                     <div class="chart-card workspace-launchpad h-100">
                         <div class="chart-card__header">
-                            <h6 class="chart-card__title"><i class="bi bi-stars"></i> Start here</h6>
+                            <h6 class="chart-card__title"><i class="bi bi-stars"></i> Start Here</h6>
                         </div>
                         <p class="workspace-launchpad__copy">
-                            This workspace is ready for first-use testing. Add recipients, invite staff, and send the first blast to unlock reporting, recent activity, and inbound insights.
+                            Add contacts and invite your team. After messaging setup is complete, review and send a message to see activity and results here.
                         </p>
                         <div class="workspace-launchpad__actions">
-                            <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-primary">Open Community</a>
+                            <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-primary">Open Contacts</a>
                             {% if config.SAAS_MODE and current_user.is_admin and not current_user.is_platform_admin %}
                             <a href="{{ url_for('main.team_invite') }}" class="btn btn-outline-secondary">Invite Team Member</a>
                             {% endif %}
-                            <a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">Review Logs</a>
+                            <a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">Message History</a>
                         </div>
                     </div>
                 </div>
                 <div class="col-lg-5">
                     <div class="chart-card workspace-launchpad workspace-launchpad--muted h-100">
                         <div class="chart-card__header">
-                            <h6 class="chart-card__title"><i class="bi bi-layout-text-window"></i> What appears next</h6>
+                            <h6 class="chart-card__title"><i class="bi bi-layout-text-window"></i> What Appears Next</h6>
                         </div>
                         <div class="workspace-launchpad__list">
                             <div class="workspace-launchpad__item">
-                                <strong>Delivery trends</strong>
-                                <span>Populate after the first scheduled or immediate blast.</span>
+                                <strong>Message Trends</strong>
+                                <span>Appear after the first scheduled or immediate message.</span>
                             </div>
                             <div class="workspace-launchpad__item">
-                                <strong>Audience insights</strong>
-                                <span>Grow once community imports or event RSVPs are added.</span>
+                                <strong>Audience Insights</strong>
+                                <span>Update as you add contacts or event registrations.</span>
                             </div>
                             <div class="workspace-launchpad__item">
-                                <strong>Inbound activity</strong>
-                                <span>Shows up when replies, surveys, and keyword matches start coming in.</span>
+                                <strong>Inbound Activity</strong>
+                                <span>Appears when replies, surveys, or keyword matches arrive.</span>
                             </div>
                         </div>
                     </div>
@@ -415,7 +414,7 @@
                     <div class="chart-card h-100">
                         <div class="chart-card__header">
                             <h6 class="chart-card__title">
-                                <i class="bi bi-graph-up"></i> Delivery Trends
+                                <i class="bi bi-graph-up"></i> Message Trends
                             </h6>
                             <span class="text-muted small">Last 7 days</span>
                         </div>
@@ -439,15 +438,15 @@
                         <div class="chart-legend">
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #6366f1"></span>
-                                Community ({{ community_count }})
+                                Contact List ({{ community_count }})
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #8b5cf6"></span>
-                                Current event contacts ({{ event_registration_count }})
+                                Current Event Contacts ({{ event_registration_count }})
                             </div>
                             <div class="chart-legend__item">
                                 <span class="chart-legend__color" style="background: #e2e8f0"></span>
-                                Suppression ({{ unsubscribed_count }})
+                                Opt-Outs ({{ unsubscribed_count }})
                             </div>
                         </div>
                     </div>
@@ -466,17 +465,17 @@
                         <div class="mt-2">
                             <div class="mb-3">
                                 <div class="h3 mb-0">{{ inbound_count_7d }}</div>
-                                <div class="text-muted small">Inbound messages</div>
+                                <div class="text-muted small">Inbound Messages</div>
                             </div>
                             <div class="d-flex justify-content-between mb-2">
-                                <span class="text-muted small">Unread threads</span>
+                                <span class="text-muted small">Unread Conversations</span>
                                 <strong>{{ unread_threads_count }}</strong>
                             </div>
                             <div class="d-flex justify-content-between">
-                                <span class="text-muted small">Active surveys</span>
+                                <span class="text-muted small">Active Surveys</span>
                                 <strong>{{ active_survey_sessions }}</strong>
                             </div>
-                            <a href="{{ url_for('main.inbox_list') }}" class="btn btn-sm btn-outline-primary mt-3">Open inbox</a>
+                            <a href="{{ url_for('main.inbox_list') }}" class="btn btn-sm btn-outline-primary mt-3">Open Inbox</a>
                         </div>
                     </div>
                 </div>
@@ -508,7 +507,7 @@
                         {% else %}
                         <div class="empty-state py-4">
                             <i class="bi bi-hash empty-state__icon"></i>
-                            <div class="empty-state__title">No keyword matches yet</div>
+                            <div class="empty-state__title">No Keyword Matches Yet</div>
                             <div class="empty-state__text">Inbound keyword activity will appear here as messages arrive.</div>
                             <a href="{{ url_for('main.inbox_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Inbox</a>
                         </div>
@@ -522,7 +521,7 @@
         <section class="mb-4 dashboard-section dashboard-section-recent">
             <div class="section-header">
                 <h5 class="section-title"><i class="bi bi-activity"></i> Recent Activity</h5>
-                <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">View all logs</a>
+                <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">Message History</a>
             </div>
             
             {% if recent_logs %}
@@ -536,7 +535,7 @@
                         </div>
                         <div class="activity-item__meta">
                             <span class="activity-item__badge activity-item__badge--success">
-                                <i class="bi bi-check-circle"></i> {{ log.success_count }} sent
+                                <i class="bi bi-check-circle"></i> {{ log.success_count }} provider accepted
                             </span>
                             {% if log.failure_count %}
                             <span class="activity-item__badge activity-item__badge--danger">
@@ -544,7 +543,7 @@
                             </span>
                             {% endif %}
                             <span class="activity-item__badge activity-item__badge--info">
-                                {{ log.target|capitalize }}{% if log.event %}: {{ (log.event.title)|private_text }}{% endif %}
+                                {{ {'community': 'Contact List', 'event': 'Event Registrants'}.get(log.target, log.target)|private_text }}{% if log.event %}: {{ (log.event.title)|private_text }}{% endif %}
                             </span>
                             <a href="{{ url_for('main.log_detail', log_id=log.id) }}" class="btn btn-sm btn-outline-primary ms-auto">
                                 Details <i class="bi bi-arrow-right"></i>
@@ -558,8 +557,8 @@
             <div class="chart-card">
                 <div class="empty-state">
                     <i class="bi bi-inbox empty-state__icon"></i>
-                    <div class="empty-state__title">No activity yet</div>
-                    <div class="empty-state__text">Send your first SMS blast to see activity here.</div>
+                    <div class="empty-state__title">No Activity Yet</div>
+                    <div class="empty-state__text">Send your first message to see activity here.</div>
                     <a href="#message_body" class="btn btn-sm btn-outline-primary empty-state__action">Compose Message</a>
                 </div>
             </div>
@@ -569,12 +568,12 @@
 </div>
 <div class="modal fade" id="sendReviewModal" tabindex="-1" aria-labelledby="sendReviewTitle" aria-describedby="sendReviewExplanation">
     <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
-        <div class="modal-header"><h2 class="modal-title h5" id="sendReviewTitle">Review send</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close review"></button></div>
+        <div class="modal-header"><h2 class="modal-title h5" id="sendReviewTitle">Review Message</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close Review"></button></div>
         <div class="modal-body">
             <p id="sendReviewExplanation">Check the audience, timing and personalized sample before confirming.</p>
             {% include 'send/review_details.html' %}
         </div>
-        <div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Edit message</button><button class="btn btn-primary" type="button" id="confirmReviewedSend">Confirm send</button></div>
+        <div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Edit Message</button><button class="btn btn-primary" type="button" id="confirmReviewedSend">Confirm Send</button></div>
     </div></div>
 </div>
 {% endblock %}
@@ -688,7 +687,7 @@
         const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
         const recipientEstimate = estimatedRecipientCount();
 
-        charCount.textContent = analysis.normalizedBody.length;
+        charCount.textContent = messageBody.value.length;
         if (segmentCount) {
             segmentCount.textContent = analysis.segmentCount;
         }
@@ -701,20 +700,22 @@
         if (messageNormalizationHint) {
             if (analysis.normalizationApplied) {
                 const segmentNote = analysis.segmentsSaved > 0
-                    ? ` Normalization saves ${analysis.segmentsSaved} segment(s).`
+                    ? ` This saves ${analysis.segmentsSaved} SMS unit(s) per recipient.`
                     : '';
-                messageNormalizationHint.textContent = `Twinevia will normalize ${analysis.replacementCount} deterministic punctuation/spacing character(s) before send.${segmentNote}`;
+                messageNormalizationHint.textContent = `Twinevia will simplify ${analysis.replacementCount} punctuation or spacing character(s) before sending.${segmentNote}`;
             } else {
                 messageNormalizationHint.textContent = `Live preview includes the current STOP footer setting.`;
             }
         }
         if (messageUnitEstimate) {
-            if (recipientEstimate > 0 && analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = `Estimated total units: ${recipientEstimate * analysis.segmentCount} (${recipientEstimate} recipient estimate; server finalizes after dedupe, personalization, and suppression filtering).`;
+            if (!messageBody.value.trim()) {
+                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
+            } else if (recipientEstimate > 0 && analysis.segmentCount > 0) {
+                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} units for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
             } else if (analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = 'Estimated total units will appear once a recipient estimate is available.';
+                messageUnitEstimate.textContent = 'Estimated SMS usage appears after you choose an eligible audience.';
             } else {
-                messageUnitEstimate.textContent = 'Estimated total units: 0';
+                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
             }
         }
     }
@@ -732,10 +733,11 @@
         scheduleWrapper.style.display = isScheduled ? 'block' : 'none';
         scheduleDate.required = isScheduled;
         scheduleTime.required = isScheduled;
+        if (sendBtn.disabled) return;
         if (isScheduled) {
-            sendBtn.innerHTML = '<i class="bi bi-clock me-2" aria-hidden="true"></i>Schedule Message';
+            sendBtn.innerHTML = '<i class="bi bi-clock me-2" aria-hidden="true"></i>Review Schedule';
         } else {
-            sendBtn.innerHTML = '<i class="bi bi-send-fill me-2" aria-hidden="true"></i>Send Now';
+            sendBtn.innerHTML = '<i class="bi bi-send-fill me-2" aria-hidden="true"></i>Review Message';
         }
     }
 
@@ -825,7 +827,7 @@
 
         if (targetEvent.checked) {
             if (!eventSelect.value) {
-                errors.push('Please select an event for the event blast.');
+                errors.push('Please select an event for the message.');
                 eventSelect.classList.add('is-invalid');
             }
         }
@@ -885,7 +887,7 @@
                 labels: chartData.trends.labels,
                 datasets: [
                     {
-                        label: 'Sent',
+                        label: 'Provider Accepted',
                         data: chartData.trends.sent,
                         borderColor: '#10b981',
                         backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -898,7 +900,7 @@
                         pointHoverRadius: 6
                     },
                     {
-                        label: 'Failed',
+                        label: 'Submission Failed',
                         data: chartData.trends.failed,
                         borderColor: '#ef4444',
                         backgroundColor: 'rgba(239, 68, 68, 0.1)',
@@ -955,8 +957,8 @@
         trendsCtx.parentElement.innerHTML = `
             <div class="empty-state">
                 <i class="bi bi-graph-up empty-state__icon" aria-hidden="true"></i>
-                <div class="empty-state__title">No trend data yet</div>
-                <div class="empty-state__text">Send messages to see delivery trends.</div>
+                <div class="empty-state__title">No Trend Data Yet</div>
+                <div class="empty-state__text">Send messages to see submission trends.</div>
             </div>
         `;
     }
@@ -972,7 +974,7 @@
             new Chart(audienceCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Community', 'Event contacts', 'Suppression'],
+                    labels: ['Contact List', 'Event Contacts', 'Opt-Outs'],
                     datasets: [{
                         data: [communityCount, eventCount, unsubCount],
                         backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],
@@ -1003,9 +1005,9 @@
             audienceCtx.parentElement.innerHTML = `
                 <div class="empty-state">
                     <i class="bi bi-people empty-state__icon" aria-hidden="true"></i>
-                    <div class="empty-state__title">No recipients yet</div>
-                    <div class="empty-state__text">Add members or registrations to build your audience.</div>
-                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Community</a>
+                    <div class="empty-state__title">No Recipients Yet</div>
+                    <div class="empty-state__text">Add contacts or registrations to build your audience.</div>
+                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Contacts</a>
                 </div>
             `;
         }

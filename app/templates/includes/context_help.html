@@ -1,0 +1,8 @@
+<details class="context-help" data-context-help>
+    <summary><i class="bi bi-question-circle" aria-hidden="true"></i> About This Page</summary>
+    <div class="context-help__body">
+        <p>{{ workspace_page_help.summary }}</p>
+        <ol>{% for step in workspace_page_help.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+        <a href="{{ url_for('main.help_center', _anchor=workspace_page_help.topic) }}">Read the {{ workspace_page_help.title }} Guide <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
+    </div>
+</details>

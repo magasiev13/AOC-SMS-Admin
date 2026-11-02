@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Help & Getting Started - {{ product_name }}{% endblock %}
+{% block page_title %}Help & Getting Started{% endblock %}
+{% block breadcrumbs %}<span>{{ 'Platform' if help_platform else 'Workspace' }}</span> / <span>Help</span>{% endblock %}
+{% block content %}
+<div class="help-center">
+    <section class="help-intro">
+        <div><span class="help-role">{{ help_role }}</span>
+        <h2>{{ 'Support Your Organizations' if help_platform else 'What Would You Like to Do?' }}</h2>
+        <p>{{ 'Find the next customer task without mixing platform access with workspace activity.' if help_platform else 'Send text messages, manage replies, and organize event contacts. Start with a task below.' }}</p></div>
+        <form method="GET" action="{{ url_for('main.help_center') }}" role="search" class="help-search">
+            <label for="helpSearch" class="form-label">Search Help</label>
+            <div class="input-group"><input id="helpSearch" class="form-control" type="search" name="q" maxlength="100" value="{{ help_query|private_text }}" placeholder="Try setup, contacts, or scheduling"><button class="btn btn-primary" type="submit">Search</button></div>
+        </form>
+    </section>
+    {% if help_setup and not help_query %}
+    <aside class="help-setup" role="note">
+        <div><h2>{{ help_setup.title }}</h2><p>{{ help_setup['copy'] }}</p></div>
+        <a class="btn btn-outline-primary" href="{{ help_setup.href }}">{{ help_setup.action }}</a>
+    </aside>
+    {% endif %}
+    {% if not help_query %}
+    <nav class="help-shortcuts" aria-label="Common Tasks">
+        {% if help_platform %}
+        <a href="{{ url_for('main.platform_organizations_list') }}"><i class="bi bi-buildings" aria-hidden="true"></i><strong>Organizations</strong><span>Review customer setup and status.</span></a>
+        <a href="{{ url_for('main.platform_pilot_applications') }}"><i class="bi bi-inbox" aria-hidden="true"></i><strong>Pilot Requests</strong><span>Review incoming workspace requests.</span></a>
+        {% else %}
+        <a href="{{ url_for('main.dashboard') }}"><i class="bi bi-send" aria-hidden="true"></i><strong>Send a Message</strong><span>Choose recipients, review, then confirm.</span></a>
+        <a href="{{ url_for('main.inbox_list') }}"><i class="bi bi-chat-left-text" aria-hidden="true"></i><strong>Inbox</strong><span>Read and reply to conversations.</span></a>
+        <a href="{{ url_for('main.community_list') }}"><i class="bi bi-people" aria-hidden="true"></i><strong>Contacts</strong><span>Find people in your saved directory.</span></a>
+        <a href="{{ url_for('main.events_list') }}"><i class="bi bi-calendar-event" aria-hidden="true"></i><strong>Events</strong><span>Manage registrations and follow-up.</span></a>
+        {% endif %}
+    </nav>
+    {% endif %}
+    <section aria-label="Help Topics" class="help-topics">
+        {% for topic in topics %}
+        <details id="{{ topic.id }}" class="help-topic" data-help-topic {% if help_query %}open{% endif %}>
+            <summary><span><strong>{{ topic.title }}</strong><span>{{ topic.summary }}</span></span><i class="bi bi-chevron-down" aria-hidden="true"></i></summary>
+            <div class="help-topic__body"><ol>{% for step in topic.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+                {% if topic.actions %}<div class="help-topic__actions">{% for action in topic.actions %}<a class="btn btn-outline-primary" href="{{ action.href }}">{{ action.label }}</a>{% endfor %}</div>{% endif %}
+            </div>
+        </details>
+        {% else %}
+        <div class="help-empty" role="status"><h2>No Matching Help Topics</h2><p>Try a task such as setup, contacts, or scheduling.</p><a class="btn btn-outline-primary" href="{{ url_for('main.help_center') }}">Show All Topics</a></div>
+        {% endfor %}
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+    const revealTopic = () => {
+        let id;
+        try { id = decodeURIComponent(window.location.hash.slice(1)); } catch { return; }
+        const topic = document.getElementById(id);
+        if (topic && topic.matches('details[data-help-topic]')) topic.open = true;
+    };
+    revealTopic();
+    window.addEventListener('hashchange', revealTopic);
+})();
+</script>
+{% endblock %}

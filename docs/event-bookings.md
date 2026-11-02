@@ -12,6 +12,20 @@ community application or manual operator can use the same projection service.
 The WordPress adapter preserves its existing provider-prefixed booking IDs for
 compatibility. Other applications supply their own stable transaction IDs.
 
+## Event workspace
+
+The event workspace opens to Overview, with roster verification and tasks that
+need attention. Registrations contains separate booking and messaging-contact
+lists, with Add Booking and Import CSV available as expandable tools. Messages
+contains scheduled messages and their outcomes; Feedback contains the event's
+feedback forms and invitation actions. Each section has a bookmarkable URL
+fragment, and browsers without JavaScript can still read every section.
+
+Messaging contacts are paged in groups of 100 independently of booking pages.
+Event totals, permission checks, audience previews and CSV exports continue to
+use the complete event. Paging limits displayed records and rendered HTML;
+the roster summaries still inspect the complete event data.
+
 ## Transaction identity and revision contract
 
 The identity is organization, source, source scope and source booking ID.

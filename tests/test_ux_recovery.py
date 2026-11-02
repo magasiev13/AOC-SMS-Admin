@@ -159,7 +159,7 @@ def test_inbox_history_is_bounded_and_keyset_pages_have_no_missing_or_duplicate_
     assert displayed_message_ids(oldest) == [message.id for message in messages[:5]]
     newer = ux.client.get(f'/inbox?thread={thread.id}&after={messages[4].id}')
     assert displayed_message_ids(newer) == [message.id for message in messages[5:105]]
-    assert b'Older messages' in latest.data and b'Newer messages' in older.data
+    assert b'Older Messages' in latest.data and b'Newer Messages' in older.data
 
 
 def test_inbox_cursor_and_activity_stay_tenant_scoped_and_detect_deletion(ux):
@@ -267,11 +267,11 @@ def test_a2p_approval_without_active_sender_does_not_claim_ready(ux):
     org = ux.db.session.get(ux.models.Organization, ux.org_id)
     with ux.app.test_request_context('/setup'):
         launch = _launch_readiness_view(org, onboarding, profile)
-        assert launch['heading'] == 'Await sender assignment' and launch['can_send'] is False
+        assert launch['heading'] == 'Support Is Setting Up Your Number' and launch['can_send'] is False
         profile.from_number = '+17205550901'
         profile.provider_status = 'active'
         launch = _launch_readiness_view(org, onboarding, profile)
-        assert launch['heading'] == 'Ready for a controlled test' and launch['can_send'] is True
+        assert launch['heading'] == 'Ready for an Internal Test' and launch['can_send'] is True
 
 
 def permitted_contact(ux, phone='+17205550820'):
@@ -386,7 +386,7 @@ def test_native_review_fallback_and_edit_preserve_original_composition(ux):
     login(ux)
     data = review_fields(schedule_later='on', schedule_date='2099-12-31', schedule_time='23:59', client_timezone='America/Denver')
     response = ux.client.post('/dashboard', data=data)
-    assert response.status_code == 200 and b'Confirm schedule' in response.data
+    assert response.status_code == 200 and b'Confirm Schedule' in response.data
     assert b'America/Denver' in response.data and b'Reviewed' in response.data
     assert ux.models.ScheduledMessage.query.count() == 0
     token = re.search(rb'name="review_token" value="([^"]+)"', response.data).group(1).decode()

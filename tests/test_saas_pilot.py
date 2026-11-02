@@ -623,10 +623,10 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"External Twilio activation", response.data)
-        self.assertIn(b"Workspace owners are read-only here", response.data)
+        self.assertIn(b"Connect Your Messaging Account", response.data)
+        self.assertIn(b"What Happens Next", response.data)
         self.assertNotIn(b"Legal business name", response.data)
-        self.assertNotIn(b"Submit for Twilio review", response.data)
+        self.assertNotIn(b'name="action" value="submit_onboarding"', response.data)
         self.assertIsNone(
             self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
         )
@@ -677,17 +677,17 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Latest provider issue", response.data)
+        self.assertIn(b"Latest Provider Issue", response.data)
         self.assertIn(b"Twilio code:", response.data)
         self.assertIn(b"30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
-        self.assertIn(b"Resubmit for Twilio review", response.data)
+        self.assertIn(b"Resubmit for Messaging Approval", response.data)
 
         launch_response = self.client.get("/setup?step=launch")
 
         self.assertEqual(launch_response.status_code, 200)
-        self.assertIn(b"Needs packet correction", launch_response.data)
-        self.assertIn(b"Fix the CTA and compliance details before resubmitting.", launch_response.data)
+        self.assertIn(b"Update Your Organization Details", launch_response.data)
+        self.assertIn(b"Some organization or signup details need correction. Review the reported issue, update the details, and submit again.", launch_response.data)
         self.assertNotIn(b"Twilio review is in progress.", launch_response.data)
 
     def test_owner_setup_launch_shows_recent_twilio_activity_and_sender_assignment_guidance(self) -> None:
@@ -791,7 +791,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup?step=launch")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Workspace is live", response.data)
+        self.assertIn(b"Messaging Is Ready", response.data)
         self.assertIn(b"First smoke test", response.data)
         self.assertIn(b"Submission recorded", response.data)
         self.assertIn(b"Verify receipt, STOP and HELP separately", response.data)
@@ -837,7 +837,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Latest provider issue", response.data)
+        self.assertIn(b"Latest Provider Issue", response.data)
         self.assertIn(b"Twilio code:", response.data)
         self.assertIn(b"30909", response.data)
         self.assertIn(b"CTA could not be verified.", response.data)
@@ -861,7 +861,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Customer-managed Twilio activation is handled by your platform admin.", response.data)
-        self.assertIn(b"External Twilio activation", response.data)
+        self.assertIn(b"Connect Your Messaging Account", response.data)
         self.assertIsNone(
             self.OrganizationA2POnboarding.query.filter_by(organization_id=organization.id).first()
         )
@@ -878,13 +878,13 @@ class TestSaasPilotFoundation(unittest.TestCase):
         response = self.client.get("/setup/pending")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"This workspace is still being activated.", response.data)
-        self.assertIn(b"No action is needed from this account right now.", response.data)
+        self.assertIn(b"Your workspace is available. Live messaging is waiting for setup to finish.", response.data)
+        self.assertIn(b"You do not need to change setup settings. You can use the workspace now, or check whether live messaging is ready.", response.data)
         self.assertNotIn(b"customer-managed Twilio connection", response.data)
         self.assertNotIn(b"External messaging:", response.data)
         self.assertNotIn(b"Billing status:", response.data)
         self.assertNotIn(b"Legal business name", response.data)
-        self.assertNotIn(b"Submit for Twilio review", response.data)
+        self.assertNotIn(b'name="action" value="submit_onboarding"', response.data)
 
     def test_setup_status_payload_for_platform_managed_owner_exposes_billing_step_contract(self) -> None:
         self._login_owner()
@@ -956,7 +956,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'data-current-step="billing"', response.data)
-        self.assertIn(b"Activate billing", response.data)
+        self.assertIn(b"Activate Billing", response.data)
         self.assertIn(b"$59.99/mo", response.data)
         self.assertIn(b"Annual upfront", response.data)
         self.assertIn(b"$149.99 setup fee", response.data)
@@ -973,7 +973,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'data-current-step="provider"', response.data)
-        self.assertIn(b"External Twilio activation", response.data)
+        self.assertIn(b"Connect Your Messaging Account", response.data)
 
     def test_setup_pending_redirects_owner_back_to_setup(self) -> None:
         self._login_owner()
@@ -1280,11 +1280,11 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Carrier review in progress", response.data)
         self.assertIn(b"Live SMS is paused.", response.data)
-        self.assertIn(b"Workspace activation in progress", response.data)
+        self.assertIn(b"Workspace Activation in Progress", response.data)
         self.assertNotIn(b"Configure keyword automation", response.data)
         self.assertNotIn(b"Billing active", response.data)
         self.assertNotIn(b"Brand pending-review", response.data)
-        self.assertIn(b"SMS Pending Approval", response.data)
+        self.assertIn(b"Messaging Setup In Progress", response.data)
 
     def test_staff_cannot_access_billing_routes(self) -> None:
         staff_user = self.AppUser(
@@ -2427,7 +2427,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
         self._login_owner()
         setup_response = self.client.get("/setup?step=billing")
         self.assertEqual(setup_response.status_code, 200)
-        self.assertIn(b"Pay $149.99 setup fee", setup_response.data)
+        self.assertIn(b"Pay $149.99 Setup Fee", setup_response.data)
         self.assertIn(b"not charged until provider approval", setup_response.data)
         self.assertNotIn(b"$59.99/mo", setup_response.data)
 

@@ -79,8 +79,8 @@ test('owner can manage test recipients and use dashboard test mode states', asyn
     await expect(page.locator('#testRecipientPhone')).toContainText('Treasurer');
 
     await page.locator('#testRecipientPhone').selectOption('+17205550123');
-    await page.getByLabel('Message').fill('Owner immediate test send');
-    await page.getByRole('button', { name: 'Send Now' }).click();
+    await page.getByLabel('Message', { exact: true }).fill('Owner immediate test send');
+    await page.getByRole('button', { name: 'Review Message' }).click();
     await confirmSendReview(page);
     await expect(page).toHaveURL(/\/logs\/\d+$/);
     await expect(page.locator('body')).toContainText('Test');
@@ -89,11 +89,11 @@ test('owner can manage test recipients and use dashboard test mode states', asyn
     await page.locator('.advanced-options__summary').click();
     await page.getByLabel('Test Mode').check();
     await page.locator('#testRecipientPhone').selectOption('+17205550123');
-    await page.getByLabel('Schedule for later').check();
-    await page.getByLabel('Message').fill('Owner single-recipient scheduled test');
+    await page.getByLabel('Schedule for Later').check();
+    await page.getByLabel('Message', { exact: true }).fill('Owner single-recipient scheduled test');
     await page.getByLabel('Date').fill('2099-12-31');
     await page.getByLabel('Time').fill('23:59');
-    await page.getByRole('button', { name: /Schedule Message|Send Now/ }).click();
+    await page.getByRole('button', { name: /Review Schedule|Review Message/ }).click();
     await confirmSendReview(page);
     await expect(page).toHaveURL(/\/scheduled$/);
     await expect(page.getByText('Message scheduled for')).toBeVisible();
@@ -157,7 +157,7 @@ test('platform admin can use platform test send only on send-ready orgs', async 
   await page.goto(activeOrgHref);
   await expect(page.getByText('Platform Test Send')).toBeVisible();
   await page.getByLabel('Destination').fill('+17205550124');
-  await page.getByLabel('Message').fill('Browser operational test send');
+  await page.getByLabel('Message', { exact: true }).fill('Browser operational test send');
   await page.getByRole('button', { name: 'Send Operational Test' }).click();
   await expect(page.getByText('Platform operational test send completed.')).toBeVisible();
 

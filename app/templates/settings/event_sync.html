@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}App integrations - {{ product_name }}{% endblock %}
+{% block title %}App Integrations - {{ product_name }}{% endblock %}
 
-{% block page_title %}App integrations{% endblock %}
+{% block page_title %}App Integrations{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>App integrations</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>App Integrations</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -19,15 +19,15 @@
 {% set setup_block = integration_view.setup_block.replace('PASTE_GENERATED_SECRET_HERE', generated_secret).replace('GENERATE_AND_PASTE_SECRET_HERE', generated_secret) if generated_secret else integration_view.setup_block %}
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <nav class="d-flex flex-wrap gap-2" aria-label="Integration types"><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'app' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='app') }}">Connected apps</a><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'wordpress' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='wordpress') }}">WordPress</a></nav>
+    <nav class="d-flex flex-wrap gap-2" aria-label="Integration types"><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'app' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='app') }}">Connected Apps</a><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'wordpress' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='wordpress') }}">WordPress</a></nav>
 
     <div class="workspace-detail-layout">
         <div class="workspace-detail-main">
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">{{ 'App connection' if integration_view.provider == 'app' else 'WordPress connection' }}</h2>
-                        <p class="workspace-panel__meta">{% if integration_view.provider == 'app' %}Connect an event platform, registration form or business application using the signed event and booking contract. The connection belongs to this workspace.{% else %}Events Manager and WPForms changes will sync after this connection is enabled on both sides.{% endif %}</p>
+                        <h2 class="workspace-panel__title">{{ 'App Connection' if integration_view.provider == 'app' else 'WordPress Connection' }}</h2>
+                        <p class="workspace-panel__meta">{% if integration_view.provider == 'app' %}Connect an event platform, form or business app to this workspace using a compatible connector or adapter.{% else %}Events Manager and WPForms changes will sync after this connection is enabled on both sides.{% endif %}</p>
                     </div>
                 </div>
 
@@ -37,11 +37,11 @@
                     <div class="workspace-panel__body">
                         <div class="form-check form-switch mb-4">
                             <input class="form-check-input" type="checkbox" role="switch" id="eventSyncEnabled" name="enabled" {% if integration_view.enabled %}checked{% endif %}>
-                            <label class="form-check-label" for="eventSyncEnabled">{{ 'Enable app integration' if integration_view.provider == 'app' else 'Enable WordPress event sync' }}</label>
+                            <label class="form-check-label" for="eventSyncEnabled">{{ 'Enable App Integration' if integration_view.provider == 'app' else 'Enable WordPress Event Sync' }}</label>
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label" for="eventSyncEndpoint">Webhook endpoint</label>
+                            <label class="form-label" for="eventSyncEndpoint">Webhook Endpoint</label>
                             <input class="form-control" id="eventSyncEndpoint" type="text" readonly value="{{ integration_view.endpoint }}">
                         </div>
 
@@ -55,16 +55,16 @@
                         {% endif %}
 
                         <div class="mb-0">
-                            <label class="form-label" for="wordpressSetupBlock">{{ 'App connection contract' if integration_view.provider == 'app' else 'WordPress setup block' }}</label>
+                            <label class="form-label" for="wordpressSetupBlock">{{ 'App Connection Details' if integration_view.provider == 'app' else 'WordPress Setup Code' }}</label>
                             <textarea class="form-control font-monospace" id="wordpressSetupBlock" rows="5" readonly>{{ setup_block }}</textarea>
-                            {% if integration_view.provider == 'app' and integration_view.source_namespace_prefix %}<div class="form-text">Source identities from this connection begin with <code>{{ integration_view.source_namespace_prefix }}</code>. Use the complete source identity when connecting multiple apps to one event's registration roster.</div>{% endif %}
+                            {% if integration_view.provider == 'app' and integration_view.source_namespace_prefix %}<div class="form-text">Source IDs from this connection start with <code>{{ integration_view.source_namespace_prefix }}</code>. Use the full ID when choosing this app’s registration source for an event.</div>{% endif %}
                         </div>
                     </div>
 
                     <div class="workspace-panel__footer">
-                        <div class="text-muted small">{% if integration_view.provider == 'app' %}Configure this endpoint and signing secret in your app or adapter. Event and booking updates do not approve roster coverage or create feedback invitations.{% else %}Install the WordPress helper plugin and configure its endpoint, signing secret and event form bindings.{% endif %}</div>
+                        <div class="text-muted small">{% if integration_view.provider == 'app' %}Configure these details in your app or adapter. Verify synced registration lists before using them for invitations; each feedback invitation requires separate approval.{% else %}Install the WordPress plugin, then add the endpoint, signing secret and form-to-event links.{% endif %}</div>
                         <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">Save settings</button>
+                            <button type="submit" class="btn btn-primary">Save Settings</button>
                         </div>
                     </div>
                 </form>
@@ -75,18 +75,18 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Sync status</h2>
+                        <h2 class="workspace-panel__title">Connection Status</h2>
                     </div>
                 </div>
                 <div class="workspace-panel__body">
                     <ul class="workspace-support-list">
                         <li>Last event: {{ integration_view.last_event_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_event_synced_at else 'None yet' }}</li>
-                        <li>Last signup: {{ integration_view.last_signup_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_signup_synced_at else 'None yet' }}</li>
-                        <li>Last reconcile: {{ integration_view.last_reconcile_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
+                        <li>Last registration: {{ integration_view.last_signup_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_signup_synced_at else 'None yet' }}</li>
+                        <li>Last sync report: {{ integration_view.last_reconcile_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
                     </ul>
                     {% if integration_view.last_error_message %}
                     <div class="workspace-callout workspace-callout--warning mt-3">
-                        <h3 class="workspace-callout__title">Latest error</h3>
+                        <h3 class="workspace-callout__title">Latest Error</h3>
                         <p class="workspace-callout__copy">{{ integration_view.last_error_message }}</p>
                     </div>
                     {% endif %}
@@ -96,7 +96,7 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Secret</h2>
+                        <h2 class="workspace-panel__title">Signing Secret</h2>
                     </div>
                 </div>
                 <div class="workspace-panel__body">
@@ -104,7 +104,7 @@
                     <form method="POST" action="{{ url_for('main.event_sync_rotate_secret') }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="provider" value="{{ integration_view.provider }}">
-                        <button type="submit" class="btn btn-outline-danger w-100">Rotate secret</button>
+                        <button type="submit" class="btn btn-outline-danger w-100">Rotate Secret</button>
                     </form>
                 </div>
             </section>

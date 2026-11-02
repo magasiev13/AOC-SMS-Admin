@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Suppression - {{ product_name }}{% endblock %}
+{% block title %}Opt-Outs &amp; Blocks - {{ product_name }}{% endblock %}
 
-{% block page_title %}Suppression{% endblock %}
+{% block page_title %}Opt-Outs &amp; Blocks{% endblock %}
 
 {% set can_manage_unsubscribed = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Suppression</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Opt-Outs &amp; Blocks</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -20,13 +20,19 @@
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
 <a href="{{ url_for('main.unsubscribed_add') }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-plus-lg me-1"></i>Add to Suppression
+    <i class="bi bi-plus-lg me-1"></i>Block Number
 </a>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-{% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and dataset exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
+{% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and CSV exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
+{% set blocks_empty_title = 'No Matching Opt-Outs or Blocks' if search else 'No Opt-Outs or Blocks Yet' %}
+{% set blocks_empty_body = 'No opt-outs or blocks match your search. Try another search or clear it.' if search else ('Contacts who opt out and blocked numbers appear here. Block a number or import a CSV when needed.' if can_manage_unsubscribed else 'Contacts who opt out and blocked numbers will appear here.') %}
+{% set blocks_empty_primary_href = url_for('main.unsubscribed_list', sort=sort_key, dir=sort_dir) if search else (url_for('main.unsubscribed_add') if can_manage_unsubscribed else None) %}
+{% set blocks_empty_primary_label = 'Clear Search' if search else ('Block Number' if can_manage_unsubscribed else None) %}
+{% set blocks_empty_secondary_href = url_for('main.unsubscribed_import') if can_manage_unsubscribed and not search else None %}
+{% set blocks_empty_secondary_label = 'Import CSV' if can_manage_unsubscribed and not search else None %}
 <div class="alert alert-success d-none" role="status" aria-live="polite" id="backfillAlert"></div>
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
@@ -36,9 +42,9 @@
             url_for('main.unsubscribed_list'),
             'Search by name, phone, reason, category, or source' if can_view_contact_numbers else 'Search by name, reason, category, or source',
             value=search,
-            aria_label='Search suppression list',
-            title='Search',
-            meta='Search combined unsubscribed and suppressed contacts.',
+            aria_label='Search Opt-Outs and Blocks',
+            title='Search Opt-Outs & Blocks',
+            meta='Find contacts who opted out and numbers blocked from sending.',
             target_ids='unsubscribedTable'
         ) %}
         <input type="hidden" name="sort" value="{{ sort_key }}">
@@ -48,14 +54,14 @@
         <div class="card app-card collection-panel collection-panel--results suppression-results-card">
             <div class="card-header suppression-results-header d-flex flex-wrap justify-content-between align-items-center gap-3">
                 <div>
-                    <h2 class="collection-panel__title">Suppression entries</h2>
-                    <p class="collection-panel__meta">Review unsubscribed contacts, manual suppressions, and backfill results before the next send.</p>
+                    <h2 class="collection-panel__title">Opt-Outs &amp; Blocks</h2>
+                    <p class="collection-panel__meta">Review contacts who opted out and numbers blocked from sending. Removing a record does not grant SMS permission.</p>
                 </div>
                 {% if can_manage_unsubscribed %}
                 <div class="d-flex flex-wrap justify-content-end align-items-center gap-2">
-                    <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-                        <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
-                        <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Bulk Selection">
+                        <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select All</button>
+                        <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select None</button>
                     </div>
                     <div class="bulk-selection-actions" id="bulkSelectionActions">
                         <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
@@ -63,7 +69,7 @@
                         </span>
                         <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                                 data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
-                            <i class="bi bi-trash me-1"></i>Delete selected
+                            <i class="bi bi-trash me-1"></i>Remove Selected
                         </button>
                     </div>
                     <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.unsubscribed_bulk_delete') }}" style="display:none;">
@@ -80,7 +86,7 @@
                             {% if can_manage_unsubscribed %}
                             <th width="40">
                                 {% if entries %}
-                                <input class="form-check-input" type="checkbox" id="selectAllEntries" aria-label="Select all entries">
+                                <input class="form-check-input" type="checkbox" id="selectAllEntries" aria-label="Select All Records">
                                 {% endif %}
                             </th>
                             {% endif %}
@@ -132,9 +138,9 @@
                                 {% if can_manage_unsubscribed %}
                                 <td>
                                     {% if entry.entry_type == 'unsubscribed' %}
-                                    <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                    <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select Record">
                                     {% else %}
-                                    <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                    <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select Record">
                                     {% endif %}
                                 </td>
                                 {% endif %}
@@ -142,7 +148,7 @@
                                 {% if can_view_contact_numbers %}<td data-sort-value="{{ entry.phone }}"><code>{{ entry.phone }}</code></td>{% endif %}
                                 <td data-sort-value="{{ (entry.reason or '')|private_text }}">{{ (entry.reason or '-')|private_text }}</td>
                             <td data-sort-value="{{ entry.category|private_text }}">
-                                <span class="badge bg-light text-dark text-uppercase">{{ entry.category|private_text }}</span>
+                                <span class="badge bg-light text-dark">{{ entry.category|private_text }}</span>
                                 </td>
                             <td data-sort-value="{{ (entry.source or '')|private_text }}"><span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span></td>
                                 <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
@@ -151,12 +157,12 @@
                                     {% if entry.entry_type == 'unsubscribed' %}
                                     <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}" class="row-actions suppression-row-actions" data-row-actions>
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove" aria-label="Remove entry">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove Record" aria-label="Remove Record">
                                             <i class="bi bi-trash"></i>
                                         </button>
                                     </form>
                                     {% else %}
-                                    <span class="badge bg-light text-muted">Suppressed</span>
+                                    <span class="badge bg-light text-muted">Blocked</span>
                                     {% endif %}
                                 </td>
                                 {% endif %}
@@ -167,12 +173,12 @@
                             <td colspan="{{ 8 if can_manage_unsubscribed else 7 }}" class="py-5">
                                 {{ ui.empty_state(
                                     'bi-person-x',
-                                    'No suppression entries found',
-                                    'Add a contact or import a CSV list to start blocking sends to these numbers.',
-                                    primary_href=url_for('main.unsubscribed_add') if can_manage_unsubscribed else None,
-                                    primary_label='Add to suppression' if can_manage_unsubscribed else None,
-                                    secondary_href=url_for('main.unsubscribed_import') if can_manage_unsubscribed else None,
-                                    secondary_label='Import CSV' if can_manage_unsubscribed else None,
+                                    blocks_empty_title,
+                                    blocks_empty_body,
+                                    primary_href=blocks_empty_primary_href,
+                                    primary_label=blocks_empty_primary_label,
+                                    secondary_href=blocks_empty_secondary_href,
+                                    secondary_label=blocks_empty_secondary_label,
                                     primary_class='btn btn-primary btn-sm',
                                     secondary_class='btn btn-outline-secondary btn-sm'
                                 ) }}
@@ -211,7 +217,7 @@
                                 {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ entry.phone }}</code></div>{% endif %}
                                 <div class="text-muted small mt-1">{{ (entry.reason or '-')|private_text }}</div>
                                 <div class="d-flex flex-wrap gap-2 mt-2">
-                                <span class="badge bg-light text-dark text-uppercase">{{ entry.category|private_text }}</span>
+                                <span class="badge bg-light text-dark">{{ entry.category|private_text }}</span>
                                 <span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span>
                                 </div>
                                 <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
@@ -219,9 +225,9 @@
                             {% if can_manage_unsubscribed %}
                             <div class="d-flex flex-column align-items-end gap-2">
                                 {% if entry.entry_type == 'unsubscribed' %}
-                                <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                <input class="form-check-input entry-checkbox" type="checkbox" name="unsubscribed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select Record">
                                 {% else %}
-                                <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select entry">
+                                <input class="form-check-input entry-checkbox" type="checkbox" name="suppressed_ids" value="{{ entry.id }}" form="bulkDeleteForm" aria-label="Select Record">
                                 {% endif %}
                             </div>
                             {% endif %}
@@ -230,8 +236,8 @@
                         <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
                             <form method="POST" action="{{ url_for('main.unsubscribed_delete', entry_id=entry.id) }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove entry">
-                                    <i class="bi bi-trash me-1"></i>Remove
+                                <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove Record">
+                                    <i class="bi bi-trash me-1"></i>Remove Record
                                 </button>
                             </form>
                         </div>
@@ -241,12 +247,12 @@
                 {% else %}
                 {{ ui.empty_state(
                     'bi-person-x',
-                    'No suppression entries found',
-                    'Add a contact or import a CSV list to start blocking sends to these numbers.',
-                    primary_href=url_for('main.unsubscribed_add') if can_manage_unsubscribed else None,
-                    primary_label='Add to suppression' if can_manage_unsubscribed else None,
-                    secondary_href=url_for('main.unsubscribed_import') if can_manage_unsubscribed else None,
-                    secondary_label='Import CSV' if can_manage_unsubscribed else None,
+                    blocks_empty_title,
+                    blocks_empty_body,
+                    primary_href=blocks_empty_primary_href,
+                    primary_label=blocks_empty_primary_label,
+                    secondary_href=blocks_empty_secondary_href,
+                    secondary_label=blocks_empty_secondary_label,
                     primary_class='btn btn-primary btn-sm',
                     secondary_class='btn btn-outline-secondary btn-sm'
                 ) }}
@@ -256,12 +262,12 @@
             {% if entries or can_manage_unsubscribed %}
             <div class="card-footer suppression-card-footer d-flex flex-wrap justify-content-between align-items-center gap-3">
                 {% if entries %}
-                <span>Showing {{ entries|length }} of {{ total_count }} contact(s)</span>
+                <span>Showing {{ entries|length }} of {{ total_count }} records</span>
                 {% else %}
-                <span>No entries to show</span>
+                <span>No records to show</span>
                 {% endif %}
                 {% if entries and total_pages > 1 %}
-                <nav aria-label="Suppression list pagination">
+                <nav aria-label="Opt-Outs and Blocks Pagination">
                     <ul class="pagination pagination-sm mb-0">
                         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
                             <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
@@ -289,7 +295,7 @@
                 <form method="POST" action="{{ url_for('main.unsubscribed_backfill') }}" class="suppression-maintenance-action" data-backfill-form>
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-secondary" data-backfill-button>
-                        <i class="bi bi-arrow-repeat me-1"></i>Backfill from logs
+                        <i class="bi bi-arrow-repeat me-1"></i>Review Message History
                     </button>
                 </form>
                 {% endif %}
@@ -303,15 +309,15 @@
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="bulkDeleteModalTitle">Confirm Bulk Delete</h5>
+                <h5 class="modal-title" id="bulkDeleteModalTitle">Remove Selected Records</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                Delete <strong id="bulkDeleteCount"></strong> selected entry/entries?
+                Remove <strong id="bulkDeleteCount"></strong> selected records? This does not grant SMS permission. Other opt-outs or blocks may still prevent sends.
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-danger" id="confirmBulkDeleteBtn">Delete</button>
+                <button type="button" class="btn btn-danger" id="confirmBulkDeleteBtn">Remove Records</button>
             </div>
         </div>
     </div>
@@ -329,14 +335,14 @@
         backfillForm.addEventListener('submit', async (event) => {
             event.preventDefault();
 
-            if (!confirm('Run suppression backfill from message logs?')) {
+            if (!confirm('Review past message failures for opt-outs and blocks?')) {
                 return;
             }
 
             if (backfillButton) {
                 backfillButton.disabled = true;
                 backfillButton.classList.add('disabled');
-                backfillButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Running backfill...';
+                backfillButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Reviewing History...';
             }
 
             if (backfillAlert) {
@@ -356,7 +362,7 @@
 
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) {
-                    throw new Error(payload?.error || 'Backfill failed.');
+                    throw new Error(payload?.error || 'The message history review could not be started.');
                 }
 
                 if (backfillAlert) {
@@ -367,7 +373,7 @@
                 }
                 setTimeout(function() { window.location.reload(); }, 1000);
             } catch (error) {
-                const message = error instanceof Error ? error.message : 'Backfill failed.';
+                const message = error instanceof Error ? error.message : 'The message history review could not be started.';
                 if (backfillAlert) {
                     backfillAlert.textContent = message;
                     backfillAlert.classList.remove('d-none');
@@ -380,7 +386,7 @@
                 if (backfillButton) {
                     backfillButton.disabled = false;
                     backfillButton.classList.remove('disabled');
-                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Backfill from logs';
+                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Review Message History';
                 }
             }
         });

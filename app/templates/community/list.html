@@ -2,14 +2,14 @@
 {% import "includes/ui_macros.html" as ui %}
 {% import "includes/permission_macros.html" as permissions %}
 
-{% block title %}Community Members - {{ product_name }}{% endblock %}
+{% block title %}Contacts - {{ product_name }}{% endblock %}
 
-{% block page_title %}Community Members{% endblock %}
+{% block page_title %}Contacts{% endblock %}
 
 {% set can_manage_community = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Community</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Contacts</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -21,40 +21,62 @@
     <i class="bi bi-download me-1"></i>Export CSV
 </a>
 <a href="{{ url_for('main.community_add') }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-plus-lg me-1"></i>Add Member
+    <i class="bi bi-plus-lg me-1"></i>Add Contact
 </a>
 {% endif %}
 {% endblock %}
 
 {% block content %}
-{% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and dataset exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
+{% if not can_view_contact_numbers %}<p class="small text-muted" role="note">Contact numbers and CSV exports are restricted to workspace owners. You can work with contact names and records here.</p>{% endif %}
+{% if search %}
+{% set contacts_empty_title = 'No Matching Contacts' %}
+{% set contacts_empty_body = 'No contacts match your search in this view. Try another search or clear it.' %}
+{% set contacts_empty_primary_href = url_for('main.community_list', view=audience_view) %}
+{% set contacts_empty_primary_label = 'Clear Search' %}
+{% set contacts_empty_secondary_href = None %}
+{% set contacts_empty_secondary_label = None %}
+{% elif audience_view == 'contactable' %}
+{% set contacts_empty_title = 'No Contacts in This View' %}
+{% set contacts_empty_body = 'No contacts are available in this view. Check All Contacts for retained opt-outs and blocked numbers.' %}
+{% set contacts_empty_primary_href = url_for('main.community_add') if can_manage_community else url_for('main.community_list', view='all') %}
+{% set contacts_empty_primary_label = 'Add Contact' if can_manage_community else 'View All Contacts' %}
+{% set contacts_empty_secondary_href = url_for('main.community_list', view='all') if can_manage_community else None %}
+{% set contacts_empty_secondary_label = 'View All Contacts' if can_manage_community else None %}
+{% else %}
+{% set contacts_empty_title = 'No Contacts Yet' %}
+{% set contacts_empty_body = ('Add contacts or import a CSV to get started. Explicit opt-outs remain excluded.' if confirmed_signup_consent else 'Add contacts or import a CSV, then review SMS permission before sending.') if can_manage_community else 'Contacts will appear here when a workspace owner adds or imports them.' %}
+{% set contacts_empty_primary_href = url_for('main.community_add') if can_manage_community else None %}
+{% set contacts_empty_primary_label = 'Add Contact' if can_manage_community else None %}
+{% set contacts_empty_secondary_href = url_for('main.community_import') if can_manage_community else None %}
+{% set contacts_empty_secondary_label = 'Import CSV' if can_manage_community else None %}
+{% endif %}
 <div class="collection-shell">
-    <nav class="d-flex flex-wrap gap-2" aria-label="Community view">
+    <nav class="d-flex flex-wrap gap-2" aria-label="Contact Views">
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'contactable' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', search=search) }}"{% if audience_view == 'contactable' %} aria-current="page"{% endif %}>Contactable</a>
-        <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'all' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', view='all', search=search) }}"{% if audience_view == 'all' %} aria-current="page"{% endif %}>All contacts</a>
+        <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'all' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', view='all', search=search) }}"{% if audience_view == 'all' %} aria-current="page"{% endif %}>All Contacts</a>
     </nav>
-    <p class="small text-muted mb-0">{{ 'Contactable hides opted-out and suppressed numbers automatically. Their records remain in All contacts and never receive a send while blocked.' if audience_view == 'contactable' else 'All contacts includes retained opt-outs and suppressed numbers. Showing a record here does not make it eligible to receive messages.' }}</p>
+    <p class="small text-muted mb-0">{{ 'Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts. Sending still requires SMS permission.' if audience_view == 'contactable' else 'All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.' }}</p>
     {% call ui.collection_search_panel(
         url_for('main.community_list'),
         'Search by name or phone' if can_view_contact_numbers else 'Search by name',
         search,
-        'Search community members',
-        'Search community',
-        'Find members and take action from one list.',
+        'Search Contacts',
+        'Search Contacts',
+        'Find contacts and review their messaging permission.',
         'communityTable'
     ) %}<input type="hidden" name="view" value="{{ audience_view }}">{% endcall %}
     {% if confirmed_signup_consent %}
     <p class="small text-muted mb-0">Newsletter, event and in-person sign-ups include community SMS consent, as confirmed by the organization. Explicit opt-outs remain excluded.</p>
     {% elif config.SAAS_MODE %}
-    <p class="small text-muted mb-0">A saved phone number does not establish SMS permission. Community permission is separate from event updates. {{ 'Review the evidence for each contact before sending.' if can_review_permission else 'Ask a workspace owner to review contacts with unknown permission.' }}</p>
+    <p class="small text-muted mb-0">Saving a phone number does not establish SMS permission. Community SMS permission is separate from event updates. {{ 'Review the evidence for each contact before sending.' if can_review_permission else 'Ask a workspace owner to review contacts with unknown permission.' }}</p>
     {% endif %}
 
 <div class="card app-card collection-panel collection-panel--results">
     {% if members and can_manage_community %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select this page</button>
-            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Bulk Selection">
+            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select This Page</button>
+            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select None</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
             <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
@@ -62,7 +84,7 @@
             </span>
             <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
-                <i class="bi bi-trash me-1"></i>Delete selected
+                <i class="bi bi-trash me-1"></i>Delete Selected
             </button>
         </div>
         <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.community_bulk_delete') }}" style="display:none;">
@@ -77,7 +99,7 @@
                     {% if can_manage_community %}
                     <th width="40">
                         {% if members %}
-                        <input class="form-check-input" type="checkbox" id="selectAllMembers" aria-label="Select all members on this page">
+                        <input class="form-check-input" type="checkbox" id="selectAllMembers" aria-label="Select All Contacts on This Page">
                         {% endif %}
                     </th>
                     {% endif %}
@@ -93,7 +115,7 @@
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>{% endif %}
-                    <th>Community SMS</th>
+                    <th>SMS Permission</th>
                     <th data-sort-type="date">
                         <button type="button" class="sort-button" data-sort-key="added">
                             <span>Added</span>
@@ -112,14 +134,14 @@
                     <tr>
                         {% if can_manage_community %}
                         <td>
-                            <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids" value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select member">
+                            <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids" value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select Contact">
                         </td>
                         {% endif %}
                         <td data-sort-value="{{ (member.name or '')|private_text }}">{{ contact_label(member.name, member.id) }}</td>
                         {% if can_view_contact_numbers %}<td data-sort-value="{{ member.phone }}"><code>{{ member.phone }}</code></td>{% endif %}
                         <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else permission_statuses[member.phone].decision }}">
                             {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}
-                            {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review permission</a></div>{% endif %}
+                            {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         </td>
                         <td data-sort-value="{{ member.created_at.isoformat() if member.created_at else '' }}">
                             {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}
@@ -127,25 +149,25 @@
                         {% if can_manage_community %}
                         <td class="community-actions-cell">
                             <div class="row-actions community-row-actions" data-row-actions data-row-actions-primary="2">
-                                <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview member" title="Preview"
+                                <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview Contact" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
-                                        data-member-name="{{ (member.name or 'Member preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
+                                        data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
                                         data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
-                                        data-member-status="{{ 'Unsubscribed' if is_unsubscribed else ('Suppressed' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
+                                        data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                                         {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                                     <i class="bi bi-layout-sidebar-inset"></i>
                                 </button>
                                 <a href="{{ url_for('main.community_edit', member_id=member.id) }}" 
-                                   class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit member">
+                                   class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit Contact">
                                     <i class="bi bi-pencil"></i>
                                 </a>
                                 {% if not is_unsubscribed %}
-                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Unsubscribe" aria-label="Unsubscribe member"
-                                        data-confirm="Unsubscribe {{ (member.name or member.phone)|private_text }}? This will add them to the suppression list.">
+                                <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning" title="Block Contact" aria-label="Block Contact"
+                                        data-confirm="Block messages to {{ (member.name or member.phone)|private_text }}? The contact record will remain in All Contacts.">
                                     <i class="bi bi-person-x"></i>
                                 </button>
                                 {% endif %}
-                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete member"
+                                <button type="button" class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete Contact"
                                         data-bs-toggle="modal" data-bs-target="#deleteModal" 
                                         data-member-name="{{ (member.name)|private_text }}" data-form-id="delete-member-{{ member.id }}">
                                     <i class="bi bi-trash"></i>
@@ -170,12 +192,12 @@
                         <td colspan="{{ 6 if can_manage_community else 4 }}" class="py-5">
                             {{ ui.empty_state(
                                 'bi-people',
-                                'No community members found',
-                                ('Add contacts to your community list. Explicit opt-outs remain excluded.' if confirmed_signup_consent else 'Add contacts, then review SMS permission before sending.') if can_manage_community else 'No community members match this search yet.',
-                                url_for('main.community_add') if can_manage_community else None,
-                                'Add Member' if can_manage_community else None,
-                                url_for('main.community_import') if can_manage_community else None,
-                                'Import CSV' if can_manage_community else None
+                                contacts_empty_title,
+                                contacts_empty_body,
+                                contacts_empty_primary_href,
+                                contacts_empty_primary_label,
+                                contacts_empty_secondary_href,
+                                contacts_empty_secondary_label
                             ) }}
                         </td>
                     </tr>
@@ -208,22 +230,22 @@
                     <div>
                         <h6 class="mb-1">{{ contact_label(member.name, member.id) }}</h6>
                         {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ member.phone }}</code></div>{% endif %}
-                        <div class="small mt-1">Community SMS: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
-                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review permission</a></div>{% endif %}
+                        <div class="small mt-1">SMS permission: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
+                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         <div class="text-muted small">Added {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</div>
                     </div>
                     {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
-                           value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select member">
+                           value="{{ member.id }}" form="bulkDeleteForm" aria-label="Select Contact">
                     {% endif %}
                 </div>
                 {% if can_manage_community %}
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions data-row-actions-primary="2">
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
-                            data-member-name="{{ (member.name or 'Member preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
+                            data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
                             data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
-                            data-member-status="{{ 'Unsubscribed' if is_unsubscribed else ('Suppressed' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
+                            data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                             {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                         <i class="bi bi-layout-sidebar-inset"></i> Preview
                     </button>
@@ -232,8 +254,8 @@
                     </a>
                     {% if not is_unsubscribed %}
                     <button type="submit" form="unsubscribe-member-{{ member.id }}" class="btn btn-sm btn-outline-warning"
-                            data-confirm="Unsubscribe {{ (member.name or member.phone)|private_text }}? This will add them to the suppression list.">
-                        <i class="bi bi-person-x"></i> Unsubscribe
+                            data-confirm="Block messages to {{ (member.name or member.phone)|private_text }}? The contact record will remain in All Contacts.">
+                        <i class="bi bi-person-x"></i> Block Contact
                     </button>
                     {% endif %}
                     <button type="button" class="btn btn-sm btn-outline-danger"
@@ -249,21 +271,21 @@
             <div class="py-5">
                 {{ ui.empty_state(
                     'bi-people',
-                    'No community members found',
-                    ('Add contacts to your community list. Explicit opt-outs remain excluded.' if confirmed_signup_consent else 'Add contacts, then review SMS permission before sending.') if can_manage_community else 'No community members match this search yet.',
-                    url_for('main.community_add') if can_manage_community else None,
-                    'Add Member' if can_manage_community else None,
-                    url_for('main.community_import') if can_manage_community else None,
-                    'Import CSV' if can_manage_community else None
+                    contacts_empty_title,
+                    contacts_empty_body,
+                    contacts_empty_primary_href,
+                    contacts_empty_primary_label,
+                    contacts_empty_secondary_href,
+                    contacts_empty_secondary_label
                 ) }}
             </div>
         {% endif %}
     </div>
     {% if members %}
     <div class="card-footer d-flex flex-wrap justify-content-between align-items-center gap-3">
-        <span>Showing {{ (page - 1) * per_page + 1 }}–{{ (page - 1) * per_page + members|length }} of {{ total_count }} members. Selection applies to this page.</span>
+        <span>Showing {{ (page - 1) * per_page + 1 }}–{{ (page - 1) * per_page + members|length }} of {{ total_count }} contacts. Selection applies to this page.</span>
         {% if total_pages > 1 %}
-        <nav aria-label="Community pagination"><ul class="pagination pagination-sm mb-0">
+        <nav aria-label="Contact Pagination"><ul class="pagination pagination-sm mb-0">
             {% if page > 1 %}<li class="page-item"><a class="page-link" href="{{ url_for('main.community_list', view=audience_view, search=search, sort=sort_key, dir=sort_dir, page=page-1) }}" rel="prev">Previous</a></li>{% endif %}
             <li class="page-item disabled"><span class="page-link" aria-current="page">{{ page }} / {{ total_pages }}</span></li>
             {% if page < total_pages %}<li class="page-item"><a class="page-link" href="{{ url_for('main.community_list', view=audience_view, search=search, sort=sort_key, dir=sort_dir, page=page+1) }}" rel="next">Next</a></li>{% endif %}
@@ -277,14 +299,14 @@
 {% if members and can_manage_community %}
     <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="memberPreview" aria-labelledby="memberPreviewTitle">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title" id="memberPreviewTitle">Member preview</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close member preview"></button>
+            <h5 class="offcanvas-title" id="memberPreviewTitle">Contact Preview</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close Contact Preview"></button>
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Phone:</strong> <code id="memberPreviewPhone"></code></p>
-            <p class="mb-2"><strong>Joined:</strong> <span id="memberPreviewJoined"></span></p>
-            <p class="mb-2"><strong>Community SMS:</strong> <span id="memberPreviewStatus"></span></p>
-            {% if can_review_permission %}<a id="memberPreviewReview" href="#" hidden>Review permission</a>{% endif %}
+            <p class="mb-2"><strong>Added:</strong> <span id="memberPreviewJoined"></span></p>
+            <p class="mb-2"><strong>SMS permission:</strong> <span id="memberPreviewStatus"></span></p>
+            {% if can_review_permission %}<a id="memberPreviewReview" href="#" hidden>Review Permission</a>{% endif %}
         </div>
     </div>
 {% endif %}
@@ -295,8 +317,8 @@
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="deleteModalTitle">Confirm Delete</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close delete confirmation"></button>
+                <h5 class="modal-title" id="deleteModalTitle">Delete Contact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Delete Confirmation"></button>
             </div>
             <div class="modal-body">
                 Delete <strong id="deleteMemberName"></strong>?
@@ -313,11 +335,11 @@
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="bulkDeleteModalTitle">Confirm Bulk Delete</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close bulk delete confirmation"></button>
+                <h5 class="modal-title" id="bulkDeleteModalTitle">Delete Selected Contacts</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Bulk Delete Confirmation"></button>
             </div>
             <div class="modal-body">
-                Delete <strong id="bulkDeleteCount"></strong> selected member(s)?
+                Delete <strong id="bulkDeleteCount"></strong> selected contacts?
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -334,7 +356,7 @@
 <script>
     document.getElementById('memberPreview')?.addEventListener('show.bs.offcanvas', function(event) {
         const data = event.relatedTarget?.dataset || {};
-        document.getElementById('memberPreviewTitle').textContent = data.memberName || 'Member preview';
+        document.getElementById('memberPreviewTitle').textContent = data.memberName || 'Contact Preview';
         document.getElementById('memberPreviewPhone').textContent = data.memberPhone || '';
         document.getElementById('memberPreviewJoined').textContent = data.memberJoined || '';
         document.getElementById('memberPreviewStatus').textContent = data.memberStatus || '';
@@ -346,7 +368,7 @@
     
     deleteModal.addEventListener('show.bs.modal', function(event) {
         const button = event.relatedTarget;
-        const memberName = button.getAttribute('data-member-name') || 'this member';
+        const memberName = button.getAttribute('data-member-name') || 'this contact';
         const formId = button.getAttribute('data-form-id');
         
         document.getElementById('deleteMemberName').textContent = memberName;

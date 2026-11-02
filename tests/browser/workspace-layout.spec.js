@@ -27,6 +27,9 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   await login(page, 'owner@browser.test', 'Owner-pass1!');
 
   await page.goto('/dashboard');
+  await expect(page.locator('#workspaceOverview')).not.toHaveAttribute('open', '');
+  await page.locator('#workspaceOverview > summary').click();
+  await expect(page.locator('#workspaceOverview')).toHaveAttribute('open', '');
   await expect(page.locator('.workspace-summary')).toBeVisible();
   await expect(page.locator('.workspace-summary__meta')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Sending enabled');
@@ -43,12 +46,12 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   await expect(page.locator('.collection-shell')).toBeVisible();
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.collection-panel--results')).toBeVisible();
-  expect(await elementHeight(page.getByRole('link', { name: 'Add Member' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('link', { name: 'Add Contact' }))).toBeGreaterThanOrEqual(44);
   const firstCommunityRow = page.locator('#communityTable tbody.table-data tr').first();
   await expect(firstCommunityRow).toBeVisible();
-  const firstCommunityPreview = firstCommunityRow.getByRole('button', { name: 'Preview member' });
-  const firstCommunityEdit = firstCommunityRow.getByRole('link', { name: 'Edit member' });
-  const firstCommunityMore = firstCommunityRow.getByRole('button', { name: 'More actions' });
+  const firstCommunityPreview = firstCommunityRow.getByRole('button', { name: 'Preview Contact' });
+  const firstCommunityEdit = firstCommunityRow.getByRole('link', { name: 'Edit Contact' });
+  const firstCommunityMore = firstCommunityRow.getByRole('button', { name: 'More Actions' });
   await expect(firstCommunityPreview).toBeVisible();
   await expect(firstCommunityEdit).toBeVisible();
   await expect(firstCommunityMore).toBeVisible();
@@ -56,7 +59,7 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   expect(Math.abs((await elementTop(firstCommunityPreview)) - (await elementTop(firstCommunityEdit)))).toBeLessThanOrEqual(1);
   expect(Math.abs((await elementTop(firstCommunityPreview)) - (await elementTop(firstCommunityMore)))).toBeLessThanOrEqual(1);
   await firstCommunityMore.click();
-  await expect(firstCommunityRow.getByRole('button', { name: 'Delete member' })).toBeVisible();
+  await expect(firstCommunityRow.getByRole('button', { name: 'Delete Contact' })).toBeVisible();
 
   await page.goto('/events');
   await expect(page.locator('.collection-shell')).toBeVisible();
@@ -75,17 +78,17 @@ test('workspace desktop surfaces use the shared summary and collection shells', 
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.collection-panel').first()).toBeVisible();
   expect(
-    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Schedule from Dashboard' }))
+    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Schedule a Message' }))
   ).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox');
-  if (await page.getByRole('link', { name: 'Back to threads' }).isVisible()) {
-    await page.getByRole('link', { name: 'Back to threads' }).click();
+  if (await page.getByRole('link', { name: 'Back to Conversations' }).isVisible()) {
+    await page.getByRole('link', { name: 'Back to Conversations' }).click();
   }
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.inbox-threads-card.collection-panel--results')).toBeVisible();
   await expect(page.locator('.workspace-panel').first()).toBeVisible();
-  expect(await elementHeight(page.getByRole('link', { name: 'Survey Flows' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('link', { name: 'Surveys' }))).toBeGreaterThanOrEqual(44);
 });
 
 test('workspace mobile surfaces keep the shared action hierarchy and tap targets', async ({ page }) => {
@@ -99,7 +102,7 @@ test('workspace mobile surfaces keep the shared action hierarchy and tap targets
 
   await page.goto('/community');
   await expect(page.locator('.collection-panel--search')).toBeVisible();
-  expect(await elementHeight(page.getByRole('link', { name: 'Add Member' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('link', { name: 'Add Contact' }))).toBeGreaterThanOrEqual(44);
   const firstCommunityAction = page.locator('.card-list-item .row-actions .btn').first();
   if (await firstCommunityAction.count()) {
     expect(await elementHeight(firstCommunityAction)).toBeGreaterThanOrEqual(44);
@@ -120,16 +123,16 @@ test('workspace mobile surfaces keep the shared action hierarchy and tap targets
   await page.goto('/scheduled');
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   expect(
-    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Schedule from Dashboard' }))
+    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Schedule a Message' }))
   ).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox');
-  if (await page.getByRole('link', { name: 'Back to threads' }).isVisible()) {
-    await page.getByRole('link', { name: 'Back to threads' }).click();
+  if (await page.getByRole('link', { name: 'Back to Conversations' }).isVisible()) {
+    await page.getByRole('link', { name: 'Back to Conversations' }).click();
   }
   await expect(page.locator('.collection-panel--search')).toBeVisible();
   await expect(page.locator('.inbox-threads-card.collection-panel--results')).toBeVisible();
-  expect(await elementHeight(page.getByRole('link', { name: 'Survey Flows' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('link', { name: 'Surveys' }))).toBeGreaterThanOrEqual(44);
 });
 
 test('lower-frequency workspace desktop pages use the shared detail and filter primitives', async ({ page }) => {
@@ -138,15 +141,17 @@ test('lower-frequency workspace desktop pages use the shared detail and filter p
 
   await page.goto('/events');
   await page.getByRole('link', { name: 'Acme Spring Launch' }).click();
-  await expect(page.locator('.workspace-summary')).toBeVisible();
+  await expect(page.locator('.event-summary')).toBeVisible();
+  await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Registrations', exact: true }).click();
+  await page.locator('[data-event-registration-tool] > summary').filter({ hasText: 'Add Booking' }).click();
   await expect(page.locator('.workspace-detail-layout')).toBeVisible();
-  expect(await elementHeight(page.getByRole('button', { name: 'Add registration' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('button', { name: 'Add Registration' }))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox/surveys');
   await expect(page.locator('.workspace-summary')).toBeVisible();
   await expect(page.locator('.collection-shell')).toBeVisible();
   expect(
-    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Add Survey Flow' }))
+    await elementHeight(page.locator('.app-page-actions').getByRole('link', { name: 'Add Survey' }))
   ).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox/surveys/add');
@@ -178,16 +183,18 @@ test('lower-frequency workspace mobile pages keep primary actions tappable', asy
   await login(page, 'owner@browser.test', 'Owner-pass1!');
 
   await page.goto('/events/1');
+  await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Registrations', exact: true }).click();
+  await page.locator('[data-event-registration-tool] > summary').filter({ hasText: 'Add Booking' }).click();
   await expect(page.locator('.workspace-detail-layout')).toBeVisible();
-  expect(await elementHeight(page.getByRole('button', { name: 'Add registration' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('button', { name: 'Add Registration' }))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/inbox/surveys/add');
   await expect(page.locator('.workspace-form-layout')).toBeVisible();
-  expect(await elementHeight(page.getByRole('button', { name: 'Save survey flow' }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('button', { name: 'Save Survey' }))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/unsubscribed');
   await expect(page.locator('.collection-shell')).toBeVisible();
-  expect(await elementHeight(page.getByRole('button', { name: 'Select all', exact: true }))).toBeGreaterThanOrEqual(44);
+  expect(await elementHeight(page.getByRole('button', { name: 'Select All', exact: true }))).toBeGreaterThanOrEqual(44);
 
   await page.goto('/security/events');
   await expect(page.locator('.collection-panel--filters')).toBeVisible();

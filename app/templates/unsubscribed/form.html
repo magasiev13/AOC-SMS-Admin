@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Add to Suppression - {{ product_name }}{% endblock %}
+{% block title %}Block a Number - {{ product_name }}{% endblock %}
 
-{% block page_title %}Add to Suppression{% endblock %}
+{% block page_title %}Block a Number{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.unsubscribed_list') }}">Suppression</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.unsubscribed_list') }}">Opt-Outs &amp; Blocks</a> /
 <span>Add</span>
 {% endblock %}
 
@@ -25,35 +25,35 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Add suppression entry</h2>
-                        <p class="workspace-panel__meta">Save a contact that should stay off outbound send lists.</p>
+                        <h2 class="workspace-panel__title">Block a Number</h2>
+                        <p class="workspace-panel__meta">Add a phone number that should not receive messages.</p>
                     </div>
                 </div>
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
                         <div class="mb-3">
-                            <label for="name" class="form-label">Name (optional)</label>
+                            <label for="name" class="form-label">Name (Optional)</label>
                             <input type="text" class="form-control" id="name" name="name" autocomplete="name" placeholder="Contact name">
                         </div>
                         <div class="mb-3">
-                            <label for="phone" class="form-label">Phone</label>
+                            <label for="phone" class="form-label">Phone Number</label>
                             <input type="tel" class="form-control" id="phone" name="phone" autocomplete="tel" placeholder="+1 (555) 555-5555" required>
                         </div>
                         <div class="mb-3">
-                            <label for="reason" class="form-label">Reason (optional)</label>
-                            <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number is suppressed"></textarea>
+                            <label for="reason" class="form-label">Reason (Optional)</label>
+                            <textarea class="form-control" id="reason" name="reason" rows="2" placeholder="Why this number should not receive messages"></textarea>
                         </div>
                         <div class="mb-0">
                             <label for="source" class="form-label">Source</label>
                             <input type="text" class="form-control" id="source" name="source" placeholder="manual" value="manual">
-                            <div class="form-text">Use a short source label such as `manual` or `event:123`.</div>
+                            <div class="form-text">Note where this request came from, such as a call or an event.</div>
                         </div>
                     </div>
                     <div class="workspace-panel__footer">
-                        <div class="text-muted small">Suppressed numbers stay excluded from future sends until removed.</div>
+                        <div class="text-muted small">Blocked numbers are excluded from future sends. Removing a block does not grant SMS permission.</div>
                         <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">Add to Suppression</button>
+                            <button type="submit" class="btn btn-primary">Block Number</button>
                             <a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">Cancel</a>
                         </div>
                     </div>

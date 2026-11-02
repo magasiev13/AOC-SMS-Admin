@@ -66,13 +66,13 @@ test('owner records verified community permission with preserved validation and 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await page.goto('/community/add');
-  await page.getByLabel('Name (optional)').fill('Permission Review Desktop');
-  await page.getByLabel('Phone number').fill('+17205550651');
-  await page.getByRole('button', { name: 'Add Member', exact: true }).click();
+  await page.getByLabel('Name (Optional)').fill('Permission Review Desktop');
+  await page.getByLabel('Phone Number').fill('+17205550651');
+  await page.getByRole('button', { name: 'Add Contact', exact: true }).click();
   createdByPage.get(page).phone = '+17205550651';
   const row = page.locator('#communityTable tbody.table-data tr').filter({ hasText: 'Permission Review Desktop' });
   await expect(row.getByText('Unknown', { exact: true })).toBeVisible();
-  await row.getByRole('link', { name: 'Review permission' }).click();
+  await row.getByRole('link', { name: 'Review Permission' }).click();
   await expect(page).toHaveURL(/\/community\/\d+\/permission$/);
   await expect(page).toHaveTitle(/Review SMS Permission/);
   await expect(page.getByRole('heading', { name: 'Record an owner review' })).toBeVisible();
@@ -118,13 +118,16 @@ test('mobile event review grants only event messages while community remains unk
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await page.goto('/events');
   await page.locator('.card-list-item').filter({ hasText: 'Acme Spring Launch' }).getByRole('link', { name: 'View', exact: true }).click();
-  await page.getByLabel('Name (optional)').fill('Permission Review Mobile');
-  await page.getByLabel('Phone number').fill('+17205550652');
-  await page.getByRole('button', { name: 'Add registration', exact: true }).click();
+  await page.locator('[data-event-section-nav]').getByRole('link', { name: 'Registrations', exact: true }).click();
+  const bookingTool = page.locator('[data-event-registration-tool]').filter({ has: page.locator('summary').filter({ hasText: /^Add Booking$/ }) });
+  await bookingTool.locator('summary').click();
+  await bookingTool.getByLabel('Name (Optional)', { exact: true }).fill('Permission Review Mobile');
+  await bookingTool.getByLabel('Phone Number (Optional)', { exact: true }).fill('+17205550652');
+  await bookingTool.getByRole('button', { name: 'Add Registration', exact: true }).click();
   createdByPage.get(page).phone = '+17205550652';
   const registration = page.locator('.card-list-item').filter({ hasText: 'Permission Review Mobile' });
   await expect(registration.getByText('Unknown', { exact: true })).toBeVisible();
-  await registration.getByRole('link', { name: 'Review permission' }).click();
+  await registration.getByRole('link', { name: 'Review Permission' }).click();
   const registrationPath = new URL(page.url()).pathname.match(/\/events\/(\d+)\/registrations\/(\d+)\/permission/);
   createdByPage.get(page).registration = `/events/${registrationPath[1]}/unregister/${registrationPath[2]}`;
   await expect(page).toHaveURL(/\/events\/\d+\/registrations\/\d+\/permission$/);
@@ -137,6 +140,8 @@ test('mobile event review grants only event messages while community remains unk
   await page.screenshot({ path: testInfo.outputPath('permission-review-mobile.png'), fullPage: true });
   await noHorizontalOverflow(page);
   await page.getByRole('link', { name: 'Back to event', exact: true }).click();
+  await expect(page).toHaveURL(/\/events\/\d+#registrations$/);
+  await expect(page.locator('[data-event-panel]:visible')).toHaveAttribute('id', 'registrations');
   await expect(registration.getByText('Granted', { exact: true })).toBeVisible();
   await page.goto('/community?search=17205550652');
   const contact = page.locator('.card-list-item').filter({ hasText: 'Permission Review Mobile' });
@@ -148,7 +153,7 @@ test('mobile event review grants only event messages while community remains unk
 test('staff can see permission state but cannot open the owner review action', async ({ page }) => {
   await login(page, 'staff@browser.test', 'Staff-pass1!');
   await page.goto('/community');
-  await expect(page.getByRole('link', { name: 'Review permission' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Review Permission' })).toHaveCount(0);
   await expect(page.getByText('Granted', { exact: true }).first()).toBeVisible();
   const response = await page.goto('/community/1/permission');
   expect(response.status()).toBe(403);

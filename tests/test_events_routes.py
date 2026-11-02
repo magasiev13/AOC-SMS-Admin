@@ -171,7 +171,7 @@ class TestEventsRoutes(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'id="bulkDeleteBtn"', response.data)
-        self.assertIn(b"Delete selected", response.data)
+        self.assertIn(b"Delete Selected", response.data)
         self.assertIn(b'/events/bulk-delete', response.data)
 
     def test_events_list_hides_bulk_delete_controls_for_social_manager(self) -> None:
