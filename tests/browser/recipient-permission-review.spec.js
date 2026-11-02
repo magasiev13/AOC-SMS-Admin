@@ -45,15 +45,11 @@ test.afterEach(async ({ page }, testInfo) => {
   expect(unexpected).toEqual([]);
 });
 
-function evidenceTime() {
-  return new Date(Date.now() - 120_000).toISOString().slice(0, 16);
-}
-
 async function fillGrant(page) {
   await page.getByLabel('Permission decision').selectOption('granted');
   await page.getByLabel('Evidence source').fill('Retained browser opt-in form');
-  await page.getByLabel('Evidence time (UTC)').fill(evidenceTime());
-  await page.getByLabel('Evidence notes').fill('Synthetic contact explicitly agreed to these updates. Original opt-in retained in the isolated test fixture.');
+  await expect(page.getByLabel('Evidence time (UTC)')).toHaveCount(0);
+  await expect(page.getByLabel('Evidence notes')).toHaveCount(0);
 }
 
 async function noHorizontalOverflow(page) {
@@ -82,17 +78,11 @@ test('owner records verified community permission with preserved validation and 
   await page.getByRole('button', { name: 'Save permission review' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'The review was not saved.' })).toBeVisible();
   await expect(page.getByLabel('Evidence source')).toHaveValue('Retained browser opt-in form');
-  await expect(page.getByLabel('Evidence notes')).toHaveValue(/Synthetic contact explicitly agreed/);
   await expect(page.getByRole('checkbox', { name: /I verified that this person/ })).not.toBeChecked();
 
   await page.getByLabel('Permission decision').focus();
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Evidence source')).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(page.getByLabel('Evidence time (UTC)')).toBeFocused();
-  // datetime-local has separate native date/time segments. Focus the next
-  // field directly, then verify keyboard access through the confirmation.
-  await page.getByLabel('Evidence notes').focus();
   await page.keyboard.press('Tab');
   const confirmation = page.getByRole('checkbox', { name: /I verified that this person/ });
   await expect(confirmation).toBeFocused();

@@ -7916,7 +7916,9 @@ def twilio_trusthub_status_webhook():
 
 # Community Members Management
 def _permission_review_token(subject, purpose, event_id, nonce):
+    # Retire forms that attested to historical evidence instead of current permission.
     payload = json.dumps([
+        'current-permission-review-v2',
         _current_organization_id(), current_user.id, current_user.session_nonce,
         purpose, event_id, subject.id, subject.phone, nonce,
     ], separators=(',', ':'))
@@ -7939,8 +7941,7 @@ def _review_recipient_permission(subject, *, purpose, event=None):
     back_url = url_for('main.event_detail', event_id=event.id, _anchor='registrations') if event is not None else url_for('main.community_list')
     review_url = (url_for('main.event_registration_permission_review', event_id=event.id, registration_id=subject.id) if event is not None else url_for('main.community_permission_review', member_id=subject.id))
     form_values = {
-        'decision': 'unknown', 'source_label': '', 'proof': '',
-        'occurred_at': '', 'verified': '',
+        'decision': 'unknown', 'source_label': '', 'verified': '',
     }
     errors = []
     if request.method == 'POST':
@@ -7956,31 +7957,26 @@ def _review_recipient_permission(subject, *, purpose, event=None):
             errors.append('Choose a valid permission decision.')
         if not form_values['source_label'] or len(form_values['source_label']) > 160:
             errors.append('Record the evidence source, using no more than 160 characters.')
-        if len(form_values['proof']) > 4000:
-            errors.append('Keep the evidence notes within 4,000 characters.')
-        if decision == 'granted' and (not form_values['proof'] or form_values['verified'] != '1'):
-            errors.append('A grant requires evidence notes and confirmation that you verified explicit permission.')
-        occurred_at = None
-        try:
-            occurred_at = datetime.fromisoformat(form_values['occurred_at'])
-            if occurred_at.tzinfo is not None:
-                raise ValueError('Use the UTC time shown in the field.')
-            occurred_at = occurred_at.replace(tzinfo=timezone.utc)
-            if occurred_at > utc_now():
-                raise ValueError('Evidence cannot be dated in the future.')
-        except (TypeError, ValueError):
-            errors.append('Enter a valid evidence time in UTC that is not in the future.')
+        if decision == 'granted' and form_values['verified'] != '1':
+            errors.append('A grant requires confirmation that you verified current explicit permission.')
         if not errors:
             metadata = {
-                'source_label': form_values['source_label'], 'proof': form_values['proof'],
+                'source_label': form_values['source_label'],
                 'actor_user_id': current_user.id,
                 'verified_attestation': decision == 'granted' and form_values['verified'] == '1',
+                'time_basis': 'owner_review',
             }
+            if decision == 'granted':
+                metadata['proof'] = (
+                    "Workspace owner confirmed the recipient's current explicit permission "
+                    'for this purpose and phone number.'
+                )
             try:
+                # The service dates new reviews and retains that date on retries.
                 evidence = record_permission_evidence(
                     organization_id, subject.phone, purpose=purpose, event_id=event_id,
                     decision=decision, source='owner_review', evidence_key=f'owner-review:{nonce}',
-                    occurred_at=occurred_at, metadata=metadata, verified=decision == 'granted',
+                    metadata=metadata, verified=decision == 'granted',
                 )
                 if json.loads(evidence.metadata_json or '{}') != metadata:
                     raise ValueError('This review was already saved with different evidence. Reload to start another review.')
