@@ -176,14 +176,14 @@ class TestTestRecipientRoutes(unittest.TestCase):
         self._login("owner@acme.test", "Owner-pass1!")
         owner_response = self.client.get("/dashboard", follow_redirects=False)
         self.assertEqual(owner_response.status_code, 200)
-        self.assertIn("Manage test recipients", owner_response.get_data(as_text=True))
+        self.assertIn("Manage Test Recipients", owner_response.get_data(as_text=True))
 
         self.client.post("/logout", follow_redirects=False)
         self._login("staff@acme.test", "Staff-pass1!")
         staff_response = self.client.get("/dashboard", follow_redirects=False)
         self.assertEqual(staff_response.status_code, 200)
         self.assertIn("1 saved test recipient", staff_response.get_data(as_text=True))
-        self.assertNotIn("Manage test recipients", staff_response.get_data(as_text=True))
+        self.assertNotIn("Manage Test Recipients", staff_response.get_data(as_text=True))
 
 
 if __name__ == "__main__":

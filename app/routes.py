@@ -29,7 +29,7 @@ from flask import (
 from flask_login import current_user, login_required, login_user
 from sqlalchemy import BigInteger, String, case, cast, func, literal, or_, select, union_all
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
@@ -1131,43 +1131,43 @@ def _launch_readiness_view(
     ]
 
     if sending_ready and smoke_test_complete:
-        heading = "Workspace is live"
+        heading = "Messaging Is Ready"
         summary = "Workspace sending checks pass and outbound provider acceptance is recorded. Confirm recipient delivery, STOP and HELP before opening customer traffic."
     elif sending_ready:
-        heading = "Ready for a controlled test"
+        heading = "Ready for an Internal Test"
         summary = "Workspace, billing and provider checks pass. Submit an internal test and verify recipient receipt, STOP and HELP before opening customer traffic."
     elif (
         staged_annual_offer_enabled_for_organization(organization)
         and subscription_activation_paid(organization.subscription)
         and not a2p_approved
     ):
-        heading = "Await provider review"
+        heading = "Waiting for Messaging Approval"
         summary = "The setup payment is complete. The $600 annual subscription remains locked until provider approval."
     elif (
         staged_annual_offer_enabled_for_organization(organization)
         and a2p_approved
         and not billing_active
     ):
-        heading = "Annual payment ready"
+        heading = "Annual Payment Is Ready"
         summary = "Provider approval is recorded. Complete the $600 annual payment before sender activation."
     elif awaiting_sender_assignment:
-        heading = "Await sender assignment"
-        summary = "Twilio approved the packet. Finish service-address validation and sender finalization before live sending unlocks."
+        heading = "Support Is Setting Up Your Number"
+        summary = "Messaging registration is approved. Twinevia support is finishing the sending-number checks before live messaging starts."
     elif awaiting_provider_activation:
-        heading = "Messaging paused" if messaging_profile is not None and messaging_profile.provider_status in {'error', 'suspended'} else "Await provider activation"
+        heading = "Messaging Is Paused" if messaging_profile is not None and messaging_profile.provider_status in {'error', 'suspended'} else "Support Is Activating Messaging"
         summary = "The sender is configured, but outbound messaging is unavailable. A platform administrator must complete provider activation or resolve its paused/error state."
     elif onboarding is not None and onboarding.onboarding_status in {"rejected", "error", "needs_action"}:
-        heading = "Needs packet correction"
-        summary = "Twilio flagged the packet for correction. Fix the CTA and compliance details before resubmitting."
+        heading = "Update Your Organization Details"
+        summary = "Some organization or signup details need correction. Review the reported issue, update the details, and submit again."
     elif onboarding is not None and onboarding.onboarding_status == "canceled":
-        heading = "Submission paused"
-        summary = "No carrier review is active right now. Update the packet and resubmit when ready."
+        heading = "Messaging Approval Is Paused"
+        summary = "No messaging approval is being reviewed right now. Update your organization details and submit when ready."
     elif not billing_active:
-        heading = "Complete billing"
+        heading = "Complete Billing"
         summary = "Billing access is not active. Review billing while registration and sender setup continue separately."
     else:
-        heading = "Await Twilio review"
-        summary = "Billing is active. Keep the workspace paused until carrier review and sender setup are complete."
+        heading = "Waiting for Messaging Approval"
+        summary = "Billing is active. Live messaging stays paused while approval and sending-number setup are completed. You can explore the workspace."
 
     return {
         "heading": heading,
@@ -1315,40 +1315,31 @@ def _setup_current_step(organization: Organization) -> str:
     return "compliance"
 
 
-def _setup_steps_view(organization: Organization) -> list[dict]:
+def _setup_steps_view(organization: Organization, *, selected_step: str | None = None) -> list[dict]:
     onboarding = organization.a2p_onboarding
     subscription_view = _subscription_view(organization.subscription)
     messaging_profile = organization.messaging_profile
-    current_step = _setup_current_step(organization)
+    current_step = selected_step or _setup_current_step(organization)
     if _organization_uses_customer_managed_messaging(organization):
         a2p_status = _a2p_status_view(onboarding, messaging_profile)
-        provider_detail = (
-            messaging_profile.last_provision_error
-            if messaging_profile and messaging_profile.last_provision_error
-            else (
-                a2p_status["summary"]
-                if a2p_status.get("has_submission")
-                else "Platform support is validating the customer-managed Twilio account, sender, and external A2P status."
-            )
-        )
-        launch_label = "Live in workspace" if _organization_setup_complete(organization) else "Await external activation"
+        launch_label = "Messaging Is Ready" if _organization_setup_complete(organization) else "Messaging Connection"
         step_rows = [
             {
                 "key": "account",
-                "label": "Workspace account",
-                "detail": "Your owner workspace is active and ready to finish setup.",
+                "label": "Your Account",
+                "detail": "Your sign-in is ready.",
                 "complete": True,
             },
             {
                 "key": "billing",
-                "label": "Billing activation",
+                "label": "Plan and Billing",
                 "detail": subscription_view["title"],
                 "complete": subscription_view["can_send"],
             },
             {
                 "key": "provider",
-                "label": "External Twilio activation",
-                "detail": provider_detail,
+                "label": "Messaging Connection",
+                "detail": "Support is checking your existing messaging account." if not (messaging_profile and messaging_profile.can_send) else "Your messaging connection is ready.",
                 "complete": bool(
                     (messaging_profile and messaging_profile.provider_status in {"provisioning", "active"})
                     or a2p_status.get("has_submission")
@@ -1358,9 +1349,9 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
                 "key": "launch",
                 "label": launch_label,
                 "detail": (
-                    messaging_profile.from_number
-                    if messaging_profile and messaging_profile.from_number
-                    else "The workspace unlocks as soon as the customer-managed sender is active."
+                    "Your sending number is active."
+                    if messaging_profile and messaging_profile.can_send
+                    else "Support activates live messaging when the connection is ready."
                 ),
                 "complete": _organization_setup_complete(organization),
             },
@@ -1377,34 +1368,34 @@ def _setup_steps_view(organization: Organization) -> list[dict]:
         a2p_status=_a2p_status_view(onboarding, messaging_profile),
     )
     if _organization_setup_complete(organization):
-        launch_label = "Live in workspace"
+        launch_label = "Messaging Is Ready"
     elif bool(launch_readiness["awaiting_sender_assignment"]):
-        launch_label = "Await sender assignment"
+        launch_label = "Sending Number Setup"
     else:
-        launch_label = "Await Twilio review"
+        launch_label = "Messaging Approval"
     step_rows = [
         {
             "key": "account",
-            "label": "Workspace account",
-            "detail": "Your owner workspace is active and ready to finish setup.",
+            "label": "Your Account",
+            "detail": "Your sign-in is ready.",
             "complete": True,
         },
         {
             "key": "billing",
-            "label": "Billing activation",
+            "label": "Plan and Billing",
             "detail": subscription_view["title"],
             "complete": subscription_view["can_send"],
         },
         {
             "key": "compliance",
-            "label": "Business profile",
-            "detail": "Complete the Twilio compliance profile once.",
+            "label": "Organization Details",
+            "detail": "Add the details needed for messaging approval.",
             "complete": _a2p_profile_ready(onboarding),
         },
         {
             "key": "review",
-            "label": "Review and submit",
-            "detail": onboarding.onboarding_status if onboarding else "draft",
+            "label": "Review and Submit",
+            "detail": "Submitted for review." if onboarding and onboarding.submitted_at else "Check your details before submitting.",
             "complete": onboarding is not None and onboarding.submitted_at is not None,
         },
         {
@@ -2817,8 +2808,8 @@ def _event_sync_surface_view(
     )
     return _surface_view(
         eyebrow='Integrations',
-        title='App integrations',
-        copy='Connect registration and event apps to this workspace. Each source retains its booking identities and reconciliation evidence.',
+        title='App Integrations',
+        copy='Bring events and registrations in from another app. This optional setup is for your developer.',
         meta=_organization_meta_items(organization),
         stats=[
             _surface_stat('Status', enabled_label, 'Connected app' if integration_view['provider'] == 'app' else 'WordPress connection'),
@@ -2839,8 +2830,8 @@ def _event_sync_surface_view(
 def _settings_surface_view(organization: Organization) -> dict:
     return _surface_view(
         eyebrow='Admin',
-        title='Workspace controls',
-        copy='Manage integrations, team access, test recipients, and security from one place.',
+        title='Workspace Settings',
+        copy='Manage setup, team access, billing and optional app connections.',
         meta=_organization_meta_items(organization),
     )
 
@@ -2848,15 +2839,15 @@ def _settings_surface_view(organization: Organization) -> dict:
 def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
     cards = [
         {
-            'title': 'App integrations',
-            'description': 'Connect event and registration apps, manage signing secrets, and review sync health.',
+            'title': 'App Integrations',
+            'description': 'Optional: bring events and registrations in from another app. Your developer configures the connection.',
             'icon': 'bi-arrow-repeat',
             'href': url_for('main.event_sync_settings', provider='app'),
-            'action': 'Open integrations',
+            'action': 'Open Integrations',
         },
         {
             'title': 'Test Recipients',
-            'description': 'Control the internal phone numbers used for owner-approved dashboard test sends.',
+            'description': 'Choose the approved internal list for test messages.',
             'icon': 'bi-phone-vibrate',
             'href': url_for('main.test_recipients_settings'),
             'action': 'Manage Test List',
@@ -2877,11 +2868,18 @@ def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
         },
     ]
     if include_billing:
+        cards.insert(0, {
+            'title': 'Messaging Setup',
+            'description': 'See your next activation task and what support is handling.',
+            'icon': 'bi-check2-circle',
+            'href': url_for('main.setup'),
+            'action': 'Review Setup',
+        })
         cards.insert(
-            3,
+            4,
             {
                 'title': 'Billing',
-                'description': 'Review subscription status, checkout state, and billing portal actions for this workspace.',
+                'description': 'Review your plan, payment status and billing portal.',
                 'icon': 'bi-credit-card',
                 'href': url_for('main.billing_overview'),
                 'action': 'Open Billing',
@@ -4297,13 +4295,13 @@ def _create_send_review(form):
     profile = _current_organization().messaging_profile if _current_organization() is not None else None
     return {
         'review_token': freeze_review(current_user, _current_organization_id(), key, intent, recipients),
-        'audience': 'Internal test recipients' if intent['test_mode'] else (event.title if event is not None and intent['target'] == 'event' else 'Community'),
+        'audience': 'Internal Test Recipients' if intent['test_mode'] else (event.title if event is not None and intent['target'] == 'event' else 'Contact List'),
         'eligible': len(recipients), 'excluded': sum(counts.values()), 'reasons': counts,
         'sender': profile.from_number if profile is not None and profile.from_number else 'Configured messaging service',
         'sample': render_message_template(intent['message_body'], recipients[0]),
         'segments': estimate['total_segments'], 'timing': timing,
-        'confirmation_label': 'Confirm schedule' if intent['schedule_later'] else ('Confirm test send' if intent['test_mode'] else 'Confirm send'),
-        'audience_policy': ('Community signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.'
+        'confirmation_label': 'Confirm Schedule' if intent['schedule_later'] else ('Confirm Test Send' if intent['test_mode'] else 'Confirm Send'),
+        'audience_policy': ('Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.'
                             if intent['target'] == 'community' and organization_has_confirmed_signup_consent(_current_organization_id()) else
                             'Current recipient eligibility is checked for this message purpose.'),
     }
@@ -5643,6 +5641,50 @@ def security_contact():
         return redirect(url_for(home_endpoint_for_user(current_user)))
 
     return render_template('auth/security_contact.html')
+
+
+@bp.app_context_processor
+def inject_workspace_page_help():
+    from app.services.help_content_service import page_help
+    guidance = None
+    if current_user.is_authenticated:
+        guidance = page_help(request.endpoint, platform=bool(current_user.is_platform_admin))
+        if guidance and guidance['topic'] == 'settings' and not current_user.is_admin:
+            guidance = None
+    return {'workspace_page_help': guidance}
+
+
+@bp.route('/help')
+@login_required
+def help_center():
+    from app.services.help_content_service import help_topics
+    platform = bool(current_user.is_platform_admin)
+    owner = _current_user_is_workspace_owner() if not platform else False
+    admin = bool(current_user.is_admin) and not platform
+    query = (request.args.get('q') or '').strip()[:100]
+    topics = help_topics(platform=platform, owner=owner, admin=admin,
+                         saas=saas_mode_enabled(), query=query)
+    for topic in topics:
+        topic['actions'] = [{'label': label, 'href': url_for(endpoint)}
+                            for label, endpoint in topic['actions']]
+    organization = _current_organization() if saas_mode_enabled() and not platform else None
+    setup_guide = None
+    if organization is not None:
+        ready = _organization_setup_complete(organization)
+        setup_guide = {
+            'ready': ready,
+            'title': 'Messaging Is Ready' if ready else 'Messaging Setup Is in Progress',
+            'copy': ('You can prepare a message and review its audience before sending.' if ready else
+                     'You can explore the workspace while live messaging is paused. '
+                     + ('Use Messaging Setup for your next task and the work support is handling.' if owner else
+                        'Your workspace owner and Twinevia support are handling activation.')),
+            'href': url_for('main.setup', step=_setup_current_step(organization)) if owner else url_for('main.dashboard'),
+            'action': ('Review Messaging Setup' if ready else 'Continue Setup') if owner else 'Open Workspace',
+        }
+    return render_template('help/index.html', topics=topics, help_query=query,
+        help_platform=platform, help_owner=owner, help_admin=admin,
+        help_role='Platform Admin' if platform else ('Workspace Owner' if owner else ('Workspace Admin' if admin else 'Team Member')),
+        help_setup=setup_guide)
 
 
 @bp.route('/settings')
@@ -7139,6 +7181,9 @@ def setup():
     except Exception:
         current_app.logger.exception('Failed to reconcile setup billing state for organization %s.', organization.id)
 
+    organization_setup_error_field = ''
+    organization_setup_errors = {}
+    rejected_organization_details = False
     if request.method == 'POST':
         action = (request.form.get('action') or '').strip().lower()
         if setup_is_customer_managed and action in {'save_compliance', 'submit_onboarding', 'refresh_onboarding', 'cancel_onboarding'}:
@@ -7151,6 +7196,8 @@ def setup():
             if action == 'save_compliance':
                 payload = request.form.to_dict(flat=True)
                 payload['business_regions'] = request.form.getlist('business_regions')
+                payload['has_business_tax_id'] = request.form.get('has_business_tax_id') == 'on'
+                payload['has_public_website'] = request.form.get('has_public_website') == 'on'
                 save_a2p_onboarding_draft(
                     organization.id,
                     payload,
@@ -7182,6 +7229,12 @@ def setup():
                 return redirect(url_for('main.setup', step='review'))
         except ProviderProvisioningError as exc:
             flash(str(exc), 'error')
+            if action == 'save_compliance':
+                rejected_organization_details = True
+                from app.services.twilio_a2p_service import A2PFormValidationError
+                if isinstance(exc, A2PFormValidationError):
+                    organization_setup_error_field = exc.field_name
+                    organization_setup_errors[exc.field_name] = str(exc)
 
     requested_step = (request.args.get('step') or '').strip().lower()
     available_steps = {'account', 'billing', 'launch'}
@@ -7190,6 +7243,8 @@ def setup():
     else:
         available_steps.update({'compliance', 'review'})
     current_step = requested_step if requested_step in available_steps else _setup_current_step(organization)
+    if rejected_organization_details:
+        current_step = 'compliance'
     a2p_status = _a2p_status_view(onboarding, messaging_profile)
 
     return render_template(
@@ -7200,7 +7255,9 @@ def setup():
         a2p_status=a2p_status,
         setup_is_customer_managed=setup_is_customer_managed,
         current_step=current_step,
-        setup_steps=_setup_steps_view(organization),
+        organization_setup_error_field=organization_setup_error_field,
+        organization_setup_errors=organization_setup_errors,
+        setup_steps=_setup_steps_view(organization, selected_step=current_step),
         setup_status=_setup_status_payload(organization),
         launch_readiness=_launch_readiness_view(
             organization,
@@ -7237,6 +7294,9 @@ def setup_pending():
         abort(404)
     if getattr(current_user, 'organization_role', None) == 'owner':
         return redirect(url_for('main.setup'))
+
+    if _organization_setup_complete(organization):
+        return redirect(url_for('main.dashboard'))
 
     return render_template(
         'setup/pending.html',
@@ -7876,7 +7936,7 @@ def _review_recipient_permission(subject, *, purpose, event=None):
     event_id = event.id if event is not None else None
     scope_key = f'event:{event_id}' if event is not None else ''
     scope_label = f'updates for {event.title}' if event is not None else 'general community messages'
-    back_url = url_for('main.event_detail', event_id=event.id) if event is not None else url_for('main.community_list')
+    back_url = url_for('main.event_detail', event_id=event.id, _anchor='registrations') if event is not None else url_for('main.community_list')
     review_url = (url_for('main.event_registration_permission_review', event_id=event.id, registration_id=subject.id) if event is not None else url_for('main.community_permission_review', member_id=subject.id))
     form_values = {
         'decision': 'unknown', 'source_label': '', 'proof': '',
@@ -8310,18 +8370,28 @@ def event_detail(event_id):
     from app.services.event_workspace_service import event_communications
     event = _tenant_get_or_404(Event, event_id)
     is_current = event_is_current(event)
-    registrations = EventRegistration.query.filter_by(event_id=event_id).order_by(
+    registration_query = EventRegistration.query.filter_by(event_id=event_id).order_by(
         EventRegistration.name,
         EventRegistration.phone,
-    ).all()
-    unsubscribed_phones = get_unsubscribed_phone_set([reg.phone for reg in registrations])
-    suppressed_phones = get_suppressed_phone_set([reg.phone for reg in registrations])
+        EventRegistration.id,
+    )
+    # Full-event totals and eligibility stay independent of the displayed page.
+    registration_metrics = registration_query.options(load_only(
+        EventRegistration.id, EventRegistration.phone, EventRegistration.booking_spaces,
+    )).all()
+    registration_total = len(registration_metrics)
+    contact_pages = max(1, (registration_total + 99) // 100)
+    contact_page = min(contact_pages, max(1, request.args.get('contact_page', 1, type=int)))
+    registrations = registration_query.offset((contact_page - 1) * 100).limit(100).all()
+    all_phones = [reg.phone for reg in registration_metrics]
+    unsubscribed_phones = get_unsubscribed_phone_set(all_phones)
+    suppressed_phones = get_suppressed_phone_set(all_phones)
     permission_statuses = permission_status_by_phone(
-        _current_organization_id(), [reg.phone for reg in registrations], purpose='event', event_id=event.id,
+        _current_organization_id(), all_phones, purpose='event', event_id=event.id,
     )
     blocked_phones = unsubscribed_phones | suppressed_phones
     blocked_phones |= {phone for phone, status in permission_statuses.items() if not status.allowed}
-    attendee_count = sum(reg.capacity_spaces for reg in registrations)
+    attendee_count = sum(reg.capacity_spaces for reg in registration_metrics)
     roster = roster_summary(event)
     coverage = event_roster_coverage(event)
     booking_page = max(1, request.args.get('booking_page', 1, type=int))
@@ -8332,6 +8402,9 @@ def event_detail(event_id):
         'events/detail.html',
         event=event,
         registrations=registrations,
+        registration_total=registration_total,
+        contact_page=contact_page,
+        contact_pages=contact_pages,
         unsubscribed_phones=unsubscribed_phones,
         suppressed_phones=suppressed_phones,
         permission_statuses=permission_statuses,
@@ -8346,9 +8419,9 @@ def event_detail(event_id):
         feedback_forms=feedback_query(event).order_by(SurveyFlow.id.desc()).limit(20).all(),
         surface_view=_event_detail_surface_view(
             event,
-            registration_count=len(registrations),
+            registration_count=registration_total,
             attendee_count=attendee_count,
-            sendable_count=len({reg.phone for reg in registrations} - blocked_phones),
+            sendable_count=len(set(all_phones) - blocked_phones),
             unsubscribed_count=len(blocked_phones),
             is_current=is_current,
             roster=roster,
@@ -8548,7 +8621,7 @@ def event_register(event_id):
             raise ValueError()
     except (TypeError, ValueError):
         flash('Reserved places must be a whole number between 0 and 100,000.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
+        return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
     if request.form.get('included_in_paid_order') == '1':
         booking_spaces = 0
     from app.services.booking_projection_service import create_local_booking
@@ -8558,7 +8631,7 @@ def event_register(event_id):
     db.session.commit()
     
     flash('Booking added. Eligible contact numbers are counted once for event messaging.', 'success')
-    return redirect(url_for('main.event_detail', event_id=event_id))
+    return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
 
 @bp.route('/events/<int:event_id>/unregister/<int:registration_id>', methods=['POST'])
@@ -8568,17 +8641,17 @@ def event_unregister(event_id, registration_id):
     registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
     if not registration:
         flash('Registration not found for this event.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
+        return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
     from app.services.booking_projection_service import cancel_registration_bookings
     try:
         cancel_registration_bookings(registration)
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), 'warning')
-        return redirect(url_for('main.event_detail', event_id=event_id))
+        return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
     db.session.commit()
     flash('Registration removed.', 'success')
-    return redirect(url_for('main.event_detail', event_id=event_id))
+    return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
 
 @bp.route('/events/<int:event_id>/registrations/<int:registration_id>/unsubscribe', methods=['POST'])
@@ -8588,12 +8661,12 @@ def event_registration_unsubscribe(event_id, registration_id):
     registration = EventRegistration.query.filter_by(id=registration_id, event_id=event_id).first()
     if not registration:
         flash('Registration not found for this event.', 'error')
-        return redirect(url_for('main.event_detail', event_id=event_id))
+        return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
     existing = UnsubscribedContact.query.filter_by(phone=registration.phone).first()
     if existing:
         flash('That number is already unsubscribed.', 'warning')
-        return redirect(url_for('main.event_detail', event_id=event_id))
+        return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
     unsubscribe = UnsubscribedContact(
         name=registration.name,
@@ -8603,7 +8676,7 @@ def event_registration_unsubscribe(event_id, registration_id):
     db.session.add(unsubscribe)
     db.session.commit()
     flash('Registration added to unsubscribed list.', 'success')
-    return redirect(url_for('main.event_detail', event_id=event_id))
+    return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
 
 @bp.route('/events/<int:event_id>/import', methods=['POST'])
@@ -8616,7 +8689,7 @@ def event_import_registrations(event_id):
     try:
         file, content, error_response = _read_uploaded_csv_text(
             redirect_endpoint='main.event_detail',
-            redirect_values={'event_id': event_id},
+            redirect_values={'event_id': event_id, '_anchor': 'registrations'},
         )
         if error_response is not None:
             return error_response
@@ -8624,7 +8697,7 @@ def event_import_registrations(event_id):
 
         if not parsed:
             flash('No valid entries found in CSV.', 'error')
-            return redirect(url_for('main.event_detail', event_id=event_id))
+            return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
         parsed, already_registered = _dedupe_recipients_by_phone(parsed)
         added = 0
@@ -8665,7 +8738,7 @@ def event_import_registrations(event_id):
         db.session.rollback()
         flash(CSV_IMPORT_ERROR_FLASH, 'error')
 
-    return redirect(url_for('main.event_detail', event_id=event_id))
+    return redirect(url_for('main.event_detail', event_id=event_id, _anchor='registrations'))
 
 
 @bp.route('/events/<int:event_id>/export')

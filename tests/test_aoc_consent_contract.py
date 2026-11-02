@@ -187,7 +187,7 @@ def test_community_pages_are_bounded_sorted_and_tenant_scoped(aoc):
         html = response.get_data(as_text=True)
         assert 'Foreign private sentinel' not in html
         assert html.count('id="memberPreview"') == 1
-        assert 'Select this page' in html and 'Selection applies to this page' in html
+        assert 'Select This Page' in html and 'Selection applies to this page' in html
         aoc.client.get('/community?page=999999')
         assert contexts[-1]['page'] == 3
         assert len(contexts[-1]['members']) == 21
@@ -227,7 +227,7 @@ def test_5000_contact_page_weight_is_bounded_without_truncating_broadcast_audien
     assert len(response.data) < 700000
     assert tags < 8000
     assert html.count('id="memberPreview"') == 1
-    assert 'of 5000 members' in html
+    assert 'of 5000 contacts' in html
     assert aoc.client.get('/dashboard/audience-preview?target=community').json['eligible'] == 5000
     queue = MagicMock()
     monkeypatch.setattr('app.queue.get_queue', lambda: queue)

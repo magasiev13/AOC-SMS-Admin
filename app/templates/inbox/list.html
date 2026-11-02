@@ -6,15 +6,15 @@
 {% block page_title %}Inbox{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Inbox</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Inbox</span>
 {% endblock %}
 
 {% block page_actions %}
 <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-primary page-action-secondary">
-    <i class="bi bi-magic me-1"></i>Keyword Rules
+    <i class="bi bi-magic me-1"></i>Automatic Replies
 </a>
 <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-primary page-action-primary">
-    <i class="bi bi-list-check me-1"></i>Survey Flows
+    <i class="bi bi-list-check me-1"></i>Surveys
 </a>
 {% endblock %}
 
@@ -29,7 +29,7 @@
      data-status-url="{{ url_for('main.inbox_status') }}"></div>
 <div class="alert alert-info d-none" id="inboxActivityNotice" role="status" aria-live="polite">
     <span>New inbox activity is available. Your unsent reply will be kept.</span>
-    <a class="btn btn-sm btn-outline-primary ms-2" id="inboxActivityRefresh" href="{{ latest_messages_url }}">View updates</a>
+    <a class="btn btn-sm btn-outline-primary ms-2" id="inboxActivityRefresh" href="{{ latest_messages_url }}">View Updates</a>
 </div>
 <div class="row g-3 inbox-layout">
     <div class="col-lg-4 {% if selected_thread and not show_thread_list_only %}d-none d-lg-block{% endif %}" id="inboxThreadsPanel">
@@ -38,7 +38,7 @@
             'Search phone or name' if can_view_contact_numbers else 'Search contact names',
             search,
             'Search inbox threads',
-            'Search inbox',
+            'Search Inbox',
             'Find the right conversation quickly.'
         ) %}
         {% if show_thread_list_only %}
@@ -82,8 +82,10 @@
                 {% else %}
                 {{ ui.empty_state(
                     'bi-chat-left-text',
-                    'No conversations yet',
-                    'Inbound messages appear here when contacts reply.'
+                    'No Matching Conversations' if search else 'No Conversations Yet',
+                    'Try a different search to find a conversation.' if search else 'Inbound messages appear here when contacts reply.',
+                    primary_href=url_for('main.inbox_list') if search else None,
+                    primary_label='Clear Search' if search else None
                 ) }}
                 {% endif %}
             </div>
@@ -104,7 +106,7 @@
             {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
             <div class="d-lg-none px-3 pt-3">
                 <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search, view='threads') }}#inboxThreadsPanel">
-                    <i class="bi bi-arrow-left me-1"></i>Back to threads
+                    <i class="bi bi-arrow-left me-1"></i>Back to Conversations
                 </a>
                 {% if threads|length > 1 %}
                 <p class="small text-muted mt-2 mb-0 inbox-mobile-thread-count">
@@ -127,21 +129,21 @@
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ (search)|private_text }}">
                         <button class="btn btn-sm btn-soft-danger" type="submit"
-                                data-confirm="Delete this thread and all related messages/survey data?">
-                            <i class="bi bi-trash me-1"></i>Delete Thread
+                                data-confirm="Delete this conversation and its messages and survey responses?">
+                            <i class="bi bi-trash me-1"></i>Delete Conversation
                         </button>
                     </form>
                 </div>
             </div>
             <div class="px-3 pt-2 d-lg-none">
                 <details class="inbox-mobile-actions">
-                    <summary class="small">Thread actions</summary>
+                    <summary class="small">Thread Actions</summary>
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="mt-2 mb-0">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ (search)|private_text }}">
                         <button class="btn btn-sm btn-soft-danger w-100" type="submit"
-                                data-confirm="Delete this thread and all related messages/survey data?">
-                            <i class="bi bi-trash me-1"></i>Delete thread
+                                data-confirm="Delete this conversation and its messages and survey responses?">
+                            <i class="bi bi-trash me-1"></i>Delete Conversation
                         </button>
                     </form>
                 </details>
@@ -152,7 +154,7 @@
                 <form method="POST" action="{{ url_for('main.inbox_thread_update', thread_id=selected_thread.id) }}" class="mb-3">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="search" value="{{ (search)|private_text }}">
-                    <label for="threadContactName" class="form-label">Thread contact name</label>
+                    <label for="threadContactName" class="form-label">Contact Name</label>
                     <div class="input-group">
                         <input id="threadContactName" name="contact_name" class="form-control" type="text"
                                value="{{ (selected_thread.contact_name or '')|private_text }}" maxlength="100"
@@ -192,9 +194,9 @@
                         <label class="form-check-label small" for="selectAllMessages">Select all messages on this page</label>
                     </div>
                     <button id="bulkMessageDeleteButton" class="btn btn-sm btn-soft-danger inbox-bulk-delete-btn" type="submit"
-                            form="bulkMessageDeleteForm" data-confirm="Delete selected messages?"
-                            aria-label="Delete selected messages" disabled>
-                        <i class="bi bi-trash me-1"></i>Delete selected messages
+                            form="bulkMessageDeleteForm" data-confirm="Delete Selected Messages?"
+                            aria-label="Delete Selected Messages" disabled>
+                        <i class="bi bi-trash me-1"></i>Delete Selected Messages
                     </button>
                 </div>
 
@@ -218,7 +220,7 @@
                                                 • keyword hidden
                                                 <span class="badge rounded-pill text-bg-secondary">historical</span>
                                                 <details class="mt-1">
-                                                    <summary class="small">Show historical keyword</summary>
+                                                    <summary class="small">Show Historical Keyword</summary>
                                                     <div class="small">
                                                         Historical keyword: <code>{{ (message.matched_keyword)|private_text }}</code>
                                                         <div class="mt-1">
@@ -257,7 +259,7 @@
                     <div class="py-4">
                         {{ ui.empty_state(
                             'bi-chat-square-text',
-                            'No messages in this thread',
+                            'No Messages in This Thread',
                             'Messages and replies for this contact appear here.'
                         ) }}
                     </div>
@@ -275,8 +277,8 @@
                 <nav class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-2" aria-label="Conversation history">
                     <span class="small text-muted">{{ messages|length }} messages on this page</span>
                     <div class="d-flex gap-2">
-                        {% if older_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ older_messages_url }}">Older messages</a>{% endif %}
-                        {% if newer_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ newer_messages_url }}">Newer messages</a><a class="btn btn-sm btn-outline-primary" href="{{ latest_messages_url }}">Latest</a>{% endif %}
+                        {% if older_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ older_messages_url }}">Older Messages</a>{% endif %}
+                        {% if newer_messages_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ newer_messages_url }}">Newer Messages</a><a class="btn btn-sm btn-outline-primary" href="{{ latest_messages_url }}">Latest</a>{% endif %}
                     </div>
                 </nav>
                 <form method="POST" action="{{ url_for('main.inbox_reply', thread_id=selected_thread.id) }}" class="mt-3 inbox-reply-form">
@@ -285,7 +287,7 @@
                     {% if saved_reply_request %}
                     <div class="alert alert-warning" role="status">{{ request_status_message(saved_reply_request) }}</div>
                     {% endif %}
-                    <label for="replyBody" class="form-label">Send reply</label>
+                    <label for="replyBody" class="form-label">Send Reply</label>
                     <div class="input-group">
                         <textarea id="replyBody" name="body" class="form-control" rows="2" maxlength="1600"
                                   placeholder="{{ 'Contact must reply START/UNSTOP/YES to resubscribe before you can send.' if selected_thread_is_unsubscribed else 'Type your reply...' }}"
@@ -296,14 +298,14 @@
                     </div>
                     <div class="form-text" id="replyBodyStats" aria-live="polite"></div>
                     <div class="form-text" id="replyDraftStatus" role="status" aria-live="polite"></div>
-                    <button class="btn btn-sm btn-link px-0" type="button" id="discardReplyDraft">Discard draft and start a new reply</button>
+                    <button class="btn btn-sm btn-link px-0" type="button" id="discardReplyDraft">Discard Draft and Start a New Reply</button>
                 </form>
             </div>
             {% else %}
             <div class="card-body">
                 {{ ui.empty_state(
                     'bi-chat-left-text',
-                    'Select a thread to view messages',
+                    'Select a Conversation',
                     'Choose a conversation from the inbox list to see details and send a reply.'
                 ) }}
             </div>

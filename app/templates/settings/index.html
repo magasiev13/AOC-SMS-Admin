@@ -6,12 +6,12 @@
 {% block page_title %}Settings{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Settings</span>
+<span>Workspace</span> / <span>Settings</span>
 {% endblock %}
 
 {% block content %}
 <div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
+    <p class="text-muted mb-0">Manage setup, team access, billing, and connections for {{ organization.name|private_text }}. Choose a setting below.</p>
 
     <section class="settings-grid" aria-label="Workspace settings">
         {% for card in settings_cards %}

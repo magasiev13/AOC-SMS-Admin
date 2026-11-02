@@ -295,9 +295,9 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         response = self.client.get("/inbox/keywords")
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(response.data.count(b'data-confirm="Delete this keyword rule?"'), 2)
+        self.assertGreaterEqual(response.data.count(b'data-confirm="Delete this automatic reply?"'), 2)
         self.assertGreaterEqual(response.data.count(b"data-row-actions"), 2)
-        self.assertNotIn(b"onclick=\"return confirm('Delete this keyword rule?');\"", response.data)
+        self.assertNotIn(b"onclick=\"return confirm('Delete this automatic reply?');\"", response.data)
 
     def test_surveys_list_uses_data_confirm_attribute(self) -> None:
         self._login()
@@ -305,16 +305,16 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         response = self.client.get("/inbox/surveys")
         self.assertEqual(response.status_code, 200)
-        self.assertGreaterEqual(response.data.count(b'data-confirm="Deactivate this survey flow?"'), 2)
+        self.assertGreaterEqual(response.data.count(b'data-confirm="Deactivate this survey?"'), 2)
         self.assertGreaterEqual(
             response.data.count(
-                b'data-confirm="Delete this survey flow and all submissions? This cannot be undone."'
+                b'data-confirm="Delete this survey and all submissions? This cannot be undone."'
             ),
             2,
         )
         self.assertGreaterEqual(response.data.count(b"data-row-actions"), 2)
         self.assertGreaterEqual(response.data.count(b'data-row-actions-primary="1"'), 2)
-        self.assertNotIn(b"onclick=\"return confirm('Deactivate this survey flow?');\"", response.data)
+        self.assertNotIn(b"onclick=\"return confirm('Deactivate this survey?');\"", response.data)
         submissions_href = f'/inbox/surveys/{survey.id}/submissions'.encode()
         self.assertGreaterEqual(response.data.count(submissions_href), 2)
 

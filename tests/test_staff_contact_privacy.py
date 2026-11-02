@@ -708,7 +708,7 @@ def test_feedback_prefill_never_discloses_protected_saved_text_or_changes_its_in
     assert detail.status_code == 200
     assert_no_private_numbers(w, detail)
     assert b'An owner needs to prepare this invitation' in detail.data
-    assert b'>Review invitation</a>' not in detail.data
+    assert b'>Review Invitation</a>' not in detail.data
     form = {'target': 'event', 'event_id': event.id, 'feedback_id': flow.id}
     for response in [w.client.get('/dashboard', query_string=form), w.client.post('/dashboard', data=form)]:
         assert response.status_code == 403
@@ -739,7 +739,7 @@ def test_native_html_send_review_obeys_privacy_and_preserves_sealed_send_intent(
     else:
         form['test_recipient_phone'] = '+17205550333'
     response = w.client.post('/dashboard', data=form)
-    assert response.status_code == 200 and b'Review send' in response.data
+    assert response.status_code == 200 and b'Review Message' in response.data
     if role == 'staff':
         assert_no_private_numbers(w, response)
         assert b'[number hidden]' in response.data

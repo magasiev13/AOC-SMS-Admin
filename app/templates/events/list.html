@@ -8,7 +8,7 @@
 {% set can_manage_events = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Events</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Events</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -20,17 +20,17 @@
 {% block content %}
 <div class="collection-shell">
     <nav class="d-flex flex-wrap gap-2" aria-label="Event view">
-        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'current' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', search=search) }}"{% if event_view == 'current' %} aria-current="page"{% endif %}>Current events</a>
-        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'past' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', view='past', search=search) }}"{% if event_view == 'past' %} aria-current="page"{% endif %}>Past events</a>
+        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'current' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', search=search) }}"{% if event_view == 'current' %} aria-current="page"{% endif %}>Current Events</a>
+        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'past' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', view='past', search=search) }}"{% if event_view == 'past' %} aria-current="page"{% endif %}>Past &amp; Inactive Events</a>
     </nav>
-    <p class="small text-muted mb-0">{{ 'Upcoming and ongoing events appear here. After an event ends, its RSVPs leave the current audience automatically; registration and feedback history stay in Past events. Undated events stay current until a date is set.' if event_view == 'current' else 'Registration and feedback history is retained. Open an event to send an intentional follow-up or feedback request; opt-outs still apply.' }}</p>
+    <p class="small text-muted mb-0">{{ 'Upcoming, ongoing and undated events appear here. After an event ends, its registrations and feedback remain in Past & Inactive Events.' if event_view == 'current' else 'Open a past event to review registrations or send a follow-up or feedback invitation. Opt-outs still apply.' }}</p>
     {% call ui.collection_search_panel(
         url_for('main.events_list'),
         'Search events',
         search,
         'Search events',
-        'Search events',
-        'Review registrations and act from one event list.',
+        'Search Events',
+        'Find an event to review registrations, messages and feedback.',
         'eventsTable'
     ) %}<input type="hidden" name="view" value="{{ event_view }}">{% endcall %}
 
@@ -38,8 +38,8 @@
     {% if events and can_manage_events %}
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div class="btn-group btn-group-sm" role="group" aria-label="Bulk selection">
-            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select all</button>
-            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select none</button>
+            <button type="button" class="btn btn-outline-secondary" id="selectAllBtn">Select All</button>
+            <button type="button" class="btn btn-outline-secondary" id="selectNoneBtn">Select None</button>
         </div>
         <div class="bulk-selection-actions" id="bulkSelectionActions">
             <span class="text-muted" role="status" aria-live="polite" aria-atomic="true">
@@ -47,7 +47,7 @@
             </span>
             <button type="button" class="btn btn-sm btn-danger" id="bulkDeleteBtn"
                     data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
-                <i class="bi bi-trash me-1"></i>Delete selected
+                <i class="bi bi-trash me-1"></i>Delete Selected
             </button>
         </div>
         <form id="bulkDeleteForm" method="POST" action="{{ url_for('main.events_bulk_delete') }}" style="display:none;">
@@ -156,10 +156,10 @@
                         <td colspan="{{ 6 if can_manage_events else 5 }}" class="py-5">
                             {{ ui.empty_state(
                                 'bi-calendar-x',
-                                'No events found',
-                                'Create your first event to start collecting registrations.',
-                                url_for('main.event_add'),
-                                'Create Event'
+                                'No Matching Events' if search else ('No Past or Inactive Events' if event_view == 'past' else 'No Current Events'),
+                                'Try a different search to find an event.' if search else ('Ended, cancelled and inactive events appear here with their registration and feedback history.' if event_view == 'past' else 'Create an event to start collecting registrations.'),
+                                url_for('main.events_list', view=event_view) if search else url_for('main.event_add'),
+                                'Clear Search' if search else 'Create Event'
                             ) }}
                         </td>
                     </tr>
@@ -232,10 +232,10 @@
             <div class="py-5">
                 {{ ui.empty_state(
                     'bi-calendar-x',
-                    'No events found',
-                    'Create your first event to start collecting registrations.',
-                    url_for('main.event_add'),
-                    'Create Event'
+                    'No Matching Events' if search else ('No Past or Inactive Events' if event_view == 'past' else 'No Current Events'),
+                    'Try a different search to find an event.' if search else ('Ended, cancelled and inactive events appear here with their registration and feedback history.' if event_view == 'past' else 'Create an event to start collecting registrations.'),
+                    url_for('main.events_list', view=event_view) if search else url_for('main.event_add'),
+                    'Clear Search' if search else 'Create Event'
                 ) }}
             </div>
         {% endif %}

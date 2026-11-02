@@ -11,18 +11,10 @@
     <link href="{{ url_for('static', filename='css/ui-system.css', v=app_version) }}" rel="stylesheet">
 </head>
 <body class="app-body">
-    <a href="#main-content" class="visually-hidden-focusable position-absolute top-0 start-0 m-2 btn btn-primary">Skip to content</a>
-    {% set logs_active = request.endpoint and request.endpoint.startswith('main.logs') %}
-    {% set inbox_active = request.endpoint and request.endpoint.startswith('main.inbox') %}
-    {% set automation_active = request.endpoint and (request.endpoint.startswith('main.keyword_rule') or request.endpoint.startswith('main.keyword_rules') or request.endpoint.startswith('main.survey_flow') or request.endpoint.startswith('main.survey_flows')) %}
-    {% set security_active = request.endpoint and request.endpoint.startswith('main.security_events') %}
+    <a href="#main-content" class="visually-hidden-focusable position-absolute top-0 start-0 m-2 btn btn-primary">Skip to Content</a>
     {% set platform_user = current_user.is_authenticated and current_user.is_platform_admin %}
     {% set workspace_settings_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and config.SAAS_MODE %}
     {% set legacy_admin_tools_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and not config.SAAS_MODE %}
-    {% set settings_active = request.endpoint and (request.endpoint == 'main.settings_home' or request.endpoint.startswith('main.event_sync') or request.endpoint.startswith('main.test_recipients') or request.endpoint.startswith('main.billing') or 'users' in request.endpoint or security_active) %}
-    {% set platform_home_active = request.endpoint == 'main.platform_home' %}
-    {% set platform_orgs_active = request.endpoint and request.endpoint.startswith('main.platform_organizations') %}
-    {% set platform_pilots_active = request.endpoint and request.endpoint.startswith('main.platform_pilot_application') %}
     {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.dashboard') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
@@ -35,9 +27,6 @@
                     <span class="brand-caption">{{ product_descriptor }}</span>
                 </span>
             </a>
-            {% if platform_user %}
-            <div class="small text-uppercase text-white-50 fw-semibold px-2">Platform</div>
-            {% endif %}
             {% if not platform_user %}
             <div class="app-sidebar-search">
                 {% block app_search %}
@@ -50,72 +39,20 @@
                 {% endblock %}
             </div>
             {% endif %}
-            <nav class="nav flex-column app-nav">
-                {% if platform_user %}
-                <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
-                    <i class="bi bi-grid-1x2 me-2"></i>Platform
-                </a>
-                <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
-                    <i class="bi bi-buildings me-2"></i>Organizations
-                </a>
-                <a class="app-nav-link {% if platform_pilots_active %}active{% endif %}" href="{{ url_for('main.platform_pilot_applications') }}">
-                    <i class="bi bi-inbox me-2"></i>Pilot Requests
-                </a>
-                <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
-                    <i class="bi bi-person-gear me-2"></i>Users
-                </a>
-                <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
-                    <i class="bi bi-shield-lock me-2"></i>Security
-                </a>
-                {% else %}
-                <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
-                    <i class="bi bi-send me-2"></i>Send
-                </a>
-                <a class="app-nav-link {% if inbox_active %}active{% endif %}" href="{{ url_for('main.inbox_list') }}">
-                    <i class="bi bi-chat-left-text me-2"></i>Inbox
-                </a>
-                <a class="app-nav-link {% if automation_active %}active{% endif %}" href="{{ url_for('main.keyword_rules_list') }}">
-                    <i class="bi bi-magic me-2"></i>Automations
-                </a>
-                <a class="app-nav-link {% if 'community' in request.endpoint %}active{% endif %}" href="{{ url_for('main.community_list') }}">
-                    <i class="bi bi-people me-2"></i>Community
-                </a>
-                <a class="app-nav-link {% if 'unsubscribed' in request.endpoint %}active{% endif %}" href="{{ url_for('main.unsubscribed_list') }}">
-                    <i class="bi bi-person-x me-2"></i>Suppression
-                </a>
-                <a class="app-nav-link {% if 'event' in request.endpoint %}active{% endif %}" href="{{ url_for('main.events_list') }}">
-                    <i class="bi bi-calendar-event me-2"></i>Events
-                </a>
-                <a class="app-nav-link {% if 'scheduled' in request.endpoint %}active{% endif %}" href="{{ url_for('main.scheduled_list') }}">
-                    <i class="bi bi-clock me-2"></i>Scheduled
-                </a>
-                <a class="app-nav-link {% if logs_active %}active{% endif %}" href="{{ url_for('main.logs_list') }}">
-                    <i class="bi bi-journal-text me-2"></i>Logs
-                </a>
-                {% if workspace_settings_visible %}
-                <a class="app-nav-link {% if settings_active %}active{% endif %}" href="{{ url_for('main.settings_home') }}">
-                    <i class="bi bi-gear me-2"></i>Settings
-                </a>
-                {% endif %}
-                {% if legacy_admin_tools_visible %}
-                <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
-                    <i class="bi bi-person-gear me-2"></i>Users
-                </a>
-                <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
-                    <i class="bi bi-shield-lock me-2"></i>Security
-                </a>
-                {% endif %}
-                {% endif %}
+            <nav class="nav flex-column app-nav" aria-label="Primary Navigation">
+                {% with mobile_navigation=false %}
+                {% include 'includes/workspace_navigation.html' %}
+                {% endwith %}
             </nav>
             {% if current_user.is_authenticated %}
             <div class="mt-auto">
-                <a class="app-nav-link" href="{{ url_for('main.change_password') }}">
+                <a class="app-nav-link{% if request.endpoint == 'main.change_password' %} active{% endif %}" href="{{ url_for('main.change_password') }}"{% if request.endpoint == 'main.change_password' %} aria-current="page"{% endif %}>
                     <i class="bi bi-key me-2"></i>Change Password
                 </a>
                 <form method="POST" action="{{ url_for('auth.logout') }}" class="w-100">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="app-nav-link app-nav-button text-start w-100">
-                        <i class="bi bi-box-arrow-right me-2"></i>Sign out everywhere
+                        <i class="bi bi-box-arrow-right me-2"></i>Sign Out Everywhere
                     </button>
                 </form>
             </div>
@@ -150,70 +87,18 @@
                         </form>
                         {% endblock %}
                         {% endif %}
-                        <div class="nav flex-column {% if not platform_user %}mt-3{% endif %}">
-                            {% if platform_user %}
-                            <a class="app-nav-link {% if platform_home_active %}active{% endif %}" href="{{ url_for('main.platform_home') }}">
-                                <i class="bi bi-grid-1x2 me-2"></i>Platform
-                            </a>
-                            <a class="app-nav-link {% if platform_orgs_active %}active{% endif %}" href="{{ url_for('main.platform_organizations_list') }}">
-                                <i class="bi bi-buildings me-2"></i>Organizations
-                            </a>
-                            <a class="app-nav-link {% if platform_pilots_active %}active{% endif %}" href="{{ url_for('main.platform_pilot_applications') }}">
-                                <i class="bi bi-inbox me-2"></i>Pilot Requests
-                            </a>
-                            <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
-                                <i class="bi bi-person-gear me-2"></i>Users
-                            </a>
-                            <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
-                                <i class="bi bi-shield-lock me-2"></i>Security
-                            </a>
-                            {% else %}
-                            <a class="app-nav-link {% if request.endpoint == 'main.dashboard' %}active{% endif %}" href="{{ url_for('main.dashboard') }}">
-                                <i class="bi bi-send me-2"></i>Send
-                            </a>
-                            <a class="app-nav-link {% if inbox_active %}active{% endif %}" href="{{ url_for('main.inbox_list') }}">
-                                <i class="bi bi-chat-left-text me-2"></i>Inbox
-                            </a>
-                            <a class="app-nav-link {% if automation_active %}active{% endif %}" href="{{ url_for('main.keyword_rules_list') }}">
-                                <i class="bi bi-magic me-2"></i>Automations
-                            </a>
-                            <a class="app-nav-link {% if 'community' in request.endpoint %}active{% endif %}" href="{{ url_for('main.community_list') }}">
-                                <i class="bi bi-people me-2"></i>Community
-                            </a>
-                            <a class="app-nav-link {% if 'unsubscribed' in request.endpoint %}active{% endif %}" href="{{ url_for('main.unsubscribed_list') }}">
-                                <i class="bi bi-person-x me-2"></i>Suppression
-                            </a>
-                            <a class="app-nav-link {% if 'event' in request.endpoint %}active{% endif %}" href="{{ url_for('main.events_list') }}">
-                                <i class="bi bi-calendar-event me-2"></i>Events
-                            </a>
-                            <a class="app-nav-link {% if 'scheduled' in request.endpoint %}active{% endif %}" href="{{ url_for('main.scheduled_list') }}">
-                                <i class="bi bi-clock me-2"></i>Scheduled
-                            </a>
-                            <a class="app-nav-link {% if logs_active %}active{% endif %}" href="{{ url_for('main.logs_list') }}">
-                                <i class="bi bi-journal-text me-2"></i>Logs
-                            </a>
-                            {% if workspace_settings_visible %}
-                            <a class="app-nav-link {% if settings_active %}active{% endif %}" href="{{ url_for('main.settings_home') }}">
-                                <i class="bi bi-gear me-2"></i>Settings
-                            </a>
-                            {% endif %}
-                            {% if legacy_admin_tools_visible %}
-                            <a class="app-nav-link {% if 'users' in request.endpoint %}active{% endif %}" href="{{ url_for('main.users_list') }}">
-                                <i class="bi bi-person-gear me-2"></i>Users
-                            </a>
-                            <a class="app-nav-link {% if security_active %}active{% endif %}" href="{{ url_for('main.security_events') }}">
-                                <i class="bi bi-shield-lock me-2"></i>Security
-                            </a>
-                            {% endif %}
-                            {% endif %}
+                        <div class="nav flex-column {% if not platform_user %}mt-3{% endif %}" role="navigation" aria-label="Primary Navigation">
+                            {% with mobile_navigation=true %}
+                            {% include 'includes/workspace_navigation.html' %}
+                            {% endwith %}
                             {% if current_user.is_authenticated %}
-                            <a class="app-nav-link mt-2" href="{{ url_for('main.change_password') }}">
+                            <a class="app-nav-link mt-2{% if request.endpoint == 'main.change_password' %} active{% endif %}" href="{{ url_for('main.change_password') }}"{% if request.endpoint == 'main.change_password' %} aria-current="page"{% endif %}>
                                 <i class="bi bi-key me-2"></i>Change Password
                             </a>
                             <form method="POST" action="{{ url_for('auth.logout') }}" class="w-100">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="app-nav-link app-nav-button mt-2 text-start w-100">
-                                    <i class="bi bi-box-arrow-right me-2"></i>Sign out everywhere
+                                    <i class="bi bi-box-arrow-right me-2"></i>Sign Out Everywhere
                                 </button>
                             </form>
                             {% endif %}
@@ -238,11 +123,12 @@
                         </div>
                         <button type="button" class="btn btn-outline-secondary app-page-actions-toggle d-lg-none"
                                 data-page-actions-toggle aria-expanded="false" hidden>
-                            <i class="bi bi-three-dots me-1"></i>More actions
+                            <i class="bi bi-three-dots me-1"></i>More Actions
                         </button>
                         <div class="app-page-actions-overflow d-lg-none" data-page-actions-overflow hidden></div>
                     </div>
                 </header>
+                {% if workspace_page_help %}{% include 'includes/context_help.html' %}{% endif %}
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         <div class="app-toast-container">
@@ -436,7 +322,9 @@
             }
 
             const topbar = mobileNav.closest('.app-topbar');
+            const toggle = topbar?.querySelector('[aria-controls="appMobileNav"]');
             const collapseInstance = bootstrap.Collapse.getOrCreateInstance(mobileNav, { toggle: false });
+            let restoreToggleFocus = false;
             const syncOffset = () => {
                 if (!topbar) {
                     return;
@@ -450,6 +338,20 @@
 
             mobileNav.addEventListener('show.bs.collapse', () => syncBodyState(true));
             mobileNav.addEventListener('hide.bs.collapse', () => syncBodyState(false));
+            mobileNav.addEventListener('hidden.bs.collapse', () => {
+                if (restoreToggleFocus) toggle?.focus();
+                restoreToggleFocus = false;
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key !== 'Escape' || !document.body.classList.contains('app-mobile-nav-open')) return;
+                event.preventDefault();
+                restoreToggleFocus = true;
+                if (mobileNav.classList.contains('collapsing')) {
+                    mobileNav.addEventListener('shown.bs.collapse', () => collapseInstance.hide(), { once: true });
+                } else {
+                    collapseInstance.hide();
+                }
+            });
             mobileNav.addEventListener('click', (event) => {
                 if (event.target === mobileNav) {
                     collapseInstance.hide();
@@ -548,7 +450,7 @@
                 overflowToggle.className = `btn${toggleSizeClass} btn-outline-secondary dropdown-toggle row-actions__overflow-toggle`;
                 overflowToggle.setAttribute('data-bs-toggle', 'dropdown');
                 overflowToggle.setAttribute('aria-expanded', 'false');
-                overflowToggle.innerHTML = '<i class="bi bi-three-dots" aria-hidden="true"></i><span class="visually-hidden">More actions</span>';
+                overflowToggle.innerHTML = '<i class="bi bi-three-dots" aria-hidden="true"></i><span class="visually-hidden">More Actions</span>';
 
                 const overflowMenu = document.createElement('div');
                 overflowMenu.className = 'dropdown-menu dropdown-menu-end row-actions__overflow-menu';

@@ -6,12 +6,12 @@
 {% set response_value = form_data.response_body if form_data else (rule.response_body if rule else '') %}
 {% set active_value = form_data.is_active if form_data else (rule.is_active if rule else True) %}
 
-{% block title %}{{ 'Edit' if is_edit else 'Add' }} Keyword Rule - {{ product_name }}{% endblock %}
+{% block title %}{{ 'Edit' if is_edit else 'Add' }} Automatic Reply - {{ product_name }}{% endblock %}
 
-{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Keyword Rule{% endblock %}
+{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Automatic Reply{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.keyword_rules_list') }}">Keyword Automations</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <a href="{{ url_for('main.keyword_rules_list') }}">Automatic Replies</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
 {% endblock %}
 
 {% block content %}
@@ -22,7 +22,7 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} keyword rule</h2>
+                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} Automatic Reply</h2>
                         <p class="workspace-panel__meta">Set the exact trigger and the SMS reply this rule should send back.</p>
                     </div>
                 </div>

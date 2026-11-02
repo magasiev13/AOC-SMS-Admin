@@ -536,10 +536,10 @@ def test_feedback_routes_create_edit_review_and_pause_without_sending(feedback):
     assert result.status_code == 302
     flow = f.m.SurveyFlow.query.filter_by(purpose='event_feedback').one()
     detail = f.client.get(result.location)
-    assert detail.status_code == 200 and b'Review invitation' in detail.data
+    assert detail.status_code == 200 and b'Review Invitation' in detail.data
     assert f'/events/{f.event.id}/feedback/{flow.id}/invite'.encode() in detail.data
     composer = f.client.get(f'/events/{f.event.id}/feedback/{flow.id}/invite')
-    assert composer.status_code == 200 and b'Choose a date and time' in composer.data
+    assert composer.status_code == 200 and b'Choose a Date and Time' in composer.data
     assert f.m.ScheduledMessage.query.count() == 0
     assert f.m.FeedbackInvitation.query.count() == 0
     assert f.provider.client.messages.create.call_count == 0

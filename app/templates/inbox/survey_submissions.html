@@ -6,7 +6,7 @@
 {% block page_title %}{{ (survey.name)|private_text }} Submissions{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
 <span>Automations</span> /
 <a href="{{ url_for('main.survey_flows_list') }}">Surveys</a> /
 <span>Submissions</span>
@@ -82,7 +82,7 @@
             <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2">
                 <div class="text-muted small">Only completed survey sessions are shown in this table and export.</div>
                 <div class="d-flex flex-wrap gap-2">
-                    <button type="submit" class="btn btn-primary">Apply filters</button>
+                    <button type="submit" class="btn btn-primary">Apply Filters</button>
                     {% if search or preview_question_indexes %}
                     <a href="{{ url_for('main.survey_flow_submissions', survey_id=survey.id) }}" class="btn btn-outline-secondary">Reset</a>
                     {% endif %}
@@ -94,7 +94,7 @@
         <section class="collection-panel collection-panel--results">
             <div class="collection-panel__header">
                 <div>
-                    <h2 class="collection-panel__title">Completed submissions</h2>
+                    <h2 class="collection-panel__title">Completed Submissions</h2>
                     <p class="collection-panel__meta">Latest completed response per phone, with history available in the side panel.</p>
                 </div>
             </div>
@@ -104,7 +104,7 @@
                         <tr>
                             <th data-sort-type="string">
                                 <button type="button" class="sort-button" data-sort-key="attendee">
-                                    <span>Attendee</span>
+                                    <span>Respondent</span>
                                     <span class="sort-indicator" aria-hidden="true"></span>
                                 </button>
                             </th>
@@ -116,13 +116,13 @@
                             </th>{% endif %}
                             <th data-sort-type="date">
                                 <button type="button" class="sort-button" data-sort-key="latest">
-                                    <span>Latest submitted</span>
+                                    <span>Latest Submitted</span>
                                     <span class="sort-indicator" aria-hidden="true"></span>
                                 </button>
                             </th>
                             <th data-sort-type="string">
                                 <button type="button" class="sort-button" data-sort-key="answers">
-                                    <span>Answer preview</span>
+                                    <span>Answer Preview</span>
                                     <span class="sort-indicator" aria-hidden="true"></span>
                                 </button>
                             </th>
@@ -171,8 +171,8 @@
                             <td colspan="6" class="py-5">
                                 {{ ui.empty_state(
                                     'bi-list-check',
-                                    'No completed submissions found',
-                                    'Completed survey responses will appear here after attendees finish the flow.'
+                                    'No Matching Submissions' if search else 'No Completed Submissions Yet',
+                                    'Try a different name or answer text.' if search else 'Completed responses appear here after a contact finishes the survey.'
                                 ) }}
                             </td>
                         </tr>
@@ -215,8 +215,8 @@
                 {% else %}
                 {{ ui.empty_state(
                     'bi-list-check',
-                    'No completed submissions found',
-                    'Completed survey responses will appear here after attendees finish the flow.'
+                    'No Matching Submissions' if search else 'No Completed Submissions Yet',
+                    'Try a different name or answer text.' if search else 'Completed responses appear here after a contact finishes the survey.'
                 ) }}
                 {% endif %}
             </div>

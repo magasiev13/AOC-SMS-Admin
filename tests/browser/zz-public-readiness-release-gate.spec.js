@@ -66,7 +66,7 @@ test('golden owner journey covers pilot approval billing onboarding staff invite
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'billing');
   await expect(page.locator('.setup-steps')).toBeVisible();
   await expect(page.getByRole('heading', { name: organizationName })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Activate billing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Activate Billing' })).toBeVisible();
 
   await startFakeCheckoutFromSetup(page);
   await expect(page.getByText('Browser-only Stripe stub')).toBeVisible();
@@ -83,15 +83,17 @@ test('golden owner journey covers pilot approval billing onboarding staff invite
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'review');
   await submitOwnerOnboarding(page);
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'launch');
-  await expect(page.getByRole('heading', { name: 'Await Twilio review' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^(Await|Waiting|Messaging).*?(review|approval).*?$/i })).toBeVisible();
   await expect(page.locator('.setup-steps')).toBeVisible();
-  await expect(page.getByText('Launch readiness')).toBeVisible();
-  await expect(page.getByText('Recent Twilio activity')).toBeVisible();
-  await expect(page.getByText('First-send runbook')).toBeVisible();
+  await expect(page.locator('[data-setup-technical-details]')).not.toHaveAttribute('open');
+  await page.locator('[data-setup-technical-details] > summary').click();
+  await expect(page.getByText('Messaging Readiness', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Recent Twilio Activity/i)).toBeVisible();
+  await expect(page.getByText(/First[- ]Send Runbook/i)).toBeVisible();
 
   await page.goto('/dashboard');
   await expect(page.getByText('Live SMS is paused.')).toBeVisible();
-  await expect(page.getByText(/Submitted to Twilio|Carrier review in progress/).first()).toBeVisible();
+  await expect(page.locator('.alert-warning').filter({ hasText: 'Live SMS is paused.' })).toContainText(/Submitted to Twilio|Carrier review in progress/);
   await expect(page.locator('#sendBtn')).toBeDisabled();
 
   await page.goto('/team/invite');
@@ -113,10 +115,10 @@ test('golden owner journey covers pilot approval billing onboarding staff invite
     expectedUrl: /\/setup\/pending$/,
   });
   await expect(page.locator('.setup-shell')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'We’ll unlock the workspace automatically.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Open Your Workspace' })).toBeVisible();
   await expect(page.locator('.setup-steps')).toHaveCount(0);
-  await expect(page.getByText('This workspace is still being activated.')).toBeVisible();
-  await expect(page.getByText('No action is needed from this account right now.')).toBeVisible();
+  await expect(page.getByText('Your workspace is available. Live messaging is waiting for setup to finish.')).toBeVisible();
+  await expect(page.getByText('You do not need to change setup settings. You can use the workspace now, or check whether live messaging is ready.')).toBeVisible();
 
   let response = await page.goto('/billing');
   expect(response).not.toBeNull();
@@ -165,14 +167,14 @@ test('platform owner invite journey lands invited owners on setup', async ({ pag
   await expect(page.getByRole('heading', { name: 'Onboarding Bakery' })).toBeVisible();
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'billing');
   await expect(page.locator('.setup-steps')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Activate billing' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start subscription' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Activate Billing' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start Subscription' })).toBeVisible();
 });
 
 test('blocked states and tenant isolation hold across seeded organizations', async ({ page }) => {
   await login(page, 'pending-a2p-owner@browser.test', 'PendingA2P-pass1!');
   await page.goto('/dashboard');
-  await expect(page.getByText(/Carrier review in progress/).first()).toBeVisible();
+  await expect(page.locator('.alert-warning').filter({ hasText: 'Live SMS is paused.' })).toContainText(/Carrier review in progress/);
   await expect(page.getByText('Live SMS is paused.')).toBeVisible();
   await expect(page.locator('#sendBtn')).toBeDisabled();
 
@@ -182,6 +184,7 @@ test('blocked states and tenant isolation hold across seeded organizations', asy
   await expect(page.getByText('Billing inactive').first()).toBeVisible();
   await page.goto('/dashboard');
   await expect(page.getByText('Live SMS is paused.')).toBeVisible();
+  await page.locator('#workspaceOverview > summary').click();
   await expect(page.getByRole('button', { name: 'Activate Subscription' })).toBeVisible();
 
   await page.goto('/login');
@@ -212,7 +215,7 @@ test('mobile sanity covers setup billing and platform primary actions', async ({
   await page.goto('/setup?step=billing');
   await expect(page.locator('[data-setup-shell]')).toHaveAttribute('data-current-step', 'billing');
   await expect(page.locator('.setup-steps')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Start subscription' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start Subscription' })).toBeVisible();
   await startFakeCheckoutFromSetup(page);
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page).toHaveURL(/\/setup\?step=billing$/);

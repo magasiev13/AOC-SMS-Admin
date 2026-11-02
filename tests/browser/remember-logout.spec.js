@@ -13,7 +13,7 @@ test('remembered login is removed on logout and stays signed out in a fresh cont
   await page.getByRole('button', { name: 'Toggle navigation', exact: true }).click();
   const mobileNavigation = page.locator('#appMobileNav');
   await expect(mobileNavigation).toBeVisible();
-  const signOut = mobileNavigation.getByRole('button', { name: 'Sign out everywhere', exact: true });
+  const signOut = mobileNavigation.getByRole('button', { name: 'Sign Out Everywhere', exact: true });
   await expect(signOut).toBeVisible();
   await Promise.all([
     page.waitForURL(/\/login$/),

@@ -40,12 +40,12 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertLess(send_index, stats_index, "Send section should appear before stats")
         self.assertLess(send_index, charts_index, "Send section should appear before charts")
 
-    def test_dashboard_breadcrumb_uses_static_overview_label(self) -> None:
+    def test_dashboard_breadcrumb_uses_static_messaging_label(self) -> None:
         html = self._read("app/templates/dashboard.html")
         match = re.search(r"\{% block breadcrumbs %\}(.*?)\{% endblock %\}", html, re.DOTALL)
         self.assertIsNotNone(match, "Dashboard breadcrumb block is missing")
         breadcrumb_block = match.group(1)
-        self.assertIn("<span>Overview</span>", breadcrumb_block)
+        self.assertIn("<span>Messaging</span>", breadcrumb_block)
         self.assertNotIn('url_for(\'main.dashboard\')', breadcrumb_block)
 
     def test_multi_action_page_headers_define_one_primary_action(self) -> None:

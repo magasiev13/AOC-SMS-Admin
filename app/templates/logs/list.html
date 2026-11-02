@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Message Logs - {{ product_name }}{% endblock %}
+{% block title %}Message History - {{ product_name }}{% endblock %}
 
-{% block page_title %}Message Logs{% endblock %}
+{% block page_title %}Message History{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Logs</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Message History</span>
 {% endblock %}
 
 {% block page_actions %}
 {% if logs and current_user.is_admin %}
 <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
-    <i class="bi bi-trash me-1"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}
+    <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
 </button>
 {% endif %}
 {% endblock %}
@@ -26,7 +26,7 @@
         'Search logs',
         search,
         'Search logs',
-        'Search message logs',
+        'Search Message History',
         'Track delivery history and recent sends in one place.',
         'logsTable'
     ) }}
@@ -44,7 +44,7 @@
                     </th>
                     <th data-sort-type="enum">
                         <button type="button" class="sort-button" data-sort-key="target">
-                            <span>Target</span>
+                            <span>Audience</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
@@ -117,10 +117,10 @@
                     <td colspan="5" class="py-5">
                         {{ ui.empty_state(
                             'bi-journal-x',
-                            'No message logs yet',
-                            'Send your first message to see delivery history.',
-                            url_for('main.dashboard'),
-                            'Send Message'
+                            'No Matching Messages' if search else 'No Message History Yet',
+                            'Try a different search to find a message.' if search else 'Your sent messages and delivery results will appear here.',
+                            url_for('main.logs_list') if search else url_for('main.dashboard'),
+                            'Clear Search' if search else 'Send a Message'
                         ) }}
                     </td>
                 </tr>
@@ -176,10 +176,10 @@
             <div class="py-5">
                 {{ ui.empty_state(
                     'bi-journal-x',
-                    'No message logs yet',
-                    'Send your first message to see delivery history.',
-                    url_for('main.dashboard'),
-                    'Send Message'
+                    'No Matching Messages' if search else 'No Message History Yet',
+                    'Try a different search to find a message.' if search else 'Your sent messages and delivery results will appear here.',
+                    url_for('main.logs_list') if search else url_for('main.dashboard'),
+                    'Clear Search' if search else 'Send a Message'
                 ) }}
             </div>
         {% endif %}
@@ -194,7 +194,7 @@
     {% for log in logs %}
     <div class="offcanvas offcanvas-end preview-panel" tabindex="-1" id="logPreview{{ log.id }}">
         <div class="offcanvas-header">
-            <h5 class="offcanvas-title">Log preview</h5>
+            <h5 class="offcanvas-title">Message Preview</h5>
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
         </div>
         <div class="offcanvas-body">
@@ -213,24 +213,24 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}</h5>
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form method="POST" action="{{ url_for('main.logs_clear') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="modal-body">
                     <div class="alert alert-warning">
-                        <strong>Warning:</strong> {{ ('This permanently deletes logs without retained send evidence. Active logs and logs linked to saved requests or dispatch attempts are kept.' if config.SAAS_MODE else 'This will permanently delete all message logs. This action cannot be undone.')|private_text }}
+                        <strong>Warning:</strong> {{ ('This permanently removes history entries without saved send evidence. Messages being processed and records linked to saved sends are kept.' if config.SAAS_MODE else 'This will permanently delete all message logs. This action cannot be undone.')|private_text }}
                     </div>
                     <div class="mb-3">
-                        <label for="admin_password" class="form-label">Enter Admin Password to confirm:</label>
+                        <label for="admin_password" class="form-label">Admin Password</label>
                         <input type="password" class="form-control" id="admin_password" name="admin_password" required autocomplete="current-password">
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" class="btn btn-danger">
-                        <i class="bi bi-trash me-1"></i>{{ 'Clear unprotected logs' if config.SAAS_MODE else 'Clear All Logs' }}
+                        <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
                     </button>
                 </div>
             </form>

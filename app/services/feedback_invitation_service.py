@@ -139,10 +139,10 @@ def build_review(event, flow, values, actor, approval_key):
     profile = event.organization.messaging_profile
     timing = 'Send now' if intent['timing'] == 'now' else f"{intent['schedule_date']} {intent['schedule_time']} ({intent['timezone']})"
     return {'review_token':freeze_review(actor, event.organization_id, approval_key, intent, recipients),
-            'intent':intent, 'late_bound':True, 'audience':'Registered contacts' if intent['audience_rule']=='registered_contacts' else 'Contactable community',
+            'intent':intent, 'late_bound':True, 'audience':'Event Registrants' if intent['audience_rule']=='registered_contacts' else 'Contact List',
             'eligible':len(recipients), 'excluded':excluded, 'sender':profile.from_number if profile else 'Configured messaging service',
             'segments':estimate['total_segments'], 'sample':render_message_template(intent['message_body'], recipients[0] if recipients else {'name':''}),
-            'timing':timing, 'confirmation_label':'Confirm invitation' if intent['timing']=='now' else 'Confirm invitation schedule',
+            'timing':timing, 'confirmation_label':'Confirm Invitation' if intent['timing']=='now' else 'Confirm Invitation Schedule',
             'audience_policy':'Eligible contacts are resolved when this invitation becomes due. Its recipient snapshot then freezes for all retries. Current opt-outs and cancellations are checked before each submission.'}
 
 
@@ -374,12 +374,12 @@ def held_review(event, flow, invitation, actor, *, resume_timing='original'):
     estimate = analyze_personalized_sms_blast(schedule.message_body, rows)
     return {'review_token':freeze_review(actor, event.organization_id, f'invitation-resume:{invitation.id}', intent, rows),
         'intent':intent, 'late_bound':invitation.snapshot_frozen_at is None,
-        'audience':'Registered contacts' if invitation.audience_rule == 'registered_contacts' else 'Contactable community',
+        'audience':'Event Registrants' if invitation.audience_rule == 'registered_contacts' else 'Contact List',
         'eligible':len(rows), 'excluded':0, 'sender':'Configured messaging service',
         'segments':estimate['total_segments'],
         'timing':'Send now after this confirmation' if resume_timing == 'now' else 'Resume when due after this review',
         'sample':render_message_template(schedule.message_body, rows[0]),
-        'confirmation_label':'Confirm send now' if resume_timing == 'now' else 'Confirm reviewed invitation',
+        'confirmation_label':'Confirm Send Now' if resume_timing == 'now' else 'Confirm Reviewed Invitation',
         'audience_policy':'The audience rule stays unchanged. Accepted and unresolved provider evidence is retained. An existing frozen snapshot cannot gain recipients.'}
 
 

@@ -86,7 +86,7 @@ for (const width of [1440, 390]) {
       await page.getByLabel('Survey name', { exact: true }).fill(surveyName);
       await page.getByLabel('Trigger keyword', { exact: true }).fill(keyword);
       await page.getByLabel('Questions (one per line)', { exact: true }).fill(question);
-      await page.getByRole('button', { name: 'Save survey flow', exact: true }).click();
+      await page.getByRole('button', { name: 'Save Survey', exact: true }).click();
       const surveyRow = await visibleSurveyRow(page, width, surveyName);
       await expect(surveyRow).toBeVisible();
       const submissions = await surveyRow.getByRole('link', { name: /submissions/i }).getAttribute('href');
@@ -106,21 +106,21 @@ for (const width of [1440, 390]) {
       await expect(page.locator('.survey-answer-preview:visible').filter({ hasText: 'Music was great. Call +17205550101 for details.' })).toBeVisible();
 
       await page.goto('/unsubscribed/add');
-      await page.getByLabel('Name (optional)').fill(`Privacy suppression ${width}`);
-      await page.getByLabel('Phone', { exact: true }).fill(suppressionPhone);
-      await page.getByLabel('Reason (optional)').fill(`Request received from ${suppressionPhone}`);
-      await page.getByRole('button', { name: 'Add to Suppression', exact: true }).click();
+      await page.getByLabel('Name (Optional)').fill(`Privacy suppression ${width}`);
+      await page.getByLabel('Phone Number', { exact: true }).fill(suppressionPhone);
+      await page.getByLabel('Reason (Optional)').fill(`Request received from ${suppressionPhone}`);
+      await page.getByRole('button', { name: 'Block Number', exact: true }).click();
       await expect(page.locator('body')).toContainText(`Privacy suppression ${width}`);
 
       await login(page, 'staff@browser.test', 'Staff-pass1!');
       await page.goto('/community');
       await privateRenderedPage(page, privatePhones);
       await noExportControls(page);
-      const memberSearch = page.getByRole('textbox', { name: 'Search community members' });
+      const memberSearch = page.locator('.collection-panel--search').getByRole('textbox', { name: 'Search Contacts', exact: true });
       await memberSearch.fill('Maya');
       await memberSearch.press('Enter');
       await expect(page.locator('.collection-panel--results')).toContainText('Maya Chen');
-      await page.getByRole('navigation', { name: 'Community view' }).getByRole('link', { name: 'All contacts', exact: true }).focus();
+      await page.getByRole('navigation', { name: 'Contact Views' }).getByRole('link', { name: 'All Contacts', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(page).toHaveURL(/view=all/);
       await privateRenderedPage(page, privatePhones);
@@ -136,13 +136,16 @@ for (const width of [1440, 390]) {
       await expect(page).toHaveURL(/\/events\/\d+$/);
       const eventPath = new URL(page.url()).pathname;
       expect(eventPath).toMatch(/^\/events\/\d+$/);
+      await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Registrations', exact: true }).click();
+      await expect(page.locator('#registrations')).toBeVisible();
       await expect(page.locator('body')).toContainText('Acme RSVP');
       await privateRenderedPage(page, privatePhones);
       await noExportControls(page);
-      if (width === 390) await page.locator('[data-page-actions-toggle]').click();
-      await page.getByRole('link', { name: 'Event feedback', exact: true }).focus();
+      await page.getByRole('navigation', { name: 'Event workspace sections' }).getByRole('link', { name: 'Feedback', exact: true }).focus();
       await page.keyboard.press('Enter');
-      await expect(page.getByRole('heading', { name: 'Feedback forms', exact: true })).toBeVisible();
+      await page.getByRole('link', { name: 'Manage Feedback', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('heading', { name: 'Feedback Forms', exact: true })).toBeVisible();
       await privateRenderedPage(page, privatePhones);
 
       await page.goto('/inbox?view=threads');
@@ -156,7 +159,7 @@ for (const width of [1440, 390]) {
       await expect(page).toHaveURL(new RegExp(`thread=${threadID}(?:&|$)`));
       expect(new URL(page.url()).searchParams.get('thread')).toBe(threadID);
       await privateRenderedPage(page, privatePhones);
-      await page.getByLabel('Send reply', { exact: true }).fill(`Staff private reply ${width}`);
+      await page.getByLabel('Send Reply', { exact: true }).fill(`Staff private reply ${width}`);
       await page.locator('.inbox-reply-form').getByRole('button', { name: 'Send', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(page.locator('.inbox-message-bubble').filter({ hasText: `Staff private reply ${width}` })).toBeVisible();
@@ -173,7 +176,7 @@ for (const width of [1440, 390]) {
       await page.getByLabel('Message', { exact: true }).fill(`Staff confidential test ${width}`);
       await privateRenderedPage(page, privatePhones);
       const reviewResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/dashboard/review' && response.request().method() === 'POST');
-      await page.getByRole('button', { name: /^Send (Now|Message)$/ }).click();
+      await page.getByRole('button', { name: /^Review Message$/ }).click();
       const response = await reviewResponse;
       expect(response.status()).toBe(200);
       const reviewData = await response.json();
@@ -181,7 +184,7 @@ for (const width of [1440, 390]) {
       expect(Object.keys(publicPayload).sort()).toEqual(['encrypted', 'version']);
       expect(publicPayload.version).toBe(2);
       for (const phone of privatePhones) expect(JSON.stringify(reviewData)).not.toContain(phone);
-      const review = page.getByRole('dialog', { name: 'Review send', exact: true });
+      const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
       await expect(review).toBeVisible();
       await expect(review.locator('[data-review="eligible"]')).toHaveText('1');
       await privateRenderedPage(page, privatePhones);
@@ -196,11 +199,11 @@ for (const width of [1440, 390]) {
       await page.locator('.advanced-options__summary').click();
       await page.getByLabel('Test Mode', { exact: false }).check();
       await page.getByLabel('Saved test contact', { exact: true }).selectOption({ label: 'Board Chair' });
-      await page.getByLabel('Schedule for later', { exact: true }).check();
+      await page.getByLabel('Schedule for Later', { exact: true }).check();
       await page.getByLabel('Message', { exact: true }).fill(`Staff private scheduled test ${width}`);
       await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
       await page.getByLabel('Time', { exact: true }).fill('23:59');
-      await page.getByRole('button', { name: /Schedule Message|Send Now/ }).click();
+      await page.getByRole('button', { name: /Review Schedule|Review Message/ }).click();
       await confirmSendReview(page);
       await expect(page).toHaveURL(/\/scheduled$/);
       await expect(page.locator('body')).toContainText(`Staff private scheduled test ${width}`);

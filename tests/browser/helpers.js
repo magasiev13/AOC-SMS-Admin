@@ -83,9 +83,9 @@ async function login(page, username, password, path = '/login') {
 }
 
 async function confirmSendReview(page) {
-  const review = page.getByRole('dialog', { name: 'Review send', exact: true });
+  const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
   await expect(review).toBeVisible();
-  await review.getByRole('button', { name: /^Confirm (send|test send|schedule)$/ }).click();
+  await review.getByRole('button', { name: /^Confirm (send|test send|schedule)$/i }).click();
 }
 
 function organizationRow(page, organizationName) {
@@ -147,7 +147,7 @@ async function acceptInvitation(
 }
 
 async function startFakeCheckoutFromSetup(page) {
-  await page.getByRole('button', { name: /Start subscription|Update subscription/ }).click();
+  await page.getByRole('button', { name: /Start subscription|Update subscription/i }).click();
   if (/\/policies\/accept/.test(page.url())) {
     await expect(page.getByRole('heading', { name: 'Required before Checkout' })).toBeVisible();
     const policyCheckboxes = page.locator('input[name="accepted_policy"]');
@@ -157,7 +157,7 @@ async function startFakeCheckoutFromSetup(page) {
     }
     await page.getByRole('button', { name: 'Accept policies' }).click();
     await expect(page).toHaveURL(/\/setup\?step=billing$/);
-    await page.getByRole('button', { name: /Start subscription|Update subscription/ }).click();
+    await page.getByRole('button', { name: /Start subscription|Update subscription/i }).click();
   }
   await expect(page).toHaveURL(/\/_test\/stripe\/checkout\/cs_fake_org_/);
 }
@@ -169,14 +169,15 @@ async function completeFakeCheckout(page) {
 
 async function fillOwnerSetupCompliance(page, { organizationName, businessEmail, notificationEmail }) {
   await page.goto('/setup?step=compliance');
-  await expect(page.getByRole('heading', { name: 'Business profile and compliance' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Organization Details' })).toBeVisible();
 
   await page.getByLabel('Business type').selectOption('Limited Liability Corporation');
   await page.getByLabel('Legal business name').fill(organizationName);
   await page.getByLabel('Public brand name').fill(organizationName);
   await page.getByLabel('This business has its own EIN or business tax ID').check();
-  await expect(page.getByText('Using hosted fallback pages for Twilio submission.')).toBeVisible();
   await page.getByLabel('Business industry').selectOption('TECHNOLOGY');
+  await page.getByLabel('Registration number').fill('12-3456789');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Business email').fill(businessEmail);
   await page.getByLabel('Notification email').fill(notificationEmail || businessEmail);
   await page.getByLabel('Business phone').fill('+15550001991');
@@ -185,29 +186,32 @@ async function fillOwnerSetupCompliance(page, { organizationName, businessEmail,
   await page.getByLabel('City').fill('Denver');
   await page.getByLabel('State or province').fill('CO');
   await page.getByLabel('Postal code').fill('80202');
-  await page.getByLabel('Registration number').fill('12-3456789');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByLabel('Authorized rep first name').fill('Golden');
   await page.getByLabel('Authorized rep last name').fill('Owner');
   await page.getByLabel('Business title').fill('Owner');
   await page.getByLabel('Job position').selectOption('Director');
-  await page.getByLabel('Campaign description').fill('Account updates and business reminders');
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByText('Using hosted fallback pages for Twilio submission.')).toBeVisible();
   await page.getByLabel('Opt-in and message flow').fill(
     'Users opt in on the website, confirm their phone number, and reply STOP to unsubscribe.'
   );
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await page.getByLabel('Campaign description').fill('Account updates and business reminders');
   await page.getByLabel('Message samples').fill(
     'Golden Path Bakery update 1\nGolden Path Bakery update 2'
   );
-  await page.getByRole('button', { name: 'Validate and save business profile' }).click();
+  await page.getByRole('button', { name: 'Save Organization Details' }).click();
 
   await expect(page.getByText('Business profile validated and saved.')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Review and submit' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Review and Submit' })).toBeVisible();
   await expect(page.getByText('Submission source')).toBeVisible();
-  await expect(page.getByText('hosted_fallback')).toBeVisible();
+  await expect(page.getByText('Hosted Signup Pages', {exact: true})).toBeVisible();
 }
 
 async function submitOwnerOnboarding(page) {
   await page.getByLabel(/I confirm the information provided is accurate/i).check();
-  await page.getByRole('button', { name: 'Submit for Twilio review' }).click();
+  await page.getByRole('button', { name: 'Submit for Messaging Approval' }).click();
   await expect(page.getByText('Twilio A2P onboarding queued for review.')).toBeVisible();
 }
 

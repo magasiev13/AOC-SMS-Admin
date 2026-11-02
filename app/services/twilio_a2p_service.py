@@ -44,6 +44,14 @@ from app.services.twilio_service import (
 from app.utils import as_utc_datetime
 
 
+class A2PFormValidationError(ProviderProvisioningError):
+    """A local validation error with a form control to reveal and focus."""
+
+    def __init__(self, message: str, *, field_name: str):
+        super().__init__(message)
+        self.field_name = field_name
+
+
 STANDARD_CUSTOMER_PROFILE_POLICY_SID = "RNdfbf3fae0e1107f8aded0e7cead80bf5"
 STANDARD_TRUST_PRODUCT_POLICY_SID = "RNb0d4771c2c98518d916a3d4cd70a8f8b"
 SOLE_PROPRIETOR_CUSTOMER_PROFILE_POLICY_SID = "RN806dd6cd175f314e1f96a9727ee271f4"
@@ -370,11 +378,15 @@ def _normalized_csv_list(raw_value: str | None, *, default: list[str] | None = N
     return [part.strip().upper() for part in value.split(",") if part.strip()]
 
 
-def _normalize_public_url(raw_value: str | None, *, field_label: str) -> str | None:
+def _normalize_public_url(raw_value: str | None, *, field_label: str, field_name: str | None = None) -> str | None:
     value = _clean_text(raw_value)
     if not value:
         return None
     if not re.match(r"^https?://", value, re.IGNORECASE):
+        if field_name:
+            raise A2PFormValidationError(
+                f"{field_label} must be a public http:// or https:// URL.", field_name=field_name,
+            )
         raise ProviderProvisioningError(f"{field_label} must be a public http:// or https:// URL.")
     return value[:255]
 
@@ -580,7 +592,7 @@ def _determine_registration_path(
     if requested_path == "sole_proprietor" and has_business_tax_id:
         return "low_volume_standard"
     if requested_path not in A2P_REGISTRATION_PATH_VALUES:
-        raise ProviderProvisioningError("Choose a valid Twilio A2P registration path.")
+        raise A2PFormValidationError("Choose a valid Twilio A2P registration path.", field_name="registration_path")
     return requested_path
 
 
@@ -666,10 +678,10 @@ def _normalize_address_value(raw_value: str | None) -> str | None:
 def _normalize_business_industry(raw_value: str | None) -> str | None:
     candidate = (_clean_text(raw_value, lowercase=True) or "").replace("-", "_").replace(" ", "_").upper()
     if not candidate:
-        raise ProviderProvisioningError("Business industry is required.")
+        raise A2PFormValidationError("Business industry is required.", field_name="business_industry")
     if candidate in A2P_ALLOWED_BUSINESS_INDUSTRIES:
         return candidate
-    raise ProviderProvisioningError("Choose a valid business industry for Twilio A2P onboarding.")
+    raise A2PFormValidationError("Choose a valid business industry for Twilio A2P onboarding.", field_name="business_industry")
 
 
 def _normalize_business_regions(raw_value: Any) -> list[str]:
@@ -678,7 +690,7 @@ def _normalize_business_regions(raw_value: Any) -> list[str]:
     else:
         value = _clean_text(raw_value) or ""
         if not value:
-            raise ProviderProvisioningError("Choose at least one business region of operation.")
+            raise A2PFormValidationError("Choose at least one business region of operation.", field_name="business_regions")
         try:
             parsed = json.loads(value)
         except (TypeError, json.JSONDecodeError):
@@ -698,30 +710,30 @@ def _normalize_business_regions(raw_value: Any) -> list[str]:
         if candidate in A2P_ALLOWED_BUSINESS_REGIONS and candidate not in normalized:
             normalized.append(candidate)
     if not normalized:
-        raise ProviderProvisioningError("Choose at least one business region of operation.")
+        raise A2PFormValidationError("Choose at least one business region of operation.", field_name="business_regions")
     return normalized
 
 
 def _normalize_job_position(raw_value: str | None) -> str | None:
     value = _clean_text(raw_value)
     if not value:
-        raise ProviderProvisioningError("Job position is required for the authorized representative.")
+        raise A2PFormValidationError("Job position is required for the authorized representative.", field_name="job_position")
     if value in A2P_ALLOWED_JOB_POSITIONS:
         return value
-    raise ProviderProvisioningError("Choose a valid job position for the authorized representative.")
+    raise A2PFormValidationError("Choose a valid job position for the authorized representative.", field_name="job_position")
 
 
 def _normalize_business_title(raw_value: str | None, *, fallback: str | None = None) -> str | None:
     value = _clean_text(raw_value) or _clean_text(fallback)
     if not value:
-        raise ProviderProvisioningError("Business title is required for the authorized representative.")
+        raise A2PFormValidationError("Business title is required for the authorized representative.", field_name="business_title")
     return value[:120]
 
 
 def _normalize_notification_email(raw_value: str | None, *, fallback: str | None = None) -> str:
     candidate = _clean_text(raw_value, lowercase=True) or _clean_text(fallback, lowercase=True) or ""
     if not candidate or "@" not in candidate:
-        raise ProviderProvisioningError("Notification email is required.")
+        raise A2PFormValidationError("Notification email is required.", field_name="notification_email")
     return candidate
 
 
@@ -741,7 +753,7 @@ def _normalize_business_registration_number(identifier: str | None, raw_value: s
     if identifier == "EIN":
         digits = re.sub(r"\D+", "", value)
         if len(digits) != 9:
-            raise ProviderProvisioningError("Enter a valid EIN using 9 digits.")
+            raise A2PFormValidationError("Enter a valid EIN using 9 digits.", field_name="business_registration_number")
         return f"{digits[:2]}-{digits[2:]}"
     return value
 
@@ -761,15 +773,15 @@ def _require_address(
     postal_code: str | None,
 ) -> tuple[str, str, str, str, str]:
     if not country:
-        raise ProviderProvisioningError("Business country is required.")
+        raise A2PFormValidationError("Business country is required.", field_name="address_country")
     if not line1:
-        raise ProviderProvisioningError("Address line 1 is required.")
+        raise A2PFormValidationError("Address line 1 is required.", field_name="address_line1")
     if not city:
-        raise ProviderProvisioningError("Business city is required.")
+        raise A2PFormValidationError("Business city is required.", field_name="address_city")
     if not region:
-        raise ProviderProvisioningError("Business state or province is required.")
+        raise A2PFormValidationError("Business state or province is required.", field_name="address_region")
     if not postal_code:
-        raise ProviderProvisioningError("Business postal code is required.")
+        raise A2PFormValidationError("Business postal code is required.", field_name="address_postal_code")
     return country, line1, city, region, postal_code
 
 
@@ -807,7 +819,7 @@ def _normalize_use_case(registration_path: str, raw_value: str | None) -> str:
 
 def _validate_message_samples(campaign_use_case: str, message_samples: list[str]) -> list[str]:
     if len(message_samples) < 2:
-        raise ProviderProvisioningError("Provide at least two real message samples for carrier review.")
+        raise A2PFormValidationError("Provide at least two real message samples for carrier review.", field_name="message_samples")
     return message_samples
 
 
@@ -820,12 +832,12 @@ def _normalize_business_type(registration_path: str, raw_value: str | None) -> s
         return "Non-profit Corporation"
     candidate = _canonical_business_type(raw_value)
     if candidate == "Sole Proprietor":
-        raise ProviderProvisioningError("Sole proprietor business type is only valid for sole proprietor A2P onboarding.")
+        raise A2PFormValidationError("Sole proprietor business type is only valid for sole proprietor A2P onboarding.", field_name="business_type")
     if candidate in A2P_ALLOWED_BUSINESS_TYPES:
         return candidate
     if _clean_text(raw_value):
-        raise ProviderProvisioningError("Choose a valid Twilio legal business type for A2P onboarding.")
-    raise ProviderProvisioningError("Business type is required for standard or low-volume A2P onboarding.")
+        raise A2PFormValidationError("Choose a valid Twilio legal business type for A2P onboarding.", field_name="business_type")
+    raise A2PFormValidationError("Business type is required for standard or low-volume A2P onboarding.", field_name="business_type")
 
 
 def _business_identity(registration_path: str) -> str:
@@ -851,12 +863,14 @@ def _validate_business_registration_details(
     if not _requires_business_registration_details(registration_path):
         return identifier, number
     if not identifier:
-        raise ProviderProvisioningError(
-            "Business registration identifier is required for non-sole-proprietor A2P onboarding."
+        raise A2PFormValidationError(
+            "Business registration identifier is required for non-sole-proprietor A2P onboarding.",
+            field_name="business_registration_identifier",
         )
     if not number:
-        raise ProviderProvisioningError(
-            "Business registration number is required for non-sole-proprietor A2P onboarding."
+        raise A2PFormValidationError(
+            "Business registration number is required for non-sole-proprietor A2P onboarding.",
+            field_name="business_registration_number",
         )
     return identifier, number
 
@@ -2174,16 +2188,16 @@ def _find_onboarding_for_event(
 def _validate_message_flow_requirements(message_flow: str) -> None:
     normalized = message_flow.lower()
     if len(message_flow) < 24:
-        raise ProviderProvisioningError(
-            "Message flow must explain how users opt in and what the messaging program is for."
+        raise A2PFormValidationError(
+            "Message flow must explain how users opt in and what the messaging program is for.", field_name="message_flow"
         )
     if not any(token in normalized for token in ("opt in", "opt-in", "consent", "subscribe", "sign up")):
-        raise ProviderProvisioningError(
-            "Message flow must explain how the customer captures opt-in or consent before messaging."
+        raise A2PFormValidationError(
+            "Message flow must explain how the customer captures opt-in or consent before messaging.", field_name="message_flow"
         )
     if not any(token in normalized for token in ("stop", "unsubscribe")):
-        raise ProviderProvisioningError(
-            "Message flow must mention STOP or unsubscribe instructions."
+        raise A2PFormValidationError(
+            "Message flow must mention STOP or unsubscribe instructions.", field_name="message_flow"
         )
 
 
@@ -2197,15 +2211,21 @@ def _validate_custom_keyword_flow(
     if not uses_custom_flow:
         return
     if not message:
-        raise ProviderProvisioningError(f"{label} message is required when you configure custom {label.lower()} keywords.")
+        raise A2PFormValidationError(
+            f"{label} message is required when you configure custom {label.lower()} keywords.",
+            field_name=f"{label.lower().replace('-', '_')}_message",
+        )
     if not keywords:
-        raise ProviderProvisioningError(f"{label} keywords are required when you configure a custom {label.lower()} message.")
+        raise A2PFormValidationError(
+            f"{label} keywords are required when you configure a custom {label.lower()} message.",
+            field_name=f"{label.lower().replace('-', '_')}_keywords",
+        )
 
 
 def _validate_form_data(form_data: A2PFormData) -> None:
     if len(form_data.campaign_description) < 12 or len(form_data.campaign_description.split()) < 2:
-        raise ProviderProvisioningError(
-            "Campaign description must clearly describe the traffic in at least two words."
+        raise A2PFormValidationError(
+            "Campaign description must clearly describe the traffic in at least two words.", field_name="campaign_description"
         )
     _validate_message_flow_requirements(form_data.message_flow)
     if not form_data.privacy_policy_url:
@@ -2436,15 +2456,15 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
     campaign_description = _clean_text(payload.get("campaign_description")) or ""
     message_flow = _clean_text(payload.get("message_flow")) or ""
     if not business_name:
-        raise ProviderProvisioningError("Legal business name is required for A2P onboarding.")
+        raise A2PFormValidationError("Legal business name is required for A2P onboarding.", field_name="legal_business_name")
     if not email:
-        raise ProviderProvisioningError("Business email is required for A2P onboarding.")
+        raise A2PFormValidationError("Business email is required for A2P onboarding.", field_name="email")
     if not first_name or not last_name:
-        raise ProviderProvisioningError("Authorized representative first and last name are required.")
+        raise A2PFormValidationError("Authorized representative first and last name are required.", field_name="first_name" if not first_name else "last_name")
     if not campaign_description:
-        raise ProviderProvisioningError("Campaign description is required.")
+        raise A2PFormValidationError("Campaign description is required.", field_name="campaign_description")
     if not message_flow:
-        raise ProviderProvisioningError("Message flow is required.")
+        raise A2PFormValidationError("Message flow is required.", field_name="message_flow")
 
     if "has_public_website" in payload:
         has_public_website = _coerce_bool(payload.get("has_public_website"))
@@ -2504,10 +2524,10 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
     terms_and_conditions_url = active_urls.get("terms_and_conditions_url") or None
     cta_proof_url = active_urls.get("cta_proof_url") or None
     website_url = active_urls.get("website_url") or cta_proof_url or None
-    social_profile_url = _normalize_public_url(payload.get("social_profile_url"), field_label="Social profile URL")
+    social_profile_url = _normalize_public_url(payload.get("social_profile_url"), field_label="Social profile URL", field_name="social_profile_url")
     desired_phone_number_sid = _clean_text(payload.get("desired_phone_number_sid"))
     if registration_path == "sole_proprietor" and not mobile_number:
-        raise ProviderProvisioningError("A mobile number is required for sole proprietor onboarding.")
+        raise A2PFormValidationError("A mobile number is required for sole proprietor onboarding.", field_name="mobile_number")
     if number_strategy in {"existing_subaccount_number", "transfer_parent_number"} and not desired_phone_number_sid:
         raise ProviderProvisioningError("A Twilio phone number SID is required for the selected number strategy.")
     campaign_use_case = _normalize_use_case(registration_path, payload.get("campaign_use_case"))
@@ -2540,8 +2560,8 @@ def _build_form_data(payload: dict[str, Any], organization: Organization, *, req
         ),
     )
     if registration_path != "sole_proprietor" and not has_business_tax_id:
-        raise ProviderProvisioningError(
-            "Non-sole-proprietor onboarding requires a business EIN or tax ID. Use sole proprietor only for true sole proprietors without a business tax ID."
+        raise A2PFormValidationError(
+            "Non-sole-proprietor onboarding requires a business EIN or tax ID. Use sole proprietor only for true sole proprietors without a business tax ID.", field_name="has_business_tax_id"
         )
     declaration_accepted = _coerce_bool(payload.get("declaration_accepted"))
     if require_declaration and not declaration_accepted:

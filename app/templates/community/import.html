@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Import Community Members - {{ product_name }}{% endblock %}
+{% block title %}Import Contacts - {{ product_name }}{% endblock %}
 
-{% block page_title %}Import Community Members{% endblock %}
+{% block page_title %}Import Contacts{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.community_list') }}">Community</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.community_list') }}">Contacts</a> /
 <span>Import</span>
 {% endblock %}
 
@@ -20,14 +20,14 @@
                 <div class="workspace-panel__header">
                     <div>
                         <h2 class="workspace-panel__title">Upload CSV</h2>
-                        <p class="workspace-panel__meta">Import community members from a file and skip manual entry.</p>
+                        <p class="workspace-panel__meta">Add contacts from a CSV. Importing phone numbers does not grant SMS permission.</p>
                     </div>
                 </div>
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
                         <div class="mb-0">
-                            <label for="file" class="form-label">CSV file <span class="text-danger">*</span></label>
+                            <label for="file" class="form-label">CSV File <span class="text-danger">*</span></label>
                             <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
                         </div>
                     </div>
@@ -35,7 +35,7 @@
                         <div class="text-muted small">Duplicate phone numbers are skipped during import.</div>
                         <div class="workspace-form-actions">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-upload me-1"></i>Import
+                                <i class="bi bi-upload me-1"></i>Import Contacts
                             </button>
                             <a href="{{ url_for('main.community_list') }}" class="btn btn-outline-secondary">Cancel</a>
                         </div>
@@ -46,14 +46,14 @@
         <aside class="workspace-form-side">
             <div class="workspace-callout-stack">
                 <section class="workspace-callout">
-                    <h3 class="workspace-callout__title">Supported CSV formats</h3>
+                    <h3 class="workspace-callout__title">Supported CSV Formats</h3>
                     <div class="workspace-callout__copy">
-                        <strong>Three columns:</strong>
+                        <strong>Three Columns:</strong>
                         <pre class="mb-2 mt-2 bg-light p-2 rounded">Vardan,Hovsepyan,(323) 630-0201
 Jane,Smith,720-383-2388</pre>
-                        <strong>Two columns:</strong>
+                        <strong>Two Columns:</strong>
                         <pre class="mb-2 mt-2 bg-light p-2 rounded">John Doe,+1234567890</pre>
-                        <strong>Phone only:</strong>
+                        <strong>Phone Only:</strong>
                         <pre class="mb-0 mt-2 bg-light p-2 rounded">720-383-2388
 303-918-8410</pre>
                     </div>

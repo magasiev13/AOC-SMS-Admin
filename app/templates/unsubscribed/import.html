@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Import Suppression Contacts - {{ product_name }}{% endblock %}
+{% block title %}Import Blocked Numbers - {{ product_name }}{% endblock %}
 
-{% block page_title %}Import Suppression Contacts{% endblock %}
+{% block page_title %}Import Blocked Numbers{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.unsubscribed_list') }}">Suppression</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.unsubscribed_list') }}">Opt-Outs &amp; Blocks</a> /
 <span>Import CSV</span>
 {% endblock %}
 
@@ -25,8 +25,8 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Import suppression contacts</h2>
-                        <p class="workspace-panel__meta">Upload a CSV and add blocked contacts in bulk.</p>
+                        <h2 class="workspace-panel__title">Import Blocked Numbers</h2>
+                        <p class="workspace-panel__meta">Upload a CSV of phone numbers that should not receive messages.</p>
                     </div>
                 </div>
                 <form method="POST" enctype="multipart/form-data">
@@ -41,7 +41,7 @@
                     <div class="workspace-panel__footer">
                         <div class="text-muted small">Duplicate phone numbers are skipped during import.</div>
                         <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">Import CSV</button>
+                            <button type="submit" class="btn btn-primary">Import Blocks</button>
                             <a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">Cancel</a>
                         </div>
                     </div>

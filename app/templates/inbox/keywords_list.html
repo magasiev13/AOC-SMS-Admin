@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Keyword Automations - {{ product_name }}{% endblock %}
+{% block title %}Automatic Replies - {{ product_name }}{% endblock %}
 
-{% block page_title %}Keyword Automations{% endblock %}
+{% block page_title %}Automatic Replies{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <span>Automations</span> / <span>Keywords</span>
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Automations</span> / <span>Automatic Replies</span>
 {% endblock %}
 
 {% block page_actions %}
 <a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary keywords-page-action">
     <i class="bi bi-list-check keywords-page-action__icon" aria-hidden="true"></i>
-    <span>Survey Flows</span>
+    <span>Surveys</span>
 </a>
 <a href="{{ url_for('main.keyword_rule_add') }}" class="btn btn-primary page-action-primary keywords-page-action">
     <i class="bi bi-plus-lg keywords-page-action__icon" aria-hidden="true"></i>
-    <span>Add Keyword Rule</span>
+    <span>Add Automatic Reply</span>
 </a>
 {% endblock %}
 
@@ -26,9 +26,9 @@
     <div class="collection-shell">
         {{ ui.collection_search_panel(
             url_for('main.keyword_rules_list'),
-            'Search keyword rules',
+            'Search Automatic Replies',
             value=search,
-            aria_label='Search keyword rules',
+            aria_label='Search Automatic Replies',
             title='Search',
             meta='Filter by keyword or reply copy.'
         ) }}
@@ -67,7 +67,7 @@
                                         <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button class="btn btn-sm btn-soft-danger" type="submit"
-                                                    data-confirm="Delete this keyword rule?">
+                                                    data-confirm="Delete this automatic reply?">
                                                 <i class="bi bi-trash me-1"></i>Delete
                                             </button>
                                         </form>
@@ -80,10 +80,10 @@
                             <td colspan="6" class="py-5">
                                 {{ ui.empty_state(
                                     'bi-magic',
-                                    'No keyword rules found',
-                                    'Add your first rule to automate replies.',
-                                    primary_href=url_for('main.keyword_rule_add'),
-                                    primary_label='Add keyword rule'
+                                    'No Matching Automatic Replies' if search else 'No Automatic Replies Yet',
+                                    'Try a different keyword or reply text.' if search else 'Create a reply that starts when a contact texts your keyword.',
+                                    primary_href=url_for('main.keyword_rules_list') if search else url_for('main.keyword_rule_add'),
+                                    primary_label='Clear Search' if search else 'Add Automatic Reply'
                                 ) }}
                             </td>
                         </tr>
@@ -117,7 +117,7 @@
                             <form method="POST" action="{{ url_for('main.keyword_rule_delete', rule_id=rule.id) }}">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button class="btn btn-sm btn-soft-danger" type="submit"
-                                        data-confirm="Delete this keyword rule?">
+                                        data-confirm="Delete this automatic reply?">
                                     <i class="bi bi-trash me-1"></i>Delete
                                 </button>
                             </form>
@@ -127,10 +127,10 @@
                 {% else %}
                 {{ ui.empty_state(
                     'bi-magic',
-                    'No keyword rules found',
-                    'Add your first rule to automate replies.',
-                    primary_href=url_for('main.keyword_rule_add'),
-                    primary_label='Add keyword rule'
+                    'No Matching Automatic Replies' if search else 'No Automatic Replies Yet',
+                    'Try a different keyword or reply text.' if search else 'Create a reply that starts when a contact texts your keyword.',
+                    primary_href=url_for('main.keyword_rules_list') if search else url_for('main.keyword_rule_add'),
+                    primary_label='Clear Search' if search else 'Add Automatic Reply'
                 ) }}
                 {% endif %}
             </div>

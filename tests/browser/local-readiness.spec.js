@@ -81,9 +81,11 @@ test('platform admin can review onboarding progress and owner invite access', as
 
 test('owner sees human-readable billing state and pending invite links', async ({ page }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
-  await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Organizations' })).toHaveCount(0);
-  await page.getByRole('link', { name: 'Billing' }).first().click();
+  await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await page.locator('.settings-card[href="/billing"]').click();
   await expect(page).toHaveURL(/\/billing$/);
 
   await expect(page.locator('.badge').filter({ hasText: 'Trial active' }).first()).toBeVisible();

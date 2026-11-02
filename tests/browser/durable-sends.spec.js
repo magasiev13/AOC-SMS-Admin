@@ -38,7 +38,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.getByLabel('Message', { exact: true }).fill(body);
     const key = await page.locator('#sendForm input[name="request_idempotency_key"]').inputValue();
     const csrf = await page.locator('#sendForm input[name="csrf_token"]').inputValue();
-    await page.getByRole('button', { name: 'Send Now', exact: true }).click();
+    await page.getByRole('button', { name: 'Review Message', exact: true }).click();
     await confirmSendReview(page);
     await expect(page).toHaveURL(/\/logs\/\d+$/);
     const logUrl = page.url();
@@ -65,7 +65,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.goto('/dashboard');
     expect(await page.locator('#sendForm input[name="request_idempotency_key"]').inputValue()).not.toBe(key);
     await page.getByLabel('Message', { exact: true }).fill(body);
-    await page.getByRole('button', { name: 'Send Now', exact: true }).click();
+    await page.getByRole('button', { name: 'Review Message', exact: true }).click();
     await confirmSendReview(page);
     await expect(page).toHaveURL(/\/logs\/\d+$/);
     expect(page.url()).not.toBe(logUrl);
@@ -85,8 +85,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const key = await form.locator('[name="request_idempotency_key"]').inputValue();
     const csrf = await form.locator('[name="csrf_token"]').inputValue();
     const body = `Durable keyboard reply ${viewport.width}`;
-    await page.getByLabel('Send reply').fill(body);
-    await page.getByLabel('Send reply').press('Tab');
+    await page.getByLabel('Send Reply').fill(body);
+    await page.getByLabel('Send Reply').press('Tab');
     await expect(form.getByRole('button', { name: 'Send', exact: true })).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('body')).toContainText('not a delivery receipt');
@@ -99,10 +99,10 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.reload();
     await expect(page.locator('.inbox-message-bubble').filter({ hasText: body })).toHaveCount(1);
     if (viewport.width < 500) {
-      await page.getByRole('link', { name: 'Back to threads' }).click();
+      await page.getByRole('link', { name: 'Back to Conversations' }).click();
       await expect(page.locator('#inboxThreadsPanel')).toBeVisible();
       await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
-      await expect(page.getByLabel('Send reply')).toBeVisible();
+      await expect(page.getByLabel('Send Reply')).toBeVisible();
     }
   });
 }

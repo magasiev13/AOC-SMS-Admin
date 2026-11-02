@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Log Details - {{ product_name }}{% endblock %}
+{% block title %}Message Details - {{ product_name }}{% endblock %}
 
-{% block page_title %}Message Log Details{% endblock %}
+{% block page_title %}Message Details{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> /
-<a href="{{ url_for('main.logs_list') }}">Logs</a> /
+<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.logs_list') }}">Message History</a> /
 <span>Details</span>
 {% endblock %}
 
 {% block page_actions %}
 <a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Back to Logs
+    <i class="bi bi-arrow-left me-1"></i>Back to History
 </a>
 {% endblock %}
 
@@ -35,7 +35,7 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Message body</h2>
+                        <h2 class="workspace-panel__title">Message Body</h2>
                         <p class="workspace-panel__meta">The exact content saved for this audience. Provider submission and delivery are separate states.</p>
                     </div>
                 </div>
@@ -47,7 +47,7 @@
             <section class="collection-panel collection-panel--results">
                 <div class="collection-panel__header">
                     <div>
-                        <h2 class="collection-panel__title">Recipient details</h2>
+                        <h2 class="collection-panel__title">Recipient Details</h2>
                         <p class="collection-panel__meta">Provider acceptance and recipient delivery are separate. Review each receipt and carrier error below.</p>
                     </div>
                 </div>
@@ -73,7 +73,7 @@
                                         <span class="sort-indicator" aria-hidden="true"></span>
                                     </button>
                                 </th>
-                                <th>Delivery receipt</th>
+                                <th>Delivery Receipt</th>
                                 <th data-sort-type="enum">
                                     <button type="button" class="sort-button" data-sort-key="suppression">
                                         <span>Suppression</span>
@@ -176,18 +176,18 @@
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
                     <div>
-                        <h2 class="workspace-panel__title">Send summary</h2>
+                        <h2 class="workspace-panel__title">Send Summary</h2>
                         <p class="workspace-panel__meta">Current submission state and saved audience details.</p>
                     </div>
                 </div>
                 <div class="workspace-panel__body">
                     <dl class="workspace-data-list">
                         <div>
-                            <dt>Created at</dt>
+                            <dt>Created At</dt>
                             <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
                         </div>
                         <div>
-                            <dt>Target</dt>
+                            <dt>Audience</dt>
                             <dd>
                                 {% if log.test_mode %}
                                 <span class="badge bg-warning text-dark mb-1">Test</span><br>
@@ -199,7 +199,7 @@
                             </dd>
                         </div>
                         <div>
-                            <dt>Total recipients</dt>
+                            <dt>Total Recipients</dt>
                             <dd>{{ log.total_recipients }}</dd>
                         </div>
                         <div>

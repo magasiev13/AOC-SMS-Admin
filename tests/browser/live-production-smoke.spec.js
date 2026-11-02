@@ -92,16 +92,18 @@ test('control owner account reaches the live readiness surfaces without mutating
   await waitForCurrentNavigation(page);
 
   if (/\/dashboard(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search)) {
-    await clickWorkspaceLinkAndExpectOk(page, 'Billing', '/billing');
+    await clickWorkspaceLinkAndExpectOk(page, 'Settings', '/settings');
+    await page.locator('.settings-card[href="/billing"]').click();
+    await expect(page).toHaveURL(/\/billing$/);
   } else {
     await gotoAndExpectOk(page, '/billing');
   }
   await expect(page.getByRole('heading', { name: 'Billing' })).toBeVisible();
 
   await gotoAndExpectOk(page, '/dashboard');
-  await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Send SMS Blast' })).toBeVisible();
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(page.getByLabel('Message', { exact: true })).toBeVisible();
   await expect(page.locator('.setup-steps')).toHaveCount(0);
   await expect(page.locator('.workspace-summary__meta')).toHaveCount(0);
   await expect(page.locator('body')).not.toContainText('Sending enabled');

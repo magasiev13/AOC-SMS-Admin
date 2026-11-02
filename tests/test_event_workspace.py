@@ -23,7 +23,7 @@ def test_group_booking_metrics_and_staff_privacy_without_a_customer_specific_rul
     page = f.staff_client.get(f'/events/{f.event.id}')
     assert page.status_code == 200
     for text in [b'Bookings', b'Reserved places', b'Reachable contacts', b'Missing contact details',
-                 b'Company guests', b'Family group', b'10 reserved places', b'2 reserved places', b'Unverified coverage']:
+                 b'Company guests', b'Family group', b'10 reserved places', b'2 reserved places', b'Needs Review']:
         assert text in page.data
     assert b'+17205550145' not in page.data
     assert b'order-one' not in page.data
@@ -52,10 +52,10 @@ def test_reminders_use_exact_source_identity_without_changing_community_audience
     with f.organization_context(f.org.id):
         rows = event_communications(f.event)
     assert len(rows['scheduled']) == 4
-    assert rows['next_message']['label'] == 'Two weeks before'
+    assert rows['next_message']['label'] == 'Two Weeks Before'
     assert all(row['schedule'].event_id is None and row['schedule'].target == 'community' for row in rows['scheduled'])
     page = f.staff_client.get(f'/events/{f.event.id}')
-    assert page.status_code == 200 and b'One week before' in page.data
+    assert page.status_code == 200 and b'One Week Before' in page.data
     assert b'Similar unrelated event' not in page.data
 
 
@@ -72,7 +72,7 @@ def test_missing_receipts_never_become_delivered(feedback):
     assert result == {'total': 3, 'accepted': 2, 'delivered': 0, 'submission_failed': 1,
                       'delivery_failed': 0, 'unresolved': 2, 'acceptance_rate': 66.7}
     dashboard = f.client.get('/dashboard')
-    assert b'Provider acceptance' in dashboard.data
+    assert b'Provider Acceptance' in dashboard.data
     assert b'Delivery Rate' not in dashboard.data
     assert b'0 confirmed delivered' in dashboard.data
     assert b'>Delivered<' not in dashboard.data
@@ -122,7 +122,7 @@ def test_app_integration_setup_is_workspace_owner_scoped(feedback):
     assert f.staff_client.get('/settings/event-sync?provider=app').status_code == 403
     page = f.client.get('/settings/event-sync?provider=app')
     assert page.status_code == 200
-    assert b'Enable app integration' in page.data
+    assert b'Enable App Integration' in page.data
     assert f'/webhooks/event-sync/{f.org.slug}/app'.encode() in page.data
     assert b'X-Twinevia-Signature' in page.data
     assert f.m.ScheduledMessage.query.count() == 0
@@ -188,7 +188,7 @@ def test_reviewed_community_announcement_keeps_event_context_and_audience(feedba
     form = {'target': 'community', 'context_event_id': f.event.id, 'message_body': 'Join our community event.',
             'request_idempotency_key': uuid4().hex, 'require_review': '1'}
     review = f.client.post('/dashboard/review', data=form)
-    assert review.status_code == 200 and review.json['audience'] == 'Community'
+    assert review.status_code == 200 and review.json['audience'] == 'Contact List'
     form['review_token'] = review.json['review_token']
     with patch('app.routes.enqueue_outbound_request'):
         response = f.client.post('/dashboard', data=form)
@@ -223,14 +223,14 @@ def test_community_feedback_invitation_is_event_associated_and_held_review_reach
     with f.organization_context(f.org.id):
         communications=event_communications(f.event)
         assert communications['next_message']['schedule'].id==invitation.scheduled_message_id
-        assert communications['next_message']['label']=='Feedback invitation'
+        assert communications['next_message']['label']=='Feedback Invitation'
         assert len(communications['scheduled'])==1
         invitation.scheduled_message.status='held'
         invitation.hold_reason='Compare the event roster before resuming.'
         f.db.session.commit()
     page=f.staff_client.get(f'/events/{f.event.id}')
     assert page.status_code==200
-    assert b'Review held invitation' in page.data
+    assert b'Review Held Invitation' in page.data
     assert f'/events/{f.event.id}/feedback/{flow.id}/invitations/{invitation.id}/review'.encode() in page.data
     assert contact.phone.encode() not in page.data
     assert f'/scheduled'.encode() in page.data
