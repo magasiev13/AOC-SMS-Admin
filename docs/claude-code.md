@@ -59,27 +59,20 @@ does not create a Claude connector login.
 3. `CLAUDE.md` imports the shared project instructions and adds the UI review workflow.
 4. The **Twinevia demo** preview is defined in `.claude/launch.json`, with automatic
    visual verification enabled. Port 5011 is fixed; stop another preview before starting it.
-5. Keep the existing permission settings. Review the local diff and test results
-   before merging or deploying any changes.
+5. The user authorizes full local credential and tool access. Keep credentials
+   out of GitHub.
 
 ## Initial review brief
 
 Use this as the first message once the committed baseline has passed validation:
 
-> Read CLAUDE.md, PRODUCT.md, and the design context. Improve the visual quality
-> and usability of Twinevia as a polished, coherent messaging workspace. Start
-> by running the configured local demo and auditing the owner, staff, and
-> platform experiences at desktop and mobile sizes. Review setup, navigation,
-> dashboard/composing, community, events/registrations/messages/feedback, inbox,
-> scheduled messages, logs, and common forms/tables. Identify the most valuable
-> improvements and any reproducible functional defects, then present a concrete
-> design direction and prioritized findings before implementation. Preserve
-> working integrations, tenant isolation, staff privacy, consent, billing gates,
-> and message-delivery safeguards. Use the existing Flask/Jinja architecture.
-> After implementation, exercise the changed flows, run the relevant backend
-> tests and full browser suite for shared UI changes, and commit verified work
-> on the working branch. Report what changed, evidence, and remaining issues.
-> Do not merge or deploy as part of this review.
+> Give me your candid, independent assessment of this app. What are the five
+> major things I should focus on fixing or optimizing, and why? What do you think
+> of the UI, and how would you improve it drastically? Inspect and use the app,
+> investigate its implementation, and choose your own approach. Support your
+> priorities and proposed design direction with concrete evidence. You have full
+> access to the local project credentials, SSH configuration, and installed tools.
+> Do not expose credentials in GitHub.
 
 ## Validation commands
 

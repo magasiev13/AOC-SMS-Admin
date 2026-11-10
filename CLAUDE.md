@@ -7,19 +7,18 @@
 Read `PRODUCT.md` and `.impeccable/design.json` before making UI decisions.
 Read the nearest nested `AGENTS.md` before editing services, migrations, or deployment tooling.
 
-The user authorizes local project work using the existing credentials, SSH access,
-and installed tools. Machine-specific access details are in `CLAUDE.local.md`.
-Keep credentials in ignored local files and avoid printing them in logs or commits.
+The user grants full freedom to inspect, research, experiment, and act on the
+requested work using existing credentials, SSH access, and installed tools.
+Use your judgment and take ownership of the outcome. Machine-specific access
+details are in `CLAUDE.local.md`. The only additional access restriction is:
+never publish, push, or commit credentials to GitHub.
 
 ## UI and issue review
 
-- Improve the real Flask/Jinja application using its shared templates, CSS tokens, and existing JavaScript. Preserve the Twinevia identity and connected workflows.
-- Inspect the rendered owner, staff, and platform experiences before proposing changes. Cover desktop and a narrow mobile viewport, navigation, setup, composing, events, inbox, forms, tables, empty states, errors, keyboard access, and visible focus.
-- Preserve tenant boundaries, staff contact privacy, consent, billing and provider gates, duplicate-send protection, and the separation of event feedback from registration.
-- Use `./run/claude_preview.sh` or the configured desktop preview for local UI work. It creates disposable demo data and fake providers. Restarting it resets that preview data.
-- Verify changed flows in the browser and run the relevant existing tests. For shared navigation, CSS, or template changes, run the full browser suite. Fix meaningful regressions; keep behavioral assertions intact.
-- Record any additional issues with reproduction steps and evidence. Distinguish verified defects from suggestions and untested assumptions.
-- Keep changes on the dedicated working branch. Commit completed, verified work. Production deployment and merging into `main` are separate tasks.
+- The current application uses Flask/Jinja, shared CSS tokens, and JavaScript. Its architecture and product context are available for you to inspect and evaluate.
+- The desktop preview runs `./run/claude_preview.sh`, an optional local environment with disposable demo data and fake providers. Restarting it resets that preview data.
+- Verify actual behavior and support conclusions with evidence. Distinguish verified defects, design judgment, and untested assumptions.
+- Choose the approach, scope, and workflow that best achieve the user's request.
 
 ## Commands
 
