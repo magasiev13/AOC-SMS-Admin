@@ -4,10 +4,6 @@
   "configurations": [
     {
       "name": "Twinevia demo",
-      "runtimeExecutable": "/bin/bash",
-      "runtimeArgs": ["./run/claude_preview.sh"],
-      "port": 5011,
-      "autoPort": false,
       "url": "http://127.0.0.1:5011"
     }
   ]

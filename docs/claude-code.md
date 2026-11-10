@@ -57,8 +57,12 @@ does not create a Claude connector login.
 2. Select the prepared isolated project folder. If that folder is already a Git
    worktree, leave Claude's extra **Worktree** option off.
 3. `CLAUDE.md` imports the shared project instructions and adds the UI review workflow.
-4. The **Twinevia demo** preview is defined in `.claude/launch.json`, with automatic
-   visual verification enabled. Port 5011 is fixed; stop another preview before starting it.
+4. Start `./run/claude_preview.sh` through Claude's Bash tool as a background task,
+   then open **Twinevia demo** from the desktop preview. The configuration in
+   `.claude/launch.json` attaches to that running server, with automatic visual
+   verification enabled. This avoids a macOS permission failure in the separate
+   preview launcher when the project is stored under Desktop. Port 5011 is fixed;
+   stop the background task before starting another copy.
 5. The user authorizes full local credential and tool access. Keep credentials
    out of GitHub.
 

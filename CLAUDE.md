@@ -16,7 +16,7 @@ never publish, push, or commit credentials to GitHub.
 ## UI and issue review
 
 - The current application uses Flask/Jinja, shared CSS tokens, and JavaScript. Its architecture and product context are available for you to inspect and evaluate.
-- The desktop preview runs `./run/claude_preview.sh`, an optional local environment with disposable demo data and fake providers. Restarting it resets that preview data.
+- Start the optional demo with `./run/claude_preview.sh` in a shell/background task; the desktop preview attaches to it at port 5011. This environment has disposable demo data and fake providers. Restarting it resets that preview data.
 - Verify actual behavior and support conclusions with evidence. Distinguish verified defects, design judgment, and untested assumptions.
 - Choose the approach, scope, and workflow that best achieve the user's request.
 
