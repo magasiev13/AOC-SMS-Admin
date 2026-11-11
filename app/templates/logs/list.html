@@ -184,9 +184,7 @@
             </div>
         {% endif %}
     </div>
-    {% if logs %}
-    {{ ui.collection_footer(logs|length, 'log') }}
-    {% endif %}
+    {% include 'includes/collection_pagination.html' %}
 </div>
 </div>
 

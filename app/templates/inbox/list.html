@@ -56,7 +56,7 @@
                     {% set thread_is_active = selected_thread and thread.id == selected_thread.id %}
                     <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}" role="listitem">
                         <a class="text-decoration-none d-block inbox-thread-link"
-                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}"
+                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search, page=page) }}"
                            data-inbox-loading-trigger
                            {% if thread_is_active %}aria-current="page"{% endif %}>
                             <div class="d-flex justify-content-between align-items-center gap-2">
@@ -97,6 +97,7 @@
                 <div class="inbox-skeleton-line"></div>
                 <div class="inbox-skeleton-line"></div>
             </div>
+            {% include 'includes/collection_pagination.html' %}
         </div>
     </div>
 
@@ -105,12 +106,12 @@
             {% if selected_thread %}
             {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
             <div class="d-lg-none px-3 pt-3">
-                <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search, view='threads') }}#inboxThreadsPanel">
+                <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search, view='threads', page=page) }}#inboxThreadsPanel">
                     <i class="bi bi-arrow-left me-1"></i>Back to Conversations
                 </a>
-                {% if threads|length > 1 %}
+                {% if total_count > 1 %}
                 <p class="small text-muted mt-2 mb-0 inbox-mobile-thread-count">
-                    Viewing 1 of {{ threads|length }} thread{{ '' if threads|length == 1 else 's' }}
+                    Viewing 1 of {{ total_count }} threads
                 </p>
                 {% endif %}
             </div>

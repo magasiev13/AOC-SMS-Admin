@@ -8828,6 +8828,8 @@ def event_export_registrations(event_id):
 @login_required
 def logs_list():
     search = request.args.get('search', '').strip()
+    page = max(1, request.args.get('page', 1, type=int) or 1)
+    per_page = 50
     query = MessageLog.query
 
     if search:
@@ -8842,14 +8844,20 @@ def logs_list():
         )
 
     try:
-        logs = query.order_by(MessageLog.created_at.desc()).limit(100).all()
+        total_count = query.count()
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        logs = query.order_by(MessageLog.created_at.desc(), MessageLog.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
     except OperationalError as exc:
+        db.session.rollback()
         current_app.logger.warning(
             'MessageLog list query failed due to schema mismatch: %s',
             exc,
         )
         flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
         logs = []
+        total_count = 0
+        page = total_pages = 1
 
     processing_logs = [
         {
@@ -8867,6 +8875,9 @@ def logs_list():
         logs=logs,
         search=search,
         processing_logs=processing_logs,
+        page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
+        pagination_endpoint='main.logs_list', pagination_args={'search': search},
+        pagination_label='Message History Pagination', pagination_noun='messages',
     )
 
 
@@ -9872,6 +9883,8 @@ def _inbox_activity_snapshot() -> dict:
 @login_required
 def inbox_list():
     search = request.args.get('search', '').strip()
+    page = max(1, request.args.get('page', 1, type=int) or 1)
+    per_page = 50
     selected_thread_id = request.args.get('thread', type=int)
     mobile_view = request.args.get('view', '').strip().lower()
     show_thread_list_only = mobile_view == 'threads'
@@ -9892,7 +9905,10 @@ def inbox_list():
             .distinct()
         )
 
-    threads = query.order_by(InboxThread.last_message_at.desc()).limit(200).all()
+    total_count = query.count()
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    threads = query.order_by(InboxThread.last_message_at.desc(), InboxThread.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
     selected_thread = None
     if selected_thread_id:
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
@@ -9932,9 +9948,9 @@ def inbox_list():
         if messages:
             all_messages = InboxMessage.query.filter_by(thread_id=selected_thread.id)
             if all_messages.filter(earlier_than(messages[0])).first() is not None:
-                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, before=messages[0].id)
+                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, before=messages[0].id)
             if all_messages.filter(later_than(messages[-1])).first() is not None:
-                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, after=messages[-1].id)
+                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, after=messages[-1].id)
         if selected_thread.unread_count and not newer_messages_url:
             mark_thread_read(selected_thread.id)
             selected_thread.unread_count = 0
@@ -10006,11 +10022,16 @@ def inbox_list():
         inbox_status_delivery_version=activity['delivery_version'],
         older_messages_url=older_messages_url,
         newer_messages_url=newer_messages_url,
-        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search) if selected_thread else url_for('main.inbox_list', search=search),
+        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page) if selected_thread else url_for('main.inbox_list', search=search, page=page, view='threads' if show_thread_list_only else None),
         reply_draft_context=hashlib.sha256(f'{_current_organization_id()}:{current_user.id}:{current_user.session_nonce}'.encode()).hexdigest()[:32],
         acknowledged_reply_key=acknowledged_reply_key,
         show_thread_list_only=show_thread_list_only,
         search=search,
+        page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
+        pagination_endpoint='main.inbox_list',
+        pagination_args={'search': search, 'view': 'threads' if show_thread_list_only else None,
+                         'thread': selected_thread.id if selected_thread else None},
+        pagination_label='Conversation Pagination', pagination_noun='conversations',
         reply_request_key=uuid4().hex,
         saved_reply_request=(
             OutboundRequest.query.filter_by(thread_id=selected_thread.id, kind='reply')
