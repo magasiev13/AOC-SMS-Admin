@@ -36,6 +36,7 @@ The `Twinevia Legacy` single-tenant SQLite runtime remains documented only where
 ## Security And Account Operations
 
 - [Security Hardening Summary](security-hardening-summary.md): current production security checklist
+- [Owner Hardening Checklist](production-hardening-checklist.md): off-server restore, alerting and host tasks to verify before signing off
 - [Auth Hardening Phases](auth-hardening-phases.md): current auth/account-security reference
 
 ## Pointers Back To The Repo
