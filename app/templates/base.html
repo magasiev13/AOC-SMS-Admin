@@ -499,5 +499,6 @@
         initMobileNav();
     </script>
     {% block scripts %}{% endblock %}
+{% if clear_send_draft_key %}<script>try { localStorage.removeItem({{ clear_send_draft_key|tojson }}); } catch (_) {}</script>{% endif %}
 </body>
 </html>

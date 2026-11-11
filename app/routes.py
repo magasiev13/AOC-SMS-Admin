@@ -4890,6 +4890,7 @@ def dashboard():
                     scheduled_estimate['max_segment_count'],
                     scheduled_estimate['total_segments'],
                 )
+                session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
                 flash(f'Message scheduled for {scheduled_local.strftime("%Y-%m-%d %H:%M")}.', 'success')
                 flash(_format_blast_estimate_summary(scheduled_estimate), 'info')
                 return redirect(url_for('main.scheduled_list'))
@@ -4958,6 +4959,7 @@ def dashboard():
                 return render_dashboard()
             if created:
                 enqueue_outbound_request(saved_request)
+            session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
             flash(request_status_message(saved_request), 'warning' if saved_request.status in {'pending', 'queue_unknown', 'ambiguous'} else 'info')
             flash(_format_blast_estimate_summary(blast_estimate), 'info')
             return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))

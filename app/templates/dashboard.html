@@ -51,7 +51,9 @@
                         <strong>Live SMS is paused.</strong> {{ (send_disabled_reason)|private_text }}
                     </div>
                     {% endif %}
-                    <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}">
+                    <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}"
+                          data-draft-key="twinevia:send-draft:{{ current_user.id }}:{{ current_organization.id if current_organization else none }}"
+                          data-login-url="{{ url_for('auth.login', next=url_for('main.dashboard')) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="require_review" value="1">
                         <input type="hidden" name="review_token" value="">
@@ -249,6 +251,7 @@
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
                                 <i class="bi bi-send-fill me-2"></i>{{ 'Messaging Setup In Progress' if config.SAAS_MODE and current_organization and not can_send_messages else 'Review Message' }}
                             </button>
+                            <button type="button" class="btn btn-outline-secondary" id="discardSendDraft">Discard draft</button>
                             {% if config.SAAS_MODE and current_organization and not can_send_messages %}
                             <div class="form-text text-center">You can draft a message while setup is in progress. Live sending becomes available when setup is complete.</div>
                             {% endif %}
@@ -579,6 +582,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/send_draft.js') }}"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>

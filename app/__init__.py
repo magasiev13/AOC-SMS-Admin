@@ -706,6 +706,23 @@ def _configure_security_headers(app: Flask) -> None:
 def _build_app() -> Flask:
     app = Flask(__name__)
 
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def expired_page_token(error):
+        from flask import jsonify, render_template, url_for
+        from flask_login import current_user
+        from app.http_errors import wants_json
+        if wants_json():
+            if not current_user.is_authenticated and request.endpoint == 'main.dashboard_send_review':
+                from app.auth import _handle_unauthorized
+                return _handle_unauthorized()
+            return jsonify(error='This page has expired. Reload it and review your saved message again.'), 400
+        return render_template('errors/request.html', error_code=400, heading='This page has expired',
+            explanation='Reload the page or sign in again, then try again.',
+            recovery_url=url_for('main.dashboard') if current_user.is_authenticated else url_for('auth.login'),
+            recovery_label='Reload workspace' if current_user.is_authenticated else 'Sign in'), 400
+
     @app.before_request
     def bound_confidential_review_form():
         # A sealed audience cannot use the compression of the former readable
@@ -751,7 +768,9 @@ def _build_app() -> Flask:
 
     @app.context_processor
     def inject_app_version():
+        from flask import session
         return {
+            "clear_send_draft_key": session.pop("clear_send_draft_key", None),
             "app_version": os.environ.get("APP_VERSION", "dev"),
             "current_year": datetime.now(timezone.utc).year,
             "product_name": app.config.get("PRODUCT_NAME", "Twinevia"),
