@@ -262,6 +262,42 @@ bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
 
 
+@bp.app_errorhandler(400)
+@bp.app_errorhandler(404)
+@bp.app_errorhandler(500)
+def request_error_page(error):
+    """Give browser pages a recovery path without changing machine responses."""
+    from app.http_errors import wants_json
+    from werkzeug.exceptions import SecurityError
+
+    if error.code == 500:
+        db.session.rollback()
+    if wants_json() or request.path.startswith(('/webhooks/', '/api/')):
+        return error
+    if isinstance(error, SecurityError):
+        # Host validation can reject the request before Flask has a URL adapter.
+        # Render without layout/context processors or links on that origin.
+        return current_app.jinja_env.get_template('errors/invalid_host.html').render(
+            product_name=current_app.config.get('PRODUCT_NAME', 'Twinevia')), 400
+
+    heading, explanation = {
+        400: ('This request could not be completed',
+              'The page may have expired. Reload the workspace or sign in again, then try again.'),
+        404: ('Page not found',
+              'This page is unavailable. Check the address or return to your workspace.'),
+        500: ('Something went wrong',
+              'We could not complete this request. Return to your workspace and try again.'),
+    }[error.code]
+    if current_user.is_authenticated:
+        destination = url_for('main.platform_home' if current_user.is_platform_admin else 'main.dashboard')
+        label = 'Back to platform' if current_user.is_platform_admin else 'Back to workspace'
+    else:
+        destination, label = url_for('auth.login'), 'Sign in'
+    return render_template('errors/request.html', error_code=error.code, heading=heading,
+                           explanation=explanation, recovery_url=destination,
+                           recovery_label=label), error.code
+
+
 @bp.app_errorhandler(403)
 def forbidden_page(_error):
     if request.is_json or request.path.startswith(('/webhooks/', '/api/')) or request.accept_mimetypes.best == 'application/json':
