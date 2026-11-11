@@ -666,7 +666,7 @@ def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:
                 scheduler_setting,
             )
         else:
-            app.logger.info(
+            app.logger.debug(
                 "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only.",
                 scheduler_setting,
             )

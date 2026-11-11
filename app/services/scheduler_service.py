@@ -388,7 +388,7 @@ def send_scheduled_messages(app):
         snapshot_max_bytes = int(
             current_app.config.get('RECIPIENT_SNAPSHOT_MAX_BYTES', 1024 * 1024) or 1024 * 1024
         )
-        logger.info("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
+        logger.debug("[Scheduler] Starting scheduled messages check at %s UTC", now.isoformat())
 
         def _load_scheduled_snapshot(scheduled_message) -> list[dict[str, str]]:
             if scheduled_message.test_mode:
@@ -466,7 +466,7 @@ def send_scheduled_messages(app):
         ).all()
         
         pending_count = len(pending)
-        logger.info("[Scheduler] Found %d pending message(s) due for sending", pending_count)
+        logger.debug("[Scheduler] Found %d pending message(s) due for sending", pending_count)
         
         if pending_count == 0:
             logger.info("[Scheduler] No messages to process, exiting")
