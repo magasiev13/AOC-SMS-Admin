@@ -19,7 +19,8 @@ cd "${READINESS_APPLICATION_ROOT}"
 send_alert() {
   local message="$1"
   if [[ -z "${ALERT_WEBHOOK_URL:-}" ]]; then
-    return
+    logger -p user.warning -t twinevia-readiness -- "Alerting not configured: readiness failure could not be delivered because no alert destination is set."
+    return 0
   fi
   ALERT_MESSAGE="${message}" "${PYTHON_BIN}" -c 'import json, os; print(json.dumps({"text": os.environ["ALERT_MESSAGE"]}))' \
     | curl --fail --silent --show-error --max-time 10 \
