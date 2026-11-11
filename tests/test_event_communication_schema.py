@@ -76,7 +76,7 @@ def test_schema028_upgrade_replay_preserves_all_old_rows_and_creates_no_authorit
                                    {'v':migration.version,'at':'2026-10-28T00:00:00Z'})
         old_tables = sorted(set(inspect(connection).get_table_names()) - set(NEW_TABLES) - {'saas_schema_migrations'})
         before = _table_hashes(connection, old_tables)
-    assert run_pending_saas_migrations(case.db.engine,case.app.logger) == ['029','030','031']
+    assert run_pending_saas_migrations(case.db.engine,case.app.logger) == ['029','030','031','032']
     assert run_pending_saas_migrations(case.db.engine,case.app.logger) == []
     with case.db.engine.begin() as connection:
         for _ in range(2):
@@ -219,7 +219,7 @@ def test_historical_first_promotion_exceptions_do_not_waive_schema031_guard(runt
 def test_runtime_contract_and_schema_migration_tip_agree():
     from app.saas_migrations.runner import _migration_files
     contract=json.loads((REPOSITORY/'deploy/runtime-contract.json').read_text())
-    assert contract['schema_min'] == contract['schema_max'] == _migration_files()[-1].version == '031'
+    assert contract['schema_min'] == contract['schema_max'] == _migration_files()[-1].version == '032'
     assert all(contract[name] is True for name in ('booking_projection_isolation','complete_inventory_authority',
                                                   'explicit_feedback_invitation_authority'))
 
@@ -236,5 +236,5 @@ def test_real_systemd_fixture_archives_the_declared_schema_tip(tmp_path):
     path = release['path']
     contract = json.loads((path/'deploy/runtime-contract.json').read_text())
     versions = sorted(source.name[:3] for source in (path/'app/saas_migrations').glob('[0-9][0-9][0-9]_*.py'))
-    assert versions[-1] == contract['schema_max'] == '031'
+    assert versions[-1] == contract['schema_max'] == '032'
     assert {'029','030','031'} <= set(versions)
