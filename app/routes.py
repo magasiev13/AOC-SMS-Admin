@@ -2710,13 +2710,16 @@ def _event_detail_surface_view(
 
 
 def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
+    from app.services.delivery_status_service import message_result_summary
+
     target_label = 'Community' if log.target == 'community' else 'Event'
     if log.event is not None:
         target_label = f'{target_label}: {log.event.title}'
-    return _surface_view(
+    outcomes = message_result_summary(log, details)
+    view = _surface_view(
         eyebrow='Logs',
-        title='Message log details',
-        copy='Review provider submission outcomes and per-recipient results. Acceptance does not confirm delivery.',
+        title='Message results',
+        copy='Provider acceptance and recipient delivery are separate outcomes.',
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(target_label, 'bg-light text-dark'),
@@ -2725,17 +2728,21 @@ def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
                 'bg-light text-dark',
             ),
         ],
-        stats=[
-            _surface_stat(
-                'Created at',
-                log.created_at.strftime('%b %d, %Y %H:%M') if log.created_at else '-',
-                'UTC timestamp',
-            ),
-            _surface_stat('Recipients', log.total_recipients or 0, 'Saved audience size'),
-            _surface_stat('Provider accepted' if saas_mode_enabled() else 'Sent', log.success_count or 0, 'Submission acknowledgements'),
-            _surface_stat('Failed', log.failure_count or 0, 'Rejected or blocked submissions'),
-        ],
+        stats=[{'key': key, 'label': label, 'value': outcomes[key]} for key, label in [
+            ('accepted', 'Accepted by provider'), ('not_submitted', 'Not submitted'),
+            ('delivered', 'Delivered'), ('not_delivered', 'Not delivered'),
+            ('no_receipt', 'No receipt yet'),
+        ]],
     )
+    zone = ZoneInfo(current_app.config.get('APP_TIMEZONE', 'UTC'))
+    created = as_utc_datetime(log.created_at)
+    view['created_at_display'] = created.astimezone(zone).strftime('%a, %b %d · %I:%M %p') if created else '-'
+    if log.status in {'processing', 'ambiguous', 'cancelled'}:
+        state_label = {'processing': 'Provider submission in progress',
+                       'ambiguous': 'Provider acceptance unresolved',
+                       'cancelled': 'Cancelled before completion'}[log.status]
+        view['badges'].append(_badge_view(state_label, 'bg-light text-dark'))
+    return view
 
 
 def _keyword_rules_surface_view(rules: list[KeywordAutomationRule], *, search: str) -> dict:
@@ -8936,29 +8943,60 @@ def log_detail(log_id):
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)
-    from app.services.delivery_status_service import project_log_delivery
+    from app.services.delivery_status_service import message_result_summary, project_log_delivery
 
     details = project_log_delivery(log.organization_id, details)
+    result_summary = message_result_summary(log, details)
+    surface_view = _log_detail_surface_view(log, details)
     if log.details and not details and not _message_log_details_payload_is_valid(log.details):
         current_app.logger.warning(
             'MessageLog details payload unusable for log_id=%s.',
             log_id,
         )
-    phones = set()
     for detail in details:
-        raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
         state = detail.get('status')
+        delivery = detail.get('delivery_status')
+        unresolved = state in {'sending', 'ambiguous', 'queued'} and detail.get('success') is not True
         detail['outcome_label'] = (
-            'Unresolved' if state in {'sending', 'ambiguous'} else
+            'Acceptance unresolved' if unresolved else
             'Excluded' if state in {'excluded', 'cancelled'} else
-            'Not submitted' if state in {'blocked', 'skipped'} else
-            ('Accepted' if saas_mode_enabled() else 'Sent') if detail.get('success') is True else 'Failed'
+            'Accepted by provider' if detail.get('success') is True else 'Not submitted'
         )
         detail['outcome_tone'] = (
-            'warning text-dark' if state in {'sending', 'ambiguous'} else
+            'warning text-dark' if unresolved else
             'secondary' if state in {'excluded', 'cancelled', 'blocked', 'skipped'} else
             'success' if detail.get('success') is True else 'danger'
         )
+        detail['result_category'] = (
+            'not_delivered' if delivery in {'undelivered', 'failed', 'canceled'} else
+            'delivered' if delivery in {'delivered', 'read'} else
+            'no_receipt' if detail.get('success') is True else
+            'unresolved' if unresolved else
+            'excluded' if state in {'excluded', 'cancelled'} else 'not_submitted'
+        )
+        detail['receipt_label'] = (
+            'Not delivered' if detail['result_category'] == 'not_delivered' else
+            'Delivered' if detail['result_category'] == 'delivered' else
+            'Conflicting delivery receipts' if delivery == 'conflict' else
+            'No receipt yet' if detail['result_category'] == 'no_receipt' else
+            'Acceptance unresolved' if unresolved else 'Not submitted'
+        )
+
+    outcome = request.args.get('outcome', 'all')
+    if outcome not in {'all', 'not_delivered', 'no_receipt', 'not_submitted'}:
+        outcome = 'all'
+    ranks = {'not_delivered': 0, 'not_submitted': 1, 'unresolved': 2, 'no_receipt': 3, 'excluded': 4, 'delivered': 5}
+    details.sort(key=lambda detail: ranks[detail['result_category']])
+    if outcome != 'all':
+        details = [detail for detail in details if detail['result_category'] == outcome]
+    total_count = len(details)
+    per_page = 50
+    total_pages = max(1, (total_count + per_page - 1) // per_page)
+    page = min(max(1, request.args.get('page', 1, type=int) or 1), total_pages)
+    details = details[(page - 1) * per_page:page * per_page]
+    phones = set()
+    for detail in details:
+        raw_phone = detail.get('phone') or detail.get('to') or detail.get('recipient')
         normalized = normalize_phone(raw_phone) if raw_phone else ''
         detail['normalized_phone'] = normalized
         if normalized:
@@ -8983,7 +9021,11 @@ def log_detail(log_id):
         log=log,
         details=details,
         suppression_status=suppression_status,
-        surface_view=_log_detail_surface_view(log, details),
+        surface_view=surface_view,
+        result_summary=result_summary, outcome=outcome,
+        page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
+        pagination_endpoint='main.log_detail', pagination_args={'log_id': log.id, 'outcome': outcome},
+        pagination_label='Recipient Pagination', pagination_noun='recipients',
         outbound_request=(OutboundRequest.query.filter_by(message_log_id=log.id, kind='blast').first() if saas_mode_enabled() else None),
         request_status_message=request_status_message,
     )

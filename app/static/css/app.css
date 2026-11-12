@@ -5386,6 +5386,98 @@ a:focus-visible,
   }
 }
 
+/* Message results keep receipt evidence visible before the message body. */
+.message-record {
+  gap: 1rem;
+}
+.message-results-summary {
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.message-results-counts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+.message-result-count {
+  min-width: 0;
+}
+.message-result-count dt {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.message-result-value {
+  margin: 0.25rem 0 0;
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.message-record-meta {
+  margin: 0.75rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.message-recipient-results .collection-panel__header {
+  display: block;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+.message-result-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.message-result-filters .btn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.message-recipients-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.message-recipients-table th,
+.message-recipients-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+.message-recipients-table .message-recipient-name { width: 20%; }
+.message-recipients-table .message-recipient-phone { width: 16%; }
+.message-recipients-table .message-recipient-submission { width: 17%; }
+.message-recipients-table .message-recipient-receipt { width: 17%; }
+.message-recipients-table .message-recipient-suppression { width: 12%; }
+.message-recipient-identity {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.message-recipient-card .badge {
+  flex-shrink: 0;
+  max-width: 48%;
+  line-height: 1.35;
+}
+@media (max-width: 767.98px) {
+  .message-results-counts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.8rem 0.5rem;
+  }
+  .message-result-value { font-size: 1.5rem; }
+  .message-result-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .message-result-filters .btn { padding-left: 0.4rem; padding-right: 0.4rem; }
+}
+
 /* Respect user motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,

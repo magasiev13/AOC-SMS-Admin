@@ -2,226 +2,100 @@
 {% import "includes/ui_macros.html" as ui %}
 
 {% block title %}Message Details - {{ product_name }}{% endblock %}
-
 {% block page_title %}Message Details{% endblock %}
-
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
-<a href="{{ url_for('main.logs_list') }}">Message History</a> /
-<span>Details</span>
+<a href="{{ url_for('main.logs_list') }}">Message History</a> / <span>Details</span>
 {% endblock %}
-
 {% block page_actions %}
-<a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Back to History
-</a>
+<a href="{{ url_for('main.logs_list') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back to History</a>
 {% endblock %}
 
 {% block content %}
-<div class="workspace-shell">
+<div class="workspace-shell message-record">
+    <section class="message-results-summary" aria-label="Message outcomes">
+        <dl class="message-results-counts">
+            {% for stat in surface_view.stats %}
+            <div class="message-result-count" data-result="{{ stat.key }}">
+                <dt>{{ stat.label }}</dt>
+                <dd class="message-result-value">{{ stat.value }}</dd>
+            </div>
+            {% endfor %}
+        </dl>
+        <p class="message-record-meta">
+            Created <time datetime="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ surface_view.created_at_display }}</time>
+            · {{ result_summary.total }} recipients
+            {% for badge in surface_view.badges %}· {{ badge.label|private_text }}{% endfor %}
+        </p>
+        {% if result_summary.acceptance_unresolved %}
+        <p class="message-record-meta mb-0" role="status">Provider acceptance remains unresolved for {{ result_summary.acceptance_unresolved }} recipient{{ '' if result_summary.acceptance_unresolved == 1 else 's' }}. Review their submission state below.</p>
+        {% endif %}
+    </section>
     {% if outbound_request %}
     <div class="alert {{ 'alert-success' if outbound_request.status == 'accepted' else 'alert-warning' }}" role="status">
         {{ request_status_message(outbound_request) }}
     </div>
     {% endif %}
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div id="logStatusMeta" class="d-none"
-         data-log-id="{{ log.id }}"
-         data-status="{{ log.status }}"
-         data-success-count="{{ log.success_count or 0 }}"
-         data-failure-count="{{ log.failure_count or 0 }}"></div>
-    <div class="workspace-detail-layout">
-        <div class="workspace-detail-main">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">Message Body</h2>
-                        <p class="workspace-panel__meta">The exact content saved for this audience. Provider submission and delivery are separate states.</p>
-                    </div>
-                </div>
-                <div class="workspace-panel__body">
-                    <pre class="mb-0 message-body-preview">{{ (log.message_body)|private_text }}</pre>
-                </div>
-            </section>
-
-            <section class="collection-panel collection-panel--results">
-                <div class="collection-panel__header">
-                    <div>
-                        <h2 class="collection-panel__title">Recipient Details</h2>
-                        <p class="collection-panel__meta">Provider acceptance and recipient delivery are separate. Review each receipt and carrier error below.</p>
-                    </div>
-                </div>
-                <div class="table-responsive d-none d-lg-block">
-                    <table class="table table-sm mb-0" data-sortable="client">
-                        <thead class="table-light">
-                            <tr>
-                                <th data-sort-type="string">
-                                    <button type="button" class="sort-button" data-sort-key="name">
-                                        <span>Name</span>
-                                        <span class="sort-indicator" aria-hidden="true"></span>
-                                    </button>
-                                </th>
-                                {% if can_view_contact_numbers %}<th data-sort-type="phone">
-                                    <button type="button" class="sort-button" data-sort-key="phone">
-                                        <span>Phone</span>
-                                        <span class="sort-indicator" aria-hidden="true"></span>
-                                    </button>
-                                </th>{% endif %}
-                                <th data-sort-type="enum">
-                                    <button type="button" class="sort-button" data-sort-key="status">
-                                        <span>Submission</span>
-                                        <span class="sort-indicator" aria-hidden="true"></span>
-                                    </button>
-                                </th>
-                                <th>Delivery Receipt</th>
-                                <th data-sort-type="enum">
-                                    <button type="button" class="sort-button" data-sort-key="suppression">
-                                        <span>Suppression</span>
-                                        <span class="sort-indicator" aria-hidden="true"></span>
-                                    </button>
-                                </th>
-                                <th data-sort-type="string">
-                                    <button type="button" class="sort-button" data-sort-key="error">
-                                        <span>Error</span>
-                                        <span class="sort-indicator" aria-hidden="true"></span>
-                                    </button>
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if details %}
-                            {% for d in details %}
-                            <tr class="{{ 'table-danger' if d.outcome_label == 'Failed' else '' }}">
-                                <td data-sort-value="{{ (d.name or '')|private_text }}">{{ (d.name or '-')|private_text }}</td>
-                                {% if can_view_contact_numbers %}<td data-sort-value="{{ d.phone }}"><code>{{ d.phone }}</code></td>{% endif %}
-                                <td data-sort-value="{{ d.outcome_label }}">
-                                    <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
-                                </td>
-                                <td><span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.delivery_label }}</span></td>
-                                <td data-sort-value="{{ suppression_status.get(d.normalized_phone) or '' }}">
-                                    {% if not d.success and suppression_status.get(d.normalized_phone) %}
-                                    <span class="badge bg-warning text-dark text-uppercase">
-                                        {{ suppression_status.get(d.normalized_phone) }}
-                                    </span>
-                                    {% else %}
-                                    -
-                                    {% endif %}
-                                </td>
-                                <td data-sort-value="{{ (d.delivery_error or d.error or '')|private_text }}">
-                                    {% if d.delivery_error or d.error %}
-                                    <small class="text-danger">{{ (d.delivery_error or d.error)|private_text }}</small>
-                                    {% else %}
-                                    -
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            {% else %}
-                            <tr>
-                                <td colspan="6" class="py-5">
-                                    {{ ui.empty_state(
-                                        'bi-list-check',
-                                        'No details available',
-                                        'No per-recipient delivery details were recorded for this send.'
-                                    ) }}
-                                </td>
-                            </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-                <div class="card-list d-lg-none">
-                    {% if details %}
-                        {% for d in details %}
-                        <div class="card-list-item">
-                            <div class="d-flex justify-content-between align-items-start gap-2">
-                                <div>
-                                    <h6 class="mb-1">{{ (d.name or '-')|private_text }}</h6>
-                                    {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ d.phone }}</code></div>{% endif %}
-                                </div>
-                                <span class="badge bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span>
-                            </div>
-                            <div class="mt-2 small">Delivery: <span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.delivery_label }}</span></div>
-                            <div class="mt-2 small text-muted">
-                                Suppression:
-                                {% if not d.success and suppression_status.get(d.normalized_phone) %}
-                                <span class="badge bg-warning text-dark text-uppercase ms-1">
-                                    {{ suppression_status.get(d.normalized_phone) }}
-                                </span>
-                                {% else %}
-                                <span class="ms-1">-</span>
-                                {% endif %}
-                            </div>
-                            {% if d.delivery_error or d.error %}
-                            <div class="mt-2 small text-danger">{{ (d.delivery_error or d.error)|private_text }}</div>
-                            {% endif %}
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                    {{ ui.empty_state(
-                        'bi-list-check',
-                        'No details available',
-                        'No per-recipient delivery details were recorded for this send.',
-                        primary_href=url_for('main.logs_list'),
-                        primary_label='Back to logs',
-                        primary_class='btn btn-outline-primary btn-sm'
-                    ) }}
-                    {% endif %}
-                </div>
-                {{ ui.collection_footer(details|length, 'recipient') }}
-            </section>
+    <div id="logStatusMeta" class="d-none" data-log-id="{{ log.id }}" data-status="{{ log.status }}"
+         data-success-count="{{ log.success_count or 0 }}" data-failure-count="{{ log.failure_count or 0 }}"></div>
+    <section class="collection-panel collection-panel--results message-recipient-results" aria-labelledby="recipientDetailsTitle">
+        <div class="collection-panel__header">
+            <h2 class="collection-panel__title" id="recipientDetailsTitle">Recipient Details</h2>
+            <p class="collection-panel__meta">Failures appear first. Provider acceptance does not confirm delivery.</p>
+            <nav class="message-result-filters" aria-label="Recipient filters">
+                {% for key, label in [('all', 'All'), ('not_delivered', 'Not delivered'), ('no_receipt', 'No receipt yet'), ('not_submitted', 'Not submitted')] %}
+                <a href="{{ url_for('main.log_detail', log_id=log.id, outcome=key) }}"
+                   class="btn btn-sm {{ 'btn-primary' if outcome == key else 'btn-outline-secondary' }}"{% if outcome == key %} aria-current="page"{% endif %}>{{ label }}</a>
+                {% endfor %}
+            </nav>
         </div>
-
-        <aside class="workspace-detail-side">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">Send Summary</h2>
-                        <p class="workspace-panel__meta">Current submission state and saved audience details.</p>
+        <div class="d-none d-lg-block">
+            <table class="table table-sm mb-0 message-recipients-table" id="messageRecipientsTable">
+                <colgroup>
+                    <col class="message-recipient-name">{% if can_view_contact_numbers %}<col class="message-recipient-phone">{% endif %}
+                    <col class="message-recipient-submission"><col class="message-recipient-receipt"><col class="message-recipient-suppression"><col>
+                </colgroup>
+                <thead class="table-light"><tr>
+                    <th>Name</th>{% if can_view_contact_numbers %}<th>Phone</th>{% endif %}<th>Submission</th><th>Delivery receipt</th><th>Suppression</th><th>Error</th>
+                </tr></thead>
+                <tbody>
+                    {% for d in details %}
+                    <tr data-result-category="{{ d.result_category }}"{% if d.result_category in ['not_delivered', 'not_submitted'] %} class="table-danger"{% endif %}>
+                        <td>{{ (d.name or '-')|private_text }}</td>
+                        {% if can_view_contact_numbers %}<td><code>{{ d.phone or d.to or d.recipient or '-' }}</code></td>{% endif %}
+                        <td><span class="badge text-wrap text-start bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span></td>
+                        <td><span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.receipt_label }}</span></td>
+                        <td>{{ suppression_status.get(d.normalized_phone) or '-' }}</td>
+                        <td>{% if d.delivery_error or d.error %}<small class="text-danger">{{ (d.delivery_error or d.error)|private_text }}</small>{% else %}-{% endif %}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="{{ 6 if can_view_contact_numbers else 5 }}" class="py-4">{{ ui.empty_state('bi-list-check', 'No matching recipients' if outcome != 'all' else 'No details available', 'Choose another outcome filter.' if outcome != 'all' else 'No per-recipient details were recorded for this send.') }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-list d-lg-none">
+            {% for d in details %}
+            <article class="card-list-item message-recipient-card" data-result-category="{{ d.result_category }}">
+                <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div class="message-recipient-identity"><h3 class="h6 mb-1">{{ (d.name or '-')|private_text }}</h3>
+                        {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ d.phone or d.to or d.recipient or '-' }}</code></div>{% endif %}
                     </div>
+                    <span class="badge text-wrap text-start bg-{{ d.delivery_tone }}">{{ d.receipt_label }}</span>
                 </div>
-                <div class="workspace-panel__body">
-                    <dl class="workspace-data-list">
-                        <div>
-                            <dt>Created At</dt>
-                            <dd>{{ log.created_at|localtime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}</dd>
-                        </div>
-                        <div>
-                            <dt>Audience</dt>
-                            <dd>
-                                {% if log.test_mode %}
-                                <span class="badge bg-warning text-dark mb-1">Test</span><br>
-                                {% endif %}
-                                <span class="badge bg-{{ 'primary' if log.target == 'community' else 'info' }}">{{ log.target }}</span>
-                                {% if log.event %}
-                                <br>{{ (log.event.title)|private_text }}
-                                {% endif %}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>Total Recipients</dt>
-                            <dd>{{ log.total_recipients }}</dd>
-                        </div>
-                        <div>
-                            <dt>Status</dt>
-                            <dd>
-                                <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
-                                    {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
-                                </span>
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>Results</dt>
-                            <dd>
-                                <span class="text-success"><i class="bi bi-check-circle me-1"></i>{{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }}</span><br>
-                                <span class="text-danger"><i class="bi bi-x-circle me-1"></i>{{ log.failure_count }} failed</span>
-                            </dd>
-                        </div>
-                    </dl>
-                </div>
-            </section>
-        </aside>
-    </div>
+                <div class="small mt-2">Submission: <span class="badge text-wrap text-start bg-{{ d.outcome_tone }}">{{ d.outcome_label }}</span></div>
+                {% if suppression_status.get(d.normalized_phone) %}<div class="small text-muted mt-1">Suppression: {{ suppression_status.get(d.normalized_phone) }}</div>{% endif %}
+                {% if d.delivery_error or d.error %}<div class="small text-danger mt-1">{{ (d.delivery_error or d.error)|private_text }}</div>{% endif %}
+            </article>
+            {% else %}
+            {{ ui.empty_state('bi-list-check', 'No matching recipients' if outcome != 'all' else 'No details available', 'Choose another outcome filter.' if outcome != 'all' else 'No per-recipient details were recorded for this send.') }}
+            {% endfor %}
+        </div>
+        {% include 'includes/collection_pagination.html' %}
+    </section>
+    <section class="workspace-panel">
+        <div class="workspace-panel__header"><h2 class="workspace-panel__title">Message Body</h2></div>
+        <div class="workspace-panel__body"><pre class="mb-0 message-body-preview">{{ log.message_body|private_text }}</pre></div>
+    </section>
 </div>
 {% endblock %}
 

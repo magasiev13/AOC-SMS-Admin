@@ -7,6 +7,7 @@ change when a later delivery receipt arrives.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
@@ -243,19 +244,41 @@ def process_delivery_callback(organization_id, payload):
         return {'status': 'recorded', 'delivery_status': record.delivery_status, 'suppression_applied': bool(suppression.get('applied'))}
 
 
-def project_log_delivery(organization_id, details):
-    """Overlay current delivery facts without rewriting submission audit JSON."""
+def _delivery_records(organization_id, details):
     sids = {str(row.get('sid') or '') for row in details if isinstance(row, dict) and row.get('sid')}
-    records = {
+    return {
         record.message_sid: record for record in MessagingUsageRecord.query.filter(
             MessagingUsageRecord.organization_id == organization_id, MessagingUsageRecord.message_sid.in_(sids),
         ).all()
     } if sids else {}
+
+
+def _canonical_delivery_error(message, code=None):
+    """A carrier code has one display wording, independent of receipt source."""
+    code = str(code or '').strip()
+    message = str(message or '').strip()
+    if not code and re.search(r'\b30003\b', message):
+        code = '30003'
+    if code == '30003':
+        return 'Unreachable destination handset (30003)'
+    if not code:
+        return message or None
+    # Unknown codes still need one wording across polling/callback sources.
+    # Retain the provider's raw description in its audit row, not as a second
+    # competing label for the same code in the recipient table.
+    return f'Provider error ({code})'
+
+
+def project_log_delivery(organization_id, details, *, records_by_sid=None):
+    """Overlay current delivery facts without rewriting submission audit JSON."""
+    records = _delivery_records(organization_id, details) if records_by_sid is None else records_by_sid
     projected = []
     for row in details:
         detail = dict(row)
         record = records.get(str(detail.get('sid') or ''))
-        status = record.delivery_status if record else ('pending' if detail.get('sid') else None)
+        if record is not None and record.organization_id != organization_id:
+            record = None
+        status = record.delivery_status if record else ('pending' if detail.get('sid') or detail.get('success') is True else None)
         detail['delivery_status'] = status
         detail['delivery_label'] = delivery_label(status) if status else 'Not submitted'
         detail['delivery_tone'] = (
@@ -263,6 +286,53 @@ def project_log_delivery(organization_id, details):
             'danger' if status in {'undelivered', 'failed', 'canceled'} else
             'warning text-dark' if status in {'unknown', 'conflict'} else 'secondary'
         )
-        detail['delivery_error'] = (record.delivery_error_message or record.delivery_error_code) if record else None
+        detail['delivery_error'] = _canonical_delivery_error(record.delivery_error_message, record.delivery_error_code) if record else None
         projected.append(detail)
     return projected
+
+
+def _message_details(log):
+    try:
+        details = json.loads(log.details or '[]')
+    except (TypeError, ValueError):
+        return []
+    if isinstance(details, dict):
+        details = details.get('details') or details.get('results') or []
+    return [dict(row) for row in details if isinstance(row, dict)] if isinstance(details, list) else []
+
+
+def message_result_summary(log, projected_details=None):
+    """Keep saved submission counts separate from current receipt evidence.
+
+    An accepted message with no final receipt is unconfirmed, never delivered.
+    Uncertain provider acceptance is tracked separately and is not a receipt.
+    """
+    if log is None:
+        return None
+    details = project_log_delivery(log.organization_id, _message_details(log)) if projected_details is None else projected_details
+    receipts = {row['sid']: row for row in details if row.get('sid')}
+    delivered = sum(row.get('delivery_status') in {'delivered', 'read'} for row in receipts.values())
+    not_delivered = sum(row.get('delivery_status') in {'undelivered', 'failed', 'canceled'} for row in receipts.values())
+    accepted = int(log.success_count or 0)
+    return {
+        'total': int(log.total_recipients or 0),
+        'accepted': accepted,
+        'not_submitted': int(log.failure_count or 0),
+        'delivered': delivered,
+        'not_delivered': not_delivered,
+        'no_receipt': max(0, accepted - delivered - not_delivered),
+        'acceptance_unresolved': sum(row.get('status') in {'sending', 'ambiguous', 'queued'} and row.get('success') is not True for row in details),
+    }
+
+
+def batch_message_results(logs):
+    """Summarize a bounded history page with one receipt query per tenant."""
+    groups = {}
+    for log in logs:
+        groups.setdefault(log.organization_id, []).append((log, _message_details(log)))
+    result = {}
+    for organization_id, entries in groups.items():
+        records = _delivery_records(organization_id, [row for _, details in entries for row in details])
+        for log, details in entries:
+            result[log.id] = message_result_summary(log, project_log_delivery(organization_id, details, records_by_sid=records))
+    return result
