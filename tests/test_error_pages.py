@@ -34,7 +34,11 @@ def test_error_pages_have_recovery_and_appropriate_layout(ux, status, heading, s
     assert response.status_code == status
     assert heading in response.data
     assert b'Controlled application error' not in response.data
-    if signed_in:
+    if status == 500:
+        assert b'Back to workspace' in response.data
+        assert b'app-sidebar' not in response.data and b'auth-body' not in response.data
+        assert response.headers['Cache-Control'] == 'private, no-store'
+    elif signed_in:
         assert b'app-sidebar' in response.data and b'Back to workspace' in response.data
         assert response.headers['Cache-Control'] == 'private, no-store'
     else:

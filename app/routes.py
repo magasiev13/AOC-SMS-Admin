@@ -271,9 +271,30 @@ def request_error_page(error):
     from werkzeug.exceptions import SecurityError
 
     if error.code == 500:
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            # The failed request may have lost its database connection. Error
+            # recovery must still render even when rollback is unavailable.
+            current_app.logger.warning('Database rollback unavailable while rendering an error response.')
     if wants_json() or request.path.startswith(('/webhooks/', '/api/')):
         return error
+    if error.code == 500:
+        # Do not invoke template context processors, user loading, URL building
+        # or session access: any of them can require the failed database.
+        workspace_base = (current_app.config.get('APP_BASE_URL')
+                          or current_app.config.get('SAAS_BASE_URL') or '').rstrip('/')
+        response = current_app.make_response((
+            current_app.jinja_env.get_template('errors/500.html').render(
+                product_name=current_app.config.get('PRODUCT_NAME', 'Twinevia'),
+                workspace_url=workspace_base + '/dashboard'),
+            500,
+        ))
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['Pragma'] = 'no-cache'
+        response.vary.add('Cookie')
+        response._twinevia_standalone_error = True
+        return response
     if isinstance(error, SecurityError):
         # Host validation can reject the request before Flask has a URL adapter.
         # Render without layout/context processors or links on that origin.

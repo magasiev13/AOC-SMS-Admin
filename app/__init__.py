@@ -748,6 +748,10 @@ def _build_app() -> Flask:
 
     @app.after_request
     def protect_staff_response(response):
+        # This internally marked response contains only owned static error
+        # copy. Loading its user to redact it could repeat the database failure.
+        if getattr(response, '_twinevia_standalone_error', False):
+            return response
         from flask_login import current_user
         if current_user.is_authenticated and request.endpoint != 'static':
             response.headers['Cache-Control'] = 'private, no-store'
