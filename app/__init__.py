@@ -779,9 +779,7 @@ def _build_app() -> Flask:
 
     @app.context_processor
     def inject_app_version():
-        from flask import session
         return {
-            "clear_send_draft_key": session.pop("clear_send_draft_key", None),
             "app_version": os.environ.get("APP_VERSION", "dev"),
             "current_year": datetime.now(timezone.utc).year,
             "product_name": app.config.get("PRODUCT_NAME", "Twinevia"),

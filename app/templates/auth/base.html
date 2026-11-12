@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% include 'includes/clear_sent_draft.html' %}
     <title>{% block title %}{{ product_name }}{% endblock %}</title>
     {% include 'includes/clear_signed_out_drafts.html' %}
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=app_version) }}">
