@@ -35,9 +35,9 @@ DEFAULT_CONTENT_SECURITY_POLICY = (
     "object-src 'none'; "
     "frame-ancestors 'none'; "
     "img-src 'self' data:; "
-    "font-src 'self' data: https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "font-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; "
     "connect-src 'self'; "
     "form-action 'self'"
 )

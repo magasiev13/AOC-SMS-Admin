@@ -1,0 +1,54 @@
+{
+  "bootstrap-icons/1.11.1/LICENSE": {
+    "sha256": "0623348b57e817b6897c41b6065380b599d5befe2839d83270566c605e430441",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/LICENSE"
+  },
+  "bootstrap-icons/1.11.1/font/bootstrap-icons.css": {
+    "sha256": "bb6fd8cd85394cb367e8ac58e47292f2d68eb288fa12fab68e65430a5ddfce48",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css"
+  },
+  "bootstrap-icons/1.11.1/font/fonts/bootstrap-icons.woff": {
+    "sha256": "4d4572ef314e1b734cdd6485f913b0396d81bedf4d216a47cfde0cdf32a9316e",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/fonts/bootstrap-icons.woff"
+  },
+  "bootstrap-icons/1.11.1/font/fonts/bootstrap-icons.woff2": {
+    "sha256": "bacd70afda7da1deac2bbd49b5717a4dd133bcd59c379525d705b8492f678e95",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/fonts/bootstrap-icons.woff2"
+  },
+  "bootstrap-icons/1.11.3/LICENSE": {
+    "sha256": "0fb3e11bd57e896c5a512afd64864d28a37de45d19835016c87ca1ad19ead969",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/LICENSE"
+  },
+  "bootstrap-icons/1.11.3/font/bootstrap-icons.min.css": {
+    "sha256": "f643d6fe7e679f9de3e16311600c5ef5cd6b098f7a3a8828fcc29255d2b33e62",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+  },
+  "bootstrap-icons/1.11.3/font/fonts/bootstrap-icons.woff": {
+    "sha256": "bb1de989b83970f6f4e54de1cd974c5cba55b73582da5e1b225a6d0edf029483",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/fonts/bootstrap-icons.woff"
+  },
+  "bootstrap-icons/1.11.3/font/fonts/bootstrap-icons.woff2": {
+    "sha256": "476adf42b40325098fcfa8b36ab3e769186bb4f6ce6a249753e2e1a9c22bf99e",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/fonts/bootstrap-icons.woff2"
+  },
+  "bootstrap/5.3.2/LICENSE": {
+    "sha256": "3d0b0c88216e4752b9afd3d24e36faaf27873b5a45a61458bb3c83e794c26832",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/LICENSE"
+  },
+  "bootstrap/5.3.2/css/bootstrap.min.css": {
+    "sha256": "3017df4a76db5f01c2b99b603d88b03106df13bcfe18e67b7c13c2341d3a67df",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+  },
+  "bootstrap/5.3.2/js/bootstrap.bundle.min.js": {
+    "sha256": "82f64f62bb03c1bc1824b0f9c9e05f70dba33e146818e63cdf5c306c8cf3dedd",
+    "source": "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+  },
+  "chart.js/4.4.1/LICENSE.md": {
+    "sha256": "5a0877ad6d818529be4f33009d0942cdf7e2ed7656156f4aba7308459a546030",
+    "source": "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/LICENSE.md"
+  },
+  "chart.js/4.4.1/chart.umd.min.js": {
+    "sha256": "d2af8974e95271638772e9e9524db5b9a6f58d6ec2d5d781400447b4a31c681e",
+    "source": "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+  }
+}
