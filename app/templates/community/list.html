@@ -7,6 +7,7 @@
 {% block page_title %}Contacts{% endblock %}
 
 {% set can_manage_community = current_user.is_admin %}
+{% set can_review_permission = can_review_permission and not confirmed_signup_consent %}
 
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Contacts</span>
@@ -55,7 +56,7 @@
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'contactable' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', search=search) }}"{% if audience_view == 'contactable' %} aria-current="page"{% endif %}>Contactable</a>
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'all' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', view='all', search=search) }}"{% if audience_view == 'all' %} aria-current="page"{% endif %}>All Contacts</a>
     </nav>
-    <p class="small text-muted mb-0">{{ 'Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts. Sending still requires SMS permission.' if audience_view == 'contactable' else 'All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.' }}</p>
+    <p class="small text-muted mb-0">{% if audience_view == 'contactable' %}Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts.{% if not confirmed_signup_consent %} Sending still requires SMS permission.{% endif %}{% else %}All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.{% endif %}</p>
     {% call ui.collection_search_panel(
         url_for('main.community_list'),
         'Search by name or phone' if can_view_contact_numbers else 'Search by name',
