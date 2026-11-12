@@ -317,11 +317,12 @@
                         <i class="bi bi-send-check-fill stat-card__icon"></i>
                         <div class="stat-card__label">Last Message</div>
                         {% if latest_log %}
-                        <div class="stat-card__value">
-                            {% if latest_log.status == 'processing' %}In progress{% elif latest_log.failure_count == 0 %}Submitted{% else %}Partial{% endif %}
+                        <div class="stat-card__value" data-last-message-delivery>
+                            {{ latest_outcomes.delivered }} of {{ latest_outcomes.total }}
                         </div>
-                        <div class="stat-card__meta">
-                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} provider accepted
+                        <div class="stat-card__meta">recipients delivered</div>
+                        <div class="stat-card__meta" data-last-message-outcomes>
+                            {{ latest_outcomes.accepted }} accepted by provider · {{ latest_outcomes.not_submitted }} not submitted · {{ latest_outcomes.not_delivered }} not delivered · {{ latest_outcomes.no_receipt }} no receipt yet
                         </div>
                         {% else %}
                         <div class="stat-card__value">—</div>
@@ -334,15 +335,12 @@
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Provider Acceptance</div>
-                        {% if success_rate is not none %}
+                        <div class="stat-card__label">Delivery Confirmed</div>
+                        {% if latest_log %}
                         <div class="stat-card__value stat-card__value--rate">
-                            <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
+                            {{ latest_outcomes.delivered }} / {{ latest_outcomes.accepted }}
                         </div>
-                        <div class="stat-card__progress">
-                            <div class="stat-card__progress-bar" style="width: {{ success_rate }}%"></div>
-                        </div>
-                        <div class="stat-card__meta">{{ latest_outcomes.delivered }} confirmed delivered · {{ latest_outcomes.delivery_failed }} delivery failures · {{ latest_outcomes.submission_failed }} submission failures · {{ latest_outcomes.unresolved }} unresolved</div>
+                        <div class="stat-card__meta">Accepted messages with a confirmed delivery receipt</div>
                         {% else %}
                         <div class="stat-card__value">N/A</div>
                         <div class="stat-card__meta">No data yet</div>

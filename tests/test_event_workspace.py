@@ -72,9 +72,10 @@ def test_missing_receipts_never_become_delivered(feedback):
     assert result == {'total': 3, 'accepted': 2, 'delivered': 0, 'submission_failed': 1,
                       'delivery_failed': 0, 'unresolved': 2, 'acceptance_rate': 66.7}
     dashboard = f.client.get('/dashboard')
-    assert b'Provider Acceptance' in dashboard.data
+    assert b'Delivery Confirmed' in dashboard.data
     assert b'Delivery Rate' not in dashboard.data
-    assert b'0 confirmed delivered' in dashboard.data
+    assert b'0 of 3' in dashboard.data and b'0 / 2' in dashboard.data
+    assert b'2 accepted by provider \xc2\xb7 1 not submitted \xc2\xb7 0 not delivered \xc2\xb7 2 no receipt yet' in dashboard.data
     assert b'>Delivered<' not in dashboard.data
 
 

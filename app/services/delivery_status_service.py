@@ -22,6 +22,7 @@ from app.utils import as_utc_datetime
 DELIVERY_TERMINAL = {'delivered', 'read', 'undelivered', 'failed', 'canceled'}
 DELIVERY_CLOSED = DELIVERY_TERMINAL | {'unknown', 'conflict'}
 DELIVERY_PROGRESS = {'pending': 0, 'scheduled': 1, 'accepted': 2, 'queued': 3, 'sending': 4, 'sent': 5}
+DELIVERY_LOOKUP_BATCH_SIZE = 10000
 DELIVERY_LABELS = {
     'pending': 'Awaiting delivery receipt', 'scheduled': 'Scheduled by provider',
     'accepted': 'Awaiting delivery receipt', 'queued': 'Queued by provider', 'sending': 'Sending to carrier',
@@ -245,12 +246,19 @@ def process_delivery_callback(organization_id, payload):
 
 
 def _delivery_records(organization_id, details):
-    sids = {str(row.get('sid') or '') for row in details if isinstance(row, dict) and row.get('sid')}
-    return {
-        record.message_sid: record for record in MessagingUsageRecord.query.filter(
-            MessagingUsageRecord.organization_id == organization_id, MessagingUsageRecord.message_sid.in_(sids),
-        ).all()
-    } if sids else {}
+    sids = sorted({str(row.get('sid') or '') for row in details if isinstance(row, dict) and row.get('sid')})
+    records = {}
+    # A fifty-log page can contain 250,000 SIDs at the supported audience cap.
+    # Keep each query below PostgreSQL's bind-parameter limit, retaining the
+    # organization boundary for every chunk and every returned record.
+    for offset in range(0, len(sids), DELIVERY_LOOKUP_BATCH_SIZE):
+        batch = sids[offset:offset + DELIVERY_LOOKUP_BATCH_SIZE]
+        for record in MessagingUsageRecord.query.filter(
+            MessagingUsageRecord.organization_id == organization_id, MessagingUsageRecord.message_sid.in_(batch),
+        ).all():
+            if record.organization_id == organization_id:
+                records[record.message_sid] = record
+    return records
 
 
 def _canonical_delivery_error(message, code=None):
@@ -326,7 +334,7 @@ def message_result_summary(log, projected_details=None):
 
 
 def batch_message_results(logs):
-    """Summarize a bounded history page with one receipt query per tenant."""
+    """Summarize a history page with bounded receipt lookups for each tenant."""
     groups = {}
     for log in logs:
         groups.setdefault(log.organization_id, []).append((log, _message_details(log)))

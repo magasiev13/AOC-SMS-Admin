@@ -4615,8 +4615,8 @@ def dashboard():
             failure_rate = round((latest_log.failure_count / latest_log.total_recipients) * 100, 1)
 
         chart_data = build_chart_data()
-        from app.services.event_workspace_service import submission_outcomes
-        latest_outcomes = submission_outcomes(latest_log)
+        from app.services.delivery_status_service import message_result_summary
+        latest_outcomes = message_result_summary(latest_log) if latest_log else None
         from app.services.event_workspace_service import event_communications
         related_communications = event_communications(composer_event) if composer_event is not None else None
         users_missing_email = []
@@ -8918,9 +8918,11 @@ def logs_list():
         if log.status == 'processing'
     ]
 
+    from app.services.delivery_status_service import batch_message_results
     return render_template(
         'logs/list.html',
         logs=logs,
+        history_results=batch_message_results(logs),
         search=search,
         processing_logs=processing_logs,
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
