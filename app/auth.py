@@ -612,6 +612,10 @@ def signup():
 @bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    draft_user_id = current_user.id
     logout_and_clear_session(revoke_sessions=True)
+    # Only an explicit sign-out discards browser drafts. Session expiry and
+    # account-security redirects deliberately preserve unsent work.
+    session['clear_send_drafts_for_user_id'] = draft_user_id
     flash("You have been logged out on all devices.", "success")
     return redirect(url_for("auth.login"))
