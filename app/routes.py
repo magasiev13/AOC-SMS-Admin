@@ -4347,9 +4347,27 @@ def _send_review_intent(form):
     }
 
 
-def _send_composition(form):
-    """Resolve one normalized personalized audience for preview and review."""
-    intent = _send_review_intent(form)
+def _send_audience_intent(form):
+    """Parse only fields that can change audience eligibility."""
+    target = form.get('target', 'community')
+    if target not in {'community', 'event'}:
+        raise SendReviewInputError('Choose a community or event audience.')
+    try:
+        event_id = int(form.get('event_id') or 0) if target == 'event' else None
+    except (TypeError, ValueError) as exc:
+        raise SendReviewInputError('Choose a valid event.') from exc
+    if target == 'event' and not event_id:
+        raise SendReviewInputError('Please select an event.')
+    test_mode = form.get('test_mode') == 'on'
+    return {
+        'target': target, 'event_id': event_id, 'test_mode': test_mode,
+        'test_recipient_selection_mode': normalize_test_recipient_selection_mode(form.get('test_recipient_selection_mode')) if test_mode else None,
+        'test_recipient_phone': normalize_phone(_selected_test_recipient_phone(form)) if test_mode else None,
+    }
+
+
+def _resolve_send_audience(intent):
+    """Use the same tenant, permission and dedupe rules for profile and review."""
     event = _tenant_get_or_404(Event, intent['event_id']) if intent['event_id'] else None
     test_data = None
     if intent['test_mode']:
@@ -4361,8 +4379,15 @@ def _send_composition(form):
             raise SendReviewInputError('Choose valid saved test recipients for this workspace before reviewing the send.') from exc
     rows = _load_blast_target_recipients(target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'], test_recipient_data=test_data)
     recipients, counts = _prepare_sendable_blast_recipients(rows, apply_opt_out_filters=True, target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'])
+    return event, recipients, counts, len(rows)
+
+
+def _send_composition(form):
+    """Resolve one normalized personalized audience for preview and review."""
+    intent = _send_review_intent(form)
+    event, recipients, counts, total = _resolve_send_audience(intent)
     estimate = analyze_personalized_sms_blast(intent['message_body'], recipients)
-    return intent, event, recipients, counts, estimate, len(rows)
+    return intent, event, recipients, counts, estimate, total
 
 
 def _create_send_review(form):
@@ -4426,6 +4451,13 @@ def dashboard_send_review():
 def dashboard_audience_preview():
     if request.method == 'POST':
         try:
+            if request.form.get('audience_profile') == '1':
+                from app.utils import build_sms_audience_profile
+                _, recipients, counts, total = _resolve_send_audience(_send_audience_intent(request.form))
+                return jsonify({
+                    'eligible': len(recipients), 'excluded': total - len(recipients), 'total': total,
+                    'reasons': counts, 'profile': build_sms_audience_profile(recipients),
+                })
             _, _, recipients, counts, estimate, total = _send_composition(request.form)
         except SendReviewInputError as exc:
             return jsonify({'error': exc.public_message}), 400

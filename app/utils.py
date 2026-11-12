@@ -214,6 +214,36 @@ def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | No
     }
 
 
+def build_sms_audience_profile(recipients: list[dict] | None) -> list[dict[str, object]]:
+    """Group rendered name lengths without exposing a contact or its text.
+
+    Keep first/full metrics together: their correlation affects segment totals
+    when a draft uses both tokens. Name text is intentionally not normalized,
+    matching the substitutions made after a message body is normalized.
+    """
+    def metrics(value: str) -> tuple[int, int, bool]:
+        gsm_units = sum(1 if char in _GSM_7_BASIC_CHARSET else
+                        2 if char in _GSM_7_EXTENDED_CHARSET else 0 for char in value)
+        unicode_required = any(char not in _GSM_7_BASIC_CHARSET and
+                               char not in _GSM_7_EXTENDED_CHARSET for char in value)
+        utf16_units = len(value.encode('utf-16-be', errors='surrogatepass')) // 2
+        return gsm_units, utf16_units, unicode_required
+
+    grouped = Counter(
+        metrics(render_message_template('{first_name}', recipient)) +
+        metrics(render_message_template('{full_name}', recipient))
+        for recipient in recipients or []
+    )
+    return [
+        {
+            'count': count,
+            'first': dict(zip(('gsm_units', 'utf16_units', 'unicode'), key[:3])),
+            'full': dict(zip(('gsm_units', 'utf16_units', 'unicode'), key[3:])),
+        }
+        for key, count in sorted(grouped.items())
+    ]
+
+
 def normalize_phone(phone: object) -> str:
     """
     Normalize phone number to E.164-ish format.

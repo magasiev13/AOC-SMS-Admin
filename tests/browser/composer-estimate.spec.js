@@ -136,13 +136,91 @@ test('editing after a large sealed review keeps the preview within ordinary form
   await expect(review).toBeFocused();
   await review.press('Escape');
   await expect(review).toBeHidden();
-  const preview = page.waitForResponse(response => response.url().includes('/dashboard/audience-preview') && response.request().method() === 'POST');
+  let extraPreviews = 0;
+  page.on('request', request => {
+    if (request.url().includes('/dashboard/audience-preview')) extraPreviews += 1;
+  });
   await page.getByLabel('Message', { exact: true }).fill('Edited large review draft');
-  const response = await preview;
-  expect(response.status()).toBe(200);
-  const body = response.request().postData() || '';
-  expect(body.includes('name="review_token"')).toBe(false);
-  expect(body.length).toBeLessThan(50_000);
+  await authoritativeTotal(page);
+  await page.waitForTimeout(900);
+  expect(extraPreviews).toBe(0);
   await expect(page.locator('#messageUnitEstimate')).toContainText('segments each');
   await expect(page.getByLabel('Message', { exact: true })).toHaveValue('Edited large review draft');
+});
+
+test('typing 200 characters, whitespace and footer changes do not recompute the server audience', async ({ page }) => {
+  const previews = [];
+  page.on('request', request => {
+    if (request.url().includes('/dashboard/audience-preview')) previews.push(request);
+  });
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  await expect(page.locator('#audienceEligibility')).toContainText(/\d+ eligible recipient/);
+  const initialCount = previews.length;
+  expect(initialCount).toBeLessThanOrEqual(2);
+  const message = page.getByLabel('Message', { exact: true });
+  await message.fill('');
+  await message.pressSequentially('A'.repeat(200), { delay: 5 });
+  const total = await authoritativeTotal(page);
+  await message.fill(`  ${'A'.repeat(200)}  `);
+  await expect(page.locator('#messageUnitEstimate')).toHaveAttribute('data-total-segments', String(total));
+  await page.getByLabel('Include Unsubscribe Option').uncheck();
+  await authoritativeTotal(page);
+  await page.getByLabel('Include Unsubscribe Option').check();
+  await page.waitForTimeout(900);
+  expect(previews.length).toBe(initialCount);
+  for (const request of previews) {
+    const fields = new URLSearchParams(request.postData());
+    expect(fields.get('audience_profile')).toBe('1');
+    for (const field of ['message_body', 'review_token', 'schedule_time', 'include_unsubscribe']) {
+      expect(fields.has(field)).toBe(false);
+    }
+  }
+  await checkReviewTotal(page, total);
+});
+
+test('changing audience cancels an in-flight preview and uses the newer audience', async ({ page }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  await expect(page.locator('#audienceEligibility')).toContainText(/\d+ eligible recipient/);
+  // Model a slow transport without starting a real long-running server request.
+  // Its promise rejects only if the composer cancels the supplied fetch signal.
+  await page.evaluate(() => {
+    const realFetch = window.fetch;
+    window.previewStarted = false;
+    window.previewAborted = false;
+    window.fetch = (url, options) => {
+      if (String(url).includes('/dashboard/audience-preview') && options.body.get('target') === 'event') {
+        window.previewStarted = true;
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            window.previewAborted = true;
+            reject(new DOMException('Preview canceled', 'AbortError'));
+          }, { once: true });
+        });
+      }
+      return realFetch(url, options);
+    };
+  });
+  const eventId = await page.locator('#event_id option').nth(1).getAttribute('value');
+  await page.getByLabel('Event Registrants', { exact: false }).check();
+  await page.locator('#event_id').selectOption(eventId);
+  await expect.poll(() => page.evaluate(() => window.previewStarted)).toBe(true);
+  await page.getByLabel('Contact List', { exact: false }).check();
+  await expect.poll(() => page.evaluate(() => window.previewAborted)).toBe(true);
+  await expect(page.locator('#audienceEligibility')).toContainText(/\d+ eligible recipient/);
+  await page.getByLabel('Message', { exact: true }).fill('Newest audience only');
+  await checkReviewTotal(page, await authoritativeTotal(page));
+});
+
+test('Unicode whitespace boundaries keep composer and review estimates equal', async ({ page }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  await page.getByLabel('Include Unsubscribe Option').uncheck();
+  for (const draft of ['A'.repeat(70) + '\uFEFF', 'A'.repeat(160) + '\u0085']) {
+    await page.getByLabel('Message', { exact: true }).fill(draft);
+    const review = await checkReviewTotal(page, await authoritativeTotal(page));
+    await review.getByRole('button', { name: 'Edit Message', exact: true }).click();
+    await expect(review).toBeHidden();
+  }
 });

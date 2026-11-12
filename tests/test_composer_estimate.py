@@ -188,7 +188,7 @@ process.stdout.write(JSON.stringify({
         assert actual['encoding'] == expected['encoding']
     assert data['originals'] == bodies
     assert data['replacement'] == 'Hi -'
-    assert data['special'] == {'character': '🙂', 'codepoint': 'U+1F642'}
+    assert data['special'] == {'character': '🙂', 'codepoint': 'U+1F642', 'name': 'SLIGHTLY SMILING FACE'}
 
 
 @pytest.mark.parametrize('body,expected,unicode_writing', [

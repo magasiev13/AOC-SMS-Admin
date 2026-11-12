@@ -627,51 +627,70 @@
     let eligibleRecipientCount = null;
     let audiencePreviewSequence = 0;
     let audiencePreviewTimer;
+    let audiencePreviewController;
+    let audienceSelectionKey = null;
+    let audienceProfile = null;
     let compositionEstimate = null;
     let compositionPreviewPending = false;
 
-    function refreshAudiencePreview() {
-        const sequence = ++audiencePreviewSequence;
-        clearTimeout(audiencePreviewTimer);
-        compositionEstimate = null;
-        compositionPreviewPending = true;
-        updateMessageStats();
-        audiencePreviewTimer = setTimeout(() => loadAudiencePreview(sequence), 200);
+    function audienceSelection() {
+        const selection = new URLSearchParams({
+            audience_profile: '1',
+            csrf_token: sendForm.elements.namedItem('csrf_token').value,
+            target: targetEvent.checked ? 'event' : 'community',
+        });
+        if (targetEvent.checked) selection.set('event_id', eventSelect.value);
+        if (testMode?.checked) {
+            selection.set('test_mode', 'on');
+            selection.set('test_recipient_selection_mode', testRecipientModeAll?.checked ? 'all' : 'one');
+            for (const field of ['test_recipient_id', 'test_recipient_phone']) {
+                const input = sendForm.elements.namedItem(field);
+                if (input && !testRecipientModeAll?.checked) selection.set(field, input.value);
+            }
+        }
+        return selection;
     }
 
-    async function loadAudiencePreview(sequence) {
-        if (testMode?.checked && !messageBody.value.trim()) {
-            audienceEligibility.textContent = 'Internal test recipients only. Saved-list membership and opt-outs are checked again at submission.';
-            compositionPreviewPending = false;
+    function refreshAudiencePreview() {
+        const selection = audienceSelection();
+        const key = selection.toString();
+        // Message, whitespace, STOP footer and timing edits stay in the browser.
+        // Only audience selection changes require another eligibility/profile read.
+        if (key === audienceSelectionKey) {
             updateMessageStats();
             return;
         }
+        audienceSelectionKey = key;
+        const sequence = ++audiencePreviewSequence;
+        clearTimeout(audiencePreviewTimer);
+        audiencePreviewController?.abort();
+        audienceProfile = null;
+        compositionEstimate = null;
         eligibleRecipientCount = null;
+        compositionPreviewPending = true;
         audienceEligibility.textContent = 'Checking audience eligibility…';
         updateMessageStats();
-        const params = new URLSearchParams({target: targetEvent.checked ? 'event' : 'community'});
-        if (targetEvent.checked && eventSelect.value) params.set('event_id', eventSelect.value);
+        audiencePreviewTimer = setTimeout(() => loadAudiencePreview(sequence, selection), 750);
+    }
+
+    async function loadAudiencePreview(sequence, selection) {
+        audiencePreviewController = new AbortController();
         try {
-            const hasMessage = Boolean(messageBody.value.trim());
-            const previewUrl = {{ url_for('main.dashboard_audience_preview')|tojson }};
-            const previewForm = hasMessage ? new FormData(sendForm) : undefined;
-            // A sealed review can be large. Preview only needs the draft;
-            // sending the retained token would exceed ordinary field limits.
-            previewForm?.delete('review_token');
-            const response = await fetch(hasMessage ? previewUrl : previewUrl + '?' + params, {
-                method: hasMessage ? 'POST' : 'GET',
-                body: previewForm,
+            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }}, {
+                method: 'POST',
+                body: selection,
+                signal: audiencePreviewController.signal,
                 headers: { Accept: 'application/json' },
             });
             if (!response.ok) throw new Error('Audience preview unavailable');
             const preview = await response.json();
             if (sequence !== audiencePreviewSequence) return;
             eligibleRecipientCount = preview.eligible;
-            compositionEstimate = preview.estimate || null;
+            audienceProfile = preview.profile;
             const audienceNote = testMode?.checked ? 'Internal test recipients only. ' : '';
             audienceEligibility.textContent = `${audienceNote}${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
         } catch (error) {
-            if (sequence !== audiencePreviewSequence) return;
+            if (sequence !== audiencePreviewSequence || error.name === 'AbortError') return;
             audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
         }
         compositionPreviewPending = false;
@@ -693,18 +712,20 @@
 
     function updateMessageStats() {
         const footer = includeUnsubscribe && includeUnsubscribe.checked ? unsubscribeFooter : '';
-        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
+        const draft = window.TwineviaSmsAnalysis.trimDraft(messageBody.value);
+        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${draft}${footer}`);
+        compositionEstimate = audienceProfile === null ? null : window.TwineviaSmsAnalysis.estimateAudience(messageBody.value, audienceProfile, { footer });
         const recipientEstimate = eligibleRecipientCount || 0;
         const minimum = compositionEstimate?.min_segment_count;
         const maximum = compositionEstimate?.max_segment_count;
         const each = minimum === maximum ? String(minimum) : `${minimum}–${maximum}`;
         const special = compositionEstimate?.special_character || window.TwineviaSmsAnalysis.specialCharacter(messageBody.value);
         const usesUnicode = compositionEstimate ? compositionEstimate.encodings.includes('ucs-2') : analysis.encoding === 'ucs-2';
-        const characterName = special ? `${special.name || 'Unicode character'} (${special.codepoint})` : 'A special character';
+        const characterName = special ? `${special.name || `Unicode character “${special.character}”`} (${special.codepoint})` : 'Personalized contact names';
         const reason = compositionEstimate && recipientEstimate === 0
             ? 'No eligible recipients were found for this audience.'
             : (usesUnicode
-                ? `${characterName} uses Unicode SMS, which fits fewer characters per segment.`
+                ? `${characterName} ${special ? 'uses' : 'use'} Unicode SMS, which fits fewer characters per segment.`
                 : (maximum > 1 ? 'Message length requires multiple SMS segments.' : 'Message length fits one SMS segment per recipient.'));
 
         charCount.textContent = messageBody.value.length;
@@ -729,7 +750,7 @@
         }
         if (messageUnitEstimate) {
             delete messageUnitEstimate.dataset.totalSegments;
-            if (!messageBody.value.trim()) {
+            if (!draft) {
                 messageUnitEstimate.textContent = '0 segments each × 0 recipients = 0';
             } else if (compositionEstimate) {
                 messageUnitEstimate.dataset.totalSegments = String(compositionEstimate.total_segments);
@@ -740,7 +761,7 @@
                 messageUnitEstimate.textContent = 'Personalized SMS estimate is unavailable. Review the message to check its segments.';
             }
         }
-        specialCharacterWarning.classList.toggle('d-none', !messageBody.value.trim() || !usesUnicode);
+        specialCharacterWarning.classList.toggle('d-none', !draft || !usesUnicode);
         const canReplace = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value) !== messageBody.value;
         const unicodeWriting = window.TwineviaSmsAnalysis.usesUnicodeWriting(messageBody.value);
         replaceSpecialCharacters.hidden = !canReplace;
