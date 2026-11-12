@@ -286,6 +286,16 @@ def _canonical_delivery_error(message, code=None):
     return f'{description} ({code})'
 
 
+def _provider_segment_count(value, *, allow_zero=False):
+    if isinstance(value, bool):
+        return None
+    try:
+        count = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return count if count > 0 or (allow_zero and count == 0) else None
+
+
 def project_log_delivery(organization_id, details, *, records_by_sid=None):
     """Overlay current delivery facts without rewriting submission audit JSON."""
     records = _delivery_records(organization_id, details) if records_by_sid is None else records_by_sid
@@ -304,8 +314,41 @@ def project_log_delivery(organization_id, details, *, records_by_sid=None):
             'warning text-dark' if status in {'unknown', 'conflict'} else 'secondary'
         )
         detail['delivery_error'] = _canonical_delivery_error(record.delivery_error_message, record.delivery_error_code) if record else None
+        segments = None
+        if record is not None and record.units_status == 'known':
+            segments = _provider_segment_count(record.billable_units, allow_zero=True)
+        if segments is None and detail.get('sid'):
+            # Creation responses can already contain a positive provider count.
+            # Their initial zero means pending, unlike a reconciled known zero.
+            segments = _provider_segment_count(detail.get('num_segments'))
+        detail['segments_used'] = segments
         projected.append(detail)
     return projected
+
+
+def message_segment_summary(log, projected_details):
+    """Total confirmed provider units once per SID, keeping missing facts pending."""
+    receipts = {}
+    accepted_without_sid = 0
+    unresolved_without_sid = 0
+    for row in projected_details:
+        sid = row.get('sid')
+        if sid:
+            # Duplicate historical rows do not represent another provider send.
+            if sid not in receipts or receipts[sid] is None:
+                receipts[sid] = row.get('segments_used')
+        elif row.get('success') is True:
+            accepted_without_sid += 1
+        elif row.get('status') in {'sending', 'ambiguous', 'queued'}:
+            unresolved_without_sid += 1
+    known = [count for count in receipts.values() if count is not None]
+    missing_accepted = max(0, int(log.success_count or 0) - len(receipts) - accepted_without_sid)
+    return {
+        'total': sum(known),
+        'confirmed_recipients': len(known),
+        'pending_recipients': (len(receipts) - len(known) + accepted_without_sid
+                               + unresolved_without_sid + missing_accepted),
+    }
 
 
 def _message_details(log):

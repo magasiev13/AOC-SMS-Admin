@@ -24,6 +24,7 @@
         <p class="message-record-meta">
             Created <time datetime="{{ log.created_at.isoformat() if log.created_at else '' }}">{{ surface_view.created_at_display }}</time>
             · {{ result_summary.total }} recipients
+            · <span data-message-segments>{% if segment_summary.pending_recipients %}{% if segment_summary.confirmed_recipients %}Segments used: {{ segment_summary.total }} confirmed; remaining segments pending provider confirmation{% else %}Segments pending provider confirmation{% endif %}{% elif segment_summary.confirmed_recipients %}Segments used: {{ segment_summary.total }}{% else %}No segments recorded{% endif %}</span>
             {% for badge in surface_view.badges %}· {{ badge.label|private_text }}{% endfor %}
         </p>
         {% if result_summary.acceptance_unresolved %}

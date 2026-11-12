@@ -8938,10 +8938,11 @@ def log_detail(log_id):
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)
-    from app.services.delivery_status_service import message_result_summary, project_log_delivery
+    from app.services.delivery_status_service import message_result_summary, message_segment_summary, project_log_delivery
 
     details = project_log_delivery(log.organization_id, details)
     result_summary = message_result_summary(log, details)
+    segment_summary = message_segment_summary(log, details)
     surface_view = _log_detail_surface_view(log, details)
     if log.details and not details and not _message_log_details_payload_is_valid(log.details):
         current_app.logger.warning(
@@ -9018,6 +9019,7 @@ def log_detail(log_id):
         suppression_status=suppression_status,
         surface_view=surface_view,
         result_summary=result_summary, outcome=outcome,
+        segment_summary=segment_summary,
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
         pagination_endpoint='main.log_detail', pagination_args={'log_id': log.id, 'outcome': outcome},
         pagination_label='Recipient Pagination', pagination_noun='recipients',
