@@ -7,9 +7,9 @@ test.afterEach(async ({ page }, info) => attachFailureDiagnostics(page, info));
 function workspaceDateTime(instant, timeZone) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', hour12: true,
+    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short',
   }).formatToParts(instant).map(part => [part.type, part.value]));
-  return `${parts.weekday}, ${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute} ${parts.dayPeriod}`;
+  return `${parts.weekday}, ${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${parts.timeZoneName}`;
 }
 
 for (const width of [1440, 390]) {
@@ -18,10 +18,8 @@ for (const width of [1440, 390]) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await login(page, 'owner@browser.test', 'Owner-pass1!');
-    const fallbackText = await page.locator('#sendForm .form-text').filter({ hasText: 'Schedule sends in your local time' }).textContent();
-    const fallback = fallbackText.match(/\(([^()]+) fallback\)/);
-    expect(fallback).not.toBeNull();
-    const workspaceTimezone = fallback[1];
+    const workspaceTimezone = await page.locator('#workspaceScheduleTimezone').getAttribute('data-workspace-timezone');
+    expect(workspaceTimezone).toBeTruthy();
     await page.goto('/events/add');
     await page.getByLabel('Event Title').fill(`Company workshop ${width}`);
     await page.getByLabel('Date (optional)').fill('2030-12-04');

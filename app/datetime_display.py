@@ -6,11 +6,38 @@ from flask import current_app
 
 
 def workspace_timezone():
+    """Resolve the workspace zone for both scheduling and display.
+
+    Keep this boundary shared so a future organization setting can replace the
+    configured default without changing schedule entry or formatting callers.
+    """
     name = str(current_app.config.get('APP_TIMEZONE') or 'UTC').strip()
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         return timezone.utc
+
+
+def workspace_timezone_name():
+    return getattr(workspace_timezone(), 'key', 'UTC')
+
+
+def workspace_timezone_label():
+    name = workspace_timezone_name()
+    return {
+        'America/Denver': 'Mountain Time (Denver)',
+        'America/New_York': 'Eastern Time (New York)',
+        'America/Chicago': 'Central Time (Chicago)',
+        'America/Los_Angeles': 'Pacific Time (Los Angeles)',
+        'UTC': 'Coordinated Universal Time (UTC)',
+    }.get(name, name.replace('_', ' '))
+
+
+def parse_workspace_datetime(date_value, time_value):
+    """Interpret a date/time input as workspace wall time, never browser time."""
+    return datetime.strptime(f'{date_value} {time_value}', '%Y-%m-%d %H:%M').replace(
+        tzinfo=workspace_timezone(),
+    )
 
 
 def _workspace_datetime(value: datetime) -> datetime:
@@ -32,4 +59,4 @@ def format_datetime(value: datetime | None, *, missing='-'):
         return missing
     local = _workspace_datetime(value)
     hour = local.hour % 12 or 12
-    return f'{local:%a}, {format_date(local)} · {hour}:{local.minute:02d} {local:%p}'
+    return f'{local:%a}, {format_date(local)} · {hour}:{local.minute:02d} {local:%p} {local:%Z}'

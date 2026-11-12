@@ -7,17 +7,20 @@ import re
 from flask import Flask, render_template_string
 import pytest
 
-from app.datetime_display import format_date, format_datetime
+from app.datetime_display import (
+    format_date, format_datetime, parse_workspace_datetime, workspace_timezone_label,
+    workspace_timezone_name,
+)
 from tests.test_event_feedback import feedback
 from tests.test_ux_recovery import ux, login, permitted_contact, review_fields
 
 
 @pytest.mark.parametrize('value, expected', [
-    (datetime(2026, 10, 31, 14, 2), 'Sat, Oct 31, 2026 · 8:02 AM'),
-    (datetime(2026, 10, 31, 14, 2, tzinfo=timezone.utc), 'Sat, Oct 31, 2026 · 8:02 AM'),
-    (datetime(2026, 11, 1, 7, 30, tzinfo=timezone.utc), 'Sun, Nov 1, 2026 · 1:30 AM'),
-    (datetime(2026, 11, 1, 8, 30, tzinfo=timezone.utc), 'Sun, Nov 1, 2026 · 1:30 AM'),
-    (datetime(2026, 10, 31, 2, 5), 'Fri, Oct 30, 2026 · 8:05 PM'),
+    (datetime(2026, 10, 31, 14, 2), 'Sat, Oct 31, 2026 · 8:02 AM MDT'),
+    (datetime(2026, 10, 31, 14, 2, tzinfo=timezone.utc), 'Sat, Oct 31, 2026 · 8:02 AM MDT'),
+    (datetime(2026, 11, 1, 7, 30, tzinfo=timezone.utc), 'Sun, Nov 1, 2026 · 1:30 AM MDT'),
+    (datetime(2026, 11, 1, 8, 30, tzinfo=timezone.utc), 'Sun, Nov 1, 2026 · 1:30 AM MST'),
+    (datetime(2026, 10, 31, 2, 5), 'Fri, Oct 30, 2026 · 8:05 PM MDT'),
 ])
 def test_datetime_converts_naive_utc_and_aware_values_with_dst(value, expected):
     app = Flask(__name__)
@@ -43,7 +46,10 @@ def test_invalid_or_missing_timezone_falls_back_to_utc(zone):
     app = Flask(__name__)
     app.config['APP_TIMEZONE'] = zone
     with app.app_context():
-        assert format_datetime(datetime(2026, 10, 31, 14, 2)) == 'Sat, Oct 31, 2026 · 2:02 PM'
+        assert format_datetime(datetime(2026, 10, 31, 14, 2)) == 'Sat, Oct 31, 2026 · 2:02 PM UTC'
+        assert workspace_timezone_name() == 'UTC'
+        assert workspace_timezone_label() == 'Coordinated Universal Time (UTC)'
+        assert parse_workspace_datetime('2099-12-31', '18:00').utcoffset().total_seconds() == 0
 
 
 def test_filters_and_route_helper_share_workspace_time_and_ignore_browser_cookie(ux):
@@ -51,7 +57,7 @@ def test_filters_and_route_helper_share_workspace_time_and_ignore_browser_cookie
     ux.app.config['APP_TIMEZONE'] = 'America/Denver'
     instant = datetime(2026, 10, 31, 14, 2, tzinfo=timezone.utc)
     with ux.app.test_request_context('/', headers={'Cookie': 'client_timezone=Asia%2FTokyo'}):
-        assert render_template_string('{{ instant|localtime }}', instant=instant) == 'Sat, Oct 31, 2026 · 8:02 AM'
+        assert render_template_string('{{ instant|localtime }}', instant=instant) == 'Sat, Oct 31, 2026 · 8:02 AM MDT'
         assert render_template_string('{{ instant|localdate }}', instant=instant) == 'Oct 31, 2026'
         assert _format_datetime_display(instant) == format_datetime(instant)
         assert _format_datetime_display(None) is None
@@ -78,9 +84,9 @@ def test_contact_event_message_and_security_pages_render_shared_dates(ux):
     events = ux.client.get('/events?view=past')
     assert b'Oct 31, 2026' in events.data and b'Oct 30, 2026' in events.data
     details = ux.client.get(f'/logs/{log.id}')
-    assert 'Fri, Oct 30, 2026 · 8:05 PM' in details.get_data(as_text=True)
+    assert 'Fri, Oct 30, 2026 · 8:05 PM MDT' in details.get_data(as_text=True)
     security = ux.client.get('/security/events')
-    assert 'Fri, Oct 30, 2026 · 8:05 PM' in security.get_data(as_text=True)
+    assert 'Fri, Oct 30, 2026 · 8:05 PM MDT' in security.get_data(as_text=True)
     for response in (contacts, events, details, security):
         assert response.status_code == 200
         assert b'UTC' not in response.data
@@ -124,20 +130,61 @@ def test_security_date_filters_follow_the_full_workspace_day_across_dst(ux):
     assert 'Before workspace day' not in html and 'After workspace day' not in html
 
 
-def test_broadcast_review_displays_workspace_time_but_keeps_selected_send_instant(ux):
+@pytest.mark.parametrize('browser_zone', ['Asia/Tokyo', 'America/Denver'])
+@pytest.mark.parametrize('with_review', [True, False])
+def test_broadcast_schedule_entry_review_confirmation_and_list_use_workspace_time(ux, browser_zone, with_review):
     ux.app.config['APP_TIMEZONE'] = 'America/Denver'
     permitted_contact(ux)
     login(ux)
+    ux.client.set_cookie('client_timezone', browser_zone)
     values = review_fields(schedule_later='on', schedule_date='2099-12-31',
-                           schedule_time='23:59', client_timezone='Asia/Tokyo')
-    review = ux.client.post('/dashboard/review', data=values).get_json()
-    expected = datetime(2099, 12, 31, 14, 59)
-    assert review['timing'] == format_datetime(expected)
-    response = ux.client.post('/dashboard', data={**values, 'review_token': review['review_token']})
+                           schedule_time='18:00', client_timezone=browser_zone)
+    expected = datetime(2100, 1, 1, 1, 0)
+    label = 'Thu, Dec 31, 2099 · 6:00 PM MST'
+    if with_review:
+        review = ux.client.post('/dashboard/review', data=values).get_json()
+        assert review['timing'] == label
+        values['review_token'] = review['review_token']
+    else:
+        values.pop('require_review', None)
+    response = ux.client.post('/dashboard', data=values)
     assert response.status_code == 302
     schedule = ux.models.ScheduledMessage.query.one()
     assert schedule.scheduled_at == expected
     assert schedule.message_body == values['message_body'] + '\n\nReply STOP to unsubscribe.'
+    page = ux.client.get(response.location).get_data(as_text=True)
+    assert f'Message scheduled for {label}.' in page
+    assert f'<strong>{label}</strong>' in page
+    composer = ux.client.get('/dashboard').get_data(as_text=True)
+    assert 'Times are in Mountain Time (Denver).' in composer
+    assert 'your local time' not in composer and 'Detected timezone' not in composer
+
+
+def test_workspace_zone_change_requires_a_fresh_schedule_review(ux):
+    ux.app.config['APP_TIMEZONE'] = 'America/Denver'
+    permitted_contact(ux)
+    login(ux)
+    values = review_fields(schedule_later='on', schedule_date='2099-12-31', schedule_time='18:00')
+    review = ux.client.post('/dashboard/review', data=values).get_json()
+    ux.app.config['APP_TIMEZONE'] = 'America/New_York'
+    response = ux.client.post('/dashboard', data={**values, 'review_token': review['review_token']})
+    assert response.status_code == 200
+    assert ux.models.ScheduledMessage.query.count() == 0
+    assert 'The message, audience, timing or signed-in account changed. Review this send again.' in response.get_data(as_text=True)
+
+
+def test_aoc_automatic_denver_reminders_keep_their_utc_instants_across_dst():
+    from types import SimpleNamespace
+    from app.services.aoc_event_sync_service import _days_before_scheduled_at, _day_of_scheduled_at
+    app = Flask(__name__)
+    app.config['APP_TIMEZONE'] = 'America/Denver'
+    event = SimpleNamespace(external_start_at=datetime(2027, 3, 15, 23),
+                            external_timezone='America/Denver')
+    with app.test_request_context('/', headers={'Cookie': 'client_timezone=Asia%2FTokyo'}):
+        assert _days_before_scheduled_at(event, 14) == datetime(2027, 3, 1, 16)
+        assert _days_before_scheduled_at(event, 7) == datetime(2027, 3, 8, 16)
+        assert _days_before_scheduled_at(event, 1) == datetime(2027, 3, 14, 15)
+        assert _day_of_scheduled_at(event) == datetime(2027, 3, 15, 14)
 
 
 def test_feedback_review_and_history_share_workspace_display_without_changing_schedule(feedback):

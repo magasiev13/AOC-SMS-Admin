@@ -93,16 +93,12 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
   await page.getByLabel('Time', { exact: true }).fill('23:59');
   const expectedTiming = await page.evaluate(() => {
-    const help = document.getElementById('scheduleLater').closest('.mb-3').textContent;
-    const workspaceZone = help.match(/\(([^)]+) fallback\)/)?.[1];
-    if (!workspaceZone) throw new Error('The composer must identify its workspace timezone fallback.');
-    const instant = new Date('2099-12-31T23:59:00');
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: workspaceZone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-      hour: 'numeric', minute: '2-digit', hour12: true,
-    }).formatToParts(instant);
-    const part = type => parts.find(value => value.type === type).value;
-    return `${part('weekday')}, ${part('month')} ${part('day')}, ${part('year')} · ${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
+    const workspaceZone = document.getElementById('workspaceScheduleTimezone').dataset.workspaceTimezone;
+    if (!workspaceZone) throw new Error('The composer must identify its workspace timezone.');
+    const zone = new Intl.DateTimeFormat('en-US', {
+      timeZone: workspaceZone, timeZoneName: 'short',
+    }).formatToParts(new Date('2099-12-31T12:00:00Z')).find(part => part.type === 'timeZoneName').value;
+    return `Thu, Dec 31, 2099 · 11:59 PM ${zone}`;
   });
   await page.route('**/dashboard/review', route => route.fulfill({ status: 503, json: { error: 'Controlled review interruption' } }));
   await page.getByRole('button', { name: 'Review Schedule', exact: true }).click();

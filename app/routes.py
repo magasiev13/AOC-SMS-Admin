@@ -7,9 +7,8 @@ import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from flask import (
     Blueprint,
@@ -33,7 +32,10 @@ from sqlalchemy.orm import load_only, selectinload
 from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
-from app.datetime_display import format_date, format_datetime, workspace_timezone
+from app.datetime_display import (
+    format_date, format_datetime, parse_workspace_datetime, workspace_timezone,
+    workspace_timezone_label, workspace_timezone_name,
+)
 from app.services.send_review_service import SendReviewInputError
 from app.services.usage_summary_service import workspace_usage_is_billed, workspace_usage_summary
 from app.services.contact_privacy_service import (
@@ -4341,7 +4343,7 @@ def _send_review_intent(form):
         'schedule_later': schedule,
         'schedule_date': form.get('schedule_date', '').strip() if schedule else None,
         'schedule_time': form.get('schedule_time', '').strip() if schedule else None,
-        'client_timezone': form.get('client_timezone', '').strip() if schedule else None,
+        'schedule_timezone': workspace_timezone_name() if schedule else None,
     }
 
 
@@ -4378,14 +4380,8 @@ def _create_send_review(form):
     _bounded_recipient_snapshot_json(recipients)
     timing = 'Send now'
     if intent['schedule_later']:
-        tz_name = intent['client_timezone'] or current_app.config.get('APP_TIMEZONE', 'UTC')
         try:
-            zone = ZoneInfo(tz_name)
-        except Exception:
-            tz_name = current_app.config.get('APP_TIMEZONE', 'UTC')
-            zone = ZoneInfo(tz_name)
-        try:
-            local = datetime.strptime(f"{intent['schedule_date']} {intent['schedule_time']}", '%Y-%m-%d %H:%M').replace(tzinfo=zone)
+            local = parse_workspace_datetime(intent['schedule_date'], intent['schedule_time'])
         except (TypeError, ValueError) as exc:
             raise SendReviewInputError('Choose a valid schedule date and time.') from exc
         if local.astimezone(timezone.utc) <= utc_now():
@@ -4461,10 +4457,6 @@ def dashboard_audience_preview():
 @login_required
 def dashboard():
     from flask import current_app
-    app_timezone = current_app.config.get('APP_TIMEZONE', 'UTC')
-    client_timezone_raw = request.cookies.get('client_timezone', '')
-    client_timezone = unquote(client_timezone_raw).strip() if client_timezone_raw else ''
-    dashboard_timezone = client_timezone or app_timezone
     events = events_query().order_by(Event.date.asc(), Event.title.asc()).all()
     selection = request.form if request.method == 'POST' else request.args
     selected_target = selection.get('target', 'community')
@@ -4503,17 +4495,7 @@ def dashboard():
 
     def build_chart_data():
         """Build 7-day delivery trends data for the dashboard chart."""
-        tz = None
-        try:
-            tz = ZoneInfo(dashboard_timezone)
-        except Exception:
-            if dashboard_timezone != app_timezone:
-                try:
-                    tz = ZoneInfo(app_timezone)
-                except Exception:
-                    tz = timezone.utc
-            else:
-                tz = timezone.utc
+        tz = workspace_timezone()
 
         today = datetime.now(tz).date()
         labels = []
@@ -4740,7 +4722,8 @@ def dashboard():
         return render_template(
             'dashboard.html',
             events=events,
-            app_timezone=app_timezone,
+            app_timezone=workspace_timezone_name(),
+            workspace_timezone_label=workspace_timezone_label(),
             **build_dashboard_context()
         )
     
@@ -4774,7 +4757,6 @@ def dashboard():
         schedule_later = request.form.get('schedule_later') == 'on'
         schedule_date = request.form.get('schedule_date', '').strip()
         schedule_time = request.form.get('schedule_time', '').strip()
-        client_timezone = request.form.get('client_timezone', '').strip()
         test_recipient_snapshot_json = None
         test_recipient_data = None
         
@@ -4878,20 +4860,7 @@ def dashboard():
                 return render_dashboard()
             
             try:
-                tz_name = client_timezone or app_timezone
-                tz = None
-                try:
-                    tz = ZoneInfo(tz_name)
-                except Exception:
-                    if tz_name != app_timezone:
-                        try:
-                            tz = ZoneInfo(app_timezone)
-                        except Exception:
-                            tz = None
-                if tz is None:
-                    tz = timezone.utc
-
-                scheduled_local = datetime.strptime(f'{schedule_date} {schedule_time}', '%Y-%m-%d %H:%M').replace(tzinfo=tz)
+                scheduled_local = parse_workspace_datetime(schedule_date, schedule_time)
                 scheduled_utc = scheduled_local.astimezone(timezone.utc).replace(tzinfo=None)
 
                 if scheduled_utc <= datetime.utcnow():
