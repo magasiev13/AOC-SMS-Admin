@@ -4846,9 +4846,9 @@ def dashboard():
                 return render_dashboard()
             if existing_request is not None:
                 db.session.commit()
-                flash(request_status_message(existing_request), 'warning')
                 if existing_request.message_log_id:
                     return redirect(url_for('main.log_detail', log_id=existing_request.message_log_id))
+                flash(request_status_message(existing_request), 'warning')
                 return redirect(url_for('main.logs_list'))
         
         reviewed_snapshot = None
@@ -5000,8 +5000,7 @@ def dashboard():
                     scheduled_estimate['total_segments'],
                 )
                 session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
-                flash(f'Message scheduled for {format_datetime(scheduled_utc)}.', 'success')
-                flash(_format_blast_estimate_summary(scheduled_estimate), 'info')
+                flash(f'Message scheduled for {format_datetime(scheduled_utc)}. {_format_blast_estimate_summary(scheduled_estimate)}', 'success')
                 return redirect(url_for('main.scheduled_list'))
                 
             except ValueError as e:
@@ -5069,8 +5068,6 @@ def dashboard():
             if created:
                 enqueue_outbound_request(saved_request)
             session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
-            flash(request_status_message(saved_request), 'warning' if saved_request.status in {'pending', 'queue_unknown', 'ambiguous'} else 'info')
-            flash(_format_blast_estimate_summary(blast_estimate), 'info')
             return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))
 
         send_fingerprint = build_blast_send_fingerprint(
@@ -8207,12 +8204,10 @@ def community_add():
             return _render_community_form(member=None, field_errors={'name': 'Use 100 characters or fewer for the name.'})
         
         if not phone:
-            flash('Phone number is required.', 'error')
             return _render_community_form(member=None, field_errors={'phone': 'Phone number is required.'})
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
-            flash('Invalid phone number format.', 'error')
             return _render_community_form(member=None, field_errors={'phone': 'Enter a valid phone number.'})
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
@@ -8221,7 +8216,6 @@ def community_add():
         # Check for duplicate
         existing = CommunityMember.query.filter_by(phone=phone).first()
         if existing:
-            flash('A member with this phone number already exists.', 'error')
             return _render_community_form(member=None, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member = CommunityMember(name=name, phone=phone)
@@ -8247,12 +8241,10 @@ def community_edit(member_id):
             return _render_community_form(member=member, field_errors={'name': 'Use 100 characters or fewer for the name.'})
         
         if not phone:
-            flash('Phone number is required.', 'error')
             return _render_community_form(member=member, field_errors={'phone': 'Phone number is required.'})
         
         phone = normalize_phone(phone)
         if not validate_phone(phone):
-            flash('Invalid phone number format.', 'error')
             return _render_community_form(member=member, field_errors={'phone': 'Enter a valid phone number.'})
 
         if UnsubscribedContact.query.filter_by(phone=phone).first():
@@ -8264,7 +8256,6 @@ def community_edit(member_id):
             CommunityMember.id != member_id
         ).first()
         if existing:
-            flash('A member with this phone number already exists.', 'error')
             return _render_community_form(member=member, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member.name = name
