@@ -863,7 +863,7 @@ def main() -> None:
         db.session.add_all([
             OrganizationMembership(organization_id=results_org.id, user_id=results_owner.id, role='owner'),
             OrganizationMembership(organization_id=results_org.id, user_id=results_staff.id, role='staff'),
-            OrganizationSubscription(organization=results_org, status='complimentary'),
+            OrganizationSubscription(organization=results_org, status='complimentary', current_period_end=now + timedelta(days=30)),
             OrganizationMessagingProfile(organization=results_org, status='active', provider_status='active',
                 sender_review_status='approved', twilio_subaccount_sid='ACbrowserresults',
                 messaging_service_sid='MGbrowserresults', phone_number_sid='PNbrowserresults',

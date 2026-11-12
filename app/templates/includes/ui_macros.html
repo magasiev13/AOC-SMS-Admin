@@ -6,7 +6,7 @@
 {% set badges = summary.get('badges') %}
 {% set stats = summary.get('stats') %}
 {% set stat_count = stats|length if stats else 0 %}
-{% set stat_count_class = stat_count if stat_count <= 4 else 4 %}
+{% set stat_count_class = stat_count if stat_count <= 6 else 4 %}
 <section class="workspace-summary{% if summary.get('modifier') %} {{ summary.get('modifier') }}{% endif %}">
     <div class="workspace-summary__header">
         <div class="workspace-summary__body">
