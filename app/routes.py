@@ -1791,13 +1791,9 @@ def _invitation_absolute_url(invitation: OrganizationInvitation | None) -> str |
 
 
 def _primary_organization_invitation(organization: Organization) -> OrganizationInvitation | None:
-    invitations = list(organization.invitations or [])
-    invitations.sort(
-        key=lambda invitation: (
-            0 if invitation.role == 'owner' else 1,
-            -(invitation.id or 0),
-        )
-    )
+    invitations = [invitation for invitation in (organization.invitations or [])
+                   if invitation.role == 'owner']
+    invitations.sort(key=lambda invitation: -(invitation.id or 0))
     return invitations[0] if invitations else None
 
 
