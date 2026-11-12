@@ -990,6 +990,7 @@ def _message_log_smoke_test_record(
     organization_id: int,
     *,
     approved_at: datetime | None = None,
+    live_only: bool = False,
 ) -> MessageLog | None:
     query = MessageLog.query.filter(
         MessageLog.organization_id == organization_id,
@@ -997,6 +998,8 @@ def _message_log_smoke_test_record(
     )
     if approved_at is not None:
         query = query.filter(MessageLog.created_at >= approved_at)
+    if live_only:
+        query = query.filter(MessageLog.test_mode.is_(False))
     return query.order_by(MessageLog.created_at.desc(), MessageLog.id.desc()).first()
 
 
@@ -2128,7 +2131,10 @@ def _organization_onboarding_view(organization: Organization) -> dict:
     required_steps = [step for step in steps if not step['optional']]
     completed_required = sum(1 for step in required_steps if step['complete'])
 
-    if completed_required == len(required_steps) and team_ready:
+    live_acceptance = _message_log_smoke_test_record(organization.id, live_only=True) is not None
+    if completed_required == len(required_steps) and live_acceptance:
+        headline = 'Live messaging in use'
+    elif completed_required == len(required_steps) and team_ready:
         headline = 'Ready for owner + staff testing'
     elif completed_required == len(required_steps):
         headline = 'Ready for owner testing'
