@@ -467,7 +467,11 @@ def run_readiness_checks(
             )
         )
         if app.config.get('SAAS_MODE') and not app.debug:
-            checks.append(_billing_reconcile_check(app))
+            billing = _billing_reconcile_check(app)
+            if not billing.ready:
+                # This operational result must not prevent deployment of its
+                # fix, rollback, or verification of a declared timer hold.
+                warnings += (f'Billing reconciliation warning: {billing.detail}.',)
             if not str(app.config.get('ALERT_WEBHOOK_URL') or '').strip():
                 warnings += ('Alerting not configured: readiness failures cannot be delivered because no alert destination is set.',)
     redis_check, queue_check = _redis_and_queue_checks(app)

@@ -15,11 +15,12 @@ if [[ -f "${ENV_FILE}" ]]; then
   set +a
 fi
 cd "${READINESS_APPLICATION_ROOT}"
+ALERT_STATE_FILE="${READINESS_ALERT_STATE_FILE:-${STATE_DIRECTORY:-${READINESS_APPLICATION_ROOT}/instance}/readiness-alert-state.json}"
 
 send_alert() {
   local message="$1"
   if [[ -z "${ALERT_WEBHOOK_URL:-}" ]]; then
-    logger -p user.warning -t twinevia-readiness -- "Alerting not configured: readiness failure could not be delivered because no alert destination is set."
+    logger -p user.warning -t twinevia-readiness -- "Alerting not configured: readiness notification could not be delivered because no alert destination is set."
     return 0
   fi
   ALERT_MESSAGE="${message}" "${PYTHON_BIN}" -c 'import json, os; print(json.dumps({"text": os.environ["ALERT_MESSAGE"]}))' \
@@ -62,9 +63,47 @@ else
   done <<< "${canonical_units}"
 fi
 
+warning_message="$("${PYTHON_BIN}" - "${READINESS_OUTPUT}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text())
+except (OSError, ValueError):
+    payload = {}
+warnings = payload.get('warnings') or []
+if isinstance(warnings, list):
+    warnings = sorted(set(value.strip() for value in warnings if isinstance(value, str) and value.strip()))
+    if warnings:
+        print('Twinevia readiness warnings: ' + '; '.join(warnings))
+PY
+)"
+notification="${failure_message}"
+if [[ -n "${warning_message}" ]]; then
+  notification="${notification:+${notification} }${warning_message}"
+fi
+if [[ -n "${notification}" ]]; then
+  state_result=0
+  "${PYTHON_BIN}" "${SCRIPT_DIR}/readiness_alert_state.py" due "${ALERT_STATE_FILE}" "${notification}" || state_result=$?
+  if [[ "${state_result}" != "1" ]]; then
+    logger -p user.warning -t twinevia-readiness -- "${notification}"
+    if send_alert "${notification}"; then
+      if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/readiness_alert_state.py" record "${ALERT_STATE_FILE}" "${notification}"; then
+        logger -p user.warning -t twinevia-readiness -- "Readiness alert state could not be saved; notifications may repeat."
+      fi
+    else
+      logger -p user.warning -t twinevia-readiness -- "Readiness notification could not be delivered; delivery will be retried."
+    fi
+  fi
+else
+  if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/readiness_alert_state.py" clear "${ALERT_STATE_FILE}"; then
+    logger -p user.warning -t twinevia-readiness -- "Readiness alert state could not be cleared."
+  fi
+fi
+
 if [[ -n "${failure_message}" ]]; then
   logger -t twinevia-readiness -- "${failure_message} Details: $(tr '\n' ' ' < "${READINESS_OUTPUT}" | cut -c1-2000)"
-  send_alert "${failure_message}"
   exit 1
 fi
 

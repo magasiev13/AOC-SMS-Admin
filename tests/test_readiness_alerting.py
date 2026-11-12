@@ -94,7 +94,18 @@ def test_isolated_modes_skip_production_billing_and_alert_checks(readiness_case,
     assert not any('alerting not configured' in warning.lower() for warning in report.warnings)
 
 
-def test_billing_failure_cannot_be_hidden_by_declared_maintenance(readiness_case, monkeypatch):
+@pytest.mark.parametrize('detail', ['the last billing reconciliation run failed',
+                                  'billing reconciliation result could not be inspected'])
+def test_billing_failure_is_a_warning_without_gating_readiness(readiness_case, detail):
+    case = readiness_case
+    case.billing.return_value = service.ReadinessCheck('billing_reconcile', False, detail)
+    report = service.run_readiness_checks(case.app, require_worker=False, require_launch_artifacts=True)
+    assert report.ready is True and report.state == 'ready'
+    assert all(check.ready for check in report.checks)
+    assert f'Billing reconciliation warning: {detail}.' in report.warnings
+
+
+def test_billing_warning_preserves_declared_maintenance_verification(readiness_case, monkeypatch):
     case = readiness_case
     monkeypatch.setattr(service, '_runtime_readiness', lambda app: (
         (service.ReadinessCheck('scheduler_timers', False, 'held fixture'),
@@ -102,7 +113,9 @@ def test_billing_failure_cannot_be_hidden_by_declared_maintenance(readiness_case
         {}, {'reason': 'Reviewed fixture hold'}, (), True))
     case.billing.return_value = service.ReadinessCheck('billing_reconcile', False, 'controlled failure')
     report = service.run_readiness_checks(case.app, require_worker=False, require_launch_artifacts=True)
-    assert report.ready is False and report.state == 'not_ready'
+    assert report.ready is False and report.state == 'maintenance'
+    assert any('controlled failure' in warning for warning in report.warnings)
+    assert {check.name for check in report.checks if not check.ready} == {'scheduler_timers', 'runtime_maintenance'}
 
 
 @pytest.mark.parametrize('destination_configured', [False, True])
