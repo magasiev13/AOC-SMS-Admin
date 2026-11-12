@@ -8418,7 +8418,6 @@ def events_list():
     event_view = 'past' if request.args.get('view') == 'past' else 'current'
     query = events_query(current_only=False)
     predicate = current_event_predicate()
-    query = query.filter(~predicate if event_view == 'past' else predicate)
 
     if search:
         escaped = escape_like(search)
@@ -8430,8 +8429,10 @@ def events_list():
             )
         )
 
-    events = query.order_by(Event.date.desc()).all()
-    return render_template('events/list.html', events=events, search=search, event_view=event_view)
+    past_count = query.filter(~predicate).count()
+    events = query.filter(~predicate if event_view == 'past' else predicate).order_by(Event.date.desc()).all()
+    return render_template('events/list.html', events=events, search=search, event_view=event_view,
+                           past_count=past_count)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
