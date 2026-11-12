@@ -543,6 +543,13 @@ def _host_redirect_target(app: Flask, host: str, path: str) -> str | None:
     if host in {public_host, www_host}:
         if _is_public_marketing_path(path) or _is_legacy_public_callback_path(path):
             return None
+        # An unknown public page belongs to the public site's 404 recovery.
+        # Known workspace routes still canonicalize to the application host.
+        if (request.method in {"GET", "HEAD"} and request.url_rule is None
+                and getattr(request.routing_exception, "code", None) == 404
+                and not request.is_json and request.accept_mimetypes.best != "application/json"
+                and not path.startswith("/api/")):
+            return None
         return _configured_host_redirect_url(app_base_url, path)
     if host == app_host and path != "/" and _is_public_marketing_path(path):
         return _configured_host_redirect_url(public_base_url, path)

@@ -262,6 +262,22 @@ bp = Blueprint('main', __name__)
 CSV_IMPORT_ERROR_FLASH = 'Could not process CSV file. Please verify the format and try again.'
 
 
+def _is_public_not_found_request() -> bool:
+    """Choose the public recovery page without confusing shared-host app URLs."""
+    from app import _is_public_marketing_path
+
+    public_host = (urlsplit(str(current_app.config.get('PUBLIC_BASE_URL') or '')).hostname or '').lower()
+    app_host = (urlsplit(str(current_app.config.get('APP_BASE_URL') or '')).hostname or '').lower()
+    request_host = (urlsplit(request.host_url).hostname or '').lower()
+    if public_host and public_host != app_host and request_host in {public_host, f'www.{public_host}'}:
+        return True
+    path = request.path.rstrip('/') or '/'
+    marketing_root = '/' + path.lstrip('/').split('/', 1)[0]
+    return _is_public_marketing_path(path) or (
+        marketing_root != '/' and _is_public_marketing_path(marketing_root)
+    )
+
+
 @bp.app_errorhandler(400)
 @bp.app_errorhandler(404)
 @bp.app_errorhandler(500)
@@ -300,6 +316,10 @@ def request_error_page(error):
         # Render without layout/context processors or links on that origin.
         return current_app.jinja_env.get_template('errors/invalid_host.html').render(
             product_name=current_app.config.get('PRODUCT_NAME', 'Twinevia')), 400
+    if error.code == 404 and _is_public_not_found_request():
+        home_url = str(current_app.config.get('PUBLIC_BASE_URL') or '').strip().rstrip('/')
+        return render_template('errors/marketing_404.html',
+                               home_url=f'{home_url}/' if home_url else url_for('main.index')), 404
 
     heading, explanation = {
         400: ('This request could not be completed',
