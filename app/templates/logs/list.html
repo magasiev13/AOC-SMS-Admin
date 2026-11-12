@@ -10,11 +10,9 @@
 {% endblock %}
 
 {% block page_actions %}
-{% if logs and current_user.is_admin %}
-<button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
-    <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
-</button>
-{% endif %}
+<a href="{{ url_for('main.dashboard') }}" class="btn btn-primary page-action-primary">
+    <i class="bi bi-send me-1"></i>Compose Message
+</a>
 {% endblock %}
 
 {% block content %}
@@ -183,6 +181,14 @@
         {% endif %}
     </div>
     {% include 'includes/collection_pagination.html' %}
+    {% if logs and current_user.is_admin %}
+    <details class="m-3" data-history-maintenance>
+        <summary class="small text-muted">History maintenance</summary>
+        <button type="button" class="btn btn-sm btn-outline-danger mt-2" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
+            <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
+        </button>
+    </details>
+    {% endif %}
 </div>
 </div>
 
