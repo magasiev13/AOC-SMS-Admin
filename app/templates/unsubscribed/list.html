@@ -151,7 +151,7 @@
                                 <span class="badge bg-light text-dark">{{ entry.category|private_text }}</span>
                                 </td>
                             <td data-sort-value="{{ (entry.source or '')|private_text }}"><span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span></td>
-                                <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</td>
+                                <td data-sort-value="{{ entry.created_at.isoformat() if entry.created_at else '' }}">{{ entry.created_at|localdate if entry.created_at else '-' }}</td>
                                 {% if can_manage_unsubscribed %}
                                 <td class="suppression-actions-cell">
                                     {% if entry.entry_type == 'unsubscribed' %}
@@ -220,7 +220,7 @@
                                 <span class="badge bg-light text-dark">{{ entry.category|private_text }}</span>
                                 <span class="badge bg-light text-dark">{{ (entry.source or '-')|private_text }}</span>
                                 </div>
-                                <div class="text-muted small mt-2">Added {{ entry.created_at.strftime('%Y-%m-%d') if entry.created_at else '-' }}</div>
+                                <div class="text-muted small mt-2">Added {{ entry.created_at|localdate if entry.created_at else '-' }}</div>
                             </div>
                             {% if can_manage_unsubscribed %}
                             <div class="d-flex flex-column align-items-end gap-2">

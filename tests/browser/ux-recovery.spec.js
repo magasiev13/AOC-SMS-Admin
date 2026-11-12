@@ -92,6 +92,18 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   await page.getByLabel('Schedule for Later').check();
   await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
   await page.getByLabel('Time', { exact: true }).fill('23:59');
+  const expectedTiming = await page.evaluate(() => {
+    const help = document.getElementById('scheduleLater').closest('.mb-3').textContent;
+    const workspaceZone = help.match(/\(([^)]+) fallback\)/)?.[1];
+    if (!workspaceZone) throw new Error('The composer must identify its workspace timezone fallback.');
+    const instant = new Date('2099-12-31T23:59:00');
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: workspaceZone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }).formatToParts(instant);
+    const part = type => parts.find(value => value.type === type).value;
+    return `${part('weekday')}, ${part('month')} ${part('day')}, ${part('year')} · ${part('hour')}:${part('minute')} ${part('dayPeriod')}`;
+  });
   await page.route('**/dashboard/review', route => route.fulfill({ status: 503, json: { error: 'Controlled review interruption' } }));
   await page.getByRole('button', { name: 'Review Schedule', exact: true }).click();
   await expect(page.locator('#sendFormError')).toHaveText('Controlled review interruption');
@@ -101,7 +113,7 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
   await expect(review).toBeVisible();
   await expect(review.locator('[data-review="audience"]')).toHaveText('Contact List');
-  await expect(review.locator('[data-review="timing"]')).toContainText('2099-12-31');
+  await expect(review.locator('[data-review="timing"]')).toHaveText(expectedTiming);
   await expect(review.locator('[data-review="sample"]')).toContainText('UX reviewed scheduled notice');
   await expect(review).toBeFocused();
   await review.press('Escape');

@@ -33,6 +33,7 @@ from sqlalchemy.orm import load_only, selectinload
 from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
+from app.datetime_display import format_date, format_datetime, workspace_timezone
 from app.services.send_review_service import SendReviewInputError
 from app.services.usage_summary_service import workspace_usage_is_billed, workspace_usage_summary
 from app.services.contact_privacy_service import (
@@ -857,10 +858,7 @@ def _membership_role_from_user_role(role: str) -> str:
 
 
 def _format_datetime_display(value):
-    normalized = as_utc_datetime(value)
-    if normalized is None:
-        return None
-    return normalized.strftime('%b %d, %Y %I:%M %p UTC')
+    return format_datetime(value, missing=None)
 
 
 _PROVIDER_AUDIT_ACTION_LABELS = {
@@ -2672,7 +2670,7 @@ def _event_form_surface_view(event: Event | None) -> dict:
         stats=[
             _surface_stat(
                 'Date',
-                event.date.strftime('%b %d, %Y') if event is not None and event.date else 'Not set',
+                format_date(event.date if event is not None else None, missing='Not set'),
                 'Event schedule',
             )
         ] if event is not None else [],
@@ -2697,7 +2695,7 @@ def _event_detail_surface_view(
         meta=_organization_meta_items(_current_organization()),
         badges=[
             _badge_view(
-                event.date.strftime('%b %d, %Y') if event.date else 'Date not set',
+                format_date(event.date, missing='Date not set'),
                 'bg-light text-dark',
             ),
         ],
@@ -2736,9 +2734,7 @@ def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
             ('no_receipt', 'No receipt yet'),
         ]],
     )
-    zone = ZoneInfo(current_app.config.get('APP_TIMEZONE', 'UTC'))
-    created = as_utc_datetime(log.created_at)
-    view['created_at_display'] = created.astimezone(zone).strftime('%a, %b %d · %I:%M %p') if created else '-'
+    view['created_at_display'] = format_datetime(log.created_at)
     if log.status in {'processing', 'ambiguous', 'cancelled'}:
         state_label = {'processing': 'Provider submission in progress',
                        'ambiguous': 'Provider acceptance unresolved',
@@ -2906,8 +2902,8 @@ def _event_sync_surface_view(
             ),
             _surface_stat(
                 'Last activity',
-                last_activity.strftime('%b %d, %Y %H:%M') if last_activity else 'None yet',
-                'UTC timestamp',
+                format_datetime(last_activity, missing='None yet'),
+                'Workspace time',
             ),
         ],
     )
@@ -4392,7 +4388,7 @@ def _create_send_review(form):
             raise SendReviewInputError('Choose a valid schedule date and time.') from exc
         if local.astimezone(timezone.utc) <= utc_now():
             raise SendReviewInputError('Scheduled time must be in the future.')
-        timing = f'{local.isoformat(timespec="minutes")} ({tz_name})'
+        timing = format_datetime(local)
     key = normalize_request_key(form.get('request_idempotency_key') or request.headers.get('Idempotency-Key'), kind='blast', intent=intent)
     profile = _current_organization().messaging_profile if _current_organization() is not None else None
     return {
@@ -5008,7 +5004,7 @@ def dashboard():
                     scheduled_estimate['total_segments'],
                 )
                 session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
-                flash(f'Message scheduled for {scheduled_local.strftime("%Y-%m-%d %H:%M")}.', 'success')
+                flash(f'Message scheduled for {format_datetime(scheduled_utc)}.', 'success')
                 flash(_format_blast_estimate_summary(scheduled_estimate), 'info')
                 return redirect(url_for('main.scheduled_list'))
                 
@@ -9124,13 +9120,13 @@ def security_events():
 
     if date_from:
         try:
-            start = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            start = datetime.fromisoformat(date_from).replace(tzinfo=workspace_timezone()).astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(AuthEvent.created_at >= start)
         except ValueError:
             flash('Invalid from date filter; expected YYYY-MM-DD.', 'error')
     if date_to:
         try:
-            end = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc) + timedelta(days=1)
+            end = (datetime.fromisoformat(date_to).replace(tzinfo=workspace_timezone()) + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
             query = query.filter(AuthEvent.created_at < end)
         except ValueError:
             flash('Invalid to date filter; expected YYYY-MM-DD.', 'error')

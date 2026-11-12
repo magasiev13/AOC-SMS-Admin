@@ -74,7 +74,7 @@
                                 {{ (thread_display_previews.get(thread.id) or 'No messages yet')|private_text }}
                             </div>
                             <div class="small inbox-thread-time">
-                                {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
+                                {{ thread.last_message_at|localtime }}
                             </div>
                         </a>
                     </div>
@@ -124,7 +124,7 @@
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2 gap-sm-3 inbox-thread-header-actions">
                     <div class="text-muted small inbox-thread-updated">
-                        Last updated {{ selected_thread.last_message_at|localtime('%b %d, %H:%M') }}
+                        Last updated {{ selected_thread.last_message_at|localtime }}
                     </div>
                     <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="d-none d-lg-block">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -212,7 +212,7 @@
                                 <div class="p-2 rounded inbox-message-bubble {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}">
                                     <div class="small mb-1">{{ (message.body)|private_text }}</div>
                                     <div class="small inbox-message-meta {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
-                                        {{ (message.direction|capitalize)|private_text }} • {{ (message.created_at|localtime('%b %d, %H:%M'))|private_text }}
+                                        {{ (message.direction|capitalize)|private_text }} • {{ (message.created_at|localtime)|private_text }}
                                         {% if message.matched_keyword %}
                                             {% set keyword_origin = message_keyword_origins.get(message.id, 'unknown') %}
                                             {% if keyword_origin == 'current' %}

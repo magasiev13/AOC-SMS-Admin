@@ -14,6 +14,7 @@ from flask import current_app
 from sqlalchemy import func
 
 from app import db
+from app.datetime_display import format_datetime
 from app.models import (CommunityMember, EventRegistration, FeedbackInvitation,
                         MessageDispatchAttempt, Organization, ScheduledMessage, utc_now)
 from app.services.send_review_service import SendReviewInputError
@@ -137,7 +138,8 @@ def build_review(event, flow, values, actor, approval_key):
     if limit_error:
         raise SendReviewInputError(limit_error)
     profile = event.organization.messaging_profile
-    timing = 'Send now' if intent['timing'] == 'now' else f"{intent['schedule_date']} {intent['schedule_time']} ({intent['timezone']})"
+    timing = 'Send now' if intent['timing'] == 'now' else format_datetime(datetime.strptime(
+        f"{intent['schedule_date']} {intent['schedule_time']}", '%Y-%m-%d %H:%M').replace(tzinfo=ZoneInfo(intent['timezone'])))
     return {'review_token':freeze_review(actor, event.organization_id, approval_key, intent, recipients),
             'intent':intent, 'late_bound':True, 'audience':'Event Registrants' if intent['audience_rule']=='registered_contacts' else 'Contact List',
             'eligible':len(recipients), 'excluded':excluded, 'sender':profile.from_number if profile else 'Configured messaging service',
@@ -318,11 +320,7 @@ def invitation_history(event, flow=None):
         schedule=invitation.scheduled_message
         outcomes=dict(db.session.query(MessageDispatchAttempt.status, func.count(MessageDispatchAttempt.id)).filter_by(
             organization_id=event.organization_id, scheduled_message_id=schedule.id).group_by(MessageDispatchAttempt.status).all())
-        try:
-            local=schedule.scheduled_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(invitation.timezone))
-            local_label=local.strftime('%Y-%m-%d %H:%M')
-        except (ValueError, ZoneInfoNotFoundError):
-            local_label=schedule.scheduled_at.strftime('%Y-%m-%d %H:%M')+' UTC'
+        local_label = format_datetime(schedule.scheduled_at)
         rows.append({'id':invitation.id, 'status':schedule.status, 'audience_rule':invitation.audience_rule,
             'scheduled_at':schedule.scheduled_at, 'scheduled_local':local_label,
             'timezone':invitation.timezone, 'hold_reason':invitation.hold_reason or schedule.error_message,

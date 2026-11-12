@@ -3,7 +3,6 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, redirect, request
 from flask_sqlalchemy import SQLAlchemy
@@ -796,25 +795,14 @@ def _build_app() -> Flask:
         }
 
     @app.template_filter("localtime")
-    def localtime_filter(utc_dt, fmt="%Y-%m-%d %H:%M"):
-        """Convert UTC datetime to user's local timezone."""
-        if not utc_dt:
-            return "-"
+    def localtime_filter(value):
+        from app.datetime_display import format_datetime
+        return format_datetime(value)
 
-        app_timezone = app.config.get("APP_TIMEZONE", "UTC")
-        client_tz_raw = request.cookies.get("client_timezone", "")
-        client_tz = unquote(client_tz_raw).strip() if client_tz_raw else ""
-        display_tz = client_tz or app_timezone
-
-        try:
-            tz = ZoneInfo(display_tz)
-        except Exception:
-            tz = timezone.utc
-
-        if utc_dt.tzinfo is None:
-            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
-
-        return utc_dt.astimezone(tz).strftime(fmt)
+    @app.template_filter("localdate")
+    def localdate_filter(value):
+        from app.datetime_display import format_date
+        return format_date(value)
 
     from app.config import Config
 

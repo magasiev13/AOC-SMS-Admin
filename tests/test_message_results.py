@@ -164,9 +164,9 @@ def test_created_at_occurs_once_in_workspace_time_independent_of_browser_cookie(
     f.app.config['APP_TIMEZONE'] = 'America/Denver'
     f.client.set_cookie('client_timezone', 'Asia/Tokyo')
     response, context = _get(f)
-    assert context['surface_view']['created_at_display'] == 'Sat, Oct 31 · 08:02 AM'
+    assert context['surface_view']['created_at_display'] == 'Sat, Oct 31, 2026 · 8:02 AM'
     body = response.get_data(as_text=True)
-    assert body.count('Sat, Oct 31 · 08:02 AM') == 1
+    assert body.count('Sat, Oct 31, 2026 · 8:02 AM') == 1
     assert 'UTC' not in body
 
 

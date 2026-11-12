@@ -74,7 +74,7 @@
                 <table class="table table-hover mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>Time (UTC)</th>
+                            <th>Time (workspace)</th>
                             <th>Event</th>
                             <th>Outcome</th>
                             <th>User</th>
@@ -86,7 +86,7 @@
                         {% if events %}
                             {% for event in events %}
                             <tr>
-                                <td>{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }}</td>
+                                <td>{{ event.created_at|localtime if event.created_at else '-' }}</td>
                                 <td>{{ event.event_type }}</td>
                                 <td>
                                     <span class="badge bg-{{ 'success' if event.outcome == 'success' else ('warning text-dark' if event.outcome == 'blocked' else 'danger') }}">
@@ -119,7 +119,7 @@
                         <div class="d-flex justify-content-between align-items-start gap-2">
                             <div>
                                 <h6 class="mb-1">{{ event.event_type }}</h6>
-                                <div class="text-muted small">{{ event.created_at.strftime('%Y-%m-%d %H:%M:%S') if event.created_at else '-' }} UTC</div>
+                                <div class="text-muted small">{{ event.created_at|localtime if event.created_at else '-' }}</div>
                                 <div class="text-muted small mt-1">{{ event.username or '-' }} · {{ event.client_ip or '-' }}</div>
                             </div>
                             <span class="badge bg-{{ 'success' if event.outcome == 'success' else ('warning text-dark' if event.outcome == 'blocked' else 'danger') }}">

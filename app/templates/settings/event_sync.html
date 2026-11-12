@@ -80,9 +80,9 @@
                 </div>
                 <div class="workspace-panel__body">
                     <ul class="workspace-support-list">
-                        <li>Last event: {{ integration_view.last_event_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_event_synced_at else 'None yet' }}</li>
-                        <li>Last registration: {{ integration_view.last_signup_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_signup_synced_at else 'None yet' }}</li>
-                        <li>Last sync report: {{ integration_view.last_reconcile_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
+                        <li>Last event: {{ integration_view.last_event_synced_at|localtime if integration_view.last_event_synced_at else 'None yet' }}</li>
+                        <li>Last registration: {{ integration_view.last_signup_synced_at|localtime if integration_view.last_signup_synced_at else 'None yet' }}</li>
+                        <li>Last sync report: {{ integration_view.last_reconcile_synced_at|localtime if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
                     </ul>
                     {% if integration_view.last_error_message %}
                     <div class="workspace-callout workspace-callout--warning mt-3">

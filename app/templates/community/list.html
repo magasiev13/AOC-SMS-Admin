@@ -144,7 +144,7 @@
                             {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         </td>
                         <td data-sort-value="{{ member.created_at.isoformat() if member.created_at else '' }}">
-                            {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}
+                            {{ member.created_at|localdate if member.created_at else '-' }}
                         </td>
                         {% if can_manage_community %}
                         <td class="community-actions-cell">
@@ -152,7 +152,7 @@
                                 <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview Contact" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
                                         data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
-                                        data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
+                                        data-member-joined="{{ member.created_at|localdate if member.created_at else '-' }}"
                                         data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                                         {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                                     <i class="bi bi-layout-sidebar-inset"></i>
@@ -232,7 +232,7 @@
                         {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ member.phone }}</code></div>{% endif %}
                         <div class="small mt-1">SMS permission: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
                         {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
-                        <div class="text-muted small">Added {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</div>
+                        <div class="text-muted small">Added {{ member.created_at|localdate if member.created_at else '-' }}</div>
                     </div>
                     {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
@@ -244,7 +244,7 @@
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
                             data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
-                            data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
+                            data-member-joined="{{ member.created_at|localdate if member.created_at else '-' }}"
                             data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                             {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                         <i class="bi bi-layout-sidebar-inset"></i> Preview

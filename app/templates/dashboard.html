@@ -111,7 +111,7 @@
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
                                 <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
-                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
+                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -537,7 +537,7 @@
                     <div class="activity-item__content">
                         <div class="activity-item__header">
                             <div class="activity-item__title">{{ (log.message_body|private_text)|truncate(60) }}</div>
-                            <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
+                            <span class="activity-item__time">{{ log.created_at|localtime }}</span>
                         </div>
                         <div class="activity-item__meta">
                             <span class="activity-item__badge activity-item__badge--success">
