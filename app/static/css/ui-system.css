@@ -79,6 +79,7 @@
   display: grid;
   gap: var(--space-3);
   min-width: min(100%, 18rem);
+  max-width: 100%;
 }
 
 .workspace-summary__badges,

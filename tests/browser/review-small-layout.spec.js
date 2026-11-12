@@ -46,3 +46,41 @@ test('P1.8g actual six-cell billed summary fills two desktop rows', async ({ pag
   await page.goto('/billing');
   await expectFilledRows(page.locator('.workspace-summary__stats--6'), 6, [3, 3]);
 });
+
+for (const width of [390, 1440]) {
+  test(`P1.8h long status text wraps inside a real workspace badge at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await login(page, 'results-owner@browser.test', 'ResultsOwner-pass1!');
+    await page.goto('/billing');
+    const badge = page.locator('.workspace-summary__badges .badge').first();
+    const label = 'Accepted by provider; waiting for the carrier delivery receipt before confirming delivery. A provider acknowledgement confirms submission only; the carrier has not reported a final delivery result.';
+    // Exercise the existing component with a longer provider-status description.
+    // No test-only component, CSS, route or application state is introduced.
+    await badge.evaluate((element, text) => { element.textContent = text; }, label);
+    await expect(badge).toHaveText(label);
+    const dimensions = await badge.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      const rail = element.closest('.workspace-summary__rail').getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const text = range.getBoundingClientRect();
+      return {
+        height: box.height, width: box.width, right: box.right, railRight: rail.right,
+        scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
+        textTop: text.top, textBottom: text.bottom, top: box.top, bottom: box.bottom,
+        whiteSpace: getComputedStyle(element).whiteSpace,
+      };
+    });
+    expect(dimensions.whiteSpace).toBe('normal');
+    expect(dimensions.height).toBeGreaterThan(30);
+    expect(dimensions.right).toBeLessThanOrEqual(dimensions.railRight + 1);
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
+    expect(dimensions.scrollHeight).toBeLessThanOrEqual(dimensions.clientHeight + 1);
+    expect(dimensions.textTop).toBeGreaterThanOrEqual(dimensions.top);
+    expect(dimensions.textBottom).toBeLessThanOrEqual(dimensions.bottom);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await badge.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(os.tmpdir(), `twinevia-phase1-long-status-${width}.png`), fullPage: false });
+  });
+}
