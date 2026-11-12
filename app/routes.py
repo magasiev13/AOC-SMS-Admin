@@ -4347,12 +4347,8 @@ def _send_review_intent(form):
     }
 
 
-def _create_send_review(form):
-    from app.services.send_review_service import freeze_review
-    from app.utils import render_message_template
-
-    if saas_mode_enabled() and not organization_can_transmit_messages(_current_organization()):
-        raise SendReviewInputError('Workspace billing and messaging must both be active before reviewing a send.')
+def _send_composition(form):
+    """Resolve one normalized personalized audience for preview and review."""
     intent = _send_review_intent(form)
     event = _tenant_get_or_404(Event, intent['event_id']) if intent['event_id'] else None
     test_data = None
@@ -4365,9 +4361,19 @@ def _create_send_review(form):
             raise SendReviewInputError('Choose valid saved test recipients for this workspace before reviewing the send.') from exc
     rows = _load_blast_target_recipients(target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'], test_recipient_data=test_data)
     recipients, counts = _prepare_sendable_blast_recipients(rows, apply_opt_out_filters=True, target=intent['target'], event_id=intent['event_id'], test_mode=intent['test_mode'])
+    estimate = analyze_personalized_sms_blast(intent['message_body'], recipients)
+    return intent, event, recipients, counts, estimate, len(rows)
+
+
+def _create_send_review(form):
+    from app.services.send_review_service import freeze_review
+    from app.utils import render_message_template
+
+    if saas_mode_enabled() and not organization_can_transmit_messages(_current_organization()):
+        raise SendReviewInputError('Workspace billing and messaging must both be active before reviewing a send.')
+    intent, event, recipients, counts, estimate, _ = _send_composition(form)
     if not recipients:
         raise SendReviewInputError('No eligible recipients were found. Review the audience and its opt-out or permission records.')
-    estimate = analyze_personalized_sms_blast(intent['message_body'], recipients)
     error = _blast_limit_error(estimate)
     if error:
         raise SendReviewInputError(error)
@@ -4421,9 +4427,23 @@ def dashboard_send_review():
         return jsonify({'error': 'The send review is temporarily unavailable. Your message has been kept. Try again.'}), 503
 
 
-@bp.route('/dashboard/audience-preview')
+@bp.route('/dashboard/audience-preview', methods=['GET', 'POST'])
 @login_required
 def dashboard_audience_preview():
+    if request.method == 'POST':
+        try:
+            _, _, recipients, counts, estimate, total = _send_composition(request.form)
+        except SendReviewInputError as exc:
+            return jsonify({'error': exc.public_message}), 400
+        # Per-recipient analysis contains names and numbers. Only aggregate
+        # estimates and a Unicode character explanation may leave this route.
+        return jsonify({
+            'eligible': len(recipients), 'excluded': total - len(recipients), 'total': total,
+            'reasons': counts,
+            'estimate': {key: estimate[key] for key in (
+                'min_segment_count', 'max_segment_count', 'total_segments', 'encodings', 'special_character',
+            )},
+        })
     target = request.args.get('target', 'community')
     if target not in {'community', 'event'}:
         return jsonify({'error': 'Choose a community or event audience.'}), 400

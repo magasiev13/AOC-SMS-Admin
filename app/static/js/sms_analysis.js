@@ -146,10 +146,27 @@
     return String(encoding || '').toLowerCase() === 'ucs-2' ? 'UCS-2' : 'GSM-7';
   }
 
+  function specialCharacter(body = '') {
+    for (const character of normalizeBody(body).normalizedBody) {
+      if (!GSM_7_BASIC_CHARSET.has(character) && !GSM_7_EXTENDED_CHARSET.has(character)) {
+        return { character, codepoint: `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}` };
+      }
+    }
+    return null;
+  }
+
+  function replaceSpecialCharacters(body = '') {
+    return Array.from(normalizeBody(body).normalizedBody, character => (
+      GSM_7_BASIC_CHARSET.has(character) || GSM_7_EXTENDED_CHARSET.has(character) ? character : '?'
+    )).join('');
+  }
+
   window.TwineviaSmsAnalysis = {
     analyzeBody,
     bodyMetrics,
     formatEncodingLabel,
     normalizeBody,
+    specialCharacter,
+    replaceSpecialCharacters,
   };
 })();

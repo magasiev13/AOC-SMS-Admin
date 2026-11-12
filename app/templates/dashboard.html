@@ -68,6 +68,10 @@
                                       placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
                             <div class="form-text"><span id="charCount">0</span> / 1600 characters. Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</div>
                             <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
+                            <div class="alert alert-warning py-2 mt-2 d-none" id="specialCharacterWarning" role="status">
+                                <span id="specialCharacterWarningText"></span>
+                                <button type="button" class="btn btn-sm btn-outline-dark mt-2" id="replaceSpecialCharacters">Replace special characters</button>
+                            </div>
                             <details class="message-usage mt-2">
                                 <summary>How SMS Usage Is Calculated</summary>
                                 <div class="form-text">Long messages use more than one SMS segment per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
@@ -592,6 +596,9 @@
     const charsToNextSegment = document.getElementById('charsToNextSegment');
     const messageNormalizationHint = document.getElementById('messageNormalizationHint');
     const messageUnitEstimate = document.getElementById('messageUnitEstimate');
+    const specialCharacterWarning = document.getElementById('specialCharacterWarning');
+    const specialCharacterWarningText = document.getElementById('specialCharacterWarningText');
+    const replaceSpecialCharacters = document.getElementById('replaceSpecialCharacters');
     const targetEvent = document.getElementById('targetEvent');
     const targetCommunity = document.getElementById('targetCommunity');
     const eventSelect = document.getElementById('event_id');
@@ -614,15 +621,26 @@
     const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
     const includeUnsubscribe = document.getElementById('includeUnsubscribe');
     const unsubscribeFooter = {{ blast_unsubscribe_footer|tojson }};
-    const savedTestRecipientCount = {{ saved_test_recipient_count|int }};
     const audienceEligibility = document.getElementById('audienceEligibility');
     let eligibleRecipientCount = null;
     let audiencePreviewSequence = 0;
+    let audiencePreviewTimer;
+    let compositionEstimate = null;
+    let compositionPreviewPending = false;
 
-    async function refreshAudiencePreview() {
+    function refreshAudiencePreview() {
         const sequence = ++audiencePreviewSequence;
-        if (testMode && testMode.checked) {
+        clearTimeout(audiencePreviewTimer);
+        compositionEstimate = null;
+        compositionPreviewPending = true;
+        updateMessageStats();
+        audiencePreviewTimer = setTimeout(() => loadAudiencePreview(sequence), 200);
+    }
+
+    async function loadAudiencePreview(sequence) {
+        if (testMode?.checked && !messageBody.value.trim()) {
             audienceEligibility.textContent = 'Internal test recipients only. Saved-list membership and opt-outs are checked again at submission.';
+            compositionPreviewPending = false;
             updateMessageStats();
             return;
         }
@@ -632,16 +650,29 @@
         const params = new URLSearchParams({target: targetEvent.checked ? 'event' : 'community'});
         if (targetEvent.checked && eventSelect.value) params.set('event_id', eventSelect.value);
         try {
-            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }} + '?' + params, {headers: {Accept: 'application/json'}});
+            const hasMessage = Boolean(messageBody.value.trim());
+            const previewUrl = {{ url_for('main.dashboard_audience_preview')|tojson }};
+            const previewForm = hasMessage ? new FormData(sendForm) : undefined;
+            // A sealed review can be large. Preview only needs the draft;
+            // sending the retained token would exceed ordinary field limits.
+            previewForm?.delete('review_token');
+            const response = await fetch(hasMessage ? previewUrl : previewUrl + '?' + params, {
+                method: hasMessage ? 'POST' : 'GET',
+                body: previewForm,
+                headers: { Accept: 'application/json' },
+            });
             if (!response.ok) throw new Error('Audience preview unavailable');
             const preview = await response.json();
             if (sequence !== audiencePreviewSequence) return;
             eligibleRecipientCount = preview.eligible;
-            audienceEligibility.textContent = `${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
+            compositionEstimate = preview.estimate || null;
+            const audienceNote = testMode?.checked ? 'Internal test recipients only. ' : '';
+            audienceEligibility.textContent = `${audienceNote}${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
         } catch (error) {
             if (sequence !== audiencePreviewSequence) return;
             audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
         }
+        compositionPreviewPending = false;
         updateMessageStats();
     }
 
@@ -675,27 +706,28 @@
         }
     }
 
-    function estimatedRecipientCount() {
-        if (testMode && testMode.checked) {
-            if (testRecipientModeOne && testRecipientModeOne.checked) {
-                return testRecipientPhone && testRecipientPhone.value ? 1 : 0;
-            }
-            return savedTestRecipientCount;
-        }
-        return eligibleRecipientCount || 0;
-    }
-
     function updateMessageStats() {
         const footer = includeUnsubscribe && includeUnsubscribe.checked ? unsubscribeFooter : '';
         const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
-        const recipientEstimate = estimatedRecipientCount();
+        const recipientEstimate = eligibleRecipientCount || 0;
+        const minimum = compositionEstimate?.min_segment_count;
+        const maximum = compositionEstimate?.max_segment_count;
+        const each = minimum === maximum ? String(minimum) : `${minimum}–${maximum}`;
+        const special = compositionEstimate?.special_character || window.TwineviaSmsAnalysis.specialCharacter(messageBody.value);
+        const usesUnicode = compositionEstimate ? compositionEstimate.encodings.includes('ucs-2') : analysis.encoding === 'ucs-2';
+        const characterName = special ? `${special.name || 'Unicode character'} (${special.codepoint})` : 'A special character';
+        const reason = compositionEstimate && recipientEstimate === 0
+            ? 'No eligible recipients were found for this audience.'
+            : (usesUnicode
+                ? `${characterName} uses Unicode SMS, which fits fewer characters per segment.`
+                : (maximum > 1 ? 'Message length requires multiple SMS segments.' : 'Message length fits one SMS segment per recipient.'));
 
         charCount.textContent = messageBody.value.length;
         if (segmentCount) {
-            segmentCount.textContent = analysis.segmentCount;
+            segmentCount.textContent = compositionEstimate ? each : (compositionPreviewPending ? '…' : analysis.segmentCount);
         }
         if (messageEncoding) {
-            messageEncoding.textContent = window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
+            messageEncoding.textContent = compositionEstimate ? compositionEstimate.encodings.map(window.TwineviaSmsAnalysis.formatEncodingLabel).join(' / ') : window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
         }
         if (charsToNextSegment) {
             charsToNextSegment.textContent = analysis.charactersToNextSegment;
@@ -711,20 +743,36 @@
             }
         }
         if (messageUnitEstimate) {
+            delete messageUnitEstimate.dataset.totalSegments;
             if (!messageBody.value.trim()) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 segments';
-            } else if (recipientEstimate > 0 && analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} segments for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
-            } else if (analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage appears after you choose an eligible audience.';
+                messageUnitEstimate.textContent = '0 segments each × 0 recipients = 0';
+            } else if (compositionEstimate) {
+                messageUnitEstimate.dataset.totalSegments = String(compositionEstimate.total_segments);
+                messageUnitEstimate.textContent = `${each} segments each × ${recipientEstimate} recipients = ${compositionEstimate.total_segments}. ${reason}`;
+            } else if (compositionPreviewPending) {
+                messageUnitEstimate.textContent = 'Calculating personalized SMS segments…';
             } else {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 segments';
+                messageUnitEstimate.textContent = 'Personalized SMS estimate is unavailable. Review the message to check its segments.';
             }
         }
+        specialCharacterWarning.classList.toggle('d-none', !messageBody.value.trim() || !usesUnicode);
+        const canReplace = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value) !== messageBody.value;
+        replaceSpecialCharacters.hidden = !canReplace;
+        specialCharacterWarningText.textContent = `${reason} ${canReplace
+            ? 'Replace simplifies punctuation and changes other special characters to ? in this draft. Review the changed text before sending.'
+            : 'This may come from personalized contact names; the draft replacement does not change contact names.'}`;
     }
 
     updateMessageStats();
     messageBody.addEventListener('input', updateMessageStats);
+    sendForm.addEventListener('input', refreshAudiencePreview);
+    sendForm.addEventListener('change', refreshAudiencePreview);
+    replaceSpecialCharacters.addEventListener('click', () => {
+        messageBody.value = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value);
+        messageBody.dispatchEvent(new Event('input', { bubbles: true }));
+        messageBody.dispatchEvent(new Event('change', { bubbles: true }));
+        messageBody.focus();
+    });
 
     function toggleEventSelect() {
         eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';
