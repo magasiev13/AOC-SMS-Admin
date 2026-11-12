@@ -70,12 +70,13 @@
                             <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
                             <details class="message-usage mt-2">
                                 <summary>How SMS Usage Is Calculated</summary>
-                                <div class="form-text">Long messages use more than one SMS unit per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
-                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS unit(s) per message · <span id="charsToNextSegment">160</span> characters until the next unit</div>
+                                <div class="form-text">Long messages use more than one SMS segment per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
+                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS segment(s) per message · <span id="charsToNextSegment">160</span> characters until the next segment</div>
                                 <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
                             </details>
                         </div>
 
+                    {% include "includes/workspace_usage.html" %}
                         <div class="mb-3">
                             <label class="form-label">Target Audience</label>
                             <div class="form-check">
@@ -702,7 +703,7 @@
         if (messageNormalizationHint) {
             if (analysis.normalizationApplied) {
                 const segmentNote = analysis.segmentsSaved > 0
-                    ? ` This saves ${analysis.segmentsSaved} SMS unit(s) per recipient.`
+                    ? ` This saves ${analysis.segmentsSaved} SMS segment(s) per recipient.`
                     : '';
                 messageNormalizationHint.textContent = `Twinevia will simplify ${analysis.replacementCount} punctuation or spacing character(s) before sending.${segmentNote}`;
             } else {
@@ -711,13 +712,13 @@
         }
         if (messageUnitEstimate) {
             if (!messageBody.value.trim()) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
+                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 segments';
             } else if (recipientEstimate > 0 && analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} units for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
+                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} segments for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
             } else if (analysis.segmentCount > 0) {
                 messageUnitEstimate.textContent = 'Estimated SMS usage appears after you choose an eligible audience.';
             } else {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
+                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 segments';
             }
         }
     }

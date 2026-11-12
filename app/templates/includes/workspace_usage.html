@@ -1,0 +1,13 @@
+{% if workspace_usage %}
+<div class="message-usage mb-3" data-workspace-usage>
+    <strong>{{ workspace_usage.used_label }} segments used this period</strong>
+    {% if workspace_usage.billed %}
+    <div class="form-text">{{ workspace_usage.included_label }} segments included · {{ workspace_usage.projected_overage_label }} projected overage</div>
+    {% else %}
+    <div class="form-text">Not billed by Twinevia</div>
+    {% endif %}
+    {% if workspace_usage.pending_records %}
+    <div class="form-text">Some usage is still being confirmed; recorded segments{% if workspace_usage.billed %} and projected overage{% endif %} may change.</div>
+    {% endif %}
+</div>
+{% endif %}

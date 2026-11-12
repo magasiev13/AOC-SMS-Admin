@@ -34,6 +34,7 @@ from werkzeug.exceptions import HTTPException
 
 from app import csrf, db
 from app.services.send_review_service import SendReviewInputError
+from app.services.usage_summary_service import workspace_usage_is_billed, workspace_usage_summary
 from app.services.contact_privacy_service import (
     can_view_phone_numbers, contact_display_label, redact_phone_numbers,
     require_contact_export_permission, staff_phone_privacy_applies,
@@ -1905,6 +1906,7 @@ def _subscription_view(subscription: OrganizationSubscription | None) -> dict:
         'period_value': None,
         'can_send': False,
         'is_complimentary': False,
+        'usage_billed': organization is None or workspace_usage_is_billed(organization),
         'show_checkout': True,
         'show_portal': True,
         'checkout_button_label': 'Start subscription',
@@ -3092,6 +3094,7 @@ def _billing_surface_view(
     organization: Organization | None,
     subscription_view: dict,
     onboarding_view: dict | None,
+    usage_summary: dict | None = None,
 ) -> dict:
     organization_name = organization.name if organization is not None else 'Workspace'
     summary_copy = subscription_view['next_step'] if not subscription_view['can_send'] else subscription_view['summary']
@@ -3115,7 +3118,8 @@ def _billing_surface_view(
         {
             'label': 'Plan',
             'value': subscription_view['plan_name'],
-            'meta': f"{subscription_view['included_segments_label']} SMS segments included",
+            'meta': (f"{subscription_view['included_segments_label']} SMS segments included"
+                     if subscription_view['usage_billed'] else 'Usage not billed by Twinevia'),
         }
     )
     if subscription_view.get('period_value'):
@@ -3126,13 +3130,17 @@ def _billing_surface_view(
                 'meta': 'Subscription period',
             }
         )
-    stats.append(
-        {
-            'label': 'Overage',
-            'value': subscription_view['overage_rate_label'],
-            'meta': 'Per outbound SMS segment after included usage',
-        }
-    )
+    if usage_summary:
+        stats.append({'label': 'Segments this period', 'value': usage_summary['used_label'],
+                      'meta': ('Recorded outbound usage' if usage_summary['billed'] else 'Not billed by Twinevia')})
+    if subscription_view['usage_billed']:
+        stats.append(
+            {
+                'label': 'Overage',
+                'value': subscription_view['overage_rate_label'],
+                'meta': 'Per outbound SMS segment after included usage',
+            }
+        )
     stats.append(
         {
             'label': 'Activation',
@@ -3161,14 +3169,18 @@ def _billing_surface_view(
 def _billing_context(organization: Organization | None) -> dict:
     subscription = organization.subscription if organization is not None else None
     onboarding = _organization_onboarding_view(organization) if organization is not None else None
+    subscription_view = _subscription_view(subscription)
+    usage_summary = workspace_usage_summary(organization)
     return {
-        'subscription_view': _subscription_view(subscription),
+        'subscription_view': subscription_view,
+        'workspace_usage': usage_summary,
         'onboarding_view': onboarding,
         'a2p_status_view': onboarding['a2p_status'] if onboarding is not None else None,
         'surface_view': _billing_surface_view(
             organization=organization,
-            subscription_view=_subscription_view(subscription),
+            subscription_view=subscription_view,
             onboarding_view=onboarding,
+            usage_summary=usage_summary,
         ),
     }
 
@@ -4662,6 +4674,7 @@ def dashboard():
             'current_organization': organization,
             'current_subscription': subscription,
             'current_subscription_view': subscription_view,
+            'workspace_usage': workspace_usage_summary(organization),
             'a2p_status_view': a2p_status_view,
             'can_send_messages': can_send_messages,
             'confirmed_community_signup_consent': organization_has_confirmed_signup_consent(_current_organization_id()),
@@ -7457,6 +7470,7 @@ def billing_overview():
         subscription_view=billing_context['subscription_view'],
         onboarding_view=billing_context['onboarding_view'],
         surface_view=billing_context['surface_view'],
+        workspace_usage=billing_context['workspace_usage'],
     )
 
 
