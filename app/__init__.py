@@ -777,10 +777,18 @@ def _build_app() -> Flask:
                 response.set_data(app.json.dumps(redact_private_json(payload)))
         return response
 
+    def asset_version():
+        return str(app.config.get("APP_RELEASE_ID") or os.environ.get("APP_VERSION") or "dev").strip() or "dev"
+
+    @app.url_defaults
+    def version_static_urls(endpoint, values):
+        if endpoint == "static":
+            values.setdefault("v", asset_version())
+
     @app.context_processor
     def inject_app_version():
         return {
-            "app_version": os.environ.get("APP_VERSION", "dev"),
+            "app_version": asset_version(),
             "current_year": datetime.now(timezone.utc).year,
             "product_name": app.config.get("PRODUCT_NAME", "Twinevia"),
             "product_descriptor": app.config.get("PRODUCT_DESCRIPTOR", "Messaging Workspace"),

@@ -82,7 +82,8 @@ release_dir="${RELEASES_DIR}/${release_id}"
 promoted=0
 runtime_quiesced=0
 
-sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
+# Keep traversal available to nginx across preparation and bootstrap-only runs.
+sudo install -d -o root -g "${APP_GROUP}" -m 0751 "${RELEASES_DIR}"
 
 create_bootstrap_release() {
   local bootstrap_id="bootstrap-${BOOTSTRAP_RELEASE_SHA:0:12}"
@@ -117,6 +118,7 @@ create_bootstrap_release() {
     sudo chmod -R u=rwX,g=rX,o= "${bootstrap_pending}"
     sudo mv "${bootstrap_pending}" "${bootstrap_dir}"
   fi
+  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${bootstrap_dir}"
   atomic_link "${bootstrap_dir}" "${CURRENT_LINK}"
   atomic_link "${bootstrap_dir}" "${PREVIOUS_LINK}"
   echo "Created recoverable bootstrap release ${bootstrap_id}."
@@ -133,6 +135,9 @@ fi
 old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
   runtime_ctl verify-target --target "${old_release}" >/dev/null
+  # Older retained releases predate direct nginx static serving. Prepare the
+  # verified fallback before promotion so error recovery keeps assets readable.
+  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${old_release}"
 fi
 if [[ -e "${pending_release}" || -e "${release_dir}" ]]; then
   echo "Release path already exists: ${release_id}" >&2
@@ -224,6 +229,7 @@ sudo rm -rf -- "${verify_cache_dir}"
 sudo install -d -o root -g "${APP_GROUP}" -m 0550 "${pending_release}/instance"
 sudo chown -R root:"${APP_GROUP}" "${pending_release}"
 sudo chmod -R u=rwX,g=rX,o= "${pending_release}"
+sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${pending_release}"
 
 for env_key in \
   APP_BASE_URL \
