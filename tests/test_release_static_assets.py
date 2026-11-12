@@ -98,8 +98,34 @@ def test_web_template_compresses_and_caches_only_the_static_location():
         assert "alias /opt/twinevia-saas/current/app/static/;" in location
         assert "gzip on;" in location and "gzip_vary on;" in location
         assert "text/css application/javascript" in location and "image/svg+xml" in location
-        assert 'Cache-Control "public, max-age=31536000, immutable"' in location
+        assert 'add_header Cache-Control $twinevia_static_cache_control;' in location
+        assert 'add_header X-Content-Type-Options "nosniff" always;' in location
+        assert 'add_header Strict-Transport-Security "max-age=31536000" always;' in location
         assert "autoindex off;" in location and "proxy_pass" not in location
+
+
+@pytest.mark.parametrize('query,expected', [
+    ('', 'public, max-age=300, must-revalidate'),
+    ('v', 'public, max-age=300, must-revalidate'),
+    ('v=', 'public, max-age=300, must-revalidate'),
+    ('theme=dark&v=&image=logo', 'public, max-age=300, must-revalidate'),
+    ('version=reviewed-release', 'public, max-age=300, must-revalidate'),
+    ('preview=reviewed-release', 'public, max-age=300, must-revalidate'),
+    ('v=reviewed-release', 'public, max-age=31536000, immutable'),
+    ('theme=dark&v=reviewed-release', 'public, max-age=31536000, immutable'),
+    ('v=0&image=logo', 'public, max-age=31536000, immutable'),
+])
+def test_web_template_immutable_cache_requires_a_nonempty_version_query(query, expected):
+    source = (ROOT / 'deploy/nginx/twinevia.conf').read_text()
+    mapping = re.findall(r'map \$arg_v \$twinevia_static_cache_control \{([^}]+)\}', source)
+    assert len(mapping) == 1
+    # Exercise the actual literal map entries without invoking a web server.
+    entries = re.findall(r'^\s*(""|default)\s+"([^"]+)";', mapping[0], re.MULTILINE)
+    assert len(entries) == 2
+    policies = dict(entries)
+    version = parse_qs(query, keep_blank_values=True).get('v', [''])[0]
+    assert policies['default' if version else '""'] == expected
+    assert 'map $args $twinevia_static_cache_control' not in source
 
 
 def test_release_flow_exposes_both_bootstrap_and_candidate_static_after_restriction():
