@@ -72,6 +72,7 @@
                                 <span id="specialCharacterWarningText"></span>
                                 <button type="button" class="btn btn-sm btn-outline-dark mt-2" id="replaceSpecialCharacters">Replace special characters</button>
                             </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="undoSpecialCharacters" hidden>Undo</button>
                             <details class="message-usage mt-2">
                                 <summary>How SMS Usage Is Calculated</summary>
                                 <div class="form-text">Long messages use more than one SMS segment per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
@@ -599,6 +600,9 @@
     const specialCharacterWarning = document.getElementById('specialCharacterWarning');
     const specialCharacterWarningText = document.getElementById('specialCharacterWarningText');
     const replaceSpecialCharacters = document.getElementById('replaceSpecialCharacters');
+    const undoSpecialCharacters = document.getElementById('undoSpecialCharacters');
+    let replacementUndo = null;
+    let applyingReplacement = false;
     const targetEvent = document.getElementById('targetEvent');
     const targetCommunity = document.getElementById('targetCommunity');
     const eventSelect = document.getElementById('event_id');
@@ -757,20 +761,44 @@
         }
         specialCharacterWarning.classList.toggle('d-none', !messageBody.value.trim() || !usesUnicode);
         const canReplace = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value) !== messageBody.value;
+        const unicodeWriting = window.TwineviaSmsAnalysis.usesUnicodeWriting(messageBody.value);
         replaceSpecialCharacters.hidden = !canReplace;
-        specialCharacterWarningText.textContent = `${reason} ${canReplace
-            ? 'Replace simplifies punctuation and changes other special characters to ? in this draft. Review the changed text before sending.'
-            : 'This may come from personalized contact names; the draft replacement does not change contact names.'}`;
+        specialCharacterWarningText.textContent = `${reason} ${unicodeWriting
+            ? 'This message uses Unicode letters. Its text is preserved; Unicode SMS fits fewer characters per segment and may use more segments.'
+            : (canReplace
+                ? 'Replace simplifies punctuation and removes emoji and pictographic symbols from this draft. You can undo the replacement until your next edit.'
+                : 'This may come from personalized contact names; the draft replacement does not change contact names.')}`;
     }
 
     updateMessageStats();
-    messageBody.addEventListener('input', updateMessageStats);
+    messageBody.addEventListener('input', () => {
+        if (!applyingReplacement) {
+            replacementUndo = null;
+            undoSpecialCharacters.hidden = true;
+        }
+        updateMessageStats();
+    });
     sendForm.addEventListener('input', refreshAudiencePreview);
     sendForm.addEventListener('change', refreshAudiencePreview);
     replaceSpecialCharacters.addEventListener('click', () => {
+        replacementUndo = messageBody.value;
         messageBody.value = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value);
+        applyingReplacement = true;
         messageBody.dispatchEvent(new Event('input', { bubbles: true }));
         messageBody.dispatchEvent(new Event('change', { bubbles: true }));
+        applyingReplacement = false;
+        undoSpecialCharacters.hidden = false;
+        messageBody.focus();
+    });
+    undoSpecialCharacters.addEventListener('click', () => {
+        if (replacementUndo === null) return;
+        messageBody.value = replacementUndo;
+        replacementUndo = null;
+        applyingReplacement = true;
+        messageBody.dispatchEvent(new Event('input', { bubbles: true }));
+        messageBody.dispatchEvent(new Event('change', { bubbles: true }));
+        applyingReplacement = false;
+        undoSpecialCharacters.hidden = true;
         messageBody.focus();
     });
 

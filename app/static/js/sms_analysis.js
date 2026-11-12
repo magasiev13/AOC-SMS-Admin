@@ -155,10 +155,21 @@
     return null;
   }
 
+  function usesUnicodeWriting(body = '') {
+    const letters = Array.from(normalizeBody(body).normalizedBody).filter(character => /\p{L}/u.test(character));
+    const unicodeLetters = letters.filter(character => !GSM_7_BASIC_CHARSET.has(character) && !GSM_7_EXTENDED_CHARSET.has(character));
+    return letters.length > 0 && unicodeLetters.length / letters.length >= 0.2;
+  }
+
   function replaceSpecialCharacters(body = '') {
-    return Array.from(normalizeBody(body).normalizedBody, character => (
-      GSM_7_BASIC_CHARSET.has(character) || GSM_7_EXTENDED_CHARSET.has(character) ? character : '?'
-    )).join('');
+    // Never transliterate or replace written language with question marks.
+    // A substantial Unicode passage should keep even its punctuation intact.
+    if (usesUnicodeWriting(body)) return body;
+    const normalized = normalizeBody(body).normalizedBody;
+    const withoutPictures = normalized
+      .replace(/[0-9#*]\uFE0F?\u20E3/gu, '')
+      .replace(/(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier})[\uFE0E\uFE0F]?\p{Emoji_Modifier}?[\u{E0020}-\u{E007F}]*(?:\u200D(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier})[\uFE0E\uFE0F]?\p{Emoji_Modifier}?[\u{E0020}-\u{E007F}]*)*/gu, '');
+    return withoutPictures === normalized ? normalized : withoutPictures.replace(/[ \t]{2,}/g, ' ').trim();
   }
 
   window.TwineviaSmsAnalysis = {
@@ -168,5 +179,6 @@
     normalizeBody,
     specialCharacter,
     replaceSpecialCharacters,
+    usesUnicodeWriting,
   };
 })();

@@ -187,5 +187,29 @@ process.stdout.write(JSON.stringify({
         assert actual['charactersUsed'] == expected['characters_used']
         assert actual['encoding'] == expected['encoding']
     assert data['originals'] == bodies
-    assert data['replacement'] == 'Hi - ?'
+    assert data['replacement'] == 'Hi -'
     assert data['special'] == {'character': '🙂', 'codepoint': 'U+1F642'}
+
+
+@pytest.mark.parametrize('body,expected,unicode_writing', [
+    ('🙂🎉👨‍👩‍👧‍👦🇦🇲1️⃣', '', False),
+    ('Hello — 🙂  world…', 'Hello - world...', False),
+    ('Բարև աշխարհ 🙂 — հանդիպում', 'Բարև աշխարհ 🙂 — հանդիպում', True),
+    ('Hello ա 🙂', 'Hello ա', False),
+    ('Hello everyone क्\u200dष 🙂', 'Hello everyone क्\u200dष', False),
+    ('Written selector A\ufe0f 🙂', 'Written selector A\ufe0f', False),
+    ('Emoji 👩🏽‍💻 🏴\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f 2️⃣ end', 'Emoji end', False),
+])
+def test_special_character_replacement_removes_pictures_and_preserves_written_language(body, expected, unicode_writing):
+    library = str(Path(__file__).resolve().parents[1] / 'app/static/js/sms_analysis.js')
+    script = """
+global.window = {};
+require(process.argv[1]);
+const body = process.argv[2];
+process.stdout.write(JSON.stringify({
+  result: window.TwineviaSmsAnalysis.replaceSpecialCharacters(body),
+  unicodeWriting: window.TwineviaSmsAnalysis.usesUnicodeWriting(body),
+}));
+"""
+    result = subprocess.run(['node', '-e', script, library, body], check=True, capture_output=True, text=True)
+    assert json.loads(result.stdout) == {'result': expected, 'unicodeWriting': unicode_writing}

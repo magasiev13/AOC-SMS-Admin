@@ -63,14 +63,48 @@ for (const width of [390, 1440]) {
     await expect(message).toHaveValue(draft);
 
     await page.getByRole('button', { name: 'Replace special characters', exact: true }).click();
-    await expect(message).toHaveValue(draft.replace('🙂', '?'));
+    await expect(message).toHaveValue(draft.replace('🙂', ''));
     const replacementTotal = await authoritativeTotal(page);
     expect(replacementTotal).toBeLessThan(total);
     await expect(warning).toBeHidden();
+    const undo = page.getByRole('button', { name: 'Undo', exact: true });
+    await expect(undo).toBeVisible();
+    await undo.click();
+    await expect(message).toHaveValue(draft);
+    await expect(undo).toBeHidden();
+    await expect(warning).toBeVisible();
+    await page.getByRole('button', { name: 'Replace special characters', exact: true }).click();
+    await expect(message).toHaveValue(draft.replace('🙂', ''));
+    await authoritativeTotal(page);
     await checkReviewTotal(page, replacementTotal);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
 }
+
+test('emoji-only replacement can be undone; an edit clears Undo; Armenian text is preserved', async ({ page }, testInfo) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  const message = page.getByLabel('Message', { exact: true });
+  const replace = page.getByRole('button', { name: 'Replace special characters', exact: true });
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  await message.fill('🙂🎉👨‍👩‍👧‍👦🇦🇲');
+  await replace.click();
+  await expect(message).toHaveValue('');
+  await undo.click();
+  await expect(message).toHaveValue('🙂🎉👨‍👩‍👧‍👦🇦🇲');
+  await replace.click();
+  await message.fill('A new draft');
+  await expect(undo).toBeHidden();
+  const armenian = 'Բարև աշխարհ 🙂 — հանդիպում';
+  await message.fill(armenian);
+  await expect(page.locator('#specialCharacterWarning')).toBeVisible();
+  await expect(page.locator('#specialCharacterWarningText')).toContainText('This message uses Unicode letters');
+  await expect(replace).toBeHidden();
+  await expect(message).toHaveValue(armenian);
+  await expect(undo).toBeHidden();
+  await page.locator('#specialCharacterWarning').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('armenian-preserved.png') });
+});
 
 test('saved-test-recipient composer and review use the same personalized total', async ({ page }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
