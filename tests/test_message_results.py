@@ -119,13 +119,41 @@ def test_carrier_errors_have_one_code_wording(results):
     assert 'Provider error 30003' not in response.get_data(as_text=True)
 
 
-@pytest.mark.parametrize('code', ['30005', '39999'])
-def test_other_coded_carrier_errors_share_one_wording_and_retain_raw_audit_messages(results, code):
+@pytest.mark.parametrize('code,description', [
+    ('30003', 'Unreachable destination handset'),
+    ('30004', 'Message blocked'),
+    ('30005', 'Unknown destination handset'),
+    ('30006', 'Landline or unreachable carrier'),
+    ('30007', 'Message filtered'),
+    ('30008', 'Unknown delivery error'),
+    ('30034', 'Unregistered sender for US A2P 10DLC'),
+    ('21610', 'Recipient opted out'),
+])
+def test_common_carrier_code_wording_is_independent_of_receipt_description(code, description):
+    from app.services.delivery_status_service import _canonical_delivery_error
+
+    for provider_description in (None, f'Provider error {code}', 'Different polling or callback description'):
+        assert _canonical_delivery_error(provider_description, code) == f'{description} ({code})'
+        assert _canonical_delivery_error(provider_description, int(code)) == f'{description} ({code})'
+    assert _canonical_delivery_error(f'Provider error {code}') == f'{description} ({code})'
+    assert _canonical_delivery_error(f'Carrier description ({code})') == f'{description} ({code})'
+    assert _canonical_delivery_error(f'Provider error {code}0') == f'Provider error {code}0'
+
+
+@pytest.mark.parametrize('code,messages,expected', [
+    ('30005', ['Provider error 30005', 'Different retained provider description'],
+     ['Unknown destination handset (30005)', 'Unknown destination handset (30005)']),
+    (None, ['Provider error 30005', 'Different retained description (30005)'],
+     ['Unknown destination handset (30005)', 'Unknown destination handset (30005)']),
+    ('39999', ['New provider error description', 'Different retained provider description'],
+     ['New provider error description (39999)', 'Different retained provider description (39999)']),
+    ('39999', [None, ''], ['Provider error (39999)', 'Provider error (39999)']),
+])
+def test_coded_carrier_error_projection_retains_provider_detail_and_raw_audit_messages(results, code, messages, expected):
     f = results
     records = [f.m.MessagingUsageRecord.query.filter_by(
         organization_id=f.org.id, message_sid=f'SMresult{index}',
     ).one() for index in (115, 116)]
-    messages = [f'Provider error {code}', 'Different retained provider description']
     for record, message in zip(records, messages):
         record.delivery_error_code = code
         record.delivery_error_message = message
@@ -134,8 +162,9 @@ def test_other_coded_carrier_errors_share_one_wording_and_retain_raw_audit_messa
     response, context = _get(f, outcome='not_delivered')
     rows = [row for row in context['details'] if row['name'] in {'Recipient 115', 'Recipient 116'}]
     assert len(rows) == 2
-    assert {row['delivery_error'] for row in rows} == {f'Provider error ({code})'}
-    assert 'Different retained provider description' not in response.get_data(as_text=True)
+    assert [row['delivery_error'] for row in rows] == expected
+    for description in expected:
+        assert description in response.get_data(as_text=True)
     for record, message in zip(records, messages):
         f.db.session.refresh(record)
         assert record.delivery_error_code == code and record.delivery_error_message == message

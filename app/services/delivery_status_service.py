@@ -30,6 +30,17 @@ DELIVERY_LABELS = {
     'undelivered': 'Undelivered', 'failed': 'Delivery failed', 'canceled': 'Provider canceled',
     'unknown': 'Delivery unconfirmed; receipt window expired', 'conflict': 'Conflicting delivery receipts',
 }
+DELIVERY_ERROR_LABELS = {
+    '30003': 'Unreachable destination handset',
+    '30004': 'Message blocked',
+    '30005': 'Unknown destination handset',
+    '30006': 'Landline or unreachable carrier',
+    '30007': 'Message filtered',
+    '30008': 'Unknown delivery error',
+    '30034': 'Unregistered sender for US A2P 10DLC',
+    '21610': 'Recipient opted out',
+}
+DELIVERY_ERROR_CODE_PATTERN = re.compile(r'\b(?:' + '|'.join(DELIVERY_ERROR_LABELS) + r')\b')
 
 
 def utc_naive(value=None):
@@ -262,19 +273,17 @@ def _delivery_records(organization_id, details):
 
 
 def _canonical_delivery_error(message, code=None):
-    """A carrier code has one display wording, independent of receipt source."""
+    """Use common code wording, retaining provider detail for unfamiliar errors."""
     code = str(code or '').strip()
     message = str(message or '').strip()
-    if not code and re.search(r'\b30003\b', message):
-        code = '30003'
-    if code == '30003':
-        return 'Unreachable destination handset (30003)'
+    if not code:
+        embedded_code = DELIVERY_ERROR_CODE_PATTERN.search(message)
+        if embedded_code:
+            code = embedded_code.group(0)
     if not code:
         return message or None
-    # Unknown codes still need one wording across polling/callback sources.
-    # Retain the provider's raw description in its audit row, not as a second
-    # competing label for the same code in the recipient table.
-    return f'Provider error ({code})'
+    description = DELIVERY_ERROR_LABELS.get(code) or message or 'Provider error'
+    return f'{description} ({code})'
 
 
 def project_log_delivery(organization_id, details, *, records_by_sid=None):
