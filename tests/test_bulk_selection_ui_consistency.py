@@ -160,7 +160,7 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertNotIn(".live-indicator__dot", css)
 
     def test_unsubscribed_bulk_selection_counts_visible_checkboxes_only(self) -> None:
-        html = self._read("app/templates/unsubscribed/list.html")
+        html = self._read("app/templates/unsubscribed/list.html") + self._read("app/static/js/pages/unsubscribed-list.js")
         self.assertIn("function getVisibleEntryCheckboxes()", html)
         self.assertIn("const visibleCheckboxes = getVisibleEntryCheckboxes();", html)
         self.assertIn("setCheckedForVisibleEntries(selectAllCheckbox.checked);", html)
@@ -170,7 +170,7 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertNotIn("document.querySelectorAll('.entry-checkbox:checked')", html)
 
     def test_events_bulk_selection_syncs_hidden_duplicate_checkboxes(self) -> None:
-        html = self._read("app/templates/events/list.html")
+        html = self._read("app/templates/events/list.html") + self._read("app/static/js/pages/events-list.js")
         self.assertIn('data-event-id="{{ event.id }}"', html)
         self.assertIn('function syncEventCheckboxes(changedCheckbox)', html)
         self.assertIn("syncEventCheckboxes(box);", html)
@@ -183,7 +183,7 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
         self.assertNotIn('form="bulkDeleteForm" aria-label="Select event"', html)
 
     def test_scheduled_bulk_selection_syncs_duplicate_checkboxes_and_modal_ids(self) -> None:
-        html = self._read("app/templates/scheduled/list.html")
+        html = self._read("app/templates/scheduled/list.html") + self._read("app/static/js/pages/scheduled-list.js")
         self.assertIn('data-record-id="{{ msg.id }}"', html)
         self.assertIn("function getVisibleGroupCheckboxes()", html)
         self.assertIn("function setCheckedAcrossDuplicates(sourceCheckbox)", html)
