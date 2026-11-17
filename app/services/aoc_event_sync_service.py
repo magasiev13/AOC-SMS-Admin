@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import current_app
 
 from app import db
+from app.datetime_display import workspace_timezone
 from app.models import (
     CommunityMember,
     Event,
@@ -575,11 +576,12 @@ def _delete_event_registration_for_booking(event: Event, payload: dict[str, Any]
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
     organization = _organization_for_id(event.organization_id)
     sender = "AOC" if organization.slug == "armenians-of-colorado" else organization.name
+    zone = workspace_timezone(organization)
     reminder_specs = (
-        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, sender, "two weeks away")),
-        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, sender, "one week away")),
-        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, sender, "tomorrow")),
-        ("day_of", _day_of_scheduled_at(event), _day_of_message(event, sender)),
+        ("two_week", _days_before_scheduled_at(event, 14, zone), _before_event_message(event, sender, "two weeks away")),
+        ("seven_day", _days_before_scheduled_at(event, 7, zone), _before_event_message(event, sender, "one week away")),
+        ("one_day", _days_before_scheduled_at(event, 1, zone), _before_event_message(event, sender, "tomorrow")),
+        ("day_of", _day_of_scheduled_at(event, zone), _day_of_message(event, sender)),
     )
 
     for automation_kind, scheduled_at, message_body in reminder_specs:
@@ -685,15 +687,19 @@ def _event_source_for_booking_source(source: str) -> str:
     return source
 
 
-def _days_before_scheduled_at(event: Event, days_before: int) -> datetime | None:
+def _days_before_scheduled_at(event: Event, days_before: int, zone=None) -> datetime | None:
     local_start = _event_local_start(event)
+    if zone is not None:
+        local_start = local_start.astimezone(zone)
     reminder_date = local_start.date() - timedelta(days=days_before)
     reminder_local = datetime.combine(reminder_date, time(hour=9), tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 
 
-def _day_of_scheduled_at(event: Event) -> datetime | None:
+def _day_of_scheduled_at(event: Event, zone=None) -> datetime | None:
     local_start = _event_local_start(event)
+    if zone is not None:
+        local_start = local_start.astimezone(zone)
     reminder_local = datetime.combine(local_start.date(), time(hour=8), tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 

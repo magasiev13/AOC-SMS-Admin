@@ -68,6 +68,7 @@ from app.models import (
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationSubscription,
+    OrganizationSettingsAuditLog,
     PilotApplication,
     ScheduledMessage,
     StripeCheckoutSession,
@@ -2927,6 +2928,12 @@ def _settings_surface_view(organization: Organization) -> dict:
 
 def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
     cards = [
+        {
+            'title': 'Scheduling preferences',
+            'description': 'Choose the clock used to enter schedules and display message times.',
+            'icon': 'bi-clock', 'href': url_for('main.schedule_preferences'),
+            'action': 'Manage scheduling',
+        },
         {
             'title': 'App Integrations',
             'description': 'Optional: bring events and registrations in from another app. Your developer configures the connection.',
@@ -5822,6 +5829,32 @@ def settings_home():
         surface_view=_settings_surface_view(organization),
         settings_cards=_settings_cards(_current_user_is_workspace_owner()),
     )
+
+
+@bp.route('/settings/scheduling', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def schedule_preferences():
+    from zoneinfo import available_timezones
+
+    organization = _current_organization()
+    if not saas_mode_enabled() or current_user.is_platform_admin or organization is None:
+        abort(404)
+    zones = sorted(available_timezones())
+    if request.method == 'POST':
+        selected = request.form.get('timezone', '').strip()
+        if selected not in zones or len(selected) > 64:
+            flash('Select a listed time zone.', 'error')
+        else:
+            organization.timezone_name = selected
+            db.session.add(OrganizationSettingsAuditLog(
+                organization_id=organization.id, actor_user_id=current_user.id,
+                category='scheduling', action='updated', metadata_json=json.dumps({'timezone': selected}),
+            ))
+            db.session.commit()
+            flash('Scheduling preferences saved.', 'success')
+            return redirect(url_for('main.schedule_preferences'))
+    return render_template('settings/scheduling.html', zones=zones, selected=workspace_timezone_name())
 
 
 @bp.route('/settings/test-recipients', methods=['GET', 'POST'])

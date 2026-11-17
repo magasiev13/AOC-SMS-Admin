@@ -202,3 +202,18 @@ def test_feedback_review_and_history_share_workspace_display_without_changing_sc
     assert response.status_code == 200
     assert review['timing'] in response.get_data(as_text=True)
     assert b' UTC' not in response.data and b'(UTC)' not in response.data
+
+
+def test_owner_changes_only_own_workspace_clock_and_staff_cannot_change_it(ux):
+    from app.tenant import organization_context
+    ux.app.config['APP_TIMEZONE'] = 'UTC'
+    login(ux)
+    assert ux.client.post('/settings/scheduling', data={'timezone':'Mars/City'}).status_code == 200
+    assert ux.client.post('/settings/scheduling', data={'timezone':'Asia/Tokyo'}).status_code == 302
+    with organization_context(ux.org_id):
+        assert workspace_timezone_name() == 'Asia/Tokyo'
+        assert parse_workspace_datetime('2027-02-12','09:00').astimezone(timezone.utc).hour == 0
+    with organization_context(ux.other_id):
+        assert workspace_timezone_name() == 'UTC'
+    login(ux, role='staff')
+    assert ux.client.post('/settings/scheduling', data={'timezone':'UTC'}).status_code == 403
