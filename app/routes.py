@@ -2887,11 +2887,14 @@ def _event_sync_surface_view(
     integration_view: dict,
 ) -> dict:
     enabled_label = 'Enabled' if integration_view['enabled'] else 'Disabled'
-    last_activity = (
-        integration_view['last_event_synced_at']
-        or integration_view['last_signup_synced_at']
-        or integration_view['last_reconcile_synced_at']
-    )
+    managed = integration_view.get('managed_wordpress')
+    managed_active = managed and managed['enabled']
+    if managed_active and not integration_view['enabled']:
+        enabled_label = 'Managed WordPress enabled'
+    last_activity = max((value for value in (
+        integration_view['last_event_synced_at'], integration_view['last_signup_synced_at'],
+        integration_view['last_reconcile_synced_at'], managed and managed['last_activity'],
+    ) if value), default=None)
     return _surface_view(
         eyebrow='Integrations',
         title='App Integrations',
@@ -2901,7 +2904,7 @@ def _event_sync_surface_view(
             _surface_stat('Status', enabled_label, 'Connected app' if integration_view['provider'] == 'app' else 'WordPress connection'),
             _surface_stat(
                 'Secret',
-                'Ready' if integration_view['has_secret'] else 'Not generated',
+                'Ready' if integration_view['has_secret'] else ('Managed on server' if managed_active else 'Not generated'),
                 'Webhook signing',
             ),
             _surface_stat(

@@ -9,11 +9,14 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from flask import current_app
+
 from app import db
 from app.models import (
     CommunityMember,
     Event,
     EventRegistration,
+    ExternalWebhookDelivery,
     Organization,
     OrganizationEventSyncIntegration,
     ScheduledMessage,
@@ -125,8 +128,19 @@ def event_sync_setup_view(organization: Organization, base_url: str, provider: s
     endpoint = _event_sync_webhook_url(base_url, organization.slug, provider)
     enabled = integration.enabled if integration is not None else False
     has_secret = bool(integration.webhook_secret_encrypted) if integration is not None else False
+    managed_wordpress = None
+    if organization.slug == current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG'):
+        recent = db.session.query(db.func.max(ExternalWebhookDelivery.processed_at)).filter_by(
+            organization_id=organization.id, provider='aoc_events', status='processed',
+        ).scalar()
+        enabled_on_host = bool(current_app.config.get('AOC_EVENTS_WEBHOOK_ENABLED')
+                               and current_app.config.get('AOC_EVENTS_WEBHOOK_SECRET'))
+        if recent or enabled_on_host:
+            managed_wordpress = {'enabled': enabled_on_host, 'last_activity': recent,
+                                 'endpoint': f"{base_url.rstrip('/')}/webhooks/aoc/events"}
     return {
         "enabled": enabled,
+        "managed_wordpress": managed_wordpress,
         "provider": provider,
         "endpoint": endpoint,
         "source_namespace_prefix": f"app:{integration.id}:" if integration is not None and provider == "app" else None,
