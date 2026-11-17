@@ -2,70 +2,72 @@
    TOKENS
    =========================================== */
 :root {
-  --color-primary: #6366f1;
-  --color-primary-strong: #4f46e5;
-  --color-primary-light: #a5b4fc;
-  --color-accent: #8b5cf6;
-  --color-accent-light: #c4b5fd;
-  --color-success: #10b981;
-  --color-success-light: #6ee7b7;
-  --color-warning: #f59e0b;
-  --color-warning-light: #fcd34d;
-  --color-danger: #ef4444;
-  --color-danger-light: #fca5a5;
-  --color-info: #06b6d4;
-  --color-info-light: #67e8f9;
-
-  --color-bg: #f8fafc;
+  --color-primary: #2563eb;
+  --color-primary-strong: #1d4ed8;
+  --color-primary-light: #bfdbfe;
+  --color-accent: #2563eb;
+  --color-accent-light: #dbeafe;
+  --color-success: #0f9f6e;
+  --color-success-light: #d1fae5;
+  --color-warning: #b45309;
+  --color-warning-light: #fef3c7;
+  --color-danger: #c2410c;
+  --color-danger-light: #ffedd5;
+  --color-info: #0f766e;
+  --color-info-light: #ccfbf1;
+  --color-bg: #f6f8fb;
   --color-surface: #ffffff;
-  --color-surface-muted: #f1f5f9;
-  --color-border: #e2e8f0;
-  --color-text: #1e293b;
-  --color-text-muted: #64748b;
-
-  --color-focus: #6366f1;
-  --inbox-thread-active-bg: #e8edff;
-  --inbox-thread-active-border: #4f46e5;
-  --inbox-thread-active-text: #1f2a44;
-  --inbox-thread-active-meta: #334155;
-  --inbox-thread-hover-bg: #f4f6ff;
-  --inbox-error-on-primary-text: #fef3c7;
+  --color-surface-muted: #eff4f8;
+  --color-border: #d8e1eb;
+  --color-text: #142033;
+  --color-text-muted: #607086;
+  --color-focus: #2563eb;
+  --inbox-thread-active-bg: #e8f0ff;
+  --inbox-thread-active-border: #2563eb;
+  --inbox-thread-active-text: #10223d;
+  --inbox-thread-active-meta: #42546d;
+  --inbox-thread-hover-bg: #f2f6ff;
+  --inbox-error-on-primary-text: #fff7ed;
   --mobile-nav-backdrop: rgba(15, 23, 42, 0.18);
   --mobile-nav-panel-shadow: 0 1rem 2.5rem rgba(15, 23, 42, 0.16);
-
-  --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  --gradient-primary: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
   --gradient-success: linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
   --gradient-warning: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
   --gradient-danger: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
   --gradient-info: linear-gradient(135deg, #06b6d4 0%, #0ea5e9 100%);
   --gradient-purple: linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
-  --gradient-dark: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-
-  --elevation-1: 0 0.125rem 0.25rem rgba(15, 23, 42, 0.08);
-  --elevation-2: 0 0.5rem 1.25rem rgba(15, 23, 42, 0.12);
-
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
+  --gradient-dark: linear-gradient(180deg, #142033 0%, #1f3047 100%);
+  --elevation-1: 0 12px 30px rgba(20, 32, 51, 0.06);
+  --elevation-2: 0 18px 44px rgba(20, 32, 51, 0.08);
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
   --radius-pill: 999px;
-
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.5rem;
   --space-6: 2rem;
-
   --font-size-1: 0.75rem;
   --font-size-2: 0.875rem;
   --font-size-3: 1rem;
   --font-size-4: 1.25rem;
-  --font-size-5: 1.5rem;
-  --font-size-6: 2rem;
-
-  --line-height-1: 1.2;
+  --font-size-5: 1.75rem;
+  --font-size-6: 2.5rem;
+  --line-height-1: 1.05;
   --line-height-2: 1.4;
   --line-height-3: 1.6;
+  --motion-duration-fast: 160ms;
+  --motion-duration-standard: 220ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --focus-ring-inner: #ffffff;
+  --focus-ring-outer: #4338ca;
+  --skeleton-base: #e2e8f0;
+  --skeleton-highlight: #f8fafc;
+  --skeleton-shimmer-duration: 1.4s;
+  --color-surface-subtle: #f3f7fb;
+  --color-border-strong: #b8c7d9;
 }
 
 * {
@@ -4087,16 +4089,6 @@ code {
    PHASE 3 POLISH OVERRIDES
    =========================================== */
 
-:root {
-  --motion-duration-fast: 160ms;
-  --motion-duration-standard: 220ms;
-  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --focus-ring-inner: #ffffff;
-  --focus-ring-outer: #4338ca;
-  --skeleton-base: #e2e8f0;
-  --skeleton-highlight: #f8fafc;
-  --skeleton-shimmer-duration: 1.4s;
-}
 
 /* Empty-state pattern: icon + title + explanation + optional action */
 .empty-state {
@@ -4561,59 +4553,6 @@ a:focus-visible,
    TWINEVIA REFRESH
    =========================================== */
 
-:root {
-  --color-primary: #2563eb;
-  --color-primary-strong: #1d4ed8;
-  --color-primary-light: #bfdbfe;
-  --color-accent: #2563eb;
-  --color-accent-light: #dbeafe;
-  --color-success: #0f9f6e;
-  --color-success-light: #d1fae5;
-  --color-warning: #b45309;
-  --color-warning-light: #fef3c7;
-  --color-danger: #c2410c;
-  --color-danger-light: #ffedd5;
-  --color-info: #0f766e;
-  --color-info-light: #ccfbf1;
-  --color-bg: #f6f8fb;
-  --color-surface: #ffffff;
-  --color-surface-muted: #eff4f8;
-  --color-surface-subtle: #f3f7fb;
-  --color-border: #d8e1eb;
-  --color-border-strong: #b8c7d9;
-  --color-text: #142033;
-  --color-text-muted: #607086;
-  --color-focus: #2563eb;
-  --inbox-thread-active-bg: #e8f0ff;
-  --inbox-thread-active-border: #2563eb;
-  --inbox-thread-active-text: #10223d;
-  --inbox-thread-active-meta: #42546d;
-  --inbox-thread-hover-bg: #f2f6ff;
-  --inbox-error-on-primary-text: #fff7ed;
-  --gradient-primary: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
-  --gradient-dark: linear-gradient(180deg, #142033 0%, #1f3047 100%);
-  --elevation-1: 0 12px 30px rgba(20, 32, 51, 0.06);
-  --elevation-2: 0 18px 44px rgba(20, 32, 51, 0.08);
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
-  --radius-pill: 999px;
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.5rem;
-  --space-6: 2rem;
-  --font-size-1: 0.75rem;
-  --font-size-2: 0.875rem;
-  --font-size-3: 1rem;
-  --font-size-4: 1.25rem;
-  --font-size-5: 1.75rem;
-  --font-size-6: 2.5rem;
-  --line-height-1: 1.05;
-  --line-height-2: 1.4;
-  --line-height-3: 1.6;
-}
 
 .app-body {
   background: var(--color-bg);
