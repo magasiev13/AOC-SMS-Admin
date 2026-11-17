@@ -9,11 +9,15 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from flask import current_app
+
 from app import db
+from app.datetime_display import workspace_timezone
 from app.models import (
     CommunityMember,
     Event,
     EventRegistration,
+    ExternalWebhookDelivery,
     Organization,
     OrganizationEventSyncIntegration,
     ScheduledMessage,
@@ -125,8 +129,19 @@ def event_sync_setup_view(organization: Organization, base_url: str, provider: s
     endpoint = _event_sync_webhook_url(base_url, organization.slug, provider)
     enabled = integration.enabled if integration is not None else False
     has_secret = bool(integration.webhook_secret_encrypted) if integration is not None else False
+    managed_wordpress = None
+    if organization.slug == current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG'):
+        recent = db.session.query(db.func.max(ExternalWebhookDelivery.processed_at)).filter_by(
+            organization_id=organization.id, provider='aoc_events', status='processed',
+        ).scalar()
+        enabled_on_host = bool(current_app.config.get('AOC_EVENTS_WEBHOOK_ENABLED')
+                               and current_app.config.get('AOC_EVENTS_WEBHOOK_SECRET'))
+        if recent or enabled_on_host:
+            managed_wordpress = {'enabled': enabled_on_host, 'last_activity': recent,
+                                 'endpoint': f"{base_url.rstrip('/')}/webhooks/aoc/events"}
     return {
         "enabled": enabled,
+        "managed_wordpress": managed_wordpress,
         "provider": provider,
         "endpoint": endpoint,
         "source_namespace_prefix": f"app:{integration.id}:" if integration is not None and provider == "app" else None,
@@ -559,11 +574,14 @@ def _delete_event_registration_for_booking(event: Event, payload: dict[str, Any]
 
 
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
+    organization = _organization_for_id(event.organization_id)
+    sender = "AOC" if organization.slug == "armenians-of-colorado" else organization.name
+    zone = workspace_timezone(organization)
     reminder_specs = (
-        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, "two weeks away")),
-        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, "one week away")),
-        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, "tomorrow")),
-        ("day_of", _day_of_scheduled_at(event), _day_of_message(event)),
+        ("two_week", _days_before_scheduled_at(event, 14, zone), _before_event_message(event, sender, "two weeks away")),
+        ("seven_day", _days_before_scheduled_at(event, 7, zone), _before_event_message(event, sender, "one week away")),
+        ("one_day", _days_before_scheduled_at(event, 1, zone), _before_event_message(event, sender, "tomorrow")),
+        ("day_of", _day_of_scheduled_at(event, zone), _day_of_message(event, sender)),
     )
 
     for automation_kind, scheduled_at, message_body in reminder_specs:
@@ -669,29 +687,33 @@ def _event_source_for_booking_source(source: str) -> str:
     return source
 
 
-def _days_before_scheduled_at(event: Event, days_before: int) -> datetime | None:
+def _days_before_scheduled_at(event: Event, days_before: int, zone=None) -> datetime | None:
     local_start = _event_local_start(event)
+    if zone is not None:
+        local_start = local_start.astimezone(zone)
     reminder_date = local_start.date() - timedelta(days=days_before)
     reminder_local = datetime.combine(reminder_date, time(hour=9), tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 
 
-def _day_of_scheduled_at(event: Event) -> datetime | None:
+def _day_of_scheduled_at(event: Event, zone=None) -> datetime | None:
     local_start = _event_local_start(event)
+    if zone is not None:
+        local_start = local_start.astimezone(zone)
     reminder_local = datetime.combine(local_start.date(), time(hour=8), tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 
 
-def _before_event_message(event: Event, timing_label: str) -> str:
+def _before_event_message(event: Event, sender: str, timing_label: str) -> str:
     return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is {timing_label}. "
+        f"Hi {{first_name}}, {sender} reminder: {event.title} is {timing_label}. "
         f"Details and registration: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 
 
-def _day_of_message(event: Event) -> str:
+def _day_of_message(event: Event, sender: str) -> str:
     return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is today at {_event_time_label(event)}. "
+        f"Hi {{first_name}}, {sender} reminder: {event.title} is today at {_event_time_label(event)}. "
         f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 

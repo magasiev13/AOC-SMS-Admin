@@ -139,6 +139,8 @@ class Organization(db.Model):
     name = db.Column(db.String(120), nullable=False)
     slug = db.Column(db.String(64), nullable=False, unique=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='active')
+    timezone_name = db.Column(db.String(64))
+    reminder_preferences = db.Column(db.JSON)
     billing_offer = db.Column(db.String(30), nullable=False, default='standard')
     billing_offer_version = db.Column(db.String(80), nullable=False, default='legacy-v1')
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)

@@ -295,6 +295,35 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(scheduled_by_kind["one_day"].scheduled_at.isoformat(), "2027-03-14T15:00:00")
         self.assertEqual(scheduled_by_kind["day_of"].scheduled_at.isoformat(), "2027-03-15T14:00:00")
 
+    def test_managed_integration_shows_own_success_on_both_tabs(self):
+        from app.services.aoc_event_sync_service import event_sync_setup_view
+        response = self._signed_post({'action': 'event_upsert', 'event': self._event_payload()}, None, None)
+        assert response.status_code == 200
+        for provider in ('app', 'wordpress'):
+            view = event_sync_setup_view(self.organization, 'https://example.test', provider)
+            assert view['managed_wordpress']['enabled']
+            assert view['managed_wordpress']['last_activity']
+            assert view['managed_wordpress']['endpoint'].endswith('/webhooks/aoc/events')
+            assert not view['enabled']
+            other = event_sync_setup_view(self.other_organization, 'https://example.test', provider)
+            assert other['managed_wordpress'] is None
+
+    def test_general_sync_uses_tenant_name_even_with_aoc_source_label(self):
+        from app.services.aoc_event_sync_service import process_event_sync_payload
+        from app.models import OrganizationEventSyncIntegration
+        integration = OrganizationEventSyncIntegration(
+            organization_id=self.other_organization.id, provider='wordpress', enabled=True,
+        )
+        self.db.session.add(integration)
+        process_event_sync_payload(
+            {'action': 'event_upsert', 'source': 'aoc-wordpress', 'event': self._event_payload()},
+            integration, datetime(2027, 1, 1, tzinfo=timezone.utc),
+        )
+        rows = self.ScheduledMessage.query.filter_by(organization_id=self.other_organization.id).all()
+        assert len(rows) == 4
+        assert all(row.message_body.startswith("Hi {first_name}, Other Org reminder:") for row in rows)
+        assert all(row.message_body.endswith("Reply STOP to unsubscribe.") for row in rows)
+
     def test_duplicate_event_delivery_updates_without_duplicate_reminders(self) -> None:
         payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
         first_response = self._signed_post(payload, secret=None, timestamp=None)

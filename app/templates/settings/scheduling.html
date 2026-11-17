@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Scheduling preferences - {{ product_name }}{% endblock %}
+{% block page_title %}Scheduling preferences{% endblock %}
+{% block content %}
+<form class="workspace-panel p-3" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="timezone" class="form-label">Workspace time zone</label>
+    <select class="form-select mb-2" name="timezone" id="timezone" required>
+        {% for zone in zones %}<option value="{{ zone }}"{% if selected == zone %} selected{% endif %}>{{ zone }}</option>{% endfor %}
+    </select>
+    <p class="form-text">Applies to message times and new schedules. Previously scheduled sends keep their instant.</p>
+    <button class="btn btn-primary" type="submit">Save preferences</button>
+</form>
+{% endblock %}
