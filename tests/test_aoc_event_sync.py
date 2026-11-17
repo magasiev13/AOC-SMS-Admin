@@ -295,6 +295,22 @@ class TestAocEventSyncWebhook(unittest.TestCase):
         self.assertEqual(scheduled_by_kind["one_day"].scheduled_at.isoformat(), "2027-03-14T15:00:00")
         self.assertEqual(scheduled_by_kind["day_of"].scheduled_at.isoformat(), "2027-03-15T14:00:00")
 
+    def test_general_sync_uses_tenant_name_even_with_aoc_source_label(self):
+        from app.services.aoc_event_sync_service import process_event_sync_payload
+        from app.models import OrganizationEventSyncIntegration
+        integration = OrganizationEventSyncIntegration(
+            organization_id=self.other_organization.id, provider='wordpress', enabled=True,
+        )
+        self.db.session.add(integration)
+        process_event_sync_payload(
+            {'action': 'event_upsert', 'source': 'aoc-wordpress', 'event': self._event_payload()},
+            integration, datetime(2027, 1, 1, tzinfo=timezone.utc),
+        )
+        rows = self.ScheduledMessage.query.filter_by(organization_id=self.other_organization.id).all()
+        assert len(rows) == 4
+        assert all(row.message_body.startswith("Hi {first_name}, Other Org reminder:") for row in rows)
+        assert all(row.message_body.endswith("Reply STOP to unsubscribe.") for row in rows)
+
     def test_duplicate_event_delivery_updates_without_duplicate_reminders(self) -> None:
         payload = {"action": "event_upsert", "source": "aoc-wordpress", "event": self._event_payload()}
         first_response = self._signed_post(payload, secret=None, timestamp=None)

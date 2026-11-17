@@ -559,11 +559,13 @@ def _delete_event_registration_for_booking(event: Event, payload: dict[str, Any]
 
 
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
+    organization = _organization_for_id(event.organization_id)
+    sender = "AOC" if organization.slug == "armenians-of-colorado" else organization.name
     reminder_specs = (
-        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, "two weeks away")),
-        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, "one week away")),
-        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, "tomorrow")),
-        ("day_of", _day_of_scheduled_at(event), _day_of_message(event)),
+        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, sender, "two weeks away")),
+        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, sender, "one week away")),
+        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, sender, "tomorrow")),
+        ("day_of", _day_of_scheduled_at(event), _day_of_message(event, sender)),
     )
 
     for automation_kind, scheduled_at, message_body in reminder_specs:
@@ -682,16 +684,16 @@ def _day_of_scheduled_at(event: Event) -> datetime | None:
     return _to_utc_naive(reminder_local)
 
 
-def _before_event_message(event: Event, timing_label: str) -> str:
+def _before_event_message(event: Event, sender: str, timing_label: str) -> str:
     return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is {timing_label}. "
+        f"Hi {{first_name}}, {sender} reminder: {event.title} is {timing_label}. "
         f"Details and registration: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 
 
-def _day_of_message(event: Event) -> str:
+def _day_of_message(event: Event, sender: str) -> str:
     return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is today at {_event_time_label(event)}. "
+        f"Hi {{first_name}}, {sender} reminder: {event.title} is today at {_event_time_label(event)}. "
         f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
     )
 
