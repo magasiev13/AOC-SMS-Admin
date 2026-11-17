@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900" font-family="system-ui, sans-serif" role="img" aria-labelledby="title"><title id="title">Today at 1440 pixels, illustrative wireframe</title>
+<rect x="0" y="0" width="1440" height="900" fill="#fff"/>
+<rect x="0" y="0" width="238" height="900" fill="#11263b"/>
+<text x="26" y="56" fill="#fff" font-size="30" font-weight="700">Twinevia</text>
+<rect x="12" y="96" width="214" height="48" fill="#234869"/>
+<text x="30" y="126" fill="#fff" font-size="20" font-weight="700">Home</text>
+<text x="30" y="181" fill="#fff" font-size="20" font-weight="400">Messages</text>
+<text x="30" y="236" fill="#fff" font-size="20" font-weight="400">Conversations</text>
+<text x="30" y="291" fill="#fff" font-size="20" font-weight="400">People</text>
+<text x="30" y="346" fill="#fff" font-size="20" font-weight="400">Events</text>
+<text x="30" y="850" fill="#fff" font-size="17" font-weight="400">Settings</text>
+<text x="300" y="92" fill="#1b2738" font-size="48" font-weight="700">Today</text>
+<rect x="1185" y="54" width="175" height="46" fill="#174bbd"/>
+<text x="1202" y="83" fill="#fff" font-size="18" font-weight="700">New message</text>
+<text x="300" y="160" fill="#1b2738" font-size="23" font-weight="700">Needs attention</text>
+<rect x="300" y="172" width="1060" height="2" fill="#223950"/>
+<text x="304" y="197" fill="#1b2738" font-size="20" font-weight="700">3 texts not delivered</text>
+<text x="780" y="197" fill="#465767" font-size="17" font-weight="400">Review delivery results</text>
+<rect x="300" y="220" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="245" fill="#1b2738" font-size="20" font-weight="700">1 held message</text>
+<text x="780" y="245" fill="#465767" font-size="17" font-weight="400">Review before resuming</text>
+<rect x="300" y="268" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="310" fill="#1b2738" font-size="23" font-weight="700">Coming up</text>
+<rect x="300" y="322" width="1060" height="2" fill="#223950"/>
+<text x="304" y="347" fill="#1b2738" font-size="20" font-weight="700">Workshop reminder</text>
+<text x="780" y="347" fill="#465767" font-size="17" font-weight="400">Tomorrow · 28 people · estimated 28 segments</text>
+<rect x="300" y="370" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="412" fill="#1b2738" font-size="23" font-weight="700">Recent event</text>
+<rect x="300" y="424" width="1060" height="2" fill="#223950"/>
+<text x="304" y="449" fill="#1b2738" font-size="20" font-weight="700">Volunteer orientation</text>
+<text x="780" y="449" fill="#465767" font-size="17" font-weight="400">Request feedback</text>
+<rect x="300" y="472" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="514" fill="#1b2738" font-size="23" font-weight="700">This month</text>
+<rect x="300" y="526" width="1060" height="2" fill="#223950"/>
+<text x="304" y="551" fill="#1b2738" font-size="20" font-weight="700">412 SMS segments</text>
+<text x="780" y="551" fill="#465767" font-size="17" font-weight="400">View usage</text>
+<rect x="300" y="574" width="1060" height="1" fill="#ccd4dc"/></svg>
