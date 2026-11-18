@@ -19,4 +19,5 @@ Use these terms in navigation, status lines and confirmation messages. A contact
 | Delivered | A positive delivery receipt was recorded. |
 | Not delivered | A terminal failure receipt was recorded. |
 | No receipt yet | The provider accepted the text and a final receipt is outstanding. |
-| Opted out | An opt-out prevents further texting. Keep the contact record. |
+| Opted out | The latest transport permission record is an inbound STOP. Keep the contact record. |
+| Blocked | A restriction prevents texting. An owner block, import or legacy row alone does not establish an inbound STOP. |

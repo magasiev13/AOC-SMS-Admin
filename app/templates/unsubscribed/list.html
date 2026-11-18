@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 {% macro readable_block_label(value) -%}
-{{ {'hard_fail': 'Number blocked', 'usage_reconciliation': 'Provider status check'}.get(value, (value or 'Unknown')|replace('_', ' ')|replace('-', ' ')|capitalize)|private_text }}
+{{ {'opted_out': 'Opted out', 'blocked': 'Blocked', 'hard_fail': 'Number blocked', 'usage_reconciliation': 'Provider status check'}.get(value, (value or 'Unknown')|replace('_', ' ')|replace('-', ' ')|capitalize)|private_text }}
 {%- endmacro %}
 
 {% block title %}Opt-Outs &amp; Blocks - {{ product_name }}{% endblock %}
@@ -40,6 +40,11 @@
 <div class="workspace-shell">
     {% set audience_view = 'blocked' %}
     {% include 'includes/people_filters.html' %}
+    <nav class="d-flex flex-wrap gap-2" aria-label="Restriction type">
+        {% for value, label in [('all','All restrictions'),('opted_out','Inbound opt-outs'),('blocked','Other blocks')] %}
+        <a class="btn btn-sm {{ 'btn-primary' if restriction == value else 'btn-outline-secondary' }}" href="{{ url_for('main.unsubscribed_list', restriction=value, search=search, sort=sort_key, dir=sort_dir) }}"{% if restriction == value %} aria-current="page"{% endif %}>{{ label }}</a>
+        {% endfor %}
+    </nav>
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
 
     <div class="collection-shell">
@@ -52,6 +57,7 @@
             meta='Find contacts who opted out and numbers blocked from sending.',
             target_ids='unsubscribedTable'
         ) %}
+        <input type="hidden" name="restriction" value="{{ restriction }}">
         <input type="hidden" name="sort" value="{{ sort_key }}">
         <input type="hidden" name="dir" value="{{ sort_dir }}">
         {% endcall %}
@@ -275,7 +281,7 @@
                 <nav aria-label="Opt-Outs and Blocks Pagination">
                     <ul class="pagination pagination-sm mb-0">
                         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
                                 <span aria-hidden="true">&laquo;</span>
                             </a>
                         </li>
@@ -283,13 +289,13 @@
                             {% if p == page %}
                             <li class="page-item active"><span class="page-link">{{ p }}</span></li>
                             {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                            <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
+                            <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
                             {% elif p == page - 3 or p == page + 3 %}
                             <li class="page-item disabled"><span class="page-link">...</span></li>
                             {% endif %}
                         {% endfor %}
                         <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
                                 <span aria-hidden="true">&raquo;</span>
                             </a>
                         </li>

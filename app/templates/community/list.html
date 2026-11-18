@@ -132,7 +132,7 @@
                         <td data-sort-value="{{ (member.name or '')|private_text }}">{{ contact_label(member.name, member.id) }}</td>
                         {% if can_view_contact_numbers %}<td data-sort-value="{{ member.phone }}"><code>{{ member.phone }}</code></td>{% endif %}
                         <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else permission_statuses[member.phone].decision }}">
-                            {{ permissions.contact_status(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones) }}
+                            {{ permissions.contact_status(permission_statuses[member.phone], member.id in inbound_opt_outs, is_unsubscribed, member.phone in suppressed_phones) }}
                             {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         </td>
                         <td data-sort-value="{{ member.created_at.isoformat() if member.created_at else '' }}">
@@ -221,7 +221,7 @@
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
                         <h6 class="mb-1">{{ contact_label(member.name, member.id) }}</h6>
-                        <div class="small mt-1">{{ permissions.contact_status(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones) }}</div>
+                        <div class="small mt-1">{{ permissions.contact_status(permission_statuses[member.phone], member.id in inbound_opt_outs, is_unsubscribed, member.phone in suppressed_phones) }}</div>
                     </div>
                     {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
