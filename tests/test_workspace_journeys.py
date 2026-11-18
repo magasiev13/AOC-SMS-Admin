@@ -76,3 +76,44 @@ def test_estimated_send_overage_consumes_remaining_allowance_before_configured_p
     assert estimated_send_overage(usage, 6) == '$0.00'
     assert estimated_send_overage(usage, 12) == '$0.15'
     assert estimated_send_overage({**usage, 'billed': False}, 100) is None
+
+
+def test_today_projects_scoped_receipts_reminder_cost_and_completed_event_follow_up(ux):
+    from tests.test_ux_recovery import permitted_contact
+    from tests.test_workspace_usage import _mode
+
+    _mode(ux, 'billed')
+    permitted_contact(ux)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    m = ux.models
+    past = m.Event(organization_id=ux.org_id, title='Finished workshop', date=(now - timedelta(days=3)).date())
+    ux.db.session.add_all([
+        past,
+        m.Event(organization_id=ux.org_id, title='Cancelled workshop', external_status='cancelled',
+                date=(now + timedelta(days=1)).date()),
+        m.ScheduledMessage(organization_id=ux.org_id, message_body='Tomorrow reminder', target='community',
+                           scheduled_at=now + timedelta(days=1), automation_kind='one_day', automation_source='event_sync'),
+        m.ScheduledMessage(organization_id=ux.org_id, message_body='Held invitation', target='community',
+                           scheduled_at=now, status='held'),
+        m.ScheduledMessage(organization_id=ux.other_id, message_body='Other organization reminder', target='community',
+                           scheduled_at=now + timedelta(hours=4), automation_kind='one_day', automation_source='event_sync'),
+        m.MessagingUsageRecord(organization_id=ux.org_id, message_sid='SMtodayfailed', delivery_status='undelivered',
+                               created_at=now),
+    ])
+    ux.db.session.commit()
+    login(ux)
+    page = ux.client.get('/home')
+    assert page.status_code == 200
+    for text in ('1 text not delivered', 'Held invitation', 'Tomorrow reminder', '1 eligible', '$0.00 extra',
+                 'Finished workshop', 'segments used this period'):
+        assert text in page.get_data(as_text=True)
+    assert b'Cancelled workshop' not in page.data and b'Other organization reminder' not in page.data
+    follow_up = f'/events/{past.id}/feedback/follow-up'
+    assert follow_up.encode() in page.data
+    assert ux.client.get(follow_up).location.endswith(f'/events/{past.id}/feedback/new')
+    flow = m.SurveyFlow(organization_id=ux.org_id, name='Event feedback', trigger_keyword='EVENTREVIEW',
+                        purpose='event_feedback', feedback_event_id=past.id, is_active=True)
+    ux.db.session.add(flow)
+    ux.db.session.commit()
+    assert ux.client.get(follow_up).location.endswith(f'/events/{past.id}/feedback/{flow.id}/invite')
+    assert m.OutboundRequest.query.count() == 0

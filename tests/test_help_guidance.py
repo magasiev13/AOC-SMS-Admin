@@ -99,7 +99,7 @@ def test_help_route_filters_actions_and_cannot_select_another_tenant(feedback):
     owner_response = f.client.get('/help', query_string={'organization_id': f.other.id})
     owner = HelpDocument(owner_response)
     assert {'/settings', '/billing', '/setup'} <= set(owner.links)
-    assert owner.current_navigation == [['/help'], ['/help']]
+    assert owner.current_navigation == [['/help'], ['/help'], []]
     assert b'You can prepare a message and review its audience before sending.' in owner_response.data
     assert b'built-in method' not in owner_response.data
     response = f.staff_client.get('/help', query_string={'organization_id': f.other.id, 'topic': 'platform-access'})
