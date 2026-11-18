@@ -1,4 +1,5 @@
 """Signed completion proofs, source scopes and snapshot freshness acceptance."""
+from tests.consent_fixtures import historical_signup_contract
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
@@ -306,7 +307,7 @@ def test_complete_inventory_can_swap_two_booking_destinations_without_replacing_
 def test_complete_inventory_clear_and_cancellation_keep_explicit_consent_decisions(case):
     from app.models import EventBooking
     from app.services.recipient_permission_service import recipient_permission_status
-    case.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[]
+    historical_signup_contract(case.organization.id, False)
     phone='+17205550235'
     mutation(case,booking(case,'clear-contact',phone,spaces=3,source_revision=1,community_sms_consent=True))
     mutation(case,booking(case,'retained-contact',phone,spaces=5,source_revision=1,community_sms_consent=True))

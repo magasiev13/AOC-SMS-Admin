@@ -52,6 +52,7 @@ from app.models import (
     AuthEvent,
     AppUser,
     CommunityMember,
+    ConsentSource,
     Event,
     EventRegistration,
     ExternalWebhookDelivery,
@@ -4024,6 +4025,9 @@ def _render_community_form(*, member: CommunityMember | None, field_errors: dict
 def _render_community_import():
     return render_template(
         'community/import.html',
+        consent_sources=(ConsentSource.query.filter_by(organization_id=_current_organization_id(),
+                                                     status='approved', kind='import').order_by(ConsentSource.name).all()
+                         if saas_mode_enabled() and _current_organization_id() else []),
         surface_view=_community_import_surface_view(),
     )
 
@@ -8370,12 +8374,73 @@ def community_bulk_delete():
     return redirect(url_for('main.community_list'))
 
 
+@bp.route('/community/consent-sources', methods=['GET', 'POST'])
+@login_required
+def consent_sources():
+    if not _current_user_is_workspace_owner():
+        abort(403)
+    organization = _current_organization()
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        disclosure = request.form.get('disclosure', '').strip()
+        kind = request.form.get('kind')
+        purpose = request.form.get('purpose')
+        event = None
+        if purpose == 'event':
+            event = _tenant_get_or_404(Event, request.form.get('event_id', type=int))
+        if (not 1 <= len(name) <= 120 or not 1 <= len(disclosure) <= 2000
+                or kind not in {'import', 'hosted'} or purpose not in {'community', 'event'}
+                or request.form.get('attest') != 'yes'):
+            flash('Enter the source, exact consent wording and purpose, and confirm the attestation.', 'error')
+        else:
+            db.session.add(ConsentSource(
+                organization_id=organization.id, name=name, disclosure=disclosure, kind=kind,
+                purpose=purpose, event_id=event.id if event else None, attested_by=current_user.id,
+            ))
+            db.session.commit()
+            flash('Source submitted for platform review.', 'success')
+            return redirect(url_for('main.consent_sources'))
+    return render_template('community/consent_sources.html', platform=False, organization=organization,
+                           sources=ConsentSource.query.filter_by(organization_id=organization.id)
+                           .order_by(ConsentSource.id.desc()).all(),
+                           events=events_query(current_only=False).order_by(Event.date.desc()).all())
+
+
+@bp.route('/platform/organizations/<int:organization_id>/consent-sources', methods=['GET', 'POST'])
+@login_required
+def platform_consent_sources(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+    organization = db.get_or_404(Organization, organization_id)
+    with organization_context(organization_id):
+        query = ConsentSource.query.filter_by(organization_id=organization_id)
+        if request.method == 'POST':
+            source = query.filter_by(id=request.form.get('source_id', type=int)).with_for_update().first_or_404()
+            action = request.form.get('action')
+            if action == 'approve' and source.status == 'pending' and source.attested_by:
+                source.status = 'approved'
+                source.reviewed_at = utc_now()
+                source.reviewed_by = current_user.id
+            elif action == 'withdraw' and source.status in {'pending', 'approved'}:
+                source.status = 'withdrawn'
+                source.withdrawn_at = utc_now()
+                source.withdrawn_by = current_user.id
+            else:
+                abort(409)
+            db.session.commit()
+            return redirect(url_for('main.platform_consent_sources', organization_id=organization_id))
+        sources = query.order_by(ConsentSource.id.desc()).all()
+    return render_template('community/consent_sources.html', platform=True, organization=organization,
+                           sources=sources)
+
+
 @bp.route('/community/import', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
 def community_import():
     if request.method == 'POST':
         file = None
+        source = None
         try:
             file, content, error_response = _read_uploaded_csv_text(
                 template_name='community/import.html',
@@ -8383,12 +8448,24 @@ def community_import():
             )
             if error_response is not None:
                 return error_response
-            parsed = _parse_uploaded_recipients_csv(content)
+            from app.services.consent_source_service import evidence_rows, record_import_row
+            source = None
+            if request.form.get('source_id'):
+                if not saas_mode_enabled() or current_user.is_platform_admin:
+                    abort(403)
+                source = ConsentSource.query.filter_by(
+                    organization_id=_current_organization_id(), id=request.form.get('source_id', type=int),
+                    kind='import', status='approved',
+                ).with_for_update().first_or_404()
+            parsed = evidence_rows(content) if source else _parse_uploaded_recipients_csv(content)
 
             if not parsed:
                 flash('No valid members found in CSV.', 'error')
                 return _render_community_import()
 
+            if source:
+                for row in parsed:
+                    record_import_row(source, row)
             parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
 
@@ -8411,6 +8488,10 @@ def community_import():
             flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.community_list'))
 
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc) if source else 'Check the CSV format, encoding and upload limits.', 'error')
+            return _render_community_import()
         except HTTPException:
             db.session.rollback()
             raise

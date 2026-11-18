@@ -31,6 +31,7 @@ REQUIRED_TABLES = (
     "external_webhook_deliveries",
     "message_dispatch_attempts",
     "recipient_permission_evidence",
+    "consent_sources",
     "outbound_requests",
     "automation_reply_outbox",
     "community_members",

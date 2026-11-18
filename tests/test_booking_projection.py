@@ -1,4 +1,5 @@
 """Booking identity/seat acceptance across the signed integration and projection."""
+from tests.consent_fixtures import historical_signup_contract
 from datetime import datetime, timezone, timedelta
 import importlib
 import json
@@ -237,7 +238,7 @@ def test_generic_business_app_uses_same_ledger_and_permission_rules(case):
 def test_generic_roster_reachable_count_requires_actual_event_permission(case):
     from app.services.booking_projection_service import upsert_booking, roster_summary
     from app.tenant import organization_context
-    case.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = []
+    historical_signup_contract(case.organization.id, False)
     post(case, 'anchor', None, spaces=0)
     event = case.Event.query.one()
     with organization_context(case.organization.id):
@@ -346,7 +347,7 @@ def test_scope_recovery_does_not_reinterpret_numeric_or_generic_unscoped_identit
 
 def _linked_source_pair(f, *, secondary_phone=None, confirmed_signup=False):
     from app.services.booking_projection_service import upsert_booking
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug] if confirmed_signup else []
+    historical_signup_contract(f.org.id, confirmed_signup)
     now=f.m.utc_now()
     base={'phone':'+17205550251','sms_consent':True,'community_sms_consent':True,
           'spaces':1,'source_revision':1,'updated_at':(now-timedelta(minutes=10)).isoformat()}
@@ -552,7 +553,7 @@ def _signed_app_consent_fixture(case, *, confirmed_signup=False):
     from tests.test_app_registration_sync import payload, post as app_post
     case.organization.name='Independent company'
     case.organization.slug='independent-company'
-    case.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[case.organization.slug] if confirmed_signup else []
+    historical_signup_contract(case.organization.id, confirmed_signup)
     case.app.config['TWILIO_CREDENTIAL_ENCRYPTION_KEY']=Fernet.generate_key().decode()
     case.integration,case.app_secret=configure_event_sync_integration(case.organization.id,True,None,provider='app')
     case.db.session.commit()
@@ -629,7 +630,7 @@ def test_cancelled_source_sms_false_obeys_community_contract_at_snapshot_submiss
     from app.services.booking_projection_service import upsert_booking
     from app.services.recipient_permission_service import recipient_permission_status
     f=feedback
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug] if confirmed_signup else []
+    historical_signup_contract(f.org.id, confirmed_signup)
     phone='+17205550264'
     with f.organization_context(f.org.id):
         upsert_booking(f.event,{'booking_id':'community-contract','phone':phone,'sms_consent':True,

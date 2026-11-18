@@ -1,3 +1,4 @@
+from tests.consent_fixtures import historical_signup_contract
 import hashlib
 import hmac
 import importlib
@@ -86,6 +87,8 @@ class TestAocEventSyncWebhook(unittest.TestCase):
             status="active",
         )
         self.db.session.add_all([self.organization, self.other_organization])
+        self.db.session.flush()
+        historical_signup_contract(self.organization.id)
         self.db.session.commit()
 
     def tearDown(self) -> None:

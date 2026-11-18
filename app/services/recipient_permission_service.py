@@ -16,10 +16,9 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from sqlalchemy.exc import IntegrityError
-from flask import current_app
 
 from app import db
-from app.models import CommunityMember, EventRegistration, Organization, RecipientPermissionEvidence, utc_now
+from app.models import CommunityMember, ConsentSource, EventRegistration, RecipientPermissionEvidence, utc_now
 from app.tenant import get_current_organization_id, organization_context, saas_mode_enabled, tenant_scope_is_active
 from app.utils import normalize_phone, validate_phone
 
@@ -44,15 +43,10 @@ def organization_has_confirmed_signup_consent(organization_id: int | None) -> bo
     """Use an explicitly configured customer contract, within tenant scope."""
     if not organization_id or not saas_mode_enabled():
         return False
-    configured = current_app.config.get('COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS') or []
-    if isinstance(configured, str):
-        configured = configured.split(',')
-    slugs = {str(slug).strip() for slug in configured if str(slug).strip()}
-    if not slugs:
-        return False
     with _organization_scope(organization_id):
-        organization = db.session.get(Organization, organization_id)
-        return bool(organization and organization.slug in slugs)
+        return ConsentSource.query.filter_by(
+            organization_id=organization_id, kind='historical', status='approved',
+        ).first() is not None
 
 
 def _signup_audience_phones(organization_id, phones, purpose, event_id):

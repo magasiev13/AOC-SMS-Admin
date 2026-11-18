@@ -1,4 +1,5 @@
 """Current audience projection and intentional past-event feedback, with no purge."""
+from tests.consent_fixtures import historical_signup_contract
 import importlib
 import json
 import os
@@ -31,7 +32,6 @@ def daily(tmp_path, monkeypatch):
     for key, value in {
         'DATABASE_URL': uri, 'SAAS_MODE': '1', 'FLASK_DEBUG': '1', 'SCHEDULER_ENABLED': '0',
         'PYTHON_DOTENV_DISABLED': '1', 'SECRET_KEY': 'isolated-daily-workflow', 'AUTH_ALERTS_ENABLED': '0',
-        'COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS': 'armenians-of-colorado',
         'APP_TIMEZONE': 'America/Denver', 'REDIS_URL': 'redis://127.0.0.1:1/0',
     }.items():
         monkeypatch.setenv(key, value)
@@ -62,6 +62,7 @@ def daily(tmp_path, monkeypatch):
             ])
             for policy, key in [('terms','TERMS_POLICY_VERSION'),('privacy','PRIVACY_POLICY_VERSION'),('acceptable_use','ACCEPTABLE_USE_POLICY_VERSION'),('sms','SMS_POLICY_VERSION'),('billing','BILLING_POLICY_VERSION')]:
                 db.session.add(models.CustomerPolicyAcceptance(organization_id=org.id, user_id=user.id, policy_name=policy, policy_version=app.config[key]))
+            historical_signup_contract(org.id)
             db.session.commit()
             provider = TwilioService.__new__(TwilioService)
             provider.organization_id, provider.account_sid = org.id, 'ACfixture'
