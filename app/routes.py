@@ -8303,6 +8303,15 @@ def community_permission_review(member_id):
     return _review_recipient_permission(member, purpose='community')
 
 
+def _community_view_query():
+    view = request.args.get('view')
+    if view == 'opted_out':
+        return view, community_query(contactable_only=False).filter(current_inbound_opt_out(CommunityMember))
+    if view == 'all':
+        return view, community_query(contactable_only=False)
+    return 'contactable', community_query()
+
+
 @bp.route('/community')
 @login_required
 def community_list():
@@ -8314,8 +8323,7 @@ def community_list():
         allowed_keys={'name', 'phone', 'added'}, default_key='name', default_dir='asc',
     )
     
-    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
-    query = community_query(contactable_only=audience_view != 'all')
+    audience_view, query = _community_view_query()
     
     if search:
         escaped = escape_like(search)
@@ -8469,9 +8477,9 @@ def community_delete(member_id):
 @login_required
 @require_roles('admin')
 def community_export():
-    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
+    _, query = _community_view_query()
     members = _bounded_export_query_all(
-        community_query(contactable_only=audience_view != 'all').order_by(CommunityMember.name, CommunityMember.phone),
+        query.order_by(CommunityMember.name, CommunityMember.phone),
         'Community member',
     )
 
