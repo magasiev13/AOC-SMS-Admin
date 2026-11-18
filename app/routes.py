@@ -7543,6 +7543,22 @@ def billing_overview():
     )
 
 
+@bp.get('/billing/usage')
+@login_required
+def billing_usage_report():
+    from app.services.usage_summary_service import workspace_monthly_report
+    _require_billing_access()
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+    month = request.args.get('month', current_month)
+    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month) or month.startswith('0000') or month > current_month:
+        abort(400, description='Choose a valid month through the current billing month.')
+    report = workspace_monthly_report(organization, datetime.strptime(month, '%Y-%m'))
+    return render_template('billing/usage_report.html', report=report, month=month, current_month=current_month)
+
+
 @bp.route('/billing/checkout', methods=['GET', 'POST'])
 @login_required
 def billing_checkout():
