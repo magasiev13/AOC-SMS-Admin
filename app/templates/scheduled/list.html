@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
+{% macro reminder_label(msg) %}
+{% if is_event_reminder is defined and is_event_reminder(msg) %}
+<div class="small">Automatic reminder · {{ msg.automation_kind|replace('_', ' ')|title }}</div>
+{% set est = reminder_estimates.get(msg.id) %}
+{% if est %}<div class="small text-muted">{{ est.recipients }} eligible now · {{ est.segments }} estimated segment{{ 's' if est.segments != 1 }}</div>{% endif %}
+{% endif %}
+{% endmacro %}
+
 {% block title %}Scheduled Messages - {{ product_name }}{% endblock %}
 
 {% block page_title %}Scheduled Messages{% endblock %}
@@ -83,7 +91,7 @@
                         <input class="form-check-input js-select-row" type="checkbox" id="pending-select-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">
-                        <strong>{{ msg.scheduled_at|localtime }}</strong>
+                        <strong>{{ msg.scheduled_at|localtime }}</strong>{{ reminder_label(msg) }}
                     </td>
                     <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
                         {% if msg.test_mode %}
@@ -102,11 +110,11 @@
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
-                            <button type="button" class="btn btn-sm btn-outline-warning"
+                            {% if current_user.effective_role == 'admin' %}<button type="button" class="btn btn-sm btn-outline-warning"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
-                                    data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
-                                <i class="bi bi-x-circle"></i> Cancel
-                            </button>
+                                    data-action="{{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}" data-form-id="cancel-scheduled-{{ msg.id }}">
+                                <i class="bi bi-x-circle"></i> {{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}
+                            </button>{% endif %}
                         </div>
                         <form id="cancel-scheduled-{{ msg.id }}" method="POST" 
                               action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
@@ -134,7 +142,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>{{ reminder_label(msg) }}
                     <div class="text-muted small">
                         {% if msg.test_mode %}
                         <span class="badge bg-warning text-dark me-1">Test</span>
@@ -151,11 +159,11 @@
                         aria-controls="scheduledPreview{{ msg.id }}">
                     <i class="bi bi-layout-sidebar-inset"></i> Preview
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-warning"
+                {% if current_user.effective_role == 'admin' %}<button type="button" class="btn btn-sm btn-outline-warning"
                         data-bs-toggle="modal" data-bs-target="#actionModal"
-                        data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
-                    <i class="bi bi-x-circle"></i> Cancel
-                </button>
+                        data-action="{{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}" data-form-id="cancel-scheduled-{{ msg.id }}">
+                    <i class="bi bi-x-circle"></i> {{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}
+                </button>{% endif %}
             </div>
         </div>
         {% endfor %}
@@ -239,7 +247,7 @@
                         <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
+                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}{{ reminder_label(msg) }}</td>
                     <td data-sort-value="{{ msg.status or 'sent' }}">
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
@@ -328,7 +336,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>{{ reminder_label(msg) }}
                     <div class="text-muted small">
                         {{ msg.status|capitalize }}
                         <span class="mx-1">·</span>
@@ -483,7 +491,7 @@
             const formId = button.getAttribute('data-form-id');
             
             document.getElementById('actionModalTitle').textContent = action === 'Cancel remaining sends' ? 'Cancel Remaining Sends' : 'Confirm ' + action;
-            document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action + ' this scheduled message?';
+            document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action === 'Skip reminder' ? 'Skip this automatic reminder for this event?' : action + ' this scheduled message?';
             formToSubmit = document.getElementById(formId);
         });
         

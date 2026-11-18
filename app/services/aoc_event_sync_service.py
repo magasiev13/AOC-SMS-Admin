@@ -669,6 +669,22 @@ def _automation_key(event: Event, automation_kind: str) -> str:
     return f"{external_source}:{external_event_id}:{event.id}:{automation_kind}"
 
 
+def event_reminder_schedules(event):
+    if event.external_source not in WORDPRESS_EVENT_SYNC_SOURCES:
+        return []
+    kinds = EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS
+    return ScheduledMessage.query.filter(
+        ScheduledMessage.organization_id == event.organization_id,
+        ScheduledMessage.automation_source == _automation_source_for_event(event),
+        ScheduledMessage.automation_key.in_([_automation_key(event, kind) for kind in kinds]),
+    ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).all()
+
+
+def is_event_reminder(schedule):
+    return (schedule.automation_source in {AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE}
+            and schedule.automation_kind in EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS)
+
+
 def _automation_source_for_event(event: Event) -> str:
     return AOC_AUTOMATION_SOURCE if event.external_source == AOC_EXTERNAL_SOURCE else EVENT_SYNC_AUTOMATION_SOURCE
 

@@ -111,6 +111,8 @@ from app.services.aoc_event_sync_service import (
     decrypted_event_sync_secret,
     event_sync_integration_for_webhook,
     event_sync_setup_view,
+    event_reminder_schedules,
+    is_event_reminder,
     parse_aoc_webhook_json,
     process_event_sync_payload,
     process_aoc_event_sync_payload,
@@ -8556,8 +8558,10 @@ def event_detail(event_id):
     booking_query = EventBooking.query.filter_by(event_id=event.id).order_by(EventBooking.id.desc())
     booking_total = booking_query.count()
     bookings = booking_query.offset((booking_page - 1) * 100).limit(100).all()
+    reminders = event_reminder_schedules(event)
     return render_template(
         'events/detail.html',
+        reminders=reminders, reminder_estimates=_automatic_reminder_estimates(reminders),
         event=event,
         registrations=registrations,
         registration_total=registration_total,
@@ -9235,6 +9239,34 @@ def _apply_scheduled_search_filter(query, search: str):
     )
 
 
+def _automatic_reminder_estimates(schedules):
+    upcoming = [schedule for schedule in schedules if schedule.status == 'pending' and is_event_reminder(schedule)]
+    if not upcoming:
+        return {}
+    _, recipients, _, _ = _resolve_send_audience({'target': 'community', 'event_id': None, 'test_mode': False})
+    from app.utils import sms_estimate_groups
+    groups = sms_estimate_groups(recipients)
+    samples = [recipient for recipient, _ in groups]
+    results = {}
+    for schedule in upcoming:
+        estimate = analyze_personalized_sms_blast(schedule.message_body, samples)
+        segments = sum(entry['segment_count'] * count for entry, (_, count) in zip(estimate['per_recipient'], groups))
+        results[schedule.id] = {'recipients': len(recipients), 'segments': segments}
+    return results
+
+
+def _cancel_workspace_schedule(schedule):
+    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation
+    if not apply_scheduled_cancellation(schedule):
+        return False
+    if is_event_reminder(schedule) and schedule.organization_id:
+        db.session.add(OrganizationSettingsAuditLog(
+            organization_id=schedule.organization_id, actor_user_id=current_user.id, category='scheduling',
+            action='reminder_skipped', metadata_json=json.dumps({'scheduled_id': schedule.id, 'kind': schedule.automation_kind}),
+        ))
+    return True
+
+
 @bp.route('/scheduled')
 @login_required
 def scheduled_list():
@@ -9256,7 +9288,7 @@ def scheduled_list():
     from app.models import FeedbackInvitation
     invitation_schedule_ids = {row[0] for row in FeedbackInvitation.query.with_entities(FeedbackInvitation.scheduled_message_id).all()}
     protected_delete_ids = retained_history_ids | invitation_schedule_ids | {
-        message.id for message in past if message.status in {'pending', 'processing', 'held'}
+        message.id for message in past if is_event_reminder(message) or message.status in {'pending', 'processing', 'held'}
     }
 
     return render_template(
@@ -9265,6 +9297,8 @@ def scheduled_list():
         past=past,
         now=now,
         pending_ids=pending_ids,
+        reminder_estimates=_automatic_reminder_estimates(pending),
+        is_event_reminder=is_event_reminder,
         protected_delete_ids=protected_delete_ids,
         search=search
     )
@@ -9275,12 +9309,12 @@ def scheduled_list():
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
-    if not apply_scheduled_cancellation(scheduled):
+    if not _cancel_workspace_schedule(scheduled):
         db.session.commit()
         flash('Only pending, processing or held messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
@@ -9300,6 +9334,9 @@ def scheduled_delete(scheduled_id):
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
+    if is_event_reminder(scheduled):
+        flash('Automatic reminder history is retained for future event syncs.', 'warning')
+        return redirect(url_for('main.scheduled_list'))
     if scheduled.status in {'pending', 'processing', 'held'}:
         db.session.commit()
         flash('Cancel this scheduled message before deleting it.', 'error')
@@ -9346,7 +9383,7 @@ def scheduled_bulk_delete():
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
         if scheduled is None:
             continue
-        if scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
+        if is_event_reminder(scheduled) or scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
             scheduled_message_id=scheduled.id,
         ).first() is not None:
             protected += 1
@@ -9356,7 +9393,7 @@ def scheduled_bulk_delete():
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
     if protected:
-        flash(f'{protected} active message(s) or messages with retained dispatch history were kept.', 'warning')
+        flash(f'{protected} active or retained message(s) were kept.', 'warning')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -9379,7 +9416,7 @@ def scheduled_bulk_cancel():
         flash('No messages selected.', 'error')
         return redirect(url_for('main.scheduled_list'))
 
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     selected = _tenant_bulk_filter(
         ScheduledMessage.query.filter(
@@ -9390,7 +9427,7 @@ def scheduled_bulk_cancel():
     updated = 0
     for selected_message in selected:
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
-        if scheduled is not None and apply_scheduled_cancellation(scheduled):
+        if scheduled is not None and _cancel_workspace_schedule(scheduled):
             updated += 1
         db.session.flush()
     db.session.commit()

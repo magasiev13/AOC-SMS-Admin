@@ -256,3 +256,42 @@ def test_workspace_reminder_controls_reschedule_future_sync_and_preserve_skips(u
     assert b'unrecognized placeholder' in ux.client.post('/settings/scheduling', data=invalid).data
     login(ux, role='staff')
     assert ux.client.post('/settings/scheduling', data=form).status_code == 403
+
+
+def test_event_reminder_skip_is_authorized_audited_and_durable_on_both_pages(ux):
+    from app.models import Event, OrganizationSettingsAuditLog, ScheduledMessage
+    from app.services.aoc_event_sync_service import refresh_workspace_reminders
+    from app.tenant import organization_context
+
+    login(ux)
+    permitted_contact(ux)
+    with organization_context(ux.org_id):
+        event = Event(title='Future event', date=date(2091, 6, 10), external_source='aoc-wordpress',
+                      external_event_id='42', external_status='publish', external_timezone='UTC',
+                      external_start_at=datetime(2091, 6, 10, 20), external_url='https://example.test/event')
+        ux.db.session.add(event)
+        ux.db.session.flush()
+        refresh_workspace_reminders(ux.db.session.get(ux.models.Organization, ux.org_id))
+        ux.db.session.commit()
+        row = ScheduledMessage.query.filter_by(automation_kind='one_day').one()
+        row_id, event_id = row.id, event.id
+
+    for path in ('/scheduled', f'/events/{event_id}'):
+        page = ux.client.get(path)
+        assert page.status_code == 200
+        assert '1 eligible now · 1 estimated segment' in page.get_data(as_text=True)
+        assert b'Skip reminder' in page.data
+    login(ux, role='staff')
+    assert b'Skip reminder' not in ux.client.get(f'/events/{event_id}').data
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 403
+    login(ux)
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 302
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 302
+    assert ux.client.post(f'/scheduled/{row_id}/delete').status_code == 302
+    assert ux.client.post('/scheduled/bulk-delete', data={'scheduled_ids':str(row_id)}).status_code == 302
+    with organization_context(ux.org_id):
+        refresh_workspace_reminders(ux.db.session.get(ux.models.Organization, ux.org_id))
+        assert ux.db.session.get(ScheduledMessage, row_id).status == 'cancelled'
+        audit = OrganizationSettingsAuditLog.query.filter_by(action='reminder_skipped').one()
+        assert audit.organization_id == ux.org_id and audit.actor_user_id == ux.users['owner']
+        assert json.loads(audit.metadata_json) == {'scheduled_id': row_id, 'kind': 'one_day'}
