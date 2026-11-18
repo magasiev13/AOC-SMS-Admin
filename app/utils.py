@@ -214,6 +214,31 @@ def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | No
     }
 
 
+def _sms_name_metrics(value: str) -> tuple[int, int, bool]:
+    gsm_units = sum(1 if char in _GSM_7_BASIC_CHARSET else
+                    2 if char in _GSM_7_EXTENDED_CHARSET else 0 for char in value)
+    unicode_required = any(char not in _GSM_7_BASIC_CHARSET and
+                           char not in _GSM_7_EXTENDED_CHARSET for char in value)
+    utf16_units = len(value.encode('utf-16-be', errors='surrogatepass')) // 2
+    return gsm_units, utf16_units, unicode_required
+
+
+def _sms_recipient_shape(recipient):
+    return (_sms_name_metrics(render_message_template('{first_name}', recipient)) +
+            _sms_name_metrics(render_message_template('{full_name}', recipient)))
+
+
+def sms_estimate_groups(recipients):
+    """One representative per distinct SMS length/encoding pair for repeated estimates."""
+    representatives = {}
+    counts = Counter()
+    for recipient in recipients:
+        shape = _sms_recipient_shape(recipient)
+        representatives.setdefault(shape, recipient)
+        counts[shape] += 1
+    return [(representative, counts[shape]) for shape, representative in representatives.items()]
+
+
 def build_sms_audience_profile(recipients: list[dict] | None) -> list[dict[str, object]]:
     """Group rendered name lengths without exposing a contact or its text.
 
@@ -221,19 +246,7 @@ def build_sms_audience_profile(recipients: list[dict] | None) -> list[dict[str, 
     when a draft uses both tokens. Name text is intentionally not normalized,
     matching the substitutions made after a message body is normalized.
     """
-    def metrics(value: str) -> tuple[int, int, bool]:
-        gsm_units = sum(1 if char in _GSM_7_BASIC_CHARSET else
-                        2 if char in _GSM_7_EXTENDED_CHARSET else 0 for char in value)
-        unicode_required = any(char not in _GSM_7_BASIC_CHARSET and
-                               char not in _GSM_7_EXTENDED_CHARSET for char in value)
-        utf16_units = len(value.encode('utf-16-be', errors='surrogatepass')) // 2
-        return gsm_units, utf16_units, unicode_required
-
-    grouped = Counter(
-        metrics(render_message_template('{first_name}', recipient)) +
-        metrics(render_message_template('{full_name}', recipient))
-        for recipient in recipients or []
-    )
+    grouped = Counter(_sms_recipient_shape(recipient) for recipient in recipients or [])
     return [
         {
             'count': count,

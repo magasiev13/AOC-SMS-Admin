@@ -1,0 +1,21 @@
+<section class="workspace-panel p-3 mt-3" aria-labelledby="event-reminder-heading">
+    <h2 class="h5" id="event-reminder-heading">Automatic community reminders</h2>
+    <ul class="list-group list-group-flush">
+    {% for reminder in reminders %}
+        <li class="list-group-item d-flex flex-wrap gap-3 align-items-center justify-content-between">
+            <div>
+                <strong>{{ reminder.automation_kind|replace('_', ' ')|title }}</strong> · {{ reminder.status|capitalize }}
+                <div>{{ reminder.scheduled_at|localtime }}</div>
+                {% set estimate = reminder_estimates.get(reminder.id) %}
+                {% if estimate %}<small>{{ estimate.recipients }} eligible now · {{ estimate.segments }} estimated segment{{ 's' if estimate.segments != 1 }}</small>{% endif %}
+            </div>
+            {% if reminder.status == 'pending' and current_user.effective_role == 'admin' %}
+            <form method="post" action="{{ url_for('main.scheduled_cancel', scheduled_id=reminder.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Skip reminder</button>
+            </form>
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</section>

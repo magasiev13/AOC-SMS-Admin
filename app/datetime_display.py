@@ -2,16 +2,26 @@
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from flask import current_app
+from flask import current_app, g
+
+from app.tenant import get_current_organization_id, saas_mode_enabled
 
 
-def workspace_timezone():
-    """Resolve the workspace zone for both scheduling and display.
-
-    Keep this boundary shared so a future organization setting can replace the
-    configured default without changing schedule entry or formatting callers.
-    """
-    name = str(current_app.config.get('APP_TIMEZONE') or 'UTC').strip()
+def workspace_timezone(organization=None):
+    """Resolve explicit worker and request contexts through the same workspace clock."""
+    if organization is None and saas_mode_enabled():
+        org_id = get_current_organization_id()
+        if org_id:
+            from app import db
+            from app.models import Organization
+            # Keep a strong reference during rendering so 50 result rows require one lookup.
+            organization = getattr(g, '_clock_organization', None)
+            if organization is None or organization.id != org_id:
+                organization = g._clock_organization = db.session.get(Organization, org_id)
+    name = getattr(organization, 'timezone_name', None)
+    if not name and getattr(organization, 'slug', None) == 'armenians-of-colorado':
+        name = 'America/Denver'
+    name = str(name or current_app.config.get('APP_TIMEZONE') or 'UTC').strip()
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):

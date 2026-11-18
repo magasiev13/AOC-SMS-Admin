@@ -40,6 +40,7 @@
             <div class="workspace-panel__body">
                 <div class="billing-summary-note" {% if subscription_view.billing_incident %}role="alert"{% endif %}>{{ subscription_view.next_step }}</div>
                 {% include "includes/workspace_usage.html" %}
+                <a class="btn btn-outline-secondary btn-sm mt-2" href="{{ url_for('main.billing_usage_report') }}">Monthly usage report</a>
                 {% include "includes/billing_plan_facts.html" %}
                 {% if subscription_view.is_complimentary %}
                 <div class="form-text mt-3">Platform billing is covered. Messaging provider readiness is checked separately.</div>

@@ -9,16 +9,21 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from flask import current_app
+
 from app import db
+from app.datetime_display import workspace_timezone
 from app.models import (
     CommunityMember,
     Event,
     EventRegistration,
+    ExternalWebhookDelivery,
     Organization,
     OrganizationEventSyncIntegration,
     ScheduledMessage,
     utc_now,
 )
+from app.services.reminder_preferences import REMINDERS, TOKEN, reminder_preferences
 from app.services.provider_secret_service import decrypt_provider_secret, encrypt_provider_secret
 from app.tenant import organization_context, without_tenant_scope
 from app.utils import normalize_phone, normalize_sms_body, validate_phone
@@ -35,7 +40,8 @@ AOC_UNSUBSCRIBE_FOOTER = "\n\nReply STOP to unsubscribe."
 ACTIVE_BOOKING_STATUSES = {"active", "approved", "pending", "reserved", "submitted", "completed", "paid"}
 CANCELLED_BOOKING_STATUSES = {"cancelled", "canceled", "rejected", "deleted", "inactive"}
 PENDING_AUTO_STATUSES = {"pending"}
-EVENT_REMINDER_KINDS = ("two_week", "seven_day", "one_day", "day_of")
+EVENT_REMINDER_KINDS = tuple(REMINDERS)
+DISABLED_REMINDER_REASON = "Disabled by workspace reminder preferences."
 LEGACY_EVENT_REMINDER_KINDS = ("invite",)
 
 
@@ -125,8 +131,19 @@ def event_sync_setup_view(organization: Organization, base_url: str, provider: s
     endpoint = _event_sync_webhook_url(base_url, organization.slug, provider)
     enabled = integration.enabled if integration is not None else False
     has_secret = bool(integration.webhook_secret_encrypted) if integration is not None else False
+    managed_wordpress = None
+    if organization.slug == current_app.config.get('AOC_EVENTS_ORGANIZATION_SLUG'):
+        recent = db.session.query(db.func.max(ExternalWebhookDelivery.processed_at)).filter_by(
+            organization_id=organization.id, provider='aoc_events', status='processed',
+        ).scalar()
+        enabled_on_host = bool(current_app.config.get('AOC_EVENTS_WEBHOOK_ENABLED')
+                               and current_app.config.get('AOC_EVENTS_WEBHOOK_SECRET'))
+        if recent or enabled_on_host:
+            managed_wordpress = {'enabled': enabled_on_host, 'last_activity': recent,
+                                 'endpoint': f"{base_url.rstrip('/')}/webhooks/aoc/events"}
     return {
         "enabled": enabled,
+        "managed_wordpress": managed_wordpress,
         "provider": provider,
         "endpoint": endpoint,
         "source_namespace_prefix": f"app:{integration.id}:" if integration is not None and provider == "app" else None,
@@ -299,7 +316,8 @@ def _process_event_sync_payload_for_organization(
     if source not in WORDPRESS_EVENT_SYNC_SOURCES:
         raise AocEventSyncPayloadError(f"Unsupported event sync source {source!r}.")
 
-    organization = _organization_for_id(organization_id)
+    # Serialize preference edits and webhook updates before either path locks a schedule.
+    organization = Organization.query.filter_by(id=organization_id).populate_existing().with_for_update().one()
     received_at_utc = _as_utc_naive(received_at)
     summary: dict[str, Any] = {
         "organization_id": organization.id,
@@ -559,20 +577,29 @@ def _delete_event_registration_for_booking(event: Event, payload: dict[str, Any]
 
 
 def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str, Any]) -> None:
-    reminder_specs = (
-        ("two_week", _days_before_scheduled_at(event, 14), _before_event_message(event, "two weeks away")),
-        ("seven_day", _days_before_scheduled_at(event, 7), _before_event_message(event, "one week away")),
-        ("one_day", _days_before_scheduled_at(event, 1), _before_event_message(event, "tomorrow")),
-        ("day_of", _day_of_scheduled_at(event), _day_of_message(event)),
-    )
-
-    for automation_kind, scheduled_at, message_body in reminder_specs:
+    organization = _organization_for_id(event.organization_id)
+    sender = "AOC" if organization.slug == "armenians-of-colorado" else organization.name
+    zone = workspace_timezone(organization)
+    preferences = reminder_preferences(organization)
+    for automation_kind, (days, _, when, _, _) in REMINDERS.items():
+        settings = preferences[automation_kind]
+        scheduled_at = _days_before_scheduled_at(event, days, zone, time.fromisoformat(settings['time']))
+        values = {'org': sender, 'event': event.title, 'when': when, 'url': event.external_url or '',
+                  'first_name': '{first_name}', 'event_time': _event_time_label(event)}
+        body = TOKEN.sub(lambda match: values[match.group(1)], settings['body'])
+        message_body = normalize_sms_body(body.rstrip() + AOC_UNSUBSCRIBE_FOOTER)
         automation_key = _automation_key(event, automation_kind)
         automation_source = _automation_source_for_event(event)
         scheduled = ScheduledMessage.query.filter_by(
             automation_source=automation_source,
             automation_key=automation_key,
-        ).first()
+        ).populate_existing().with_for_update().first()
+        if not settings['enabled']:
+            if scheduled is not None and scheduled.status == 'pending':
+                scheduled.status = 'cancelled'
+                scheduled.error_message = DISABLED_REMINDER_REASON
+                summary["scheduled_cancelled"] += 1
+            continue
         if scheduled_at is None or scheduled_at <= received_at:
             if scheduled is not None and scheduled.status in PENDING_AUTO_STATUSES:
                 scheduled.status = "cancelled"
@@ -580,7 +607,8 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
                 summary["scheduled_cancelled"] += 1
             continue
         if scheduled is not None and scheduled.status not in PENDING_AUTO_STATUSES:
-            continue
+            if scheduled.status != 'cancelled' or scheduled.error_message != DISABLED_REMINDER_REASON:
+                continue
         if scheduled is None:
             scheduled = ScheduledMessage(
                 scheduled_at=scheduled_at,
@@ -606,6 +634,17 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
             summary["scheduled_updated"] += 1
 
 
+def refresh_workspace_reminders(organization):
+    now = _as_utc_naive(utc_now())
+    summary = {'scheduled_created': 0, 'scheduled_updated': 0, 'scheduled_cancelled': 0}
+    for event in Event.query.filter(
+        Event.organization_id == organization.id, Event.external_source.in_(WORDPRESS_EVENT_SYNC_SOURCES),
+        Event.external_status == 'publish', Event.external_start_at > now,
+    ).order_by(Event.id):
+        _sync_event_reminders(event, now, summary)
+    return summary
+
+
 def _cancel_pending_event_reminders(event: Event) -> int:
     automation_keys = [
         _automation_key(event, automation_kind)
@@ -628,6 +667,22 @@ def _automation_key(event: Event, automation_kind: str) -> str:
     external_event_id = event.external_event_id or str(event.id)
     external_source = event.external_source or AOC_EXTERNAL_SOURCE
     return f"{external_source}:{external_event_id}:{event.id}:{automation_kind}"
+
+
+def event_reminder_schedules(event):
+    if event.external_source not in WORDPRESS_EVENT_SYNC_SOURCES:
+        return []
+    kinds = EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS
+    return ScheduledMessage.query.filter(
+        ScheduledMessage.organization_id == event.organization_id,
+        ScheduledMessage.automation_source == _automation_source_for_event(event),
+        ScheduledMessage.automation_key.in_([_automation_key(event, kind) for kind in kinds]),
+    ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).all()
+
+
+def is_event_reminder(schedule):
+    return (schedule.automation_source in {AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE}
+            and schedule.automation_kind in EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS)
 
 
 def _automation_source_for_event(event: Event) -> str:
@@ -669,31 +724,17 @@ def _event_source_for_booking_source(source: str) -> str:
     return source
 
 
-def _days_before_scheduled_at(event: Event, days_before: int) -> datetime | None:
+def _days_before_scheduled_at(event: Event, days_before: int, zone=None, clock=time(hour=9)) -> datetime | None:
     local_start = _event_local_start(event)
+    if zone is not None:
+        local_start = local_start.astimezone(zone)
     reminder_date = local_start.date() - timedelta(days=days_before)
-    reminder_local = datetime.combine(reminder_date, time(hour=9), tzinfo=local_start.tzinfo)
+    reminder_local = datetime.combine(reminder_date, clock, tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 
 
-def _day_of_scheduled_at(event: Event) -> datetime | None:
-    local_start = _event_local_start(event)
-    reminder_local = datetime.combine(local_start.date(), time(hour=8), tzinfo=local_start.tzinfo)
-    return _to_utc_naive(reminder_local)
-
-
-def _before_event_message(event: Event, timing_label: str) -> str:
-    return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is {timing_label}. "
-        f"Details and registration: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
-    )
-
-
-def _day_of_message(event: Event) -> str:
-    return normalize_sms_body(
-        f"Hi {{first_name}}, AOC reminder: {event.title} is today at {_event_time_label(event)}. "
-        f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
-    )
+def _day_of_scheduled_at(event: Event, zone=None) -> datetime | None:
+    return _days_before_scheduled_at(event, 0, zone, time(hour=8))
 
 
 def _event_time_label(event: Event) -> str:

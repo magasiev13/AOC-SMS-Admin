@@ -9,7 +9,7 @@ if (actionModal) {
         const formId = button.getAttribute('data-form-id');
 
         document.getElementById('actionModalTitle').textContent = action === 'Cancel remaining sends' ? 'Cancel Remaining Sends' : 'Confirm ' + action;
-        document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action + ' this scheduled message?';
+        document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action === 'Skip reminder' ? 'Skip this automatic reminder for this event?' : action + ' this scheduled message?';
         formToSubmit = document.getElementById(formId);
     });
 

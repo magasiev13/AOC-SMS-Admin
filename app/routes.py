@@ -68,6 +68,7 @@ from app.models import (
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationSubscription,
+    OrganizationSettingsAuditLog,
     PilotApplication,
     ScheduledMessage,
     StripeCheckoutSession,
@@ -110,6 +111,8 @@ from app.services.aoc_event_sync_service import (
     decrypted_event_sync_secret,
     event_sync_integration_for_webhook,
     event_sync_setup_view,
+    event_reminder_schedules,
+    is_event_reminder,
     parse_aoc_webhook_json,
     process_event_sync_payload,
     process_aoc_event_sync_payload,
@@ -2887,11 +2890,14 @@ def _event_sync_surface_view(
     integration_view: dict,
 ) -> dict:
     enabled_label = 'Enabled' if integration_view['enabled'] else 'Disabled'
-    last_activity = (
-        integration_view['last_event_synced_at']
-        or integration_view['last_signup_synced_at']
-        or integration_view['last_reconcile_synced_at']
-    )
+    managed = integration_view.get('managed_wordpress')
+    managed_active = managed and managed['enabled']
+    if managed_active and not integration_view['enabled']:
+        enabled_label = 'Managed WordPress enabled'
+    last_activity = max((value for value in (
+        integration_view['last_event_synced_at'], integration_view['last_signup_synced_at'],
+        integration_view['last_reconcile_synced_at'], managed and managed['last_activity'],
+    ) if value), default=None)
     return _surface_view(
         eyebrow='Integrations',
         title='App Integrations',
@@ -2901,7 +2907,7 @@ def _event_sync_surface_view(
             _surface_stat('Status', enabled_label, 'Connected app' if integration_view['provider'] == 'app' else 'WordPress connection'),
             _surface_stat(
                 'Secret',
-                'Ready' if integration_view['has_secret'] else 'Not generated',
+                'Ready' if integration_view['has_secret'] else ('Managed on server' if managed_active else 'Not generated'),
                 'Webhook signing',
             ),
             _surface_stat(
@@ -2924,6 +2930,12 @@ def _settings_surface_view(organization: Organization) -> dict:
 
 def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
     cards = [
+        {
+            'title': 'Scheduling preferences',
+            'description': 'Choose the clock used to enter schedules and display message times.',
+            'icon': 'bi-clock', 'href': url_for('main.schedule_preferences'),
+            'action': 'Manage scheduling',
+        },
         {
             'title': 'App Integrations',
             'description': 'Optional: bring events and registrations in from another app. Your developer configures the connection.',
@@ -5903,6 +5915,47 @@ def settings_home():
     )
 
 
+@bp.route('/settings/scheduling', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def schedule_preferences():
+    from zoneinfo import available_timezones
+
+    organization = _current_organization()
+    if not saas_mode_enabled() or current_user.is_platform_admin or organization is None:
+        abort(404)
+    from app.services.aoc_event_sync_service import refresh_workspace_reminders
+    from app.services.reminder_preferences import REMINDERS, parse_reminder_preferences, reminder_preferences
+
+    zones = sorted(available_timezones())
+    if request.method == 'POST':
+        organization = Organization.query.filter_by(id=organization.id).populate_existing().with_for_update().one()
+        try:
+            if request.form.get('section') == 'reminders':
+                organization.reminder_preferences = parse_reminder_preferences(request.form)
+                metadata = refresh_workspace_reminders(organization)
+                action = 'reminders_updated'
+            else:
+                selected = request.form.get('timezone', '').strip()
+                if selected not in zones or len(selected) > 64:
+                    raise ValueError('Select a listed time zone.')
+                organization.timezone_name = selected
+                metadata = {'timezone': selected}
+                action = 'updated'
+            db.session.add(OrganizationSettingsAuditLog(
+                organization_id=organization.id, actor_user_id=current_user.id,
+                category='scheduling', action=action, metadata_json=json.dumps(metadata),
+            ))
+            db.session.commit()
+            flash('Scheduling preferences saved.', 'success')
+            return redirect(url_for('main.schedule_preferences'))
+        except ValueError as error:
+            db.session.rollback()
+            flash(str(error), 'error')
+    return render_template('settings/scheduling.html', zones=zones, selected=workspace_timezone_name(),
+                           definitions=REMINDERS, preferences=reminder_preferences(organization))
+
+
 @bp.route('/settings/test-recipients', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
@@ -7572,6 +7625,22 @@ def billing_overview():
     )
 
 
+@bp.get('/billing/usage')
+@login_required
+def billing_usage_report():
+    from app.services.usage_summary_service import workspace_monthly_report
+    _require_billing_access()
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+    month = request.args.get('month', current_month)
+    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month) or month.startswith('0000') or month > current_month:
+        abort(400, description='Choose a valid month through the current billing month.')
+    report = workspace_monthly_report(organization, datetime.strptime(month, '%Y-%m'))
+    return render_template('billing/usage_report.html', report=report, month=month, current_month=current_month)
+
+
 @bp.route('/billing/checkout', methods=['GET', 'POST'])
 @login_required
 def billing_checkout():
@@ -8607,8 +8676,10 @@ def event_detail(event_id):
     booking_query = EventBooking.query.filter_by(event_id=event.id).order_by(EventBooking.id.desc())
     booking_total = booking_query.count()
     bookings = booking_query.offset((booking_page - 1) * 100).limit(100).all()
+    reminders = event_reminder_schedules(event)
     return render_template(
         'events/detail.html',
+        reminders=reminders, reminder_estimates=_automatic_reminder_estimates(reminders),
         event=event,
         registrations=registrations,
         registration_total=registration_total,
@@ -9286,6 +9357,34 @@ def _apply_scheduled_search_filter(query, search: str):
     )
 
 
+def _automatic_reminder_estimates(schedules):
+    upcoming = [schedule for schedule in schedules if schedule.status == 'pending' and is_event_reminder(schedule)]
+    if not upcoming:
+        return {}
+    _, recipients, _, _ = _resolve_send_audience({'target': 'community', 'event_id': None, 'test_mode': False})
+    from app.utils import sms_estimate_groups
+    groups = sms_estimate_groups(recipients)
+    samples = [recipient for recipient, _ in groups]
+    results = {}
+    for schedule in upcoming:
+        estimate = analyze_personalized_sms_blast(schedule.message_body, samples)
+        segments = sum(entry['segment_count'] * count for entry, (_, count) in zip(estimate['per_recipient'], groups))
+        results[schedule.id] = {'recipients': len(recipients), 'segments': segments}
+    return results
+
+
+def _cancel_workspace_schedule(schedule):
+    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation
+    if not apply_scheduled_cancellation(schedule):
+        return False
+    if is_event_reminder(schedule) and schedule.organization_id:
+        db.session.add(OrganizationSettingsAuditLog(
+            organization_id=schedule.organization_id, actor_user_id=current_user.id, category='scheduling',
+            action='reminder_skipped', metadata_json=json.dumps({'scheduled_id': schedule.id, 'kind': schedule.automation_kind}),
+        ))
+    return True
+
+
 @bp.route('/scheduled')
 @login_required
 def scheduled_list():
@@ -9309,7 +9408,7 @@ def scheduled_list():
     from app.models import FeedbackInvitation
     invitation_schedule_ids = {row[0] for row in FeedbackInvitation.query.with_entities(FeedbackInvitation.scheduled_message_id).all()}
     protected_delete_ids = retained_history_ids | invitation_schedule_ids | {
-        message.id for message in past if message.status in {'pending', 'processing', 'held'}
+        message.id for message in past if is_event_reminder(message) or message.status in {'pending', 'processing', 'held'}
     }
 
     return render_template(
@@ -9318,6 +9417,8 @@ def scheduled_list():
         past=past,
         now=now,
         pending_ids=pending_ids,
+        reminder_estimates=_automatic_reminder_estimates(pending),
+        is_event_reminder=is_event_reminder,
         protected_delete_ids=protected_delete_ids,
         search=search
     )
@@ -9328,12 +9429,12 @@ def scheduled_list():
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
-    if not apply_scheduled_cancellation(scheduled):
+    if not _cancel_workspace_schedule(scheduled):
         db.session.commit()
         flash('Only pending, processing or held messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
@@ -9353,6 +9454,9 @@ def scheduled_delete(scheduled_id):
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
+    if is_event_reminder(scheduled):
+        flash('Automatic reminder history is retained for future event syncs.', 'warning')
+        return redirect(url_for('main.scheduled_list'))
     if scheduled.status in {'pending', 'processing', 'held'}:
         db.session.commit()
         flash('Cancel this scheduled message before deleting it.', 'error')
@@ -9399,7 +9503,7 @@ def scheduled_bulk_delete():
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
         if scheduled is None:
             continue
-        if scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
+        if is_event_reminder(scheduled) or scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
             scheduled_message_id=scheduled.id,
         ).first() is not None:
             protected += 1
@@ -9409,7 +9513,7 @@ def scheduled_bulk_delete():
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
     if protected:
-        flash(f'{protected} active message(s) or messages with retained dispatch history were kept.', 'warning')
+        flash(f'{protected} active or retained message(s) were kept.', 'warning')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -9432,7 +9536,7 @@ def scheduled_bulk_cancel():
         flash('No messages selected.', 'error')
         return redirect(url_for('main.scheduled_list'))
 
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     selected = _tenant_bulk_filter(
         ScheduledMessage.query.filter(
@@ -9443,7 +9547,7 @@ def scheduled_bulk_cancel():
     updated = 0
     for selected_message in selected:
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
-        if scheduled is not None and apply_scheduled_cancellation(scheduled):
+        if scheduled is not None and _cancel_workspace_schedule(scheduled):
             updated += 1
         db.session.flush()
     db.session.commit()
