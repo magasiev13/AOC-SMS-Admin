@@ -242,7 +242,7 @@ test.describe('native HTML fallback', () => {
   }
 
   test('event sections and registration disclosures remain usable without JavaScript', async ({ page }) => {
-    await nativeLogin(page, 'owner@browser.test', 'Owner-pass1!', /\/dashboard$/);
+    await nativeLogin(page, 'owner@browser.test', 'Owner-pass1!', /\/home$/);
     await page.goto('/events/1#registrations', { waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-event-panel]:visible')).toHaveCount(4);
     const tools = page.locator('[data-event-registration-tool]').filter({ has: page.locator('summary').filter({ hasText: /^Add Booking$/ }) });

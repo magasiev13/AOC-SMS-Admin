@@ -167,8 +167,8 @@ test('customer-managed owner with pending activation lands on the read-only setu
 test('customer-managed owner with active messaging lands in the workspace', async ({ page }) => {
   await login(page, 'customer-managed-ready@browser.test', 'CustomerManagedReady-pass1!');
 
-  await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
+  await expect(page).toHaveURL(/\/home$/);
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible();
 });
 
 test('live setup launch state keeps the open-workspace action visible', async ({ page }) => {

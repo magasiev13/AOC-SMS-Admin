@@ -4432,7 +4432,8 @@ def _create_send_review(form):
 @login_required
 def workspace_messages():
     """Page a combined schedule and dispatch index before loading message bodies."""
-    from app.services.event_workspace_service import REMINDER_LABELS, submission_outcomes
+    from app.services.delivery_status_service import batch_message_results
+    from app.services.event_workspace_service import REMINDER_LABELS
     def index_query(model, timestamp, kind):
         query = model.query.with_entities(model.id.label('id'), timestamp.label('activity_at'),
                                           literal(kind).label('kind'))
@@ -4451,6 +4452,7 @@ def workspace_messages():
     log_ids = [entry.id for entry in entries if entry.kind == 'log']
     schedule_ids = [entry.id for entry in entries if entry.kind == 'schedule']
     logs_by_id = {log.id: log for log in MessageLog.query.filter(MessageLog.id.in_(log_ids)).all()}
+    outcomes = batch_message_results(logs_by_id.values())
     schedules_by_id = {row.id: row for row in ScheduledMessage.query.filter(ScheduledMessage.id.in_(schedule_ids)).all()}
     linked = {row.message_log_id: row for row in ScheduledMessage.query.filter(ScheduledMessage.message_log_id.in_(log_ids)).all()}
     rows = []
@@ -4465,7 +4467,7 @@ def workspace_messages():
             state = 'Scheduled'
         rows.append({'body': record.message_body, 'time': entry.activity_at, 'state': state,
                      'reminder': bool(schedule and schedule.automation_kind in REMINDER_LABELS),
-                     'outcome': submission_outcomes(log) if log else None,
+                     'outcome': outcomes.get(log.id) if log else None,
                      'url': url_for('main.log_detail', log_id=log.id) if log else
                             url_for('main.scheduled_list', id=schedule.id)})
     return render_template('workspace/messages.html', rows=rows, page=page, pages=pages)

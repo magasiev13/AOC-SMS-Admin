@@ -68,7 +68,8 @@ for (const width of [1440, 390]) {
     await page.getByRole('button', { name: 'Add Contact', exact: true }).click();
     const row = (width === 390 ? page.locator('.card-list-item') : page.locator('#communityTable tbody.table-data tr')).filter({ hasText: name });
     await expect(row).toBeVisible();
-    await row.getByRole('button', { name: 'More Actions', exact: true }).click();
+    if (width === 390) await row.locator('.people-row-menu > summary').click();
+    else await row.getByRole('button', { name: 'More Actions', exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await row.getByRole('button', { name: /Block Contact/ }).click();
     await expect(page.locator('.collection-panel--results')).not.toContainText(name);
@@ -76,7 +77,7 @@ for (const width of [1440, 390]) {
     await all.focus();
     await page.keyboard.press('Enter');
     await expect(all).toHaveAttribute('aria-current', 'page');
-    await expect(row).toContainText('Unsubscribed');
+    await expect(row).toContainText('Opted out');
     await page.locator('.collection-panel--search').getByRole('textbox', { name: 'Search Contacts', exact: true }).fill(phone);
     await page.locator('.collection-panel--search').getByRole('textbox', { name: 'Search Contacts', exact: true }).press('Enter');
     await expect(page).toHaveURL(/view=all/);

@@ -377,7 +377,7 @@ def test_send_review_rechecks_withdrawal_without_replacing_frozen_audience(ux):
     ux.db.session.commit()
     permitted_contact(ux, '+17205550822')
     result = ux.client.post('/dashboard', data={**data, 'review_token': token})
-    assert result.status_code == 200 and b'No eligible recipients' in result.data
+    assert result.status_code == 200 and b'No contacts can receive this message' in result.data
     assert ux.models.OutboundRequest.query.count() == 0
 
 

@@ -608,7 +608,7 @@ class TestLogsRoutes(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("No eligible recipients were found. Review permission, unsubscribe, and suppression records.", response.get_data(as_text=True))
+        self.assertIn("No contacts can receive this message. Review permission, opt-outs and blocked numbers.", response.get_data(as_text=True))
         self.assertEqual(self.MessageLog.query.count(), 0)
 
     def test_dashboard_test_mode_requires_saved_test_recipient(self) -> None:

@@ -290,11 +290,9 @@
         </aside>
     </div>
 
-        <details class="compose-workspace-details">
+        <details class="compose-workspace-details dashboard-overview" id="workspaceOverview">
             <summary>Workspace activity and usage</summary>
     {% if config.SAAS_MODE and current_organization %}
-    <details class="dashboard-overview" id="workspaceOverview">
-    <summary class="btn btn-outline-secondary mb-2">Workspace Status and Usage</summary>
     {% call ui.workspace_summary(workspace_summary) %}
     {% if current_user_is_workspace_owner %}
     <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
@@ -309,7 +307,6 @@
     </form>
     {% endif %}
     {% endcall %}
-    </details>
     {% endif %}
 
         {% include 'includes/workspace_usage.html' %}

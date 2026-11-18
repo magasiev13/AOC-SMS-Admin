@@ -20,7 +20,7 @@ class HelpDocument(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         region = self.stack[-1][1] if self.stack else None
-        if attrs.get('aria-label') == 'Primary Navigation':
+        if attrs.get('aria-label') == 'Primary Navigation' or (tag == 'nav' and attrs.get('aria-label') == 'Workspace navigation'):
             region = len(self.current_navigation)
             self.current_navigation.append([])
         if tag == 'a':
@@ -205,11 +205,11 @@ def test_integration_and_log_detail_select_one_nav_item_and_the_correct_guide(fe
     f.db.session.add_all([log, other_log]); f.db.session.commit()
     for client, path, expected, guide in [
         (f.client, '/settings/event-sync?provider=app', '/settings', '/help#settings'),
-        (f.client, f'/logs/{log.id}', '/logs', '/help#message-history'),
-        (f.staff_client, f'/logs/{log.id}', '/logs', '/help#message-history'),
+        (f.client, f'/logs/{log.id}', '/messages', '/help#message-history'),
+        (f.staff_client, f'/logs/{log.id}', '/messages', '/help#message-history'),
     ]:
         parsed = HelpDocument(client.get(path))
-        assert parsed.current_navigation == [[expected], [expected]]
+        assert parsed.current_navigation == ([[expected], [expected], []] if expected == '/settings' else [[expected], [], [expected]])
         assert guide in parsed.links
         assert '/events' not in [link for region in parsed.current_navigation for link in region]
     assert f.client.get(f'/logs/{other_log.id}').status_code == 404

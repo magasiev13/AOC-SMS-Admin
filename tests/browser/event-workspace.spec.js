@@ -18,6 +18,7 @@ for (const width of [1440, 390]) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await login(page, 'owner@browser.test', 'Owner-pass1!');
+    await page.getByRole('link', { name: 'New message', exact: true }).click();
     const workspaceTimezone = await page.locator('#workspaceScheduleTimezone').getAttribute('data-workspace-timezone');
     expect(workspaceTimezone).toBeTruthy();
     await page.goto('/events/add');
