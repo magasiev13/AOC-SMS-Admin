@@ -246,6 +246,7 @@ from app.services.twilio_service import (
 )
 from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
+from app.services import hosted_signup_service
 from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
@@ -7297,14 +7298,43 @@ def hosted_sms_opt_in(organization_slug):
     organization = _public_organization_by_slug_or_404(organization_slug)
     onboarding = organization.a2p_onboarding
     hosted_urls = hosted_a2p_compliance_urls(organization)
+    with organization_context(organization.id):
+        signup_sources = [source for source in ConsentSource.query.filter_by(
+            organization_id=organization.id, kind='hosted', status='approved',
+        ).order_by(ConsentSource.name, ConsentSource.id) if hosted_signup_service.is_published(source, organization)]
     return render_template(
         'public/sms_compliance_page.html',
         organization=organization,
         onboarding=onboarding,
         hosted_compliance_urls=hosted_urls,
+        signup_sources=signup_sources,
         page_kind='opt_in',
         page_title='SMS Opt-In and Consent',
     )
+
+
+@bp.route('/compliance/<organization_slug>/sms/join/<int:source_id>', methods=['GET', 'POST'])
+def hosted_signup(organization_slug, source_id):
+    if not saas_mode_enabled():
+        abort(404)
+    organization = _public_organization_by_slug_or_404(organization_slug)
+    with organization_context(organization.id):
+        source = ConsentSource.query.filter_by(organization_id=organization.id, id=source_id).first_or_404()
+        if not hosted_signup_service.is_published(source, organization):
+            abort(404)
+        command = error = None
+        if request.method == 'POST':
+            phone = normalize_phone(request.form.get('phone', ''))
+            if not validate_phone(phone) or request.form.get('consent') != 'yes':
+                error = 'Enter your mobile number and choose the text updates you want.'
+            else:
+                command = hosted_signup_service.confirmation_command(source, phone)
+        response = current_app.make_response((render_template('public/hosted_signup.html', source=source,
+                                             details=source.public_details, command=command, error=error),
+                                             422 if error else 200))
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Referrer-Policy'] = 'same-origin'
+        return response
 
 
 @bp.route('/setup', methods=['GET', 'POST'])
@@ -8384,11 +8414,13 @@ def consent_sources():
         name = request.form.get('name', '').strip()
         disclosure = request.form.get('disclosure', '').strip()
         kind = request.form.get('kind')
+        help_contact = request.form.get('help_contact', '').strip()
         purpose = request.form.get('purpose')
         event = None
         if purpose == 'event':
             event = _tenant_get_or_404(Event, request.form.get('event_id', type=int))
         if (not 1 <= len(name) <= 120 or not 1 <= len(disclosure) <= 2000
+                or (kind == 'hosted' and not 3 <= len(help_contact) <= 120)
                 or kind not in {'import', 'hosted'} or purpose not in {'community', 'event'}
                 or request.form.get('attest') != 'yes'):
             flash('Enter the source, exact consent wording and purpose, and confirm the attestation.', 'error')
@@ -8396,6 +8428,7 @@ def consent_sources():
             db.session.add(ConsentSource(
                 organization_id=organization.id, name=name, disclosure=disclosure, kind=kind,
                 purpose=purpose, event_id=event.id if event else None, attested_by=current_user.id,
+                public_details={'help_contact': help_contact} if kind == 'hosted' else None,
             ))
             db.session.commit()
             flash('Source submitted for platform review.', 'success')
@@ -8418,6 +8451,14 @@ def platform_consent_sources(organization_id):
             source = query.filter_by(id=request.form.get('source_id', type=int)).with_for_update().first_or_404()
             action = request.form.get('action')
             if action == 'approve' and source.status == 'pending' and source.attested_by:
+                if source.kind == 'hosted':
+                    details = hosted_signup_service.public_details(
+                        organization, (source.public_details or {}).get('help_contact'),
+                    )
+                    if not details or request.form.get('review_public') != 'yes':
+                        flash('Verify the live sender, HELP contact, privacy policy, terms and signup wording before approval.', 'error')
+                        return redirect(url_for('main.platform_consent_sources', organization_id=organization_id))
+                    source.public_details = details
                 source.status = 'approved'
                 source.reviewed_at = utc_now()
                 source.reviewed_by = current_user.id
@@ -8430,8 +8471,11 @@ def platform_consent_sources(organization_id):
             db.session.commit()
             return redirect(url_for('main.platform_consent_sources', organization_id=organization_id))
         sources = query.order_by(ConsentSource.id.desc()).all()
+        previews = {source.id: hosted_signup_service.public_details(
+            organization, (source.public_details or {}).get('help_contact'),
+        ) for source in sources if source.kind == 'hosted' and source.status == 'pending'}
     return render_template('community/consent_sources.html', platform=True, organization=organization,
-                           sources=sources)
+                           sources=sources, previews=previews)
 
 
 @bp.route('/community/import', methods=['GET', 'POST'])
@@ -9992,7 +10036,9 @@ def twilio_delivery_webhook():
 def twilio_inbound_webhook():
     payload = request.form.to_dict(flat=True)
     messaging_profile = resolve_messaging_profile(payload) if saas_mode_enabled() else None
-    if current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
+    requires_signup_proof = bool(messaging_profile and hosted_signup_service.JOIN_COMMAND.fullmatch(
+        (payload.get('Body') or '').strip()))
+    if requires_signup_proof or current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
         signature = request.headers.get('X-Twilio-Signature')
         validation = validate_inbound_signature_detailed(
             request.url,

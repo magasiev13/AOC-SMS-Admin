@@ -91,3 +91,57 @@ def test_event_only_import_in_historical_workspace_keeps_its_scope(ux):
     assert not recipient_permission_status(ux.org_id, phone).allowed
     assert recipient_permission_status(ux.org_id, existing.phone).allowed
     assert ux.models.EventRegistration.query.count() == 0
+
+
+def test_hosted_signup_requires_review_and_same_phone_confirmation(ux, monkeypatch):
+    import re
+    from app.services import hosted_signup_service as signup
+    from app.services.inbox_service import process_inbound_sms
+    from app.services.recipient_permission_service import recipient_permission_status
+    ux.app.config.update(APP_BASE_URL='https://app.example.test')
+    login(ux)
+    assert submit_source(ux, kind='hosted', help_contact='Workspace support desk').status_code == 302
+    source = ux.models.ConsentSource.query.one()
+    path = f'/compliance/ux-fixture/sms/join/{source.id}'
+    public = ux.app.test_client()
+    assert public.get(path).status_code == 404
+    login(ux, 'platform')
+    review(ux, source)
+    assert public.get(path).status_code == 404
+    review(ux, source, review_public='yes')
+    assert path.encode() in public.get('/compliance/ux-fixture/sms/opt-in').data
+    assert b'Workspace support desk' in public.get(path).data
+    phone = '+17205550111'
+    assert public.post(path, data={'phone':phone}).status_code == 422
+    response = public.post(path, data={'phone':phone, 'consent':'yes'})
+    command = re.search(rb'<code[^>]*>(JOIN [^<]+)</code>', response.data)[1].decode()
+    assert b'sms:+17205550901?body=JOIN%20' in response.data
+    assert phone not in command and response.cache_control.no_store
+    assert public.get(path.replace('ux-fixture', 'ux-other')).status_code == 404
+    assert ux.models.CommunityMember.query.count() == 0
+    assert ux.models.RecipientPermissionEvidence.query.count() == 0
+    def payload(number, seq, command_text=command):
+        return dict(From=number, To='+17205550901', Body=command_text,
+                    MessageSid='SM'+f'{seq:032x}', AccountSid='ACisolatedux')
+    ux.app.config['TWILIO_VALIDATE_INBOUND_SIGNATURE'] = False
+    assert public.post('/webhooks/twilio/inbound', data=payload(phone, 1)).status_code == 403
+    assert process_inbound_sms(payload('+17205550110', 2))['status'] == 'signup_unconfirmed'
+    with monkeypatch.context() as patch:
+        clock = signup.time.time()
+        patch.setattr(signup.time, 'time', lambda: clock + signup.JOIN_VALID_SECONDS + 1)
+        assert process_inbound_sms(payload(phone, 3))['status'] == 'signup_unconfirmed'
+    from twilio.request_validator import RequestValidator
+    ux.app.config['TWILIO_AUTH_TOKEN'] = 'fixture-signature-key'
+    inbound = payload(phone, 4)
+    endpoint = '/webhooks/twilio/inbound'
+    signature = RequestValidator(ux.app.config['TWILIO_AUTH_TOKEN']).compute_signature('http://localhost'+endpoint, inbound)
+    assert public.post(endpoint, data=inbound, headers={'X-Twilio-Signature': signature}).status_code == 200
+    assert process_inbound_sms(payload(phone, 5))['status'] == 'signup_already_confirmed'
+    assert ux.models.CommunityMember.query.count() == ux.models.RecipientPermissionEvidence.query.count() == 1
+    assert recipient_permission_status(ux.org_id, phone).allowed
+    assert process_inbound_sms(payload(phone, 6, 'STOP'))['status'] == 'opt_out'
+    assert process_inbound_sms(payload(phone, 7))['status'] == 'signup_blocked'
+    assert not recipient_permission_status(ux.org_id, phone).allowed
+    review(ux, source, 'withdraw')
+    assert public.get(path).status_code == 404
+    assert process_inbound_sms(payload(phone, 8))['status'] == 'signup_unconfirmed'

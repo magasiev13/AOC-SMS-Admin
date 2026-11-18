@@ -54,6 +54,7 @@
                         </p>
                         {% endif %}
                         {% else %}
+                        {% for source in signup_sources %}<p><a class="btn btn-primary" href="{{ url_for('main.hosted_signup', organization_slug=organization.slug, source_id=source.id) }}">{{ source.name }}</a></p>{% endfor %}
                         <p>This page documents the public SMS consent path for <strong>{{ sender_name }}</strong>.</p>
                         <p>{{ message_flow }}</p>
                         <div class="border rounded-3 p-3 bg-light mb-3">
