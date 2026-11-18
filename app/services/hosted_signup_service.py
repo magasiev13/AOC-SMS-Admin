@@ -31,7 +31,9 @@ def public_details(organization, help_contact):
     if any(urlsplit(urls[key]).scheme != 'https' or not urlsplit(urls[key]).hostname
            for key in ('privacy_policy_url', 'terms_and_conditions_url')):
         return None
-    return {'sender': organization.name, 'number': profile.from_number, 'help_contact': contact,
+    onboarding = organization.a2p_onboarding
+    sender = (onboarding.public_brand_name if onboarding else None) or organization.name
+    return {'sender': sender, 'number': profile.from_number, 'help_contact': contact,
             'terms': STANDARD_TERMS, 'privacy_url': urls['privacy_policy_url'],
             'terms_url': urls['terms_and_conditions_url']}
 

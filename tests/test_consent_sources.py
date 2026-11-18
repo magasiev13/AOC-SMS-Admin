@@ -99,6 +99,8 @@ def test_hosted_signup_requires_review_and_same_phone_confirmation(ux, monkeypat
     from app.services.inbox_service import process_inbound_sms
     from app.services.recipient_permission_service import recipient_permission_status
     ux.app.config.update(APP_BASE_URL='https://app.example.test')
+    ux.db.session.add(ux.models.OrganizationA2POnboarding(organization_id=ux.org_id, public_brand_name='Public Workshop'))
+    ux.db.session.commit()
     login(ux)
     assert submit_source(ux, kind='hosted', help_contact='Workspace support desk').status_code == 302
     source = ux.models.ConsentSource.query.one()
@@ -111,6 +113,7 @@ def test_hosted_signup_requires_review_and_same_phone_confirmation(ux, monkeypat
     review(ux, source, review_public='yes')
     assert path.encode() in public.get('/compliance/ux-fixture/sms/opt-in').data
     assert b'Workspace support desk' in public.get(path).data
+    assert b'Public Workshop' in public.get(path).data
     phone = '+17205550111'
     assert public.post(path, data={'phone':phone}).status_code == 422
     response = public.post(path, data={'phone':phone, 'consent':'yes'})
