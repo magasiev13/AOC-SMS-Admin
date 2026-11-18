@@ -84,7 +84,7 @@ for (const width of [1440, 390]) {
     await expect(row).toContainText(name);
     await noOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`retained-optout-${width}.png`), fullPage: false });
-    await page.getByRole('navigation', { name: 'Contact Views' }).getByRole('link', { name: 'Opt-outs & blocks' }).click();
+    await page.getByRole('navigation', { name: 'Contact Views' }).getByRole('link', { name: 'Restriction records' }).click();
     const restrictions = page.getByRole('navigation', { name: 'Restriction type' });
     await restrictions.getByRole('link', { name: 'Other blocks' }).click();
     await expect(page.locator('.suppression-results-card')).toContainText(name);

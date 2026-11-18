@@ -164,3 +164,18 @@ def test_people_separates_inbound_stop_from_operator_block_and_imported_source_l
             if role == 'staff':
                 assert phone.encode() not in opted.data + blocks.data
     assert m.UnsubscribedContact.query.count() == 4
+    login(ux)
+    # Removing a restriction record does not grant consent. Show the latest
+    # signed STOP in the People view and its owner-only export after removal.
+    blocked_record = m.UnsubscribedContact.query.filter_by(organization_id=ux.org_id, phone=rows[0][1]).one()
+    assert ux.client.post(f'/unsubscribed/{blocked_record.id}/delete').status_code == 302
+    directory = ux.client.get('/community?view=opted_out')
+    exported = ux.client.get('/community/export?view=opted_out')
+    assert directory.status_code == exported.status_code == 200
+    assert rows[0][0].encode() in directory.data and rows[0][1].encode() in exported.data
+    for name, phone, _ in rows[1:]:
+        assert name.encode() not in directory.data and phone.encode() not in exported.data
+    login(ux, 'staff')
+    assert rows[0][0].encode() in ux.client.get('/community?view=opted_out').data
+    assert rows[0][1].encode() not in ux.client.get('/community?view=opted_out').data
+    assert ux.client.get('/community/export?view=opted_out').status_code == 403
