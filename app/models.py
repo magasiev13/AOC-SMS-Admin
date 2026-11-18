@@ -1107,6 +1107,31 @@ class OrganizationUsageBillingPeriod(db.Model):
         return f'<OrganizationUsageBillingPeriod org={self.organization_id} start={self.period_start}>'
 
 
+class ConsentSource(db.Model):
+    __tablename__ = 'consent_sources'
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    kind = db.Column(db.String(24), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    disclosure = db.Column(db.Text, nullable=False)
+    public_details = db.Column(db.JSON)
+    purpose = db.Column(db.String(20), nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'))
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    attested_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    attested_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    reviewed_at = db.Column(db.DateTime)
+    withdrawn_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    withdrawn_at = db.Column(db.DateTime)
+    __table_args__ = (
+        db.CheckConstraint("kind IN ('historical', 'import', 'hosted')", name='ck_consent_source_kind'),
+        db.CheckConstraint("status IN ('pending','approved','withdrawn')", name='ck_consent_source_status'),
+        db.CheckConstraint("(purpose = 'community' AND event_id IS NULL) OR "
+                           "(purpose = 'event' AND event_id IS NOT NULL)", name='ck_consent_source_purpose'),
+    )
+
+
 class RecipientPermissionEvidence(db.Model):
     """Retained evidence of permission for one tenant, phone and message purpose.
 
@@ -1158,6 +1183,8 @@ class CommunityMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=True)
+    # A source-scoped import or enrollment has its own individual evidence.
+    individual_consent_required = db.Column(db.Boolean)
     phone = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
     organization = db.relationship('Organization')

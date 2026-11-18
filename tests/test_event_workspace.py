@@ -1,4 +1,5 @@
 """Event operators see independent bookings and evidence-based communication."""
+from tests.consent_fixtures import historical_signup_contract
 import json
 import io
 from datetime import timedelta
@@ -183,7 +184,7 @@ def test_local_bookings_can_cancel_one_and_explicitly_link_or_unlink(feedback):
 
 def test_reviewed_community_announcement_keeps_event_context_and_audience(feedback):
     f = feedback
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = [f.org.slug]
+    historical_signup_contract(f.org.id, True)
     f.db.session.add(f.m.CommunityMember(organization_id=f.org.id, name='Member', phone='+17205550145'))
     f.db.session.commit()
     form = {'target': 'community', 'context_event_id': f.event.id, 'message_body': 'Join our community event.',

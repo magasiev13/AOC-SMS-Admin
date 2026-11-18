@@ -1106,7 +1106,9 @@ def process_inbound_sms(payload: dict) -> dict:
                 feedback_command = SurveyFlow.query.filter_by(
                     trigger_keyword=normalized, purpose='event_feedback',
                 ).order_by(SurveyFlow.id.desc()).first()
-        if session is not None and outbound_ready and normalized not in STOP_KEYWORDS:
+        from app.services.hosted_signup_service import JOIN_COMMAND, confirm_inbound
+        signup_command = JOIN_COMMAND.fullmatch(inbound_body.strip()) if messaging_profile else None
+        if session is not None and outbound_ready and normalized not in STOP_KEYWORDS and not signup_command:
             inbound_message.automation_source = 'survey'
             inbound_message.automation_source_id = session.survey_id
         if normalized in STOP_KEYWORDS:
@@ -1119,6 +1121,9 @@ def process_inbound_sms(payload: dict) -> dict:
             record_transport_consent(source='inbound_stop', decision='denied')
             _cancel_active_sessions(phone)
             status = 'opt_out'
+        elif signup_command:
+            status = confirm_inbound(signup_command, messaging_profile.organization, phone,
+                                     payload.get('To') or '', message_sid)
         elif not outbound_ready:
             if normalized in START_KEYWORDS and (
                 normalized != 'YES'

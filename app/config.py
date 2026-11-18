@@ -347,12 +347,6 @@ class Config:
     AOC_EVENTS_WEBHOOK_SECRET = os.environ.get('AOC_EVENTS_WEBHOOK_SECRET', '').strip()
     AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS = _env_int('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS', '300')
     AOC_EVENTS_ORGANIZATION_SLUG = os.environ.get('AOC_EVENTS_ORGANIZATION_SLUG', 'armenians-of-colorado').strip()
-    # AOC's owner confirmed that newsletter, event and in-person sign-ups all
-    # include permission for community SMS. This is a tenant-specific contract,
-    # not an inference that every organization's directory establishes consent.
-    COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS = _env_csv(
-        'COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS', AOC_EVENTS_ORGANIZATION_SLUG,
-    )
     AOC_SCHEDULED_CANCELLATION_RECORD_FILE = os.environ.get(
         'AOC_SCHEDULED_CANCELLATION_RECORD_FILE',
         '',

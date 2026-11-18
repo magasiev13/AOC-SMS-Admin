@@ -55,6 +55,7 @@ def _tenant_scoped_models():
     from app.models import (
         AuthEvent,
         CommunityMember,
+        ConsentSource,
         RecipientPermissionEvidence,
         Event,
         EventRegistration,
@@ -88,6 +89,7 @@ def _tenant_scoped_models():
     return (
         AuthEvent,
         CommunityMember,
+        ConsentSource,
         RecipientPermissionEvidence,
         Event,
         EventRegistration,
