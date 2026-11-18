@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Something went wrong - {{ product_name }}</title>
+    <style>
+        body { margin: 0; background: #f4f6fa; color: #172338; font: 1rem/1.6 system-ui, sans-serif; }
+        main { max-width: 38rem; margin: 10vh auto; padding: 2rem; }
+        .brand { font-weight: 700; }
+        h1 { line-height: 1.2; }
+        a { color: #185ad8; text-underline-offset: .2em; }
+        a:focus-visible { outline: 3px solid #185ad8; outline-offset: 4px; }
+    </style>
+</head>
+<body>
+<main>
+    <p class="brand">{{ product_name }} · 500</p>
+    <h1>Something went wrong</h1>
+    <p>We could not complete this request. Return to your workspace and try again.</p>
+    <a href="{{ workspace_url }}">Back to workspace</a>
+</main>
+</body>
+</html>

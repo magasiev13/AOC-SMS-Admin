@@ -308,6 +308,8 @@ class OrganizationSubscription(db.Model):
     checkout_request_session_id = db.Column(db.String(80), nullable=True)
     billing_incident_code = db.Column(db.String(64), nullable=True)
     billing_incident_detail = db.Column(db.Text, nullable=True)
+    stripe_missing_subscription_id = db.Column(db.String(80), nullable=True)
+    stripe_missing_observed_at = db.Column(db.DateTime, nullable=True)
     last_stripe_event_created_at = db.Column(db.DateTime, nullable=True)
     last_stripe_event_id = db.Column(db.String(80), nullable=True)
     status = db.Column(db.String(30), nullable=False, default='incomplete')

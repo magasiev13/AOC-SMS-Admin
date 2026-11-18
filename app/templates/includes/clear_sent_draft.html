@@ -1,0 +1,5 @@
+{% set sent_draft_key = session.get('clear_send_draft_key') %}
+{% if sent_draft_key %}
+<script>try { localStorage.removeItem({{ sent_draft_key|tojson }}); } catch (_) {}</script>
+{% set consumed_sent_draft_key = session.pop('clear_send_draft_key', None) %}
+{% endif %}

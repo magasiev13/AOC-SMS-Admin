@@ -1,0 +1,13 @@
+{% set signed_out_user_id = session.pop('clear_send_drafts_for_user_id', none) %}
+{% if signed_out_user_id is not none %}
+<script>
+(() => {
+    const prefix = {{ ('twinevia:send-draft:' ~ signed_out_user_id ~ ':')|tojson }};
+    try {
+        for (const key of Object.keys(localStorage)) {
+            if (key.startsWith(prefix)) localStorage.removeItem(key);
+        }
+    } catch (_) { /* Storage may be disabled; sign-out still completes. */ }
+})();
+</script>
+{% endif %}

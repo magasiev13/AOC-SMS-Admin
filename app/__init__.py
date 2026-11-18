@@ -543,6 +543,13 @@ def _host_redirect_target(app: Flask, host: str, path: str) -> str | None:
     if host in {public_host, www_host}:
         if _is_public_marketing_path(path) or _is_legacy_public_callback_path(path):
             return None
+        # An unknown public page belongs to the public site's 404 recovery.
+        # Known workspace routes still canonicalize to the application host.
+        if (request.method in {"GET", "HEAD"} and request.url_rule is None
+                and getattr(request.routing_exception, "code", None) == 404
+                and not request.is_json and request.accept_mimetypes.best != "application/json"
+                and not path.startswith("/api/")):
+            return None
         return _configured_host_redirect_url(app_base_url, path)
     if host == app_host and path != "/" and _is_public_marketing_path(path):
         return _configured_host_redirect_url(public_base_url, path)
@@ -666,7 +673,7 @@ def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:
                 scheduler_setting,
             )
         else:
-            app.logger.info(
+            app.logger.debug(
                 "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only.",
                 scheduler_setting,
             )
@@ -706,6 +713,23 @@ def _configure_security_headers(app: Flask) -> None:
 def _build_app() -> Flask:
     app = Flask(__name__)
 
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def expired_page_token(error):
+        from flask import jsonify, render_template, url_for
+        from flask_login import current_user
+        from app.http_errors import wants_json
+        if wants_json():
+            if not current_user.is_authenticated and request.endpoint == 'main.dashboard_send_review':
+                from app.auth import _handle_unauthorized
+                return _handle_unauthorized()
+            return jsonify(error='This page has expired. Reload it and review your saved message again.'), 400
+        return render_template('errors/request.html', error_code=400, heading='This page has expired',
+            explanation='Reload the page or sign in again, then try again.',
+            recovery_url=url_for('main.dashboard') if current_user.is_authenticated else url_for('auth.login'),
+            recovery_label='Reload workspace' if current_user.is_authenticated else 'Sign in'), 400
+
     @app.before_request
     def bound_confidential_review_form():
         # A sealed audience cannot use the compression of the former readable
@@ -731,6 +755,10 @@ def _build_app() -> Flask:
 
     @app.after_request
     def protect_staff_response(response):
+        # This internally marked response contains only owned static error
+        # copy. Loading its user to redact it could repeat the database failure.
+        if getattr(response, '_twinevia_standalone_error', False):
+            return response
         from flask_login import current_user
         if current_user.is_authenticated and request.endpoint != 'static':
             response.headers['Cache-Control'] = 'private, no-store'

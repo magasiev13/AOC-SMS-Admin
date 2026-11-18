@@ -1,0 +1,10 @@
+{% extends 'base.html' if current_user.is_authenticated else 'auth/base.html' %}
+{% block title %}{{ heading }} - {{ product_name }}{% endblock %}
+{% block page_title %}{{ heading }}{% endblock %}
+{% block content %}
+<section class="workspace-panel"><div class="workspace-panel__body">
+    <p class="text-muted small">{{ error_code }}</p>
+    <p>{{ explanation }}</p>
+    <a class="btn btn-primary" href="{{ recovery_url }}">{{ recovery_label }}</a>
+</div></section>
+{% endblock %}

@@ -59,6 +59,7 @@ RECONCILEABLE_SUBSCRIPTION_STATUSES = {
     "canceled",
     "incomplete",
 }
+UNRESOLVED_CHECKOUT_STATUSES = ("open", "expiry_unknown", "payment_pending")
 WEBHOOK_PROCESSING_STALE_AFTER = timedelta(minutes=5)
 USAGE_SETTLEMENT_LEASE = timedelta(minutes=15)
 CHECKOUT_SESSION_CREATED_SKEW_ALLOWANCE = timedelta(minutes=5)
@@ -521,19 +522,27 @@ def _stripe_object_to_dict(value: Any) -> dict[str, Any]:
 
 
 def _retry_stripe_operation(operation_name: str, operation: Callable[[], Any]) -> Any:
+    import stripe
+
     attempts = int(current_app.config.get("STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS", 3) or 3)
     if attempts < 1:
         raise RuntimeError("STRIPE_CONFIGURATION_VALIDATION_ATTEMPTS must be at least 1.")
-    last_error: Exception | None = None
     for attempt_number in range(1, attempts + 1):
         try:
             return operation()
         except Exception as exc:
-            last_error = exc
+            status = getattr(exc, "http_status", None)
+            transient = isinstance(exc, (stripe.APIConnectionError, stripe.RateLimitError, ConnectionError, TimeoutError)) or (
+                isinstance(exc, stripe.StripeError) and isinstance(status, int) and status >= 500
+            )
+            if not transient:
+                # Preserve the typed provider error and code for callers. An
+                # invalid resource or request cannot recover through retries.
+                raise
             current_app.logger.warning(
                 "Stripe configuration read failed.",
                 extra={
-                    "operation": operation_name,
+                    "operation": operation_name.split(":", 1)[0],
                     "attempt_number": attempt_number,
                     "attempt_limit": attempts,
                     "error_type": type(exc).__name__,
@@ -541,11 +550,17 @@ def _retry_stripe_operation(operation_name: str, operation: Callable[[], Any]) -
             )
             if attempt_number < attempts:
                 time.sleep(min(0.25 * attempt_number, 1.0))
-    if last_error is None:
-        raise RuntimeError(f"Stripe configuration read failed without an error: {operation_name}.")
-    raise RuntimeError(
-        f"Stripe configuration read failed after {attempts} attempts: {operation_name}: {last_error}"
-    ) from last_error
+            else:
+                raise
+
+
+def _canceled_subscription_missing_in_stripe(subscription: OrganizationSubscription) -> bool:
+    return (
+        (subscription.status or "").strip().lower() == "canceled"
+        and bool(subscription.stripe_subscription_id)
+        and subscription.stripe_missing_subscription_id == subscription.stripe_subscription_id
+        and subscription.stripe_missing_observed_at is not None
+    )
 
 
 def _portal_supported_price_ids(configuration: dict[str, Any]) -> set[str]:
@@ -789,6 +804,8 @@ def _subscription_state_snapshot(subscription: OrganizationSubscription | None) 
         subscription.stripe_price_id,
         period_end.isoformat() if period_end else None,
         bool(subscription.cancel_at_period_end),
+        subscription.stripe_missing_subscription_id,
+        subscription.stripe_missing_observed_at,
     )
 
 
@@ -1150,7 +1167,7 @@ def _close_or_reuse_checkouts(organization: Organization, subscription: Organiza
         _execute_saved_checkout(organization, subscription)
         organization, subscription = _lock_billing_state(organization.id)
     records = StripeCheckoutSession.query.filter_by(organization_id=organization.id).filter(
-        StripeCheckoutSession.status.in_(["open", "expiry_unknown", "payment_pending"]),
+        StripeCheckoutSession.status.in_(UNRESOLVED_CHECKOUT_STATUSES),
     ).order_by(StripeCheckoutSession.id.desc()).all()
     retained = None
     closed = 0
@@ -2168,10 +2185,29 @@ def refresh_subscription_from_stripe(
                 return _apply_stripe_event_to_billing_state(
                     "checkout.session.completed", checkout_session, utc_now(), f"checkout-proof-refresh:{subscription.id}:{uuid4().hex}",
                 )
-        stripe_subscription = _retry_stripe_operation(
-            f"subscription.retrieve:{subscription.stripe_subscription_id}",
-            lambda: stripe.Subscription.retrieve(subscription.stripe_subscription_id),
-        )
+        try:
+            stripe_subscription = _retry_stripe_operation(
+                "subscription.retrieve",
+                lambda: stripe.Subscription.retrieve(subscription.stripe_subscription_id),
+            )
+        except Exception as exc:
+            import stripe as stripe_sdk
+
+            if not (
+                isinstance(exc, stripe_sdk.InvalidRequestError)
+                and getattr(exc, "code", None) == "resource_missing"
+                and (subscription.status or "").strip().lower() == "canceled"
+            ):
+                raise
+            if not _canceled_subscription_missing_in_stripe(subscription):
+                subscription.stripe_missing_subscription_id = subscription.stripe_subscription_id
+                subscription.stripe_missing_observed_at = _billing_utc_now()
+                db.session.commit()
+                current_app.logger.warning(
+                    "Canceled subscription is missing in Stripe; later reconciliation will skip it for organization_id=%s.",
+                    organization.id,
+                )
+            return subscription
         return sync_subscription_from_event(
             "customer.subscription.updated",
             _stripe_object_to_dict(stripe_subscription),
@@ -2596,6 +2632,14 @@ def reconcile_billing_subscriptions() -> dict[str, int]:
     for subscription in subscriptions:
         if subscription_status_is_complimentary(subscription.status):
             continue
+        if _canceled_subscription_missing_in_stripe(subscription):
+            # A new checkout can complete while the old subscription remains
+            # locally canceled. Its recovery must still run on the timer.
+            unresolved_checkout = StripeCheckoutSession.query.filter_by(
+                organization_id=subscription.organization_id,
+            ).filter(StripeCheckoutSession.status.in_(UNRESOLVED_CHECKOUT_STATUSES)).first()
+            if unresolved_checkout is None:
+                continue
         needs_reconcile = (
             not subscription.stripe_customer_id
             or not subscription.stripe_subscription_id
