@@ -68,6 +68,9 @@ if [[ "${backup_status_file}" != /* || "${backup_status_file}" == "/" ]]; then
   exit 1
 fi
 
+# Keep the last confirmed receipt readable throughout the new off-host transfer.
+pending_status="${backup_status_file}.pending-${EXPORT_DIR##*-}"
+BACKUP_STATUS_FILE="${pending_status}" \
 BACKUP_ARTIFACT_EXPORT=1 \
 BACKUP_APPLICATION_HELPER="${BACKUP_APPLICATION_HELPER:-}" \
 BACKUP_TARGET_SOURCE_SHA="${BACKUP_TARGET_SOURCE_SHA:-}" \
@@ -79,7 +82,7 @@ bash "${BACKUP_SCRIPT}"
 export_owner_uid="$(id -u "${EXPORT_OWNER}")"
 export_owner_gid="$(id -g "${EXPORT_OWNER}")"
 install -d -o "${export_owner_uid}" -g "${export_owner_gid}" -m 0700 "${EXPORT_DIR}"
-BACKUP_STATUS_INPUT="${backup_status_file}" \
+BACKUP_STATUS_INPUT="${pending_status}" \
 BACKUP_EXPORT_DIRECTORY="${EXPORT_DIR}" \
 BACKUP_EXPORT_UID="${export_owner_uid}" \
 BACKUP_EXPORT_GID="${export_owner_gid}" \
