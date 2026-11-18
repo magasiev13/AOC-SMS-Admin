@@ -37,7 +37,7 @@ def test_every_common_layout_emits_cleanup_before_assets_and_consumes_once(ux, l
         template = '{% extends "' + layout + '" %}{% block content %}<p>Fixture content</p>{% endblock %}'
         rendered = render_template_string(template)
         assert rendered.count(DRAFT_KEY) == 1
-        assert re.search(r'localStorage\.removeItem\s*\(', rendered)
+        assert '/static/js/pages/includes-clear-sent-draft.js' in rendered
         assert rendered.index(DRAFT_KEY) < rendered.index('/static/')
         assert 'clear_send_draft_key' not in session
         second = render_template_string(template)

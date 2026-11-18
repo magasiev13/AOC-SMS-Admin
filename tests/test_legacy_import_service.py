@@ -612,3 +612,63 @@ class TestLegacyImportService(unittest.TestCase):
             db.session.expire_all()
             self.assertEqual(AppUser.query.filter_by(username="kfolyan").one().password_hash, "pbkdf2:sha256:1$sync$hash")
             self.assertTrue(AppUser.query.filter_by(username="kfolyan").one().must_change_password)
+
+
+    def test_directory_and_booking_imports_cannot_inherit_historical_signup_permission(self):
+        from datetime import datetime
+        from app import create_app, db
+        from app.models import CommunityMember, Event, EventBooking, EventRegistration, Organization
+        from app.services.booking_projection_service import reconcile_event_projection
+        from app.services.legacy_import_service import (
+            import_legacy_sqlite_snapshot, sync_legacy_sqlite_snapshot_into_existing_org,
+        )
+        from app.services.recipient_permission_service import record_permission_evidence, recipient_permission_status
+        from tests.consent_fixtures import historical_signup_contract
+
+        with create_app(run_startup_tasks=False, start_scheduler=False).app_context():
+            import_legacy_sqlite_snapshot(legacy_db_path=self.legacy_db_path,
+                                         organization_name='Import fixture', organization_slug='import-fixture')
+            org = Organization.query.one()
+            historical_signup_contract(org.id)
+            event = Event.query.one()
+            member = CommunityMember.query.one()
+            registration = EventRegistration.query.one()
+
+            def allowed(phone, purpose='community'):
+                return recipient_permission_status(org.id, phone, purpose=purpose,
+                    event_id=event.id if purpose == 'event' else None).allowed
+
+            assert member.individual_consent_required and registration.individual_consent_required
+            assert not allowed(member.phone) and not allowed(registration.phone)
+            assert not allowed(registration.phone, 'event')
+
+            # Model the same directory and booking records present before the upgrade.
+            # A repeated import must preserve that existing contract.
+            member.individual_consent_required = None
+            registration.individual_consent_required = None
+            EventBooking.query.one().individual_consent_required = None
+            db.session.commit()
+            new_phone = '+12025550131'
+            with sqlite3.connect(self.legacy_db_path) as source:
+                source.execute("INSERT INTO community_members (id, name, phone, created_at) VALUES (2, 'New', ?, '2026-01-02')",
+                               (new_phone,))
+                source.execute("INSERT INTO event_registrations (id,event_id,name,phone,created_at) VALUES (2,1,'New',?,'2026-01-02')",
+                               (new_phone,))
+            sync_legacy_sqlite_snapshot_into_existing_org(legacy_db_path=self.legacy_db_path,
+                organization_slug=org.slug, since=datetime(2020, 1, 1))
+            db.session.expire_all()
+            assert allowed(member.phone) and allowed(registration.phone, 'event')
+            assert not allowed(new_phone) and not allowed(new_phone, 'event')
+            fresh = EventRegistration.query.filter_by(phone=new_phone).one()
+            booking = EventBooking.query.filter_by(phone=new_phone).one()
+            assert booking.individual_consent_required and fresh.individual_consent_required
+            booking.projection_registration_id = None
+            db.session.delete(fresh)
+            db.session.flush()
+            reconcile_event_projection(event)
+            assert EventRegistration.query.filter_by(phone=new_phone).one().individual_consent_required
+            assert not allowed(new_phone) and not allowed(new_phone, 'event')
+            record_permission_evidence(org.id,new_phone,purpose='event',event_id=event.id,decision='granted',
+                source='owner_review',evidence_key='fixture-import',verified=True,metadata={'proof':'Reviewed event-only evidence'})
+            db.session.commit()
+            assert allowed(new_phone, 'event') and not allowed(new_phone)

@@ -1,4 +1,5 @@
 """Lossless forms, bounded inbox, current invitations and honest readiness."""
+from tests.consent_fixtures import historical_signup_contract
 from datetime import timedelta
 import importlib
 import json
@@ -329,7 +330,7 @@ def test_send_review_freezes_audience_before_new_directory_additions(ux, monkeyp
 
 
 def test_confirmed_signup_workspace_does_not_require_individual_reapproval_in_compose_or_review(ux):
-    ux.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = ['ux-fixture']
+    historical_signup_contract(ux.org_id, True)
     ux.db.session.add(ux.models.CommunityMember(organization_id=ux.org_id, phone='+17205550824', name='Confirmed signup'))
     ux.db.session.commit()
     login(ux)
@@ -377,7 +378,7 @@ def test_send_review_rechecks_withdrawal_without_replacing_frozen_audience(ux):
     ux.db.session.commit()
     permitted_contact(ux, '+17205550822')
     result = ux.client.post('/dashboard', data={**data, 'review_token': token})
-    assert result.status_code == 200 and b'No eligible recipients' in result.data
+    assert result.status_code == 200 and b'No contacts can receive this message' in result.data
     assert ux.models.OutboundRequest.query.count() == 0
 
 

@@ -274,7 +274,7 @@ class RuntimeController:
             ceiling = str(contract.get('schema_max') or '')
             floor = str(contract.get('schema_min') or '')
             if (not re.fullmatch(r'\d{3}', ceiling) or not re.fullmatch(r'\d{3}', floor)
-                    or floor > ceiling or floor > '032'):
+                    or floor > ceiling or floor > '036'):
                 raise RuntimeControlError('Recovery target schema contract is invalid.')
             for required_schema, feature in (
                 ('029', 'booking_projection_isolation'),

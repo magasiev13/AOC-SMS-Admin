@@ -67,7 +67,7 @@ test('owner records verified community permission with preserved validation and 
   await page.getByRole('button', { name: 'Add Contact', exact: true }).click();
   createdByPage.get(page).phone = '+17205550651';
   const row = page.locator('#communityTable tbody.table-data tr').filter({ hasText: 'Permission Review Desktop' });
-  await expect(row.getByText('Unknown', { exact: true })).toBeVisible();
+  await expect(row.getByText('Needs permission', { exact: true })).toBeVisible();
   await row.getByRole('link', { name: 'Review Permission' }).click();
   await expect(page).toHaveURL(/\/community\/\d+\/permission$/);
   await expect(page).toHaveTitle(/Review SMS Permission/);
@@ -135,7 +135,7 @@ test('mobile event review grants only event messages while community remains unk
   await expect(registration.getByText('Granted', { exact: true })).toBeVisible();
   await page.goto('/community?search=17205550652');
   const contact = page.locator('.card-list-item').filter({ hasText: 'Permission Review Mobile' });
-  await expect(contact.getByText('Unknown', { exact: true })).toBeVisible();
+  await expect(contact.getByText('Needs permission', { exact: true })).toBeVisible();
   await noHorizontalOverflow(page);
   expect(pageErrors).toEqual([]);
 });
@@ -144,7 +144,7 @@ test('staff can see permission state but cannot open the owner review action', a
   await login(page, 'staff@browser.test', 'Staff-pass1!');
   await page.goto('/community');
   await expect(page.getByRole('link', { name: 'Review Permission' })).toHaveCount(0);
-  await expect(page.getByText('Granted', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Can text', { exact: true }).first()).toBeVisible();
   const response = await page.goto('/community/1/permission');
   expect(response.status()).toBe(403);
 });

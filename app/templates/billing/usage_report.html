@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Monthly usage report - {{ product_name }}{% endblock %}
+{% block page_title %}Monthly usage report{% endblock %}
+{% block breadcrumbs %}<a href="{{ url_for('main.billing_overview') }}">Billing</a> / Usage{% endblock %}
+{% block content %}
+<form class="d-flex align-items-end gap-2 mb-3" method="get">
+    <div><label class="form-label" for="month">Billing month (UTC)</label>
+    <input class="form-control" type="month" id="month" name="month" value="{{ month }}" max="{{ current_month }}" required></div>
+    <button class="btn btn-primary" type="submit">View month</button>
+</form>
+<section class="workspace-panel p-3">
+    <h2 class="h5">Outbound messages</h2>
+    <p>Each provider message counts once per recipient. The average uses messages with confirmed segment counts.</p>
+    <div class="table-responsive"><table class="table">
+        <thead><tr><th scope="col">Origin</th><th scope="col">Messages</th><th scope="col">Known segments</th><th scope="col">Segments per message</th><th scope="col">Awaiting segment count</th></tr></thead>
+        <tbody>{% for row in report.rows %}<tr><th scope="row">{{ row.label }}</th><td>{{ row.messages }}</td><td>{{ row.segments }}</td><td>{{ '%.2f'|format(row.average) if row.average is not none else '—' }}</td><td>{{ row.pending }}</td></tr>{% endfor %}</tbody>
+        <tfoot><tr><th scope="row">Total</th><td>{{ report.messages }}</td><td>{{ report.segments }}</td><td>{{ '%.2f'|format(report.average) if report.average is not none else '—' }}</td><td>{{ report.rows|sum(attribute='pending') }}</td></tr></tfoot>
+    </table></div>
+</section>
+<section class="workspace-panel p-3 mt-3">
+    <h2 class="h5">Plan and usage charges</h2>
+    {% set summary = report.summary %}
+    {% if report.plan %}<p>Current plan price: {{ report.plan.name }} · {{ report.plan.price_label }}</p>{% endif %}
+    <p>{{ summary.included_label }} segments included · {{ summary.used_label }} counted toward usage · {{ summary.overage_segments }} over allowance</p>
+    {% if summary.billed %}<p>Usage overage estimate: <strong>{{ summary.projected_overage_label }}</strong></p>
+    {% else %}<p>Twinevia usage charge: <strong>$0.00</strong>. Estimated overage under the platform rate: {{ summary.projected_overage_label }}.</p>{% endif %}
+    <p class="form-text">{{ 'Usage charges use the retained billing-period record.' if summary.stored_period else 'Usage estimate uses current plan terms and retained billing evidence.' }}
+    {% if summary.pending_records %}{{ summary.pending_records }} usage records still need confirmation.{% endif %}</p>
+</section>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block title %}Account email - {{ product_name }}{% endblock %}
+{% block page_title %}Account email{% endblock %}
+{% block content %}
+<section class="workspace-panel p-3">
+    <h2 class="h5">Recovery email</h2>
+    {% if not ready %}<p>Contact your workspace administrator for help recovering access. Transactional email is unavailable.</p>
+    {% elif not current_user.email %}<p>Ask your workspace administrator to add your work email to this account.</p>
+    {% elif current_user.email != current_user.verified_recovery_email %}
+    <p>Verify {{ current_user.email }} to use it for password recovery and reply notices.</p>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="verify">
+    <label class="form-label" for="password">Current password</label>
+    <input type="password" class="form-control mb-2" id="password" name="password" autocomplete="current-password" required>
+    <button class="btn btn-primary" type="submit">Send verification link</button></form>
+    {% else %}<p>{{ current_user.email }} is verified for password recovery.</p>{% endif %}
+    {% if current_user.verified_recovery_email and current_user.email == current_user.verified_recovery_email %}
+    {% set enabled = member.reply_notice_email == current_user.email %}
+    <h2 class="h5 mt-4">Inbox reply notices</h2>
+    <p>Receive an email when a new incoming reply needs attention. Open the workspace inbox to read the message.</p>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-outline-secondary" type="submit" name="action" value="{{ 'disable' if enabled else 'enable' }}"{% if not enabled and not ready %} disabled{% endif %}>
+        Turn {{ 'off' if enabled else 'on' }} reply notices</button></form>
+    {% endif %}
+</section>
+{% endblock %}

@@ -16,6 +16,22 @@ def _normalize_recipient(recipient: dict) -> tuple[dict, str]:
     return normalized_recipient, normalized_phone
 
 
+def current_inbound_opt_out(model):
+    """Only the latest transport decision can attest to a current inbound STOP.
+
+    Operators and CSV imports can supply free-form source labels on a block.
+    Authenticated inbound handling writes a tenant-scoped consent event with a
+    durable identity. The following START supersedes its STOP for transport.
+    """
+    from app import db
+    from app.models import RecipientPermissionEvidence as Evidence
+    latest = db.select(db.and_(Evidence.source == 'inbound_stop', Evidence.decision == 'denied')).where(
+        Evidence.organization_id == model.organization_id, Evidence.phone == model.phone,
+        Evidence.purpose == 'all', Evidence.scope_key == '',
+    ).order_by(Evidence.occurred_at.desc(), Evidence.id.desc()).limit(1).correlate(model).scalar_subquery()
+    return db.func.coalesce(latest, db.false())
+
+
 def get_unsubscribed_phone_set(phones: Iterable[str]) -> set[str]:
     normalized_phones = {normalize_phone(phone) for phone in phones if phone}
     normalized_phones.discard('')

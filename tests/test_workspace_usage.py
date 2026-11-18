@@ -178,3 +178,39 @@ def test_newly_accepted_unconfirmed_usage_is_pending_before_it_becomes_billable(
     assert ux.models.OrganizationUsageBillingPeriod.query.count() == 0
     assert record.billable is False and record.units_status == record.cost_status == 'pending'
     provider.assert_not_called()
+
+
+def test_report_origin_month_scope_and_partial_segment_denominator(ux):
+    from app.services.usage_summary_service import workspace_monthly_report
+    organization = _mode(ux, 'billed')
+    start, end = _window()
+    for identity, source, segments, automated in [
+        ('reminder', 'scheduled', 4, True), ('manual', 'scheduled', 2, False),
+        ('inbox', 'reply', 1, None), ('keyword', 'keyword', 3, None), ('old', 'scheduled', 2, None),
+    ]:
+        usage = _record(ux, identity, segments, source=source)
+        if automated is not None:
+            schedule = ux.models.ScheduledMessage(organization_id=ux.org_id, scheduled_at=start,
+                status='sent', message_body='fixture', target='community',
+                automation_source='event_sync' if automated else None)
+            ux.db.session.add(schedule)
+            ux.db.session.flush()
+            ux.db.session.add(ux.models.MessageDispatchAttempt(organization_id=ux.org_id, scheduled_message_id=schedule.id,
+                provider_message_sid=usage.message_sid, logical_send_key=identity, recipient_phone='+17205550109',
+                message_body_digest='a'*64, send_kind='blast', status='sent'))
+    _record(ux, 'partial', 99, units_status='pending', source='blast')
+    _record(ux, 'other', 200, organization_id=ux.other_id)
+    _record(ux, 'prior', 200, billing_period_start=None, billing_period_end=None, created_at=start-timedelta(seconds=1))
+    ux.db.session.commit()
+    with organization_context(ux.org_id):
+        report = workspace_monthly_report(organization, start)
+    amounts = {row['label']: (row['messages'], row['segments'], row['average']) for row in report['rows']}
+    assert amounts == {'Automatic':(2,7,3.5), 'Sent immediately':(2,1,1), 'Scheduled by a person':(1,2,2), 'Origin unconfirmed':(1,2,2)}
+    assert report['messages'] == 6 and report['segments'] == 12 and report['average'] == 12/5
+    login(ux)
+    assert b'Origin unconfirmed' in ux.client.get('/billing/usage').data
+    assert ux.client.get('/billing/usage?month=invalid').status_code == 400
+    assert ux.client.get('/billing/usage?month=2099-09').status_code == 400
+    assert b'Origin unconfirmed' not in ux.client.get('/billing/usage?month=2000-01').data
+    login(ux, role='staff')
+    assert ux.client.get('/billing/usage').status_code == 403

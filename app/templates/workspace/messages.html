@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block title %}Messages · {{ product_name }}{% endblock %}
+{% block page_title %}Messages{% endblock %}
+{% block page_actions %}<a class="btn btn-primary" href="{{ url_for('main.dashboard') }}">New message</a>{% endblock %}
+{% block content %}
+<div class="work-ledger">
+    {% if page == 1 %}
+    <section id="localMessageDraft" hidden data-key="{{ draft_key }}">
+        <h2>On this device</h2><a class="work-row" href="{{ url_for('main.dashboard') }}"><strong>Unfinished message</strong><span>Continue draft →</span></a>
+    </section>
+    {% endif %}
+    <section><h2>Message timeline</h2>
+        {% for row in rows %}<a class="work-row" href="{{ row.url }}">
+            <div><strong>{{ row.body|private_text|truncate(110) }}</strong><small>{{ row.time|localtime }}{% if row.reminder %} · Automatic reminder{% endif %}</small></div>
+            <span>{% if row.outcome %}{{ row.outcome.delivered }} delivered · {{ row.outcome.not_delivered }} not delivered{% if row.outcome.not_submitted %} · {{ row.outcome.not_submitted }} not submitted{% endif %}{% if row.outcome.no_receipt %} · {{ row.outcome.no_receipt }} no receipt yet{% endif %}{% if row.outcome.acceptance_unresolved %} · {{ row.outcome.acceptance_unresolved }} acceptance unresolved{% endif %}{% else %}{{ row.state }}{% endif %}</span>
+        </a>{% else %}<p class="work-row">Your scheduled and sent messages will appear here.</p>{% endfor %}
+    </section>
+    {% if pages > 1 %}<nav aria-label="Message pages" class="d-flex gap-3">{% if page > 1 %}<a rel="prev" href="{{ url_for('main.workspace_messages', page=page-1) }}">Previous</a>{% endif %} Page {{ page }} of {{ pages }} {% if page < pages %}<a rel="next" href="{{ url_for('main.workspace_messages', page=page+1) }}">Next</a>{% endif %}</nav>{% endif %}
+    <p><a href="{{ url_for('main.logs_list') }}">Search message history</a> · <a href="{{ url_for('main.scheduled_list') }}">Manage scheduled messages</a></p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/pages/workspace-messages.js', v=app_version) }}"></script>{% endblock %}

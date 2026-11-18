@@ -37,7 +37,7 @@ DEFAULT_CONTENT_SECURITY_POLICY = (
     "img-src 'self' data:; "
     "font-src 'self' data:; "
     "style-src 'self' 'unsafe-inline'; "
-    "script-src 'self' 'unsafe-inline'; "
+    "script-src 'self'; "
     "connect-src 'self'; "
     "form-action 'self'"
 )
@@ -74,6 +74,12 @@ class Config:
     TRUST_PROXY = _env_bool('TRUST_PROXY', '0')
     SAAS_MODE = _env_bool('SAAS_MODE', '0')
     SAAS_BASE_URL = os.environ.get('SAAS_BASE_URL', '')
+    ACCOUNT_MAIL_ENABLED = _env_bool('ACCOUNT_MAIL_ENABLED', '0')
+    ACCOUNT_MAIL_SMTP_HOST = os.environ.get('ACCOUNT_MAIL_SMTP_HOST', '').strip()
+    ACCOUNT_MAIL_SMTP_PORT = _env_int('ACCOUNT_MAIL_SMTP_PORT', '465')
+    ACCOUNT_MAIL_SMTP_USER = os.environ.get('ACCOUNT_MAIL_SMTP_USER', '').strip()
+    ACCOUNT_MAIL_SMTP_PASSWORD = os.environ.get('ACCOUNT_MAIL_SMTP_PASSWORD', '')
+    ACCOUNT_MAIL_FROM = os.environ.get('ACCOUNT_MAIL_FROM', '').strip()
     PUBLIC_BASE_URL = (os.environ.get('PUBLIC_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
     APP_BASE_URL = (os.environ.get('APP_BASE_URL') or SAAS_BASE_URL).strip().rstrip('/')
     APP_RELEASE_ID = os.environ.get('APP_RELEASE_ID', '').strip()
@@ -347,12 +353,6 @@ class Config:
     AOC_EVENTS_WEBHOOK_SECRET = os.environ.get('AOC_EVENTS_WEBHOOK_SECRET', '').strip()
     AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS = _env_int('AOC_EVENTS_WEBHOOK_TOLERANCE_SECONDS', '300')
     AOC_EVENTS_ORGANIZATION_SLUG = os.environ.get('AOC_EVENTS_ORGANIZATION_SLUG', 'armenians-of-colorado').strip()
-    # AOC's owner confirmed that newsletter, event and in-person sign-ups all
-    # include permission for community SMS. This is a tenant-specific contract,
-    # not an inference that every organization's directory establishes consent.
-    COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS = _env_csv(
-        'COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS', AOC_EVENTS_ORGANIZATION_SLUG,
-    )
     AOC_SCHEDULED_CANCELLATION_RECORD_FILE = os.environ.get(
         'AOC_SCHEDULED_CANCELLATION_RECORD_FILE',
         '',

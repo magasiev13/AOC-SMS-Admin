@@ -367,7 +367,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         self.assertIn("/setup", response.headers.get("Location", ""))
 
-    def test_customer_managed_owner_login_redirects_to_dashboard_when_workspace_is_ready(self) -> None:
+    def test_customer_managed_owner_login_redirects_to_home_when_workspace_is_ready(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(
             slug="customer-managed-ready",
             username="customer-managed-ready",
@@ -378,7 +378,7 @@ class TestSaasPilotFoundation(unittest.TestCase):
 
         response = self._login_with_credentials(user.email, "CustomerManaged-pass1!")
 
-        self.assertIn("/dashboard", response.headers.get("Location", ""))
+        self.assertIn("/home", response.headers.get("Location", ""))
 
     def test_customer_managed_owner_login_redirects_to_setup_when_provider_is_pending(self) -> None:
         _, _, _, user = self._create_customer_managed_workspace(

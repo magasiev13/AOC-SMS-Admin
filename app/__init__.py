@@ -869,6 +869,9 @@ def _build_app() -> Flask:
 
     app.register_blueprint(routes.bp)
 
+    from app.account_mail_routes import bp as account_mail_bp
+    app.register_blueprint(account_mail_bp)
+
     from app.event_feedback_routes import bp as event_feedback_bp
     app.register_blueprint(event_feedback_bp)
 

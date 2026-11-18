@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Consent sources · {{ organization.name }}{% endblock %}
+{% block page_title %}Consent sources{% endblock %}
+{% block content %}
+<section class="workspace-panel p-3">
+<h2>{{ organization.name }}</h2>
+{% for source in sources %}
+<article class="border-top py-3">
+<h3 class="h5">{{ source.name }}</h3>
+<p>{{ source.kind|capitalize }} · {{ source.purpose|capitalize }}{% if source.event_id %} · Event #{{ source.event_id }}{% endif %} · {{ source.status|capitalize }}</p>
+<blockquote>{{ source.disclosure }}</blockquote>
+{% if source.kind == 'hosted' and source.status == 'approved' %}
+<p><a href="{{ url_for('main.hosted_signup', organization_slug=organization.slug, source_id=source.id) }}">Open public signup</a></p>
+{% endif %}
+{% if platform and source.status != 'withdrawn' %}
+<form method="post">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="source_id" value="{{ source.id }}">
+{% if source.status == 'pending' and source.kind == 'hosted' %}
+{% set details = previews.get(source.id) %}
+{% if details %}
+<p>{{ details.sender }} · {{ details.number }} · {{ details.help_contact }}</p><p>{{ details.terms }}</p>
+<p><a href="{{ details.privacy_url }}">Privacy policy</a> · <a href="{{ details.terms_url }}">SMS terms</a></p>
+<label class="d-block mb-2"><input type="checkbox" name="review_public" value="yes"> I verified the sender, wording, HELP response, public contact and both policy pages for this purpose.</label>
+{% else %}<p>An active SMS number, public help contact and HTTPS policy pages are required for publication.</p>{% endif %}
+{% endif %}
+{% if source.status == 'pending' %}<button name="action" value="approve" class="btn btn-primary">Approve source</button>{% endif %}
+<button name="action" value="withdraw" class="btn btn-outline-secondary">Withdraw source</button>
+</form>
+{% endif %}
+</article>
+{% else %}<p>No consent sources have been submitted.</p>{% endfor %}
+</section>
+{% if not platform %}
+<form method="post" class="workspace-panel p-3 mt-3">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<h2>Submit a source</h2>
+<label class="form-label" for="name">Source name</label><input id="name" name="name" class="form-control" maxlength="120" required>
+<label class="form-label mt-2" for="kind">Collection method</label><select id="kind" class="form-select" name="kind"><option value="import">Traceable import</option><option value="hosted">Hosted text signup</option></select>
+<label class="form-label mt-2" for="help_contact">Public help contact for hosted signup</label>
+<input class="form-control" id="help_contact" name="help_contact" maxlength="120">
+<label class="form-label mt-2" for="purpose">Purpose</label><select id="purpose" name="purpose" class="form-select"><option value="community">Community updates</option><option value="event">One event's reminders</option></select>
+<label class="form-label mt-2" for="event_id">Event for reminder permission</label><select id="event_id" name="event_id" class="form-select"><option value="">Choose an event</option>{% for event in events %}<option value="{{ event.id }}">{{ event.title }}</option>{% endfor %}</select>
+<label class="form-label mt-2" for="disclosure">Exact wording shown to recipients</label><textarea class="form-control" name="disclosure" id="disclosure" maxlength="2000" required></textarea>
+<label class="my-3 d-block"><input type="checkbox" name="attest" value="yes" required> I confirm that this wording identifies our organization, the purpose, and how each recipient chooses to receive these texts.</label>
+<button class="btn btn-primary">Submit for review</button>
+</form>
+{% endif %}
+{% endblock %}

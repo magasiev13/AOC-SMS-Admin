@@ -43,7 +43,7 @@ from app.services.contact_privacy_service import (
     require_contact_export_permission, staff_phone_privacy_applies,
 )
 from app.services.audience_service import (
-    community_query, current_audience_counts, current_event_predicate, event_is_current,
+    community_query, completed_event_predicate, current_audience_counts, current_event_predicate, event_is_current,
     event_registrations_query, events_query,
 )
 from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, logout_and_clear_session, require_roles
@@ -52,6 +52,7 @@ from app.models import (
     AuthEvent,
     AppUser,
     CommunityMember,
+    ConsentSource,
     Event,
     EventRegistration,
     ExternalWebhookDelivery,
@@ -68,6 +69,7 @@ from app.models import (
     OrganizationMessagingProfile,
     OrganizationProviderAuditLog,
     OrganizationSubscription,
+    OrganizationSettingsAuditLog,
     PilotApplication,
     ScheduledMessage,
     StripeCheckoutSession,
@@ -110,6 +112,8 @@ from app.services.aoc_event_sync_service import (
     decrypted_event_sync_secret,
     event_sync_integration_for_webhook,
     event_sync_setup_view,
+    event_reminder_schedules,
+    is_event_reminder,
     parse_aoc_webhook_json,
     process_event_sync_payload,
     process_aoc_event_sync_payload,
@@ -135,6 +139,7 @@ from app.services.billing_plans import (
 )
 from app.services.provider_secret_service import decrypt_provider_secret
 from app.services.inbox_service import (
+    conversation_annotations,
     delete_survey_flow_with_dependencies,
     delete_messages_in_thread,
     delete_thread_with_dependencies,
@@ -187,6 +192,7 @@ from app.services.recipient_service import (
     dedupe_recipients_by_phone as dedupe_recipients_by_phone_service,
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
+    current_inbound_opt_out,
     get_suppressed_phone_set,
     get_unsubscribed_phone_set,
 )
@@ -244,6 +250,7 @@ from app.services.twilio_service import (
 )
 from app.services.security_alert_service import send_security_alert
 from app.sort_utils import normalize_sort_params
+from app.services import hosted_signup_service
 from app.tenant import organization_context, saas_mode_enabled, without_tenant_scope
 from app.utils import (
     ALLOWED_TEMPLATE_TOKENS,
@@ -2887,11 +2894,14 @@ def _event_sync_surface_view(
     integration_view: dict,
 ) -> dict:
     enabled_label = 'Enabled' if integration_view['enabled'] else 'Disabled'
-    last_activity = (
-        integration_view['last_event_synced_at']
-        or integration_view['last_signup_synced_at']
-        or integration_view['last_reconcile_synced_at']
-    )
+    managed = integration_view.get('managed_wordpress')
+    managed_active = managed and managed['enabled']
+    if managed_active and not integration_view['enabled']:
+        enabled_label = 'Managed WordPress enabled'
+    last_activity = max((value for value in (
+        integration_view['last_event_synced_at'], integration_view['last_signup_synced_at'],
+        integration_view['last_reconcile_synced_at'], managed and managed['last_activity'],
+    ) if value), default=None)
     return _surface_view(
         eyebrow='Integrations',
         title='App Integrations',
@@ -2901,7 +2911,7 @@ def _event_sync_surface_view(
             _surface_stat('Status', enabled_label, 'Connected app' if integration_view['provider'] == 'app' else 'WordPress connection'),
             _surface_stat(
                 'Secret',
-                'Ready' if integration_view['has_secret'] else 'Not generated',
+                'Ready' if integration_view['has_secret'] else ('Managed on server' if managed_active else 'Not generated'),
                 'Webhook signing',
             ),
             _surface_stat(
@@ -2924,6 +2934,12 @@ def _settings_surface_view(organization: Organization) -> dict:
 
 def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
     cards = [
+        {
+            'title': 'Scheduling preferences',
+            'description': 'Choose the clock used to enter schedules and display message times.',
+            'icon': 'bi-clock', 'href': url_for('main.schedule_preferences'),
+            'action': 'Manage scheduling',
+        },
         {
             'title': 'App Integrations',
             'description': 'Optional: bring events and registrations in from another app. Your developer configures the connection.',
@@ -3384,6 +3400,8 @@ def _parse_survey_preview_indexes(raw_values: list[str], *, question_count: int)
 def _redirect_to_inbox(*, thread_id: int | None = None) -> object:
     search = request.form.get('search', '').strip()
     query_args = {}
+    if request.form.get('folder') == 'archived':
+        query_args['folder'] = 'archived'
     if thread_id:
         query_args['thread'] = thread_id
     if search:
@@ -4014,6 +4032,9 @@ def _render_community_form(*, member: CommunityMember | None, field_errors: dict
 def _render_community_import():
     return render_template(
         'community/import.html',
+        consent_sources=(ConsentSource.query.filter_by(organization_id=_current_organization_id(),
+                                                     status='approved', kind='import').order_by(ConsentSource.name).all()
+                         if saas_mode_enabled() and _current_organization_id() else []),
         surface_view=_community_import_surface_view(),
     )
 
@@ -4428,6 +4449,91 @@ def _create_send_review(form):
     }
 
 
+def _send_draft_key():
+    return f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+
+
+@bp.get('/messages')
+@login_required
+def workspace_messages():
+    """Page a combined schedule and dispatch index before loading message bodies."""
+    from app.services.delivery_status_service import batch_message_results
+    def index_query(model, timestamp, kind):
+        query = model.query.with_entities(model.id.label('id'), timestamp.label('activity_at'),
+                                          literal(kind).label('kind'))
+        return _tenant_bulk_filter(query, model)
+
+    logs = index_query(MessageLog, MessageLog.created_at, 'log')
+    schedules = index_query(ScheduledMessage, ScheduledMessage.scheduled_at, 'schedule').filter(
+        ScheduledMessage.message_log_id.is_(None))
+    timeline = logs.union_all(schedules).subquery()
+    index = db.session.query(timeline)
+    per_page = 50
+    pages = max(1, (index.count() + per_page - 1) // per_page)
+    page = min(pages, max(1, request.args.get('page', 1, type=int)))
+    upcoming = timeline.c.activity_at >= datetime.now(timezone.utc).replace(tzinfo=None)
+    entries = index.order_by(case((upcoming, 0), else_=1), case((upcoming, timeline.c.activity_at)).asc(),
+                             timeline.c.activity_at.desc(), timeline.c.kind, timeline.c.id.desc()).offset(
+                                 (page - 1) * per_page).limit(per_page).all()
+    log_ids = [entry.id for entry in entries if entry.kind == 'log']
+    schedule_ids = [entry.id for entry in entries if entry.kind == 'schedule']
+    logs_by_id = {log.id: log for log in MessageLog.query.filter(MessageLog.id.in_(log_ids)).all()}
+    outcomes = batch_message_results(logs_by_id.values())
+    schedules_by_id = {row.id: row for row in ScheduledMessage.query.filter(ScheduledMessage.id.in_(schedule_ids)).all()}
+    linked = {row.message_log_id: row for row in ScheduledMessage.query.filter(ScheduledMessage.message_log_id.in_(log_ids)).all()}
+    rows = []
+    for entry in entries:
+        log = logs_by_id.get(entry.id) if entry.kind == 'log' else None
+        schedule = linked.get(entry.id) if entry.kind == 'log' else schedules_by_id.get(entry.id)
+        record = log or schedule
+        if record is None:
+            continue
+        state = (record.status or 'sent').capitalize()
+        if schedule and not log and schedule.status == 'pending':
+            state = 'Scheduled'
+        rows.append({'body': record.message_body, 'time': entry.activity_at, 'state': state,
+                     'reminder': bool(schedule and is_event_reminder(schedule)),
+                     'outcome': outcomes.get(log.id) if log else None,
+                     'url': url_for('main.log_detail', log_id=log.id) if log else
+                            url_for('main.scheduled_list', id=schedule.id)})
+    return render_template('workspace/messages.html', rows=rows, page=page, pages=pages, draft_key=_send_draft_key())
+
+
+@bp.get('/home')
+@login_required
+def workspace_home():
+    from app.models import MessagingUsageRecord
+    from app.services.aoc_event_sync_service import (
+        AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE, EVENT_REMINDER_KINDS, LEGACY_EVENT_REMINDER_KINDS,
+    )
+    from app.services.usage_summary_service import estimated_send_overage
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    organization = _current_organization()
+    failed = MessagingUsageRecord.query.filter(
+        MessagingUsageRecord.organization_id == _current_organization_id(),
+        MessagingUsageRecord.direction == 'outbound',
+        MessagingUsageRecord.created_at >= now - timedelta(days=7),
+        MessagingUsageRecord.delivery_status.in_(('failed', 'undelivered', 'canceled')),
+    ).count() if organization else 0
+    held = ScheduledMessage.query.filter_by(status='held').order_by(ScheduledMessage.scheduled_at).limit(5).all()
+    upcoming = ScheduledMessage.query.filter(
+        ScheduledMessage.status == 'pending',
+        ScheduledMessage.automation_source.in_((AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE)),
+        ScheduledMessage.automation_kind.in_(EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS),
+        ScheduledMessage.scheduled_at >= now,
+    ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).limit(3).all()
+    usage = workspace_usage_summary(organization)
+    estimates = _automatic_reminder_estimates(upcoming)
+    reminders = [{'schedule': item, **estimates[item.id],
+                  'overage': estimated_send_overage(usage, estimates[item.id]['segments'])}
+                 for item in upcoming if item.id in estimates]
+    recent = events_query(current_only=False).filter(completed_event_predicate()).order_by(
+        Event.date.desc(), Event.id.desc()).first()
+    return render_template('workspace/home.html', failed=failed, held=held, reminders=reminders,
+                           unread=InboxThread.query.filter(InboxThread.unread_count > 0, InboxThread.archived_at.is_(None)).count(),
+                           recent_event=recent, workspace_usage=usage)
+
+
 @bp.route('/dashboard/review', methods=['POST'])
 @login_required
 @require_roles('admin', 'social_manager')
@@ -4707,6 +4813,7 @@ def dashboard():
             'current_subscription': subscription,
             'current_subscription_view': subscription_view,
             'workspace_usage': workspace_usage_summary(organization),
+            'draft_key': _send_draft_key(),
             'a2p_status_view': a2p_status_view,
             'can_send_messages': can_send_messages,
             'confirmed_community_signup_consent': organization_has_confirmed_signup_consent(_current_organization_id()),
@@ -5006,7 +5113,7 @@ def dashboard():
                     scheduled_estimate['max_segment_count'],
                     scheduled_estimate['total_segments'],
                 )
-                session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+                session['clear_send_draft_key'] = _send_draft_key()
                 flash(f'Message scheduled for {format_datetime(scheduled_utc)}. {_format_blast_estimate_summary(scheduled_estimate)}', 'success')
                 return redirect(url_for('main.scheduled_list'))
                 
@@ -5032,7 +5139,7 @@ def dashboard():
             if test_mode:
                 flash('No internal test recipients were resolved for this test send.', 'error')
             else:
-                flash('No eligible recipients were found. Review permission, unsubscribe, and suppression records.', 'error')
+                flash('No contacts can receive this message. Review permission, opt-outs and blocked numbers.', 'error')
             return render_dashboard()
 
         blast_estimate = analyze_personalized_sms_blast(final_message, recipient_data)
@@ -5074,7 +5181,7 @@ def dashboard():
                 return render_dashboard()
             if created:
                 enqueue_outbound_request(saved_request)
-            session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+            session['clear_send_draft_key'] = _send_draft_key()
             return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))
 
         send_fingerprint = build_blast_send_fingerprint(
@@ -5819,6 +5926,47 @@ def settings_home():
         surface_view=_settings_surface_view(organization),
         settings_cards=_settings_cards(_current_user_is_workspace_owner()),
     )
+
+
+@bp.route('/settings/scheduling', methods=['GET', 'POST'])
+@login_required
+@require_roles('admin')
+def schedule_preferences():
+    from zoneinfo import available_timezones
+
+    organization = _current_organization()
+    if not saas_mode_enabled() or current_user.is_platform_admin or organization is None:
+        abort(404)
+    from app.services.aoc_event_sync_service import refresh_workspace_reminders
+    from app.services.reminder_preferences import REMINDERS, parse_reminder_preferences, reminder_preferences
+
+    zones = sorted(available_timezones())
+    if request.method == 'POST':
+        organization = Organization.query.filter_by(id=organization.id).populate_existing().with_for_update().one()
+        try:
+            if request.form.get('section') == 'reminders':
+                organization.reminder_preferences = parse_reminder_preferences(request.form)
+                metadata = refresh_workspace_reminders(organization)
+                action = 'reminders_updated'
+            else:
+                selected = request.form.get('timezone', '').strip()
+                if selected not in zones or len(selected) > 64:
+                    raise ValueError('Select a listed time zone.')
+                organization.timezone_name = selected
+                metadata = {'timezone': selected}
+                action = 'updated'
+            db.session.add(OrganizationSettingsAuditLog(
+                organization_id=organization.id, actor_user_id=current_user.id,
+                category='scheduling', action=action, metadata_json=json.dumps(metadata),
+            ))
+            db.session.commit()
+            flash('Scheduling preferences saved.', 'success')
+            return redirect(url_for('main.schedule_preferences'))
+        except ValueError as error:
+            db.session.rollback()
+            flash(str(error), 'error')
+    return render_template('settings/scheduling.html', zones=zones, selected=workspace_timezone_name(),
+                           definitions=REMINDERS, preferences=reminder_preferences(organization))
 
 
 @bp.route('/settings/test-recipients', methods=['GET', 'POST'])
@@ -7257,14 +7405,43 @@ def hosted_sms_opt_in(organization_slug):
     organization = _public_organization_by_slug_or_404(organization_slug)
     onboarding = organization.a2p_onboarding
     hosted_urls = hosted_a2p_compliance_urls(organization)
+    with organization_context(organization.id):
+        signup_sources = [source for source in ConsentSource.query.filter_by(
+            organization_id=organization.id, kind='hosted', status='approved',
+        ).order_by(ConsentSource.name, ConsentSource.id) if hosted_signup_service.is_published(source, organization)]
     return render_template(
         'public/sms_compliance_page.html',
         organization=organization,
         onboarding=onboarding,
         hosted_compliance_urls=hosted_urls,
+        signup_sources=signup_sources,
         page_kind='opt_in',
         page_title='SMS Opt-In and Consent',
     )
+
+
+@bp.route('/compliance/<organization_slug>/sms/join/<int:source_id>', methods=['GET', 'POST'])
+def hosted_signup(organization_slug, source_id):
+    if not saas_mode_enabled():
+        abort(404)
+    organization = _public_organization_by_slug_or_404(organization_slug)
+    with organization_context(organization.id):
+        source = ConsentSource.query.filter_by(organization_id=organization.id, id=source_id).first_or_404()
+        if not hosted_signup_service.is_published(source, organization):
+            abort(404)
+        command = error = None
+        if request.method == 'POST':
+            phone = normalize_phone(request.form.get('phone', ''))
+            if not validate_phone(phone) or request.form.get('consent') != 'yes':
+                error = 'Enter your mobile number and choose the text updates you want.'
+            else:
+                command = hosted_signup_service.confirmation_command(source, phone)
+        response = current_app.make_response((render_template('public/hosted_signup.html', source=source,
+                                             details=source.public_details, command=command, error=error),
+                                             422 if error else 200))
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Referrer-Policy'] = 'same-origin'
+        return response
 
 
 @bp.route('/setup', methods=['GET', 'POST'])
@@ -7488,6 +7665,22 @@ def billing_overview():
         surface_view=billing_context['surface_view'],
         workspace_usage=billing_context['workspace_usage'],
     )
+
+
+@bp.get('/billing/usage')
+@login_required
+def billing_usage_report():
+    from app.services.usage_summary_service import workspace_monthly_report
+    _require_billing_access()
+    organization = _current_organization()
+    if organization is None:
+        abort(404)
+    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+    month = request.args.get('month', current_month)
+    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month) or month.startswith('0000') or month > current_month:
+        abort(400, description='Choose a valid month through the current billing month.')
+    report = workspace_monthly_report(organization, datetime.strptime(month, '%Y-%m'))
+    return render_template('billing/usage_report.html', report=report, month=month, current_month=current_month)
 
 
 @bp.route('/billing/checkout', methods=['GET', 'POST'])
@@ -8144,6 +8337,15 @@ def community_permission_review(member_id):
     return _review_recipient_permission(member, purpose='community')
 
 
+def _community_view_query():
+    view = request.args.get('view')
+    if view == 'opted_out':
+        return view, community_query(contactable_only=False).filter(current_inbound_opt_out(CommunityMember))
+    if view == 'all':
+        return view, community_query(contactable_only=False)
+    return 'contactable', community_query()
+
+
 @bp.route('/community')
 @login_required
 def community_list():
@@ -8155,8 +8357,7 @@ def community_list():
         allowed_keys={'name', 'phone', 'added'}, default_key='name', default_dir='asc',
     )
     
-    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
-    query = community_query(contactable_only=audience_view != 'all')
+    audience_view, query = _community_view_query()
     
     if search:
         escaped = escape_like(search)
@@ -8188,8 +8389,11 @@ def community_list():
     members = query.order_by(order, CommunityMember.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
     phones = [member.phone for member in members]
     unsubscribed_phones = get_unsubscribed_phone_set(phones)
+    inbound_opt_outs = {member_id for (member_id,) in CommunityMember.query.with_entities(CommunityMember.id).filter(
+        CommunityMember.id.in_([member.id for member in members]), current_inbound_opt_out(CommunityMember),
+    ).all()} if members else set()
     return render_template(
-        'community/list.html', members=members, search=search,
+        'community/list.html', members=members, search=search, inbound_opt_outs=inbound_opt_outs,
         unsubscribed_phones=unsubscribed_phones, suppressed_phones=get_suppressed_phone_set(phones),
         permission_statuses=permission_status_by_phone(_current_organization_id(), phones),
         can_review_permission=_current_user_is_workspace_owner(),
@@ -8198,6 +8402,23 @@ def community_list():
         sort_key=sort_key, sort_dir=sort_dir,
         audience_view=audience_view,
     )
+
+
+@bp.get('/community/delivery-review')
+@login_required
+@require_roles('admin')
+def community_delivery_review():
+    from app.services.reachability_review_service import repeated_unreachable_contacts
+    if not can_view_phone_numbers():
+        abort(403)
+    flagged = repeated_unreachable_contacts(_current_organization_id())
+    page_size = 50
+    pages = max(1, (len(flagged) + page_size - 1) // page_size)
+    page = min(pages, max(1, request.args.get('page', 1, type=int)))
+    rows = flagged[(page - 1) * page_size:page * page_size]
+    phones = [row['phone'] for row in rows]
+    contacts = {member.phone: member for member in CommunityMember.query.filter(CommunityMember.phone.in_(phones)).all()}
+    return render_template('community/delivery_review.html', rows=rows, contacts=contacts, page=page, pages=pages)
 
 
 @bp.route('/community/add', methods=['GET', 'POST'])
@@ -8225,7 +8446,7 @@ def community_add():
         if existing:
             return _render_community_form(member=None, field_errors={'phone': 'A contact with this phone number already exists.'})
         
-        member = CommunityMember(name=name, phone=phone)
+        member = CommunityMember(name=name, phone=phone, individual_consent_required=True)
         db.session.add(member)
         db.session.commit()
         
@@ -8266,6 +8487,8 @@ def community_edit(member_id):
             return _render_community_form(member=member, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member.name = name
+        if phone != member.phone:
+            member.individual_consent_required = True
         member.phone = phone
         db.session.commit()
         
@@ -8290,9 +8513,9 @@ def community_delete(member_id):
 @login_required
 @require_roles('admin')
 def community_export():
-    audience_view = 'all' if request.args.get('view') == 'all' else 'contactable'
+    _, query = _community_view_query()
     members = _bounded_export_query_all(
-        community_query(contactable_only=audience_view != 'all').order_by(CommunityMember.name, CommunityMember.phone),
+        query.order_by(CommunityMember.name, CommunityMember.phone),
         'Community member',
     )
 
@@ -8334,12 +8557,87 @@ def community_bulk_delete():
     return redirect(url_for('main.community_list'))
 
 
+@bp.route('/community/consent-sources', methods=['GET', 'POST'])
+@login_required
+def consent_sources():
+    if not _current_user_is_workspace_owner():
+        abort(403)
+    organization = _current_organization()
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        disclosure = request.form.get('disclosure', '').strip()
+        kind = request.form.get('kind')
+        help_contact = request.form.get('help_contact', '').strip()
+        purpose = request.form.get('purpose')
+        event = None
+        if purpose == 'event':
+            event = _tenant_get_or_404(Event, request.form.get('event_id', type=int))
+        if (not 1 <= len(name) <= 120 or not 1 <= len(disclosure) <= 2000
+                or (kind == 'hosted' and not 3 <= len(help_contact) <= 120)
+                or kind not in {'import', 'hosted'} or purpose not in {'community', 'event'}
+                or request.form.get('attest') != 'yes'):
+            flash('Enter the source, exact consent wording and purpose, and confirm the attestation.', 'error')
+        else:
+            db.session.add(ConsentSource(
+                organization_id=organization.id, name=name, disclosure=disclosure, kind=kind,
+                purpose=purpose, event_id=event.id if event else None, attested_by=current_user.id,
+                public_details={'help_contact': help_contact} if kind == 'hosted' else None,
+            ))
+            db.session.commit()
+            flash('Source submitted for platform review.', 'success')
+            return redirect(url_for('main.consent_sources'))
+    return render_template('community/consent_sources.html', platform=False, organization=organization,
+                           sources=ConsentSource.query.filter_by(organization_id=organization.id)
+                           .order_by(ConsentSource.id.desc()).all(),
+                           events=events_query(current_only=False).order_by(Event.date.desc()).all())
+
+
+@bp.route('/platform/organizations/<int:organization_id>/consent-sources', methods=['GET', 'POST'])
+@login_required
+def platform_consent_sources(organization_id):
+    if not _can_manage_platform():
+        abort(403)
+    organization = db.get_or_404(Organization, organization_id)
+    with organization_context(organization_id):
+        query = ConsentSource.query.filter_by(organization_id=organization_id)
+        if request.method == 'POST':
+            source = query.filter_by(id=request.form.get('source_id', type=int)).with_for_update().first_or_404()
+            action = request.form.get('action')
+            if action == 'approve' and source.status == 'pending' and source.attested_by:
+                if source.kind == 'hosted':
+                    details = hosted_signup_service.public_details(
+                        organization, (source.public_details or {}).get('help_contact'),
+                    )
+                    if not details or request.form.get('review_public') != 'yes':
+                        flash('Verify the live sender, HELP contact, privacy policy, terms and signup wording before approval.', 'error')
+                        return redirect(url_for('main.platform_consent_sources', organization_id=organization_id))
+                    source.public_details = details
+                source.status = 'approved'
+                source.reviewed_at = utc_now()
+                source.reviewed_by = current_user.id
+            elif action == 'withdraw' and source.status in {'pending', 'approved'}:
+                source.status = 'withdrawn'
+                source.withdrawn_at = utc_now()
+                source.withdrawn_by = current_user.id
+            else:
+                abort(409)
+            db.session.commit()
+            return redirect(url_for('main.platform_consent_sources', organization_id=organization_id))
+        sources = query.order_by(ConsentSource.id.desc()).all()
+        previews = {source.id: hosted_signup_service.public_details(
+            organization, (source.public_details or {}).get('help_contact'),
+        ) for source in sources if source.kind == 'hosted' and source.status == 'pending'}
+    return render_template('community/consent_sources.html', platform=True, organization=organization,
+                           sources=sources, previews=previews)
+
+
 @bp.route('/community/import', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
 def community_import():
     if request.method == 'POST':
         file = None
+        source = None
         try:
             file, content, error_response = _read_uploaded_csv_text(
                 template_name='community/import.html',
@@ -8347,12 +8645,24 @@ def community_import():
             )
             if error_response is not None:
                 return error_response
-            parsed = _parse_uploaded_recipients_csv(content)
+            from app.services.consent_source_service import evidence_rows, record_import_row
+            source = None
+            if request.form.get('source_id'):
+                if not saas_mode_enabled() or current_user.is_platform_admin:
+                    abort(403)
+                source = ConsentSource.query.filter_by(
+                    organization_id=_current_organization_id(), id=request.form.get('source_id', type=int),
+                    kind='import', status='approved',
+                ).with_for_update().first_or_404()
+            parsed = evidence_rows(content) if source else _parse_uploaded_recipients_csv(content)
 
             if not parsed:
                 flash('No valid members found in CSV.', 'error')
                 return _render_community_import()
 
+            if source:
+                for row in parsed:
+                    record_import_row(source, row)
             parsed, skipped = _dedupe_recipients_by_phone(parsed)
             added = 0
 
@@ -8366,7 +8676,8 @@ def community_import():
 
                 member = CommunityMember(
                     name=rec['name'],
-                    phone=phone
+                    phone=phone,
+                    individual_consent_required=True,
                 )
                 db.session.add(member)
                 added += 1
@@ -8375,6 +8686,10 @@ def community_import():
             flash(f'Imported {added} members. {skipped} duplicates skipped.', 'success')
             return redirect(url_for('main.community_list'))
 
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc) if source else 'Check the CSV format, encoding and upload limits.', 'error')
+            return _render_community_import()
         except HTTPException:
             db.session.rollback()
             raise
@@ -8407,7 +8722,7 @@ def community_unsubscribe(member_id):
     )
     db.session.add(unsubscribe)
     db.session.commit()
-    flash('Member added to unsubscribed list.', 'success')
+    flash('Contact blocked from texts.', 'success')
     return redirect(url_for('main.community_list'))
 
 
@@ -8431,9 +8746,12 @@ def events_list():
         )
 
     past_count = query.filter(~predicate).count()
-    events = query.filter(~predicate if event_view == 'past' else predicate).order_by(Event.date.desc()).all()
+    events = query.filter(~predicate if event_view == 'past' else predicate).order_by(
+        Event.date.desc() if event_view == 'past' else Event.date.asc().nullslast(), Event.id).all()
+    recent = query.filter(completed_event_predicate()).order_by(Event.date.desc(), Event.id.desc()).limit(3).all() if (
+        not search and 'view' not in request.args) else []
     return render_template('events/list.html', events=events, search=search, event_view=event_view,
-                           past_count=past_count)
+                           past_count=past_count, recent_events=recent)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
@@ -8505,8 +8823,10 @@ def event_detail(event_id):
     booking_query = EventBooking.query.filter_by(event_id=event.id).order_by(EventBooking.id.desc())
     booking_total = booking_query.count()
     bookings = booking_query.offset((booking_page - 1) * 100).limit(100).all()
+    reminders = event_reminder_schedules(event)
     return render_template(
         'events/detail.html',
+        reminders=reminders, reminder_estimates=_automatic_reminder_estimates(reminders),
         event=event,
         registrations=registrations,
         registration_total=registration_total,
@@ -8733,8 +9053,6 @@ def event_register(event_id):
         booking_spaces = 0
     from app.services.booking_projection_service import create_local_booking
     create_local_booking(event, name, phone, party_size=booking_spaces)
-    if normalized_phone and validate_phone(normalized_phone):
-        upsert_community_member_contact(name, normalized_phone)
     db.session.commit()
     
     flash('Booking added. Eligible contact numbers are counted once for event messaging.', 'success')
@@ -8811,7 +9129,7 @@ def event_import_registrations(event_id):
 
         for rec in parsed:
             phone = rec['phone']
-            upsert_community_member_contact(rec['name'], phone)
+            upsert_community_member_contact(rec['name'], phone, individual_consent_required=True)
 
             # Check if already registered for this event
             existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()
@@ -8927,7 +9245,7 @@ def logs_list():
             'MessageLog list query failed due to schema mismatch: %s',
             exc,
         )
-        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        flash('Message history is temporarily unavailable. Try again later.', 'error')
         logs = []
         total_count = 0
         page = total_pages = 1
@@ -8966,7 +9284,7 @@ def log_detail(log_id):
             'MessageLog detail query failed due to schema mismatch: %s',
             exc,
         )
-        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        flash('Message history is temporarily unavailable. Try again later.', 'error')
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)
@@ -9169,7 +9487,9 @@ def security_events():
 
 
 # Scheduled Messages
-def _apply_scheduled_search_filter(query, search: str):
+def _apply_scheduled_search_filter(query, search: str, schedule_id=None):
+    if schedule_id is not None:
+        query = query.filter(ScheduledMessage.id == schedule_id)
     if not search:
         return query
 
@@ -9184,12 +9504,40 @@ def _apply_scheduled_search_filter(query, search: str):
     )
 
 
+def _automatic_reminder_estimates(schedules):
+    upcoming = [schedule for schedule in schedules if schedule.status == 'pending' and is_event_reminder(schedule)]
+    if not upcoming:
+        return {}
+    _, recipients, _, _ = _resolve_send_audience({'target': 'community', 'event_id': None, 'test_mode': False})
+    from app.utils import sms_estimate_groups
+    groups = sms_estimate_groups(recipients)
+    samples = [recipient for recipient, _ in groups]
+    results = {}
+    for schedule in upcoming:
+        estimate = analyze_personalized_sms_blast(schedule.message_body, samples)
+        segments = sum(entry['segment_count'] * count for entry, (_, count) in zip(estimate['per_recipient'], groups))
+        results[schedule.id] = {'recipients': len(recipients), 'segments': segments}
+    return results
+
+
+def _cancel_workspace_schedule(schedule):
+    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation
+    if not apply_scheduled_cancellation(schedule):
+        return False
+    if is_event_reminder(schedule) and schedule.organization_id:
+        db.session.add(OrganizationSettingsAuditLog(
+            organization_id=schedule.organization_id, actor_user_id=current_user.id, category='scheduling',
+            action='reminder_skipped', metadata_json=json.dumps({'scheduled_id': schedule.id, 'kind': schedule.automation_kind}),
+        ))
+    return True
+
+
 @bp.route('/scheduled')
 @login_required
 def scheduled_list():
     search = request.args.get('search', '').strip()
     now = datetime.utcnow()
-    query = _apply_scheduled_search_filter(ScheduledMessage.query, search)
+    query = _apply_scheduled_search_filter(ScheduledMessage.query, search, request.args.get('id', type=int))
 
     pending = query.filter(ScheduledMessage.status == 'pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
@@ -9205,7 +9553,7 @@ def scheduled_list():
     from app.models import FeedbackInvitation
     invitation_schedule_ids = {row[0] for row in FeedbackInvitation.query.with_entities(FeedbackInvitation.scheduled_message_id).all()}
     protected_delete_ids = retained_history_ids | invitation_schedule_ids | {
-        message.id for message in past if message.status in {'pending', 'processing', 'held'}
+        message.id for message in past if is_event_reminder(message) or message.status in {'pending', 'processing', 'held'}
     }
 
     return render_template(
@@ -9214,6 +9562,8 @@ def scheduled_list():
         past=past,
         now=now,
         pending_ids=pending_ids,
+        reminder_estimates=_automatic_reminder_estimates(pending),
+        is_event_reminder=is_event_reminder,
         protected_delete_ids=protected_delete_ids,
         search=search
     )
@@ -9224,12 +9574,12 @@ def scheduled_list():
 @require_roles('admin')
 def scheduled_cancel(scheduled_id):
     scheduled = _tenant_get_or_404(ScheduledMessage, scheduled_id)
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
-    if not apply_scheduled_cancellation(scheduled):
+    if not _cancel_workspace_schedule(scheduled):
         db.session.commit()
         flash('Only pending, processing or held messages can be cancelled.', 'error')
         return redirect(url_for('main.scheduled_list'))
@@ -9249,6 +9599,9 @@ def scheduled_delete(scheduled_id):
     scheduled = lock_scheduled_message(scheduled.id, scheduled.organization_id)
     if scheduled is None:
         abort(404)
+    if is_event_reminder(scheduled):
+        flash('Automatic reminder history is retained for future event syncs.', 'warning')
+        return redirect(url_for('main.scheduled_list'))
     if scheduled.status in {'pending', 'processing', 'held'}:
         db.session.commit()
         flash('Cancel this scheduled message before deleting it.', 'error')
@@ -9295,7 +9648,7 @@ def scheduled_bulk_delete():
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
         if scheduled is None:
             continue
-        if scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
+        if is_event_reminder(scheduled) or scheduled.status in {'pending', 'processing', 'held'} or FeedbackInvitation.query.filter_by(scheduled_message_id=scheduled.id).first() is not None or MessageDispatchAttempt.query.filter_by(
             scheduled_message_id=scheduled.id,
         ).first() is not None:
             protected += 1
@@ -9305,7 +9658,7 @@ def scheduled_bulk_delete():
     db.session.commit()
     flash(f'{deleted} scheduled message(s) deleted.', 'success')
     if protected:
-        flash(f'{protected} active message(s) or messages with retained dispatch history were kept.', 'warning')
+        flash(f'{protected} active or retained message(s) were kept.', 'warning')
     return redirect(url_for('main.scheduled_list'))
 
 
@@ -9328,7 +9681,7 @@ def scheduled_bulk_cancel():
         flash('No messages selected.', 'error')
         return redirect(url_for('main.scheduled_list'))
 
-    from app.services.scheduled_cancellation_service import apply_scheduled_cancellation, lock_scheduled_message
+    from app.services.scheduled_cancellation_service import lock_scheduled_message
 
     selected = _tenant_bulk_filter(
         ScheduledMessage.query.filter(
@@ -9339,7 +9692,7 @@ def scheduled_bulk_cancel():
     updated = 0
     for selected_message in selected:
         scheduled = lock_scheduled_message(selected_message.id, selected_message.organization_id)
-        if scheduled is not None and apply_scheduled_cancellation(scheduled):
+        if scheduled is not None and _cancel_workspace_schedule(scheduled):
             updated += 1
         db.session.flush()
     db.session.commit()
@@ -9353,8 +9706,7 @@ def scheduled_status():
     """API endpoint for polling scheduled message status changes."""
     search = request.args.get('search', '').strip()
     pending = _apply_scheduled_search_filter(
-        ScheduledMessage.query,
-        search
+        ScheduledMessage.query, search, request.args.get('id', type=int),
     ).filter(ScheduledMessage.status == 'pending').all()
     pending_ids = [m.id for m in pending]
     pending_count = len(pending_ids)
@@ -9413,6 +9765,11 @@ def unsubscribed_list():
         default_dir='desc',
     )
     per_page = 50
+    restriction = request.args.get('restriction')
+    if restriction not in ('opted_out', 'blocked'):
+        restriction = 'all'
+    inbound_stop = current_inbound_opt_out(UnsubscribedContact)
+
 
     unsubscribed_query = (
         UnsubscribedContact.query
@@ -9477,6 +9834,12 @@ def unsubscribed_list():
             )
         )
 
+    if restriction == 'opted_out':
+        unsubscribed_query = unsubscribed_query.filter(inbound_stop)
+        suppressed_query = suppressed_query.filter(db.false())
+    elif restriction == 'blocked':
+        unsubscribed_query = unsubscribed_query.filter(~inbound_stop)
+
     unsubscribed_count = unsubscribed_query.count()
     suppressed_count = suppressed_query.count()
     total_count = unsubscribed_count + suppressed_count
@@ -9495,7 +9858,7 @@ def unsubscribed_list():
             resolved_name.label('name'),
             UnsubscribedContact.phone.label('phone'),
             UnsubscribedContact.reason.label('reason'),
-            literal('unsubscribed').label('category'),
+            case((inbound_stop, literal('opted_out')), else_=literal('blocked')).label('category'),
             UnsubscribedContact.source.label('source'),
             UnsubscribedContact.created_at.label('created_at'),
             literal('unsubscribed').label('entry_type'),
@@ -9566,6 +9929,12 @@ def unsubscribed_list():
             )
         )
 
+    if restriction == 'opted_out':
+        unsubscribed_rows = unsubscribed_rows.where(inbound_stop)
+        suppressed_rows = suppressed_rows.where(db.false())
+    elif restriction == 'blocked':
+        unsubscribed_rows = unsubscribed_rows.where(~inbound_stop)
+
     combined_rows = union_all(unsubscribed_rows, suppressed_rows).subquery('suppression_entries')
     normalized_phone = func.replace(
         func.replace(
@@ -9622,7 +9991,7 @@ def unsubscribed_list():
     ]
 
     return render_template(
-        'unsubscribed/list.html',
+        'unsubscribed/list.html', restriction=restriction,
         entries=combined,
         search=search,
         page=page,
@@ -9874,7 +10243,9 @@ def twilio_delivery_webhook():
 def twilio_inbound_webhook():
     payload = request.form.to_dict(flat=True)
     messaging_profile = resolve_messaging_profile(payload) if saas_mode_enabled() else None
-    if current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
+    requires_signup_proof = bool(messaging_profile and hosted_signup_service.JOIN_COMMAND.fullmatch(
+        (payload.get('Body') or '').strip()))
+    if requires_signup_proof or current_app.config.get('TWILIO_VALIDATE_INBOUND_SIGNATURE', True):
         signature = request.headers.get('X-Twilio-Signature')
         validation = validate_inbound_signature_detailed(
             request.url,
@@ -9999,8 +10370,10 @@ def inbox_list():
     per_page = 50
     selected_thread_id = request.args.get('thread', type=int)
     mobile_view = request.args.get('view', '').strip().lower()
-    show_thread_list_only = mobile_view == 'threads'
-    query = InboxThread.query
+    show_thread_list_only = not selected_thread_id or mobile_view == 'threads'
+    archived = request.args.get('folder') == 'archived'
+    folder = 'archived' if archived else None
+    query = InboxThread.query.filter(InboxThread.archived_at.is_not(None) if archived else InboxThread.archived_at.is_(None))
 
     if search:
         escaped = escape_like(search)
@@ -10026,8 +10399,6 @@ def inbox_list():
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
         if selected_thread is None:
             selected_thread = InboxThread.query.filter_by(id=selected_thread_id).first()
-    elif threads and not show_thread_list_only:
-        selected_thread = threads[0]
 
     messages = []
     active_sessions = []
@@ -10060,9 +10431,9 @@ def inbox_list():
         if messages:
             all_messages = InboxMessage.query.filter_by(thread_id=selected_thread.id)
             if all_messages.filter(earlier_than(messages[0])).first() is not None:
-                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, before=messages[0].id)
+                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder, before=messages[0].id)
             if all_messages.filter(later_than(messages[-1])).first() is not None:
-                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, after=messages[-1].id)
+                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder, after=messages[-1].id)
         if selected_thread.unread_count and not newer_messages_url:
             mark_thread_read(selected_thread.id)
             selected_thread.unread_count = 0
@@ -10118,8 +10489,11 @@ def inbox_list():
     activity = _inbox_activity_snapshot()
     from app.services.contact_privacy_service import build_thread_display_previews
 
+    reaction_marks, attached_reactions, opt_outs = conversation_annotations(messages)
     return render_template(
         'inbox/list.html',
+        reaction_marks=reaction_marks, attached_reactions=attached_reactions, opt_outs=opt_outs,
+        can_delete_inbox=_can_delete_inbox(), folder=folder,
         threads=threads,
         selected_thread=selected_thread,
         messages=messages,
@@ -10134,14 +10508,14 @@ def inbox_list():
         inbox_status_delivery_version=activity['delivery_version'],
         older_messages_url=older_messages_url,
         newer_messages_url=newer_messages_url,
-        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page) if selected_thread else url_for('main.inbox_list', search=search, page=page, view='threads' if show_thread_list_only else None),
+        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder) if selected_thread else url_for('main.inbox_list', search=search, page=page, folder=folder, view='threads' if show_thread_list_only else None),
         reply_draft_context=hashlib.sha256(f'{_current_organization_id()}:{current_user.id}:{current_user.session_nonce}'.encode()).hexdigest()[:32],
         acknowledged_reply_key=acknowledged_reply_key,
         show_thread_list_only=show_thread_list_only,
         search=search,
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
         pagination_endpoint='main.inbox_list',
-        pagination_args={'search': search, 'view': 'threads' if show_thread_list_only else None,
+        pagination_args={'search': search, 'folder': folder, 'view': 'threads' if show_thread_list_only else None,
                          'thread': selected_thread.id if selected_thread else None},
         pagination_label='Conversation Pagination', pagination_noun='conversations',
         reply_request_key=uuid4().hex,
@@ -10291,18 +10665,52 @@ def inbox_thread_update(thread_id):
     return _redirect_to_inbox(thread_id=thread.id)
 
 
+def _can_delete_inbox() -> bool:
+    if saas_mode_enabled():
+        return _current_user_is_workspace_owner()
+    return current_user.role == 'admin'
+
+
+def _inbox_retention_reason(thread):
+    if SurveySession.query.filter_by(thread_id=thread.id, purpose='event_feedback').first() is not None:
+        return 'This conversation contains retained event feedback. Keep it to preserve that history.'
+    if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
+        OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
+    ).first() is not None:
+        return 'This conversation has an unresolved send request. Resolve it before deleting its history.'
+    return None
+
+
+@bp.route('/inbox/threads/<int:thread_id>/archive', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_thread_archive(thread_id):
+    thread = _tenant_get_or_404(InboxThread, thread_id)
+    action = request.form.get('action')
+    if action not in {'archive', 'restore'}:
+        abort(400)
+    # Serialize archive with incoming messages. A later inbound reopens the conversation.
+    thread = InboxThread.query.filter_by(id=thread.id).populate_existing().with_for_update().one()
+    if action == 'archive':
+        thread.archived_at = thread.archived_at or utc_now()
+        thread.unread_count = 0
+    else:
+        thread.archived_at = None
+    db.session.commit()
+    flash('Conversation archived.' if action == 'archive' else 'Conversation restored.', 'success')
+    return _redirect_to_inbox()
+
+
 @bp.route('/inbox/threads/<int:thread_id>/delete', methods=['POST'])
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_thread_delete(thread_id):
+    if not _can_delete_inbox():
+        abort(403)
     thread = _tenant_get_or_404(InboxThread, thread_id)
-    if SurveySession.query.filter_by(thread_id=thread.id, purpose='event_feedback').first() is not None:
-        flash('This conversation contains retained event feedback. Keep it to preserve that history.', 'warning')
-        return _redirect_to_inbox(thread_id=thread.id)
-    if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
-        OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
-    ).first() is not None:
-        flash('This conversation has an unresolved send request. Resolve it before deleting the conversation.', 'warning')
+    reason = _inbox_retention_reason(thread)
+    if reason:
+        flash(reason, 'warning')
         return _redirect_to_inbox(thread_id=thread.id)
     result = delete_thread_with_dependencies(thread.id)
     if result is None:
@@ -10325,12 +10733,18 @@ def inbox_thread_delete(thread_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_messages_bulk_delete():
+    if not _can_delete_inbox():
+        abort(403)
     thread_id = request.form.get('thread_id', type=int)
     if not thread_id:
         flash('Thread is required.', 'error')
         return _redirect_to_inbox()
 
-    _tenant_get_or_404(InboxThread, thread_id)
+    thread = _tenant_get_or_404(InboxThread, thread_id)
+    reason = _inbox_retention_reason(thread)
+    if reason:
+        flash(reason, 'warning')
+        return _redirect_to_inbox(thread_id=thread_id)
     message_ids = _parse_int_ids(request.form.getlist('message_ids'))
     if not message_ids:
         flash('No messages selected.', 'warning')

@@ -26,6 +26,15 @@
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="workspace-panel__body">
+                        {% if consent_sources %}
+                        <label class="form-label" for="source_id">Permission evidence</label>
+                        <select id="source_id" class="form-select mb-2" name="source_id">
+                            <option value="">Directory import only</option>
+                            {% for source in consent_sources %}<option value="{{ source.id }}">{{ source.name }} · {{ source.purpose }}</option>{% endfor %}
+                        </select>
+                        <p class="small text-muted">For an approved source, include the header name,phone,reference,consented_at. Each reference must identify the original consent record. Include the time zone in its timestamp.</p>
+                        {% endif %}
+                        {% if current_user.organization_role == 'owner' %}<p><a href="{{ url_for('main.consent_sources') }}">Manage consent sources</a></p>{% endif %}
                         <div class="mb-0">
                             <label for="file" class="form-label">CSV File <span class="text-danger">*</span></label>
                             <input type="file" class="form-control" id="file" name="file" accept=".csv" required>

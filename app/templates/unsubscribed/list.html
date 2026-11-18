@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 {% macro readable_block_label(value) -%}
-{{ {'hard_fail': 'Number blocked', 'usage_reconciliation': 'Provider status check'}.get(value, (value or 'Unknown')|replace('_', ' ')|replace('-', ' ')|capitalize)|private_text }}
+{{ {'opted_out': 'Opted out', 'blocked': 'Blocked', 'hard_fail': 'Number blocked', 'usage_reconciliation': 'Provider status check'}.get(value, (value or 'Unknown')|replace('_', ' ')|replace('-', ' ')|capitalize)|private_text }}
 {%- endmacro %}
 
 {% block title %}Opt-Outs &amp; Blocks - {{ product_name }}{% endblock %}
@@ -38,6 +38,13 @@
 {% set blocks_empty_secondary_label = 'Import CSV' if can_manage_unsubscribed and not search else None %}
 <div class="alert alert-success d-none" role="status" aria-live="polite" id="backfillAlert"></div>
 <div class="workspace-shell">
+    {% set audience_view = 'blocked' %}
+    {% include 'includes/people_filters.html' %}
+    <nav class="d-flex flex-wrap gap-2" aria-label="Restriction type">
+        {% for value, label in [('all','All restrictions'),('opted_out','Inbound opt-outs'),('blocked','Other blocks')] %}
+        <a class="btn btn-sm {{ 'btn-primary' if restriction == value else 'btn-outline-secondary' }}" href="{{ url_for('main.unsubscribed_list', restriction=value, search=search, sort=sort_key, dir=sort_dir) }}"{% if restriction == value %} aria-current="page"{% endif %}>{{ label }}</a>
+        {% endfor %}
+    </nav>
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
 
     <div class="collection-shell">
@@ -50,6 +57,7 @@
             meta='Find contacts who opted out and numbers blocked from sending.',
             target_ids='unsubscribedTable'
         ) %}
+        <input type="hidden" name="restriction" value="{{ restriction }}">
         <input type="hidden" name="sort" value="{{ sort_key }}">
         <input type="hidden" name="dir" value="{{ sort_dir }}">
         {% endcall %}
@@ -273,7 +281,7 @@
                 <nav aria-label="Opt-Outs and Blocks Pagination">
                     <ul class="pagination pagination-sm mb-0">
                         <li class="page-item {% if page <= 1 %}disabled{% endif %}">
-                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=page-1, sort=sort_key, dir=sort_dir) }}" aria-label="Previous">
                                 <span aria-hidden="true">&laquo;</span>
                             </a>
                         </li>
@@ -281,13 +289,13 @@
                             {% if p == page %}
                             <li class="page-item active"><span class="page-link">{{ p }}</span></li>
                             {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                            <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
+                            <li class="page-item"><a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=p, sort=sort_key, dir=sort_dir) }}">{{ p }}</a></li>
                             {% elif p == page - 3 or p == page + 3 %}
                             <li class="page-item disabled"><span class="page-link">...</span></li>
                             {% endif %}
                         {% endfor %}
                         <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
-                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
+                            <a class="page-link" href="{{ url_for('main.unsubscribed_list', restriction=restriction, search=search, page=page+1, sort=sort_key, dir=sort_dir) }}" aria-label="Next">
                                 <span aria-hidden="true">&raquo;</span>
                             </a>
                         </li>
@@ -328,166 +336,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-    const backfillForm = document.querySelector('[data-backfill-form]');
-    const backfillAlert = document.getElementById('backfillAlert');
-
-    if (backfillForm) {
-        const backfillButton = backfillForm.querySelector('[data-backfill-button]');
-
-        backfillForm.addEventListener('submit', async (event) => {
-            event.preventDefault();
-
-            if (!confirm('Review past message failures for opt-outs and blocks?')) {
-                return;
-            }
-
-            if (backfillButton) {
-                backfillButton.disabled = true;
-                backfillButton.classList.add('disabled');
-                backfillButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Reviewing History...';
-            }
-
-            if (backfillAlert) {
-                backfillAlert.classList.add('d-none');
-                backfillAlert.textContent = '';
-            }
-
-            try {
-                const response = await fetch(backfillForm.action, {
-                    method: 'POST',
-                    headers: {
-                        'X-Requested-With': 'XMLHttpRequest',
-                    },
-                    credentials: 'same-origin',
-                    body: new FormData(backfillForm),
-                });
-
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    throw new Error(payload?.error || 'The message history review could not be started.');
-                }
-
-                if (backfillAlert) {
-                    backfillAlert.textContent = payload.message + ' Refreshing...';
-                    backfillAlert.classList.remove('d-none');
-                    backfillAlert.classList.remove('alert-danger');
-                    backfillAlert.classList.add('alert-success');
-                }
-                setTimeout(function() { window.location.reload(); }, 1000);
-            } catch (error) {
-                const message = error instanceof Error ? error.message : 'The message history review could not be started.';
-                if (backfillAlert) {
-                    backfillAlert.textContent = message;
-                    backfillAlert.classList.remove('d-none');
-                    backfillAlert.classList.remove('alert-success');
-                    backfillAlert.classList.add('alert-danger');
-                } else {
-                    alert(message);
-                }
-            } finally {
-                if (backfillButton) {
-                    backfillButton.disabled = false;
-                    backfillButton.classList.remove('disabled');
-                    backfillButton.innerHTML = '<i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Review Message History';
-                }
-            }
-        });
-    }
-
-    // Bulk selection functionality
-    const allEntryCheckboxes = Array.from(document.querySelectorAll('.entry-checkbox'));
-    const selectAllCheckbox = document.getElementById('selectAllEntries');
-    const selectAllBtn = document.getElementById('selectAllBtn');
-    const selectNoneBtn = document.getElementById('selectNoneBtn');
-    const selectedCount = document.getElementById('selectedCount');
-    const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
-    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
-    const bulkDeleteCount = document.getElementById('bulkDeleteCount');
-    const confirmBulkDeleteBtn = document.getElementById('confirmBulkDeleteBtn');
-    const bulkDeleteForm = document.getElementById('bulkDeleteForm');
-
-    function isElementVisible(element) {
-        if (!element) return false;
-        if (element.offsetParent !== null) return true;
-        return element.getClientRects().length > 0;
-    }
-
-    function getVisibleEntryCheckboxes() {
-        return allEntryCheckboxes.filter(isElementVisible);
-    }
-
-    function syncMatchingCheckboxes(sourceCheckbox, checked) {
-        allEntryCheckboxes.forEach(function(cb) {
-            if (cb.name === sourceCheckbox.name && cb.value === sourceCheckbox.value) {
-                cb.checked = checked;
-            }
-        });
-    }
-
-    function setCheckedForVisibleEntries(checked) {
-        getVisibleEntryCheckboxes().forEach(function(cb) {
-            syncMatchingCheckboxes(cb, checked);
-        });
-    }
-
-    function updateBulkUi() {
-        const visibleCheckboxes = getVisibleEntryCheckboxes();
-        const count = visibleCheckboxes.filter(function(cb) { return cb.checked; }).length;
-        if (selectedCount) selectedCount.textContent = count;
-        if (bulkSelectionActions) {
-            bulkSelectionActions.classList.toggle('is-visible', count > 0);
-        }
-        if (bulkDeleteCount) bulkDeleteCount.textContent = count;
-        if (selectAllCheckbox) {
-            selectAllCheckbox.checked = visibleCheckboxes.length > 0 && count === visibleCheckboxes.length;
-            selectAllCheckbox.indeterminate = count > 0 && count < visibleCheckboxes.length;
-        }
-    }
-
-    allEntryCheckboxes.forEach(function(cb) {
-        cb.addEventListener('change', function() {
-            syncMatchingCheckboxes(cb, cb.checked);
-            updateBulkUi();
-        });
-    });
-
-    if (selectAllCheckbox) {
-        selectAllCheckbox.addEventListener('change', function() {
-            setCheckedForVisibleEntries(selectAllCheckbox.checked);
-            updateBulkUi();
-        });
-    }
-
-    if (selectAllBtn) {
-        selectAllBtn.addEventListener('click', function() {
-            setCheckedForVisibleEntries(true);
-            updateBulkUi();
-        });
-    }
-
-    if (selectNoneBtn) {
-        selectNoneBtn.addEventListener('click', function() {
-            setCheckedForVisibleEntries(false);
-            updateBulkUi();
-        });
-    }
-
-    const bulkDeleteModal = document.getElementById('bulkDeleteModal');
-    if (bulkDeleteModal) {
-        bulkDeleteModal.addEventListener('show.bs.modal', function() {
-            const selected = getVisibleEntryCheckboxes().filter(function(cb) { return cb.checked; }).length;
-            if (bulkDeleteCount) bulkDeleteCount.textContent = selected;
-        });
-    }
-
-    if (confirmBulkDeleteBtn && bulkDeleteForm) {
-        confirmBulkDeleteBtn.addEventListener('click', function() {
-            bulkDeleteForm.submit();
-        });
-    }
-
-    window.addEventListener('resize', updateBulkUi);
-    updateBulkUi();
-</script>
+<script src="{{ url_for('static', filename='js/pages/unsubscribed-list.js', v=app_version) }}"></script>
 {% endblock %}

@@ -147,6 +147,16 @@ sudo chown root:twinevia /opt/twinevia-saas/.env
 sudo chmod 660 /opt/twinevia-saas/.env
 ```
 
+### Account recovery and reply email
+
+Transactional account mail defaults to off. Configure a verified sender in the transactional account approved for this installation. For SES, use its regional SMTP endpoint and SMTP credentials for the verified sending identity. Confirm production sending access, bounce/complaint handling, and the monitored return address with the mail operator before enabling.
+
+Set `ACCOUNT_MAIL_FROM`, `ACCOUNT_MAIL_SMTP_HOST`, `ACCOUNT_MAIL_SMTP_PORT`, `ACCOUNT_MAIL_SMTP_USER`, and `ACCOUNT_MAIL_SMTP_PASSWORD` in the protected deployment environment. Port 465 uses TLS and port 587 requires STARTTLS. Set `APP_BASE_URL` to the canonical HTTPS application origin. After verifying those settings, set `ACCOUNT_MAIL_ENABLED=1` and restart the web, scheduler and worker services.
+
+A workspace member opens **Change Password → Recovery email and reply notices** and verifies their own account email. Unmatched incoming SMS replies can generate generic notices after that member opts in. A recovery link expires 15 minutes after the request. Resetting the password revokes existing sessions and other recovery links.
+
+The SaaS scheduler hands pending email to its RQ worker. `account_mail_deliveries` records SMTP acceptance as `accepted`. An interrupted submission stays `sending` or `unconfirmed` for operator review. Known connection failures retry before expiry. Set `ACCOUNT_MAIL_ENABLED=0` and restart those services to disable sending and redemption while retaining administrator recovery and historical records.
+
 ## 4. Run The SaaS Installer
 
 ```bash

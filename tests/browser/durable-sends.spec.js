@@ -79,6 +79,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.setViewportSize(viewport);
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     await page.goto('/inbox');
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     const form = page.locator('.inbox-reply-form');
     await expect(form).toBeVisible();
     const action = await form.getAttribute('action');

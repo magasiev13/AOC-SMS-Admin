@@ -50,7 +50,7 @@ def test_templates_load_browser_assets_from_the_app_and_csp_has_no_cdn_exception
         assert not re.search(r'<(?:script|link)[^>]+(?:src|href)=[\"\']https?://', template.read_text()), template
     assert 'https://cdn.jsdelivr.net' not in DEFAULT_CONTENT_SECURITY_POLICY
     assert "font-src 'self' data:;" in DEFAULT_CONTENT_SECURITY_POLICY
-    assert "script-src 'self' 'unsafe-inline';" in DEFAULT_CONTENT_SECURITY_POLICY
+    assert "script-src 'self';" in DEFAULT_CONTENT_SECURITY_POLICY
     assert "style-src 'self' 'unsafe-inline';" in DEFAULT_CONTENT_SECURITY_POLICY
 
 
@@ -70,3 +70,21 @@ def test_workspace_signin_and_marketing_render_local_libraries(ux):
         response = ux.client.get('/static/vendor/' + asset)
         assert response.status_code == 200
         assert hashlib.sha256(response.data).hexdigest() == MANIFEST[asset]['sha256']
+
+def test_templates_only_load_external_scripts_and_use_event_listeners():
+    from html.parser import HTMLParser
+
+    class ScriptPolicy(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'script':
+                assert attrs.get('src'), path
+            for name, value in attrs.items():
+                assert not re.fullmatch(r'on[a-z]+', name), (path, name)
+                if value and name in {'href', 'action', 'src'}:
+                    assert not value.lstrip().lower().startswith('javascript:'), path
+
+    for path in (Path(__file__).resolve().parents[1] / 'app/templates').rglob('*.html'):
+        parser = ScriptPolicy()
+        parser.feed(re.sub(r'{%.*?%}|{#.*?#}', '', path.read_text(), flags=re.DOTALL))
+        parser.close()

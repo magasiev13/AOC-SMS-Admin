@@ -257,6 +257,7 @@
     </section>
     {% include 'events/messages.html' %}
 </div>
+{% if reminders %}{% include 'includes/event_reminders.html' %}{% endif %}
 {% endblock %}
 
 {% block scripts %}

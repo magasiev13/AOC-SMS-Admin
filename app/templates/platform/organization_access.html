@@ -12,6 +12,7 @@
 {% endblock %}
 
 {% block page_actions %}
+<a href="{{ url_for('main.platform_consent_sources', organization_id=organization.id) }}" class="btn btn-primary page-action-primary">Review consent sources</a>
 <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
 {% endblock %}
 

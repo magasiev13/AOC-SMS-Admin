@@ -1,5 +1,6 @@
 import json
 import hashlib
+import re
 import time
 from contextlib import nullcontext
 from uuid import uuid4
@@ -44,6 +45,53 @@ STOP_KEYWORDS = {'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'}
 START_KEYWORDS = {'START', 'UNSTOP', 'YES'}
 SURVEY_CANCEL_KEYWORDS = {'CANCEL', 'QUIT'}
 SURVEY_CONFIRM_PREFIX = 'CONFIRM'
+
+
+_REACTION_TEXT = re.compile(
+    r'(Liked|Loved|Disliked|Laughed at|Emphasized|Questioned) (?:“([^”]+)”|"([^"]+)")',
+    re.DOTALL,
+)
+_REACTION_MARKS = {
+    'Liked': '👍', 'Loved': '❤️', 'Disliked': '👎', 'Laughed at': '😄',
+    'Emphasized': '‼️', 'Questioned': '❓',
+}
+
+
+def conversation_annotations(messages):
+    """Attach quoted SMS reactions only to a unique, earlier sent message on this page."""
+    opt_outs = set()
+    quoted = {}
+    positions = {message.id: index for index, message in enumerate(messages)}
+    for message in messages:
+        if message.direction != 'inbound':
+            continue
+        if normalize_keyword(message.body) in STOP_KEYWORDS:
+            opt_outs.add(message.id)
+        match = _REACTION_TEXT.fullmatch((message.body or '').strip())
+        if match:
+            label, curly_text, straight_text = match.groups()
+            quoted[message.id] = (label, curly_text or straight_text)
+
+    marks = {}
+    attached = set()
+    if quoted:
+        quoted_bodies = {body for label, body in quoted.values()}
+        sent = (
+            db.session.query(InboxMessage.body, func.min(InboxMessage.id))
+            .filter(InboxMessage.thread_id == messages[0].thread_id, InboxMessage.direction == 'outbound',
+                    InboxMessage.body.in_(quoted_bodies))
+            .group_by(InboxMessage.body).having(func.count(InboxMessage.id) == 1)
+        )
+        candidates = dict(sent.all())
+        for reaction in messages:
+            if reaction.id not in quoted:
+                continue
+            label, body = quoted[reaction.id]
+            target = candidates.get(body)
+            if target in positions and positions[target] < positions[reaction.id]:
+                marks.setdefault(target, []).append((reaction, label, _REACTION_MARKS[label]))
+                attached.add(reaction.id)
+    return marks, attached, opt_outs
 
 
 class DuplicateMessageSidError(Exception):
@@ -516,6 +564,7 @@ def _append_inbox_message(
     thread.last_direction = direction
     thread.updated_at = now
     if direction == 'inbound':
+        thread.archived_at = None
         thread.unread_count = (thread.unread_count or 0) + 1
     return message
 
@@ -1057,7 +1106,9 @@ def process_inbound_sms(payload: dict) -> dict:
                 feedback_command = SurveyFlow.query.filter_by(
                     trigger_keyword=normalized, purpose='event_feedback',
                 ).order_by(SurveyFlow.id.desc()).first()
-        if session is not None and outbound_ready and normalized not in STOP_KEYWORDS:
+        from app.services.hosted_signup_service import JOIN_COMMAND, confirm_inbound
+        signup_command = JOIN_COMMAND.fullmatch(inbound_body.strip()) if messaging_profile else None
+        if session is not None and outbound_ready and normalized not in STOP_KEYWORDS and not signup_command:
             inbound_message.automation_source = 'survey'
             inbound_message.automation_source_id = session.survey_id
         if normalized in STOP_KEYWORDS:
@@ -1070,6 +1121,9 @@ def process_inbound_sms(payload: dict) -> dict:
             record_transport_consent(source='inbound_stop', decision='denied')
             _cancel_active_sessions(phone)
             status = 'opt_out'
+        elif signup_command:
+            status = confirm_inbound(signup_command, messaging_profile.organization, phone,
+                                     payload.get('To') or '', message_sid)
         elif not outbound_ready:
             if normalized in START_KEYWORDS and (
                 normalized != 'YES'
@@ -1289,6 +1343,9 @@ def process_inbound_sms(payload: dict) -> dict:
                 inbound_message, thread, pending_replies, survey_session=session,
                 question_delay=_survey_start_question_delay_seconds() if status == 'survey_started' else 0,
             )
+            if status == 'stored':
+                from app.services.account_mail_service import save_reply_notices
+                save_reply_notices(inbound_message)
             inbound_id, thread_id = inbound_message.id, thread.id
             db.session.commit()
             queued = enqueue_for_inbound(messaging_profile.organization_id, inbound_id)

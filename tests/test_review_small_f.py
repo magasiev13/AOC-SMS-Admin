@@ -1,4 +1,5 @@
 """Confirmed community consent hides redundant actions without granting event consent."""
+from tests.consent_fixtures import historical_signup_contract
 import pytest
 
 from tests.test_ux_recovery import ux, login
@@ -7,7 +8,7 @@ from tests.test_ux_recovery import ux, login
 @pytest.mark.parametrize('confirmed', [False, True])
 @pytest.mark.parametrize('view', ['contactable', 'all'])
 def test_community_permission_links_follow_confirmed_workspace_consent_only(ux, confirmed, view):
-    ux.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = ['ux-fixture'] if confirmed else []
+    historical_signup_contract(ux.org_id, confirmed)
     owner = ux.db.session.get(ux.models.AppUser, ux.users['owner'])
     ux.db.session.add(ux.models.CommunityMember(organization_id=ux.org_id, phone=owner.phone, name='Retained contact'))
     ux.db.session.commit()
@@ -27,7 +28,7 @@ def test_community_permission_links_follow_confirmed_workspace_consent_only(ux, 
 
 def test_confirmed_community_consent_keeps_event_permission_actions_and_existing_event_scope(ux):
     from app.services.recipient_permission_service import recipient_permission_status
-    ux.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = ['ux-fixture']
+    historical_signup_contract(ux.org_id, True)
     owner = ux.db.session.get(ux.models.AppUser, ux.users['owner'])
     event = ux.models.Event(organization_id=ux.org_id, title='Separate event consent')
     unrelated = ux.models.Event(organization_id=ux.org_id, title='Unrelated event audience')

@@ -202,3 +202,96 @@ def test_feedback_review_and_history_share_workspace_display_without_changing_sc
     assert response.status_code == 200
     assert review['timing'] in response.get_data(as_text=True)
     assert b' UTC' not in response.data and b'(UTC)' not in response.data
+
+
+def test_owner_changes_only_own_workspace_clock_and_staff_cannot_change_it(ux):
+    from app.tenant import organization_context
+    ux.app.config['APP_TIMEZONE'] = 'UTC'
+    login(ux)
+    assert ux.client.post('/settings/scheduling', data={'timezone':'Mars/City'}).status_code == 200
+    assert ux.client.post('/settings/scheduling', data={'timezone':'Asia/Tokyo'}).status_code == 302
+    with organization_context(ux.org_id):
+        assert workspace_timezone_name() == 'Asia/Tokyo'
+        assert parse_workspace_datetime('2027-02-12','09:00').astimezone(timezone.utc).hour == 0
+    with organization_context(ux.other_id):
+        assert workspace_timezone_name() == 'UTC'
+    login(ux, role='staff')
+    assert ux.client.post('/settings/scheduling', data={'timezone':'UTC'}).status_code == 403
+
+
+def test_workspace_reminder_controls_reschedule_future_sync_and_preserve_skips(ux):
+    from app.models import Event, Organization, OrganizationSettingsAuditLog, ScheduledMessage
+    from app.services.reminder_preferences import REMINDERS
+    from app.tenant import organization_context
+
+    login(ux)
+    with organization_context(ux.org_id):
+        event = Event(title='Summer outing', date=date(2091, 6, 10), external_source='aoc-wordpress',
+                      external_status='publish', external_event_id='42', external_timezone='UTC',
+                      external_start_at=datetime(2091, 6, 10, 20), external_url='https://example.test/event')
+        ux.db.session.add(event)
+        ux.db.session.commit()
+    form = {'section': 'reminders'}
+    for kind, (_, _, _, clock, body) in REMINDERS.items():
+        form.update({f'{kind}_enabled': 'on', f'{kind}_time': clock, f'{kind}_body': body})
+    del form['two_week_enabled']
+    form.update(one_day_time='17:35', one_day_body='{org} invites {first_name} to {event} {when}. {url}')
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    rows = {row.automation_kind: row for row in ScheduledMessage.query.filter_by(organization_id=ux.org_id)}
+    assert set(rows) == {'one_day', 'seven_day', 'day_of'}
+    assert rows['one_day'].scheduled_at == datetime(2091, 6, 9, 17, 35)
+    assert 'invites {first_name} to Summer outing tomorrow.' in rows['one_day'].message_body
+    assert rows['one_day'].message_body.endswith('Reply STOP to unsubscribe.')
+    rows['seven_day'].status = 'cancelled'
+    ux.db.session.commit()
+    del form['one_day_enabled']
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    assert rows['one_day'].status == 'cancelled'
+    form['one_day_enabled'] = 'on'
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    assert rows['one_day'].status == 'pending' and rows['seven_day'].status == 'cancelled'
+    assert OrganizationSettingsAuditLog.query.filter_by(organization_id=ux.org_id, action='reminders_updated').count() == 3
+    assert ux.db.session.get(Organization, ux.other_id).reminder_preferences is None
+    invalid = form | {'one_day_body': '{event.unknown}'}
+    assert b'unrecognized placeholder' in ux.client.post('/settings/scheduling', data=invalid).data
+    login(ux, role='staff')
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 403
+
+
+def test_event_reminder_skip_is_authorized_audited_and_durable_on_both_pages(ux):
+    from app.models import Event, OrganizationSettingsAuditLog, ScheduledMessage
+    from app.services.aoc_event_sync_service import refresh_workspace_reminders
+    from app.tenant import organization_context
+
+    login(ux)
+    permitted_contact(ux)
+    with organization_context(ux.org_id):
+        event = Event(title='Future event', date=date(2091, 6, 10), external_source='aoc-wordpress',
+                      external_event_id='42', external_status='publish', external_timezone='UTC',
+                      external_start_at=datetime(2091, 6, 10, 20), external_url='https://example.test/event')
+        ux.db.session.add(event)
+        ux.db.session.flush()
+        refresh_workspace_reminders(ux.db.session.get(ux.models.Organization, ux.org_id))
+        ux.db.session.commit()
+        row = ScheduledMessage.query.filter_by(automation_kind='one_day').one()
+        row_id, event_id = row.id, event.id
+
+    for path in ('/scheduled', f'/events/{event_id}'):
+        page = ux.client.get(path)
+        assert page.status_code == 200
+        assert '1 eligible now · 1 estimated segment' in page.get_data(as_text=True)
+        assert b'Skip reminder' in page.data
+    login(ux, role='staff')
+    assert b'Skip reminder' not in ux.client.get(f'/events/{event_id}').data
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 403
+    login(ux)
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 302
+    assert ux.client.post(f'/scheduled/{row_id}/cancel').status_code == 302
+    assert ux.client.post(f'/scheduled/{row_id}/delete').status_code == 302
+    assert ux.client.post('/scheduled/bulk-delete', data={'scheduled_ids':str(row_id)}).status_code == 302
+    with organization_context(ux.org_id):
+        refresh_workspace_reminders(ux.db.session.get(ux.models.Organization, ux.org_id))
+        assert ux.db.session.get(ScheduledMessage, row_id).status == 'cancelled'
+        audit = OrganizationSettingsAuditLog.query.filter_by(action='reminder_skipped').one()
+        assert audit.organization_id == ux.org_id and audit.actor_user_id == ux.users['owner']
+        assert json.loads(audit.metadata_json) == {'scheduled_id': row_id, 'kind': 'one_day'}

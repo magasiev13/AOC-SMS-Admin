@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900" font-family="system-ui, sans-serif" role="img" aria-labelledby="title"><title id="title">People at 1440 pixels, illustrative wireframe</title>
+<rect x="0" y="0" width="1440" height="900" fill="#fff"/>
+<rect x="0" y="0" width="238" height="900" fill="#11263b"/>
+<text x="26" y="56" fill="#fff" font-size="30" font-weight="700">Twinevia</text>
+<text x="30" y="126" fill="#fff" font-size="20" font-weight="400">Home</text>
+<text x="30" y="181" fill="#fff" font-size="20" font-weight="400">Messages</text>
+<text x="30" y="236" fill="#fff" font-size="20" font-weight="400">Conversations</text>
+<rect x="12" y="261" width="214" height="48" fill="#234869"/>
+<text x="30" y="291" fill="#fff" font-size="20" font-weight="700">People</text>
+<text x="30" y="346" fill="#fff" font-size="20" font-weight="400">Events</text>
+<text x="30" y="850" fill="#fff" font-size="17" font-weight="400">Settings</text>
+<text x="300" y="92" fill="#1b2738" font-size="48" font-weight="700">People</text>
+<rect x="1185" y="54" width="175" height="46" fill="#174bbd"/>
+<text x="1202" y="83" fill="#fff" font-size="18" font-weight="700">Add contact</text>
+<text x="300" y="160" fill="#1b2738" font-size="23" font-weight="700">Search by name</text>
+<rect x="300" y="172" width="1060" height="2" fill="#223950"/>
+<text x="304" y="197" fill="#1b2738" font-size="20" font-weight="700">All contacts    /    Opted out</text>
+<text x="780" y="197" fill="#465767" font-size="17" font-weight="400">Filter people</text>
+<rect x="300" y="220" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="262" fill="#1b2738" font-size="23" font-weight="700">Contacts</text>
+<rect x="300" y="274" width="1060" height="2" fill="#223950"/>
+<text x="304" y="299" fill="#1b2738" font-size="20" font-weight="700">Taylor Lane</text>
+<text x="780" y="299" fill="#465767" font-size="17" font-weight="400">Can text</text>
+<rect x="300" y="322" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="347" fill="#1b2738" font-size="20" font-weight="700">Jordan Lee</text>
+<text x="780" y="347" fill="#465767" font-size="17" font-weight="400">Opted out</text>
+<rect x="300" y="370" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="395" fill="#1b2738" font-size="20" font-weight="700">Riley Park</text>
+<text x="780" y="395" fill="#465767" font-size="17" font-weight="400">Needs permission</text>
+<rect x="300" y="418" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="443" fill="#1b2738" font-size="20" font-weight="700">Morgan Chen</text>
+<text x="780" y="443" fill="#465767" font-size="17" font-weight="400">Not deliverable</text>
+<rect x="300" y="466" width="1060" height="1" fill="#ccd4dc"/></svg>

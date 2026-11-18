@@ -13,11 +13,11 @@ def test_explicit_logout_marks_user_cleanup_and_login_emits_it_once(ux):
 
     response = ux.client.get('/login')
     assert response.status_code == 200
-    assert f'const prefix = "twinevia:send-draft:{user_id}:";'.encode() in response.data
-    assert b'key.startsWith(prefix)' in response.data
+    assert f'data-prefix="twinevia:send-draft:{user_id}:"'.encode() in response.data
+    assert b'/static/js/pages/includes-clear-signed-out-drafts.js' in response.data
     with ux.client.session_transaction() as session:
         assert 'clear_send_drafts_for_user_id' not in session
-    assert b'key.startsWith(prefix)' not in ux.client.get('/login').data
+    assert b'/static/js/pages/includes-clear-signed-out-drafts.js' not in ux.client.get('/login').data
 
 
 def test_automatic_logout_does_not_mark_draft_deletion(ux):
@@ -30,4 +30,4 @@ def test_automatic_logout_does_not_mark_draft_deletion(ux):
 
     response = ux.client.post('/dashboard/review', headers={'Accept': 'application/json'})
     assert response.status_code == 401
-    assert b'key.startsWith(prefix)' not in ux.client.get('/login').data
+    assert b'/static/js/pages/includes-clear-signed-out-drafts.js' not in ux.client.get('/login').data

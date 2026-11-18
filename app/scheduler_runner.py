@@ -15,12 +15,14 @@ def _handle_shutdown(signum, frame):
 
 def run_once(app):
     """Run the timer's recovery and scheduling work with quiet idle summaries."""
+    from app.services.account_mail_service import recover_mail
     from app.services.automation_outbox_service import recover_automation_replies
     from app.services.outbound_request_service import reconcile_outbound_requests
     from app.services.scheduler_service import send_scheduled_messages
 
     with app.app_context():
         if app.config.get('SAAS_MODE'):
+            recover_mail()
             outbound = reconcile_outbound_requests()
             if any(outbound.values()):
                 app.logger.info('Outbound recovery: %s', outbound)

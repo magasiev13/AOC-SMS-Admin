@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900" font-family="system-ui, sans-serif" role="img" aria-labelledby="title"><title id="title">Events at 1440 pixels, illustrative wireframe</title>
+<rect x="0" y="0" width="1440" height="900" fill="#fff"/>
+<rect x="0" y="0" width="238" height="900" fill="#11263b"/>
+<text x="26" y="56" fill="#fff" font-size="30" font-weight="700">Twinevia</text>
+<text x="30" y="126" fill="#fff" font-size="20" font-weight="400">Home</text>
+<text x="30" y="181" fill="#fff" font-size="20" font-weight="400">Messages</text>
+<text x="30" y="236" fill="#fff" font-size="20" font-weight="400">Conversations</text>
+<text x="30" y="291" fill="#fff" font-size="20" font-weight="400">People</text>
+<rect x="12" y="316" width="214" height="48" fill="#234869"/>
+<text x="30" y="346" fill="#fff" font-size="20" font-weight="700">Events</text>
+<text x="30" y="850" fill="#fff" font-size="17" font-weight="400">Settings</text>
+<text x="300" y="92" fill="#1b2738" font-size="48" font-weight="700">Events</text>
+<rect x="1185" y="54" width="175" height="46" fill="#174bbd"/>
+<text x="1202" y="83" fill="#fff" font-size="18" font-weight="700">Add event</text>
+<text x="300" y="160" fill="#1b2738" font-size="23" font-weight="700">Upcoming</text>
+<rect x="300" y="172" width="1060" height="2" fill="#223950"/>
+<text x="304" y="197" fill="#1b2738" font-size="20" font-weight="700">Community workshop</text>
+<text x="780" y="197" fill="#465767" font-size="17" font-weight="400">Saturday · 28 people</text>
+<rect x="300" y="220" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="245" fill="#1b2738" font-size="20" font-weight="700">Volunteer training</text>
+<text x="780" y="245" fill="#465767" font-size="17" font-weight="400">Wednesday · 16 people</text>
+<rect x="300" y="268" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="310" fill="#1b2738" font-size="23" font-weight="700">Recent</text>
+<rect x="300" y="322" width="1060" height="2" fill="#223950"/>
+<text x="304" y="347" fill="#1b2738" font-size="20" font-weight="700">Volunteer orientation</text>
+<text x="780" y="347" fill="#465767" font-size="17" font-weight="400">Sunday · Request feedback</text>
+<rect x="300" y="370" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="395" fill="#1b2738" font-size="20" font-weight="700">Neighborhood meeting</text>
+<text x="780" y="395" fill="#465767" font-size="17" font-weight="400">Last week · View event</text>
+<rect x="300" y="418" width="1060" height="1" fill="#ccd4dc"/></svg>

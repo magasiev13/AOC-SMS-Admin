@@ -1,4 +1,5 @@
 """The confirmed AOC community sign-up contract, including actual opt-outs."""
+from tests.consent_fixtures import historical_signup_contract
 import importlib
 import json
 import os
@@ -29,7 +30,6 @@ def aoc(tmp_path, monkeypatch):
     for key, value in {
         'DATABASE_URL': uri, 'SAAS_MODE': '1', 'FLASK_DEBUG': '1', 'SCHEDULER_ENABLED': '0',
         'PYTHON_DOTENV_DISABLED': '1', 'SECRET_KEY': 'aoc-contract-test-secret',
-        'COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS': 'armenians-of-colorado',
     }.items():
         monkeypatch.setenv(key, value)
     import app.config
@@ -58,6 +58,7 @@ def aoc(tmp_path, monkeypatch):
             phone = '+17205550145'
             member = models.CommunityMember(organization=org, phone=phone, name='Confirmed signup')
             db.session.add_all([member, models.CommunityMember(organization=other, phone=phone, name='Other tenant')])
+            historical_signup_contract(org.id)
             db.session.commit()
             provider = TwilioService.__new__(TwilioService)
             provider.organization_id = org.id
