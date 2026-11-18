@@ -17,17 +17,15 @@ Use [maintenance and code recovery](runtime-operations.md) for the installed roo
 
 ## AOC Scheduled-Send Freeze
 
-This is the retained one-time launch cancellation procedure, not a routine deployment or audience-cleanup step. Its private record preserves message content, schedule, target, event information, automation metadata and audience rules. The historical operation canceled exactly two AOC rows and left the scheduler stopped; normal operation can later process unrelated authorized schedules. Do not rerun the historical command to clear past-event attendees or recreate the old freeze.
+The private launch cancellation record preserves message content, schedule, target, event information, automation metadata and audience rules. To verify the historical operation, read `expected_count` and the `scheduled_message_id` values from the configured `AOC_SCHEDULED_CANCELLATION_RECORD_FILE`. Confirm that the record contains that many distinct IDs and that the guard reports each ID as `cancelled`. Unrelated schedules can be pending during a normal release.
 
-For a new incident, declare the relevant timer hold through the installed root supervisor before reviewing tenant-specific cancellations. See [pause and resume](runtime-operations.md). The historical command below is retained for evidence of that separately authorized operation:
-
-After explicit approval:
+For a new incident, declare the relevant timer hold through the installed root supervisor before reviewing tenant-specific cancellations. See [pause and resume](runtime-operations.md). The retained launch command takes the number of dispatchable rows approved for that operation. Use the read-only guard below for verification. Running the cancellation command again would write a new cancellation record.
 
 ```bash
 sudo APP_ROOT=/opt/twinevia-saas/current \
   TWINEVIA_ENV_FILE=/opt/twinevia-saas/.env \
   /opt/twinevia-saas/current/deploy/cancel_aoc_scheduled_sends.sh \
-  --expected-count 2 \
+  --expected-count "${APPROVED_COUNT:?Set the explicitly approved count for this operation}" \
   --confirm-organization-slug armenians-of-colorado
 ```
 
