@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Inbox - {{ product_name }}{% endblock %}
+{% block title %}Conversations - {{ product_name }}{% endblock %}
 
-{% block page_title %}Inbox{% endblock %}
+{% block page_title %}Conversations{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Inbox</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Conversations</span>
 {% endblock %}
 
 {% block page_actions %}

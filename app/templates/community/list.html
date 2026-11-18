@@ -2,7 +2,7 @@
 {% import "includes/ui_macros.html" as ui %}
 {% import "includes/permission_macros.html" as permissions %}
 
-{% block title %}Contacts - {{ product_name }}{% endblock %}
+{% block title %}People - {{ product_name }}{% endblock %}
 
 {% block page_title %}People{% endblock %}
 
@@ -10,7 +10,7 @@
 {% set can_review_permission = can_review_permission and not confirmed_signup_consent %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Contacts</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>People</span>
 {% endblock %}
 
 {% block page_actions %}

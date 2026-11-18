@@ -25,6 +25,10 @@ def test_timeline_scopes_schedules_and_combines_dispatched_reminders(ux):
     assert b'Automatic reminder' in response.data and b'Next schedule' in response.data
     assert b'Old schedule body' not in response.data and b'Private other tenant' not in response.data
     assert ux.client.get('/home').status_code == 200
+    pending = m.ScheduledMessage.query.filter_by(message_body='Next schedule').one()
+    linked = m.ScheduledMessage.query.filter_by(message_body='Old schedule body').one()
+    assert ux.client.get(f'/scheduled/status?id={pending.id}').get_json()['pending_ids'] == [pending.id]
+    assert ux.client.get(f'/scheduled/status?id={linked.id}').get_json()['pending_ids'] == []
     login(ux, 'platform')
     assert ux.client.get('/messages').status_code in (302, 403)
     assert ux.client.get('/home').status_code in (302, 403)
