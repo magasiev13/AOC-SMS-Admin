@@ -43,7 +43,7 @@ from app.services.contact_privacy_service import (
     require_contact_export_permission, staff_phone_privacy_applies,
 )
 from app.services.audience_service import (
-    community_query, current_audience_counts, current_event_predicate, event_is_current,
+    community_query, completed_event_predicate, current_audience_counts, current_event_predicate, event_is_current,
     event_registrations_query, events_query,
 )
 from app.auth import attach_trusted_browser_cookie, home_endpoint_for_user, logout_and_clear_session, require_roles
@@ -4443,12 +4443,15 @@ def _create_send_review(form):
     }
 
 
+def _send_draft_key():
+    return f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+
+
 @bp.get('/messages')
 @login_required
 def workspace_messages():
     """Page a combined schedule and dispatch index before loading message bodies."""
     from app.services.delivery_status_service import batch_message_results
-    from app.services.event_workspace_service import REMINDER_LABELS
     def index_query(model, timestamp, kind):
         query = model.query.with_entities(model.id.label('id'), timestamp.label('activity_at'),
                                           literal(kind).label('kind'))
@@ -4462,8 +4465,10 @@ def workspace_messages():
     per_page = 50
     pages = max(1, (index.count() + per_page - 1) // per_page)
     page = min(pages, max(1, request.args.get('page', 1, type=int)))
-    entries = index.order_by(timeline.c.activity_at.desc(), timeline.c.kind,
-                             timeline.c.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    upcoming = timeline.c.activity_at >= datetime.now(timezone.utc).replace(tzinfo=None)
+    entries = index.order_by(case((upcoming, 0), else_=1), case((upcoming, timeline.c.activity_at)).asc(),
+                             timeline.c.activity_at.desc(), timeline.c.kind, timeline.c.id.desc()).offset(
+                                 (page - 1) * per_page).limit(per_page).all()
     log_ids = [entry.id for entry in entries if entry.kind == 'log']
     schedule_ids = [entry.id for entry in entries if entry.kind == 'schedule']
     logs_by_id = {log.id: log for log in MessageLog.query.filter(MessageLog.id.in_(log_ids)).all()}
@@ -4481,18 +4486,21 @@ def workspace_messages():
         if schedule and not log and schedule.status == 'pending':
             state = 'Scheduled'
         rows.append({'body': record.message_body, 'time': entry.activity_at, 'state': state,
-                     'reminder': bool(schedule and schedule.automation_kind in REMINDER_LABELS),
+                     'reminder': bool(schedule and is_event_reminder(schedule)),
                      'outcome': outcomes.get(log.id) if log else None,
                      'url': url_for('main.log_detail', log_id=log.id) if log else
                             url_for('main.scheduled_list', id=schedule.id)})
-    return render_template('workspace/messages.html', rows=rows, page=page, pages=pages)
+    return render_template('workspace/messages.html', rows=rows, page=page, pages=pages, draft_key=_send_draft_key())
 
 
 @bp.get('/home')
 @login_required
 def workspace_home():
     from app.models import MessagingUsageRecord
-    from app.services.event_workspace_service import REMINDER_LABELS
+    from app.services.aoc_event_sync_service import (
+        AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE, EVENT_REMINDER_KINDS, LEGACY_EVENT_REMINDER_KINDS,
+    )
+    from app.services.usage_summary_service import estimated_send_overage
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     organization = _current_organization()
     failed = MessagingUsageRecord.query.filter(
@@ -4503,26 +4511,21 @@ def workspace_home():
     ).count() if organization else 0
     held = ScheduledMessage.query.filter_by(status='held').order_by(ScheduledMessage.scheduled_at).limit(5).all()
     upcoming = ScheduledMessage.query.filter(
-        ScheduledMessage.status == 'pending', ScheduledMessage.automation_kind.in_(REMINDER_LABELS),
+        ScheduledMessage.status == 'pending',
+        ScheduledMessage.automation_source.in_((AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE)),
+        ScheduledMessage.automation_kind.in_(EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS),
         ScheduledMessage.scheduled_at >= now,
     ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).limit(3).all()
-    reminders = []
-    audiences = {}
-    for item in upcoming:
-        audience_key = (item.target, item.event_id)
-        if audience_key not in audiences:
-            groups = _load_blast_target_recipients(target=item.target, event_id=item.event_id,
-                                                   test_mode=False, test_recipient_data=None)
-            audiences[audience_key], _ = _prepare_sendable_blast_recipients(
-                groups, apply_opt_out_filters=True, target=item.target, event_id=item.event_id)
-        recipients = audiences[audience_key]
-        estimate = analyze_personalized_sms_blast(item.message_body, recipients)
-        reminders.append({'schedule': item, 'audience': len(recipients), 'segments': estimate['total_segments']})
-    recent = events_query(current_only=False).filter(~current_event_predicate()).order_by(
+    usage = workspace_usage_summary(organization)
+    estimates = _automatic_reminder_estimates(upcoming)
+    reminders = [{'schedule': item, **estimates[item.id],
+                  'overage': estimated_send_overage(usage, estimates[item.id]['segments'])}
+                 for item in upcoming if item.id in estimates]
+    recent = events_query(current_only=False).filter(completed_event_predicate()).order_by(
         Event.date.desc(), Event.id.desc()).first()
     return render_template('workspace/home.html', failed=failed, held=held, reminders=reminders,
-                           unread=InboxThread.query.filter(InboxThread.unread_count > 0).count(),
-                           recent_event=recent, workspace_usage=workspace_usage_summary(organization))
+                           unread=InboxThread.query.filter(InboxThread.unread_count > 0, InboxThread.archived_at.is_(None)).count(),
+                           recent_event=recent, workspace_usage=usage)
 
 
 @bp.route('/dashboard/review', methods=['POST'])
@@ -4804,6 +4807,7 @@ def dashboard():
             'current_subscription': subscription,
             'current_subscription_view': subscription_view,
             'workspace_usage': workspace_usage_summary(organization),
+            'draft_key': _send_draft_key(),
             'a2p_status_view': a2p_status_view,
             'can_send_messages': can_send_messages,
             'confirmed_community_signup_consent': organization_has_confirmed_signup_consent(_current_organization_id()),
@@ -5103,7 +5107,7 @@ def dashboard():
                     scheduled_estimate['max_segment_count'],
                     scheduled_estimate['total_segments'],
                 )
-                session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+                session['clear_send_draft_key'] = _send_draft_key()
                 flash(f'Message scheduled for {format_datetime(scheduled_utc)}. {_format_blast_estimate_summary(scheduled_estimate)}', 'success')
                 return redirect(url_for('main.scheduled_list'))
                 
@@ -5171,7 +5175,7 @@ def dashboard():
                 return render_dashboard()
             if created:
                 enqueue_outbound_request(saved_request)
-            session['clear_send_draft_key'] = f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
+            session['clear_send_draft_key'] = _send_draft_key()
             return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))
 
         send_fingerprint = build_blast_send_fingerprint(
@@ -8604,7 +8608,7 @@ def events_list():
     past_count = query.filter(~predicate).count()
     events = query.filter(~predicate if event_view == 'past' else predicate).order_by(
         Event.date.desc() if event_view == 'past' else Event.date.asc().nullslast(), Event.id).all()
-    recent = query.filter(~predicate).order_by(Event.date.desc(), Event.id.desc()).limit(3).all() if (
+    recent = query.filter(completed_event_predicate()).order_by(Event.date.desc(), Event.id.desc()).limit(3).all() if (
         not search and 'view' not in request.args) else []
     return render_template('events/list.html', events=events, search=search, event_view=event_view,
                            past_count=past_count, recent_events=recent)

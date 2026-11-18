@@ -74,9 +74,18 @@ def workspace_usage_summary(organization, *, reference_time=None) -> dict | None
             'included_segments': included, 'included_label': segment_count_label(included),
             'overage_segments': overage, 'projected_overage': amount,
             'projected_overage_label': _money_label(amount, currency),
-            'currency': currency, 'billed': billed,
+            'currency': currency, 'billed': billed, 'segment_rate': str(_currency_rate()),
+            'remaining_segments': max(0, included - used),
             'pending_records': pending, 'stored_period': period is not None,
         }
+
+
+def estimated_send_overage(usage, segments):
+    """Incremental Twinevia charge if sent against today's recorded allowance."""
+    if not usage or not usage['billed']:
+        return None
+    chargeable = max(0, segments - usage['remaining_segments'])
+    return _money_label(Decimal(chargeable) * Decimal(usage['segment_rate']), usage['currency'])
 
 
 def workspace_monthly_report(organization, reference_time):

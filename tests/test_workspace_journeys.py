@@ -13,7 +13,7 @@ def test_timeline_scopes_schedules_and_combines_dispatched_reminders(ux):
     ux.db.session.flush()
     ux.db.session.add_all([
         m.ScheduledMessage(organization_id=ux.org_id, message_body='Old schedule body', target='community',
-                           message_log_id=log.id, scheduled_at=now, automation_kind='one_day', status='sent'),
+                           message_log_id=log.id, scheduled_at=now, automation_source='aoc_events', automation_kind='one_day', status='sent'),
         m.ScheduledMessage(organization_id=ux.org_id, message_body='Next schedule', target='community',
                            scheduled_at=now + timedelta(days=1)),
     ])
@@ -68,3 +68,11 @@ def test_reachability_review_counts_unique_sends_and_expires_without_changing_pe
     assert ux.client.get('/community/delivery-review').status_code == 403
     assert b'/community/delivery-review' not in ux.client.get('/community').data
     assert m.SuppressedContact.query.count() == 0 and m.UnsubscribedContact.query.count() == 0
+
+
+def test_estimated_send_overage_consumes_remaining_allowance_before_configured_price():
+    from app.services.usage_summary_service import estimated_send_overage
+    usage = {'billed': True, 'remaining_segments': 8, 'segment_rate': '0.0375', 'currency': 'usd'}
+    assert estimated_send_overage(usage, 6) == '$0.00'
+    assert estimated_send_overage(usage, 12) == '$0.15'
+    assert estimated_send_overage({**usage, 'billed': False}, 100) is None

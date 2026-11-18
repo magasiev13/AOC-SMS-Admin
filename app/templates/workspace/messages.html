@@ -5,7 +5,7 @@
 {% block content %}
 <div class="work-ledger">
     {% if page == 1 %}
-    <section id="localMessageDraft" hidden data-key="twinevia:send-draft:{{ current_user.id }}:{{ current_organization.id if current_organization else none }}">
+    <section id="localMessageDraft" hidden data-key="{{ draft_key }}">
         <h2>On this device</h2><a class="work-row" href="{{ url_for('main.dashboard') }}"><strong>Unfinished message</strong><span>Continue draft →</span></a>
     </section>
     {% endif %}

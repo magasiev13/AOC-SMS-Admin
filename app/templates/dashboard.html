@@ -30,7 +30,7 @@
                     </div>
                     {% endif %}
                     <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}"
-                          data-draft-key="twinevia:send-draft:{{ current_user.id }}:{{ current_organization.id if current_organization else none }}"
+                          data-draft-key="{{ draft_key }}"
                           data-login-url="{{ url_for('auth.login', next=url_for('main.dashboard')) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="require_review" value="1">
@@ -239,7 +239,7 @@
                         </fieldset>
                         <button type="button" class="btn btn-link" id="discardSendDraft">Discard draft</button>
                         <div class="compose-review-bar">
-                            <div><strong>Estimated usage</strong><span id="composeSegmentTotal" aria-live="polite">0 SMS segments</span></div>
+                            <div><strong>Estimated usage</strong><span id="composeSegmentTotal" aria-live="polite">0 SMS segments</span><small id="composeCostEstimate" aria-live="polite"></small></div>
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
                                 <i class="bi bi-send-fill me-2"></i>{{ 'Messaging Setup In Progress' if config.SAAS_MODE and current_organization and not can_send_messages else 'Review Message' }}
                             </button>
@@ -598,6 +598,6 @@
 <script src="{{ url_for('static', filename='js/send_draft.js') }}"></script>
 <script src="{{ url_for('static', filename='vendor/chart.js/4.4.1/chart.umd.min.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
-<script data-settings='{{ dict(footer=blast_unsubscribe_footer, previewUrl=url_for('main.dashboard_audience_preview'), timezone=app_timezone, timezoneLabel=workspace_timezone_label, chartData=chart_data or {}, communityCount=community_count, eventCount=event_registration_count, unsubCount=unsubscribed_count, contactsUrl=url_for('main.community_list'))|tojson }}' src="{{ url_for('static', filename='js/pages/dashboard.js', v=app_version) }}"></script>
+<script data-settings='{{ dict(footer=blast_unsubscribe_footer, previewUrl=url_for('main.dashboard_audience_preview'), timezone=app_timezone, timezoneLabel=workspace_timezone_label, usage=dict(currency=workspace_usage.currency, rate=workspace_usage.segment_rate, remaining=workspace_usage.remaining_segments, billed=workspace_usage.billed) if workspace_usage else none, chartData=chart_data or {}, communityCount=community_count, eventCount=event_registration_count, unsubCount=unsubscribed_count, contactsUrl=url_for('main.community_list'))|tojson }}' src="{{ url_for('static', filename='js/pages/dashboard.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/send_review.js') }}"></script>
 {% endblock %}

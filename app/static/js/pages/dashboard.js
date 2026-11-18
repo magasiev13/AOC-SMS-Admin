@@ -174,6 +174,19 @@ function updateMessageStats() {
     const segmentTotal = document.getElementById('composeSegmentTotal');
     if (segmentTotal) segmentTotal.textContent = !draft ? '0 SMS segments' : compositionEstimate
         ? `${compositionEstimate.total_segments} SMS segments` : 'Checking estimate…';
+    const usage = dashboardSettings.usage;
+    const cost = document.getElementById('composeCostEstimate');
+    if (cost && usage) {
+        const total = !draft ? 0 : compositionEstimate?.total_segments;
+        if (!usage.billed) cost.textContent = 'Not billed by Twinevia';
+        else if (total == null) cost.textContent = '';
+        else {
+            const extra = Math.max(0, total - usage.remaining) * Number(usage.rate);
+            const amount = extra.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const label = usage.currency === 'usd' ? '$' + amount : usage.currency.toUpperCase() + ' ' + amount;
+            cost.textContent = label + ' extra at today’s allowance';
+        }
+    }
     const preview = document.getElementById('composePreviewBody');
     if (preview) preview.textContent = draft ? [draft, footer].filter(Boolean).join(' ') : 'Your message will appear here.';
     specialCharacterWarning.classList.toggle('d-none', !draft || !usesUnicode);

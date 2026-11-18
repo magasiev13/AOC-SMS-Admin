@@ -11,7 +11,7 @@
         {% if not unread and not failed and not held %}<p class="work-row">You're caught up.</p>{% endif %}
     </section>
     <section><h2>Upcoming automatic reminders</h2>
-        {% for row in reminders %}<a class="work-row" href="{{ url_for('main.scheduled_list', id=row.schedule.id) }}"><strong>{{ row.schedule.message_body|private_text|truncate(90) }}</strong><span>{{ row.schedule.scheduled_at|localtime }} · {{ row.audience }} eligible · estimated {{ row.segments }} SMS segments</span></a>
+        {% for row in reminders %}<a class="work-row" href="{{ url_for('main.scheduled_list', id=row.schedule.id) }}"><strong>{{ row.schedule.message_body|private_text|truncate(90) }}</strong><span>{{ row.schedule.scheduled_at|localtime }} · {{ row.recipients }} eligible · estimated {{ row.segments }} SMS segments{% if row.overage %} · {{ row.overage }} extra at today’s allowance{% elif workspace_usage and not workspace_usage.billed %} · Not billed by Twinevia{% endif %}</span></a>
         {% else %}<p class="work-row">No upcoming automatic reminders.</p>{% endfor %}
     </section>
     {% if recent_event %}<section><h2>Recent event</h2><a class="work-row" href="{{ url_for('event_feedback.follow_up', event_id=recent_event.id) }}"><strong>{{ recent_event.title|private_text }}</strong><span>{{ recent_event.date|localdate }} · Prepare feedback →</span></a></section>{% endif %}
