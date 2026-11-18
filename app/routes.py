@@ -8280,6 +8280,23 @@ def community_list():
     )
 
 
+@bp.get('/community/delivery-review')
+@login_required
+@require_roles('admin')
+def community_delivery_review():
+    from app.services.reachability_review_service import repeated_unreachable_contacts
+    if not can_view_phone_numbers():
+        abort(403)
+    flagged = repeated_unreachable_contacts(_current_organization_id())
+    page_size = 50
+    pages = max(1, (len(flagged) + page_size - 1) // page_size)
+    page = min(pages, max(1, request.args.get('page', 1, type=int)))
+    rows = flagged[(page - 1) * page_size:page * page_size]
+    phones = [row['phone'] for row in rows]
+    contacts = {member.phone: member for member in CommunityMember.query.filter(CommunityMember.phone.in_(phones)).all()}
+    return render_template('community/delivery_review.html', rows=rows, contacts=contacts, page=page, pages=pages)
+
+
 @bp.route('/community/add', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin')
