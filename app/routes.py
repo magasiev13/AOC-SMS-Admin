@@ -8434,7 +8434,7 @@ def community_add():
         if existing:
             return _render_community_form(member=None, field_errors={'phone': 'A contact with this phone number already exists.'})
         
-        member = CommunityMember(name=name, phone=phone)
+        member = CommunityMember(name=name, phone=phone, individual_consent_required=True)
         db.session.add(member)
         db.session.commit()
         
@@ -8475,6 +8475,8 @@ def community_edit(member_id):
             return _render_community_form(member=member, field_errors={'phone': 'A contact with this phone number already exists.'})
         
         member.name = name
+        if phone != member.phone:
+            member.individual_consent_required = True
         member.phone = phone
         db.session.commit()
         

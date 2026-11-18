@@ -145,3 +145,20 @@ def test_hosted_signup_requires_review_and_same_phone_confirmation(ux, monkeypat
     review(ux, source, 'withdraw')
     assert public.get(path).status_code == 404
     assert process_inbound_sms(payload(phone, 8))['status'] == 'signup_unconfirmed'
+
+
+def test_new_manual_number_never_inherits_an_old_directory_contract(ux):
+    from tests.consent_fixtures import historical_signup_contract
+    from app.services.recipient_permission_service import recipient_permission_status
+
+    historical_signup_contract(ux.org_id)
+    retained = ux.models.CommunityMember(organization_id=ux.org_id, name='Existing', phone='+17205550112')
+    ux.db.session.add(retained)
+    ux.db.session.commit()
+    login(ux)
+    assert ux.client.post('/community/add', data=dict(name='New', phone='+17205550113')).status_code == 302
+    assert not recipient_permission_status(ux.org_id, '+17205550113').allowed
+    assert ux.client.post(f'/community/{retained.id}/edit', data=dict(name='Corrected', phone=retained.phone)).status_code == 302
+    assert recipient_permission_status(ux.org_id, retained.phone).allowed
+    assert ux.client.post(f'/community/{retained.id}/edit', data=dict(name='Corrected', phone='+17205550114')).status_code == 302
+    assert not recipient_permission_status(ux.org_id, '+17205550114').allowed
