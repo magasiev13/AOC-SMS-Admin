@@ -53,6 +53,7 @@ def tenant_scope_is_active() -> bool:
 
 def _tenant_scoped_models():
     from app.models import (
+        AccountMailDelivery,
         AuthEvent,
         CommunityMember,
         ConsentSource,
@@ -87,6 +88,7 @@ def _tenant_scoped_models():
     )
 
     return (
+        AccountMailDelivery,
         AuthEvent,
         CommunityMember,
         ConsentSource,

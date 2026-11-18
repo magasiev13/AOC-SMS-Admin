@@ -9,6 +9,6 @@
   "booking_projection_isolation": true,
   "complete_inventory_authority": true,
   "explicit_feedback_invitation_authority": true,
-  "schema_min": "035",
-  "schema_max": "035"
+  "schema_min": "036",
+  "schema_max": "036"
 }
