@@ -36,6 +36,7 @@ class AppUser(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), nullable=False, unique=True)
     email = db.Column(db.String(255), nullable=True, index=True)
+    verified_recovery_email = db.Column(db.String(255), nullable=True)
     full_name = db.Column(db.String(120), nullable=True)
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20), nullable=True, index=True)
@@ -77,6 +78,8 @@ class AppUser(UserMixin, db.Model):
     @validates("email")
     def _normalize_email(self, key, value):
         normalized = (value or "").strip().lower()
+        if self.verified_recovery_email and self.verified_recovery_email != normalized:
+            self.verified_recovery_email = None
         return normalized or None
 
     @validates("phone")
@@ -228,6 +231,7 @@ class OrganizationMembership(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     role = db.Column(db.String(20), nullable=False, default='staff')
+    reply_notice_email = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
 
     organization = db.relationship('Organization', back_populates='memberships')
@@ -246,6 +250,23 @@ class OrganizationMembership(db.Model):
 
     def __repr__(self):
         return f'<OrganizationMembership org={self.organization_id} user={self.user_id} role={self.role}>'
+
+
+class AccountMailDelivery(db.Model):
+    """Transactional account mail with immutable destination binding and one send claim."""
+    __tablename__ = 'account_mail_deliveries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False)
+    identity_digest = db.Column(db.String(64), nullable=False)
+    dedupe_key = db.Column(db.String(100), nullable=False, unique=True)
+    token_digest = db.Column(db.String(64), unique=True, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    next_enqueue_at = db.Column(db.DateTime, nullable=True)
 
 
 class OrganizationInvitation(db.Model):

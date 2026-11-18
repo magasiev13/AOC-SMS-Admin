@@ -88,6 +88,9 @@
                 Sign in to {{ product_name }}
             </button>
         </form>
+        {% if not is_platform and config.get('SAAS_MODE') %}
+        <a class="d-inline-block mt-2" href="{{ url_for('account_mail.forgot_password') }}">Forgot your password?</a>
+        {% endif %}
 
         <p class="auth-panel__footnote">
             {% if is_platform %}

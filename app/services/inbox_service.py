@@ -1289,6 +1289,9 @@ def process_inbound_sms(payload: dict) -> dict:
                 inbound_message, thread, pending_replies, survey_session=session,
                 question_delay=_survey_start_question_delay_seconds() if status == 'survey_started' else 0,
             )
+            if status == 'stored':
+                from app.services.account_mail_service import save_reply_notices
+                save_reply_notices(inbound_message)
             inbound_id, thread_id = inbound_message.id, thread.id
             db.session.commit()
             queued = enqueue_for_inbound(messaging_profile.organization_id, inbound_id)

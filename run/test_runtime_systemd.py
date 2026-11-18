@@ -232,7 +232,8 @@ ReadWritePaths={self.root}
                  'app/saas_migrations/030_booking_inventories.py',
                  'app/saas_migrations/031_feedback_invitations.py',
                  'app/saas_migrations/032_record_missing_canceled_subscriptions.py',
-                 'app/saas_migrations/033_workspace_schedule_preferences.py']
+                 'app/saas_migrations/033_workspace_schedule_preferences.py',
+                 'app/saas_migrations/036_account_mail.py']
         for relative in paths:
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
