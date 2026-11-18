@@ -217,3 +217,42 @@ def test_owner_changes_only_own_workspace_clock_and_staff_cannot_change_it(ux):
         assert workspace_timezone_name() == 'UTC'
     login(ux, role='staff')
     assert ux.client.post('/settings/scheduling', data={'timezone':'UTC'}).status_code == 403
+
+
+def test_workspace_reminder_controls_reschedule_future_sync_and_preserve_skips(ux):
+    from app.models import Event, Organization, OrganizationSettingsAuditLog, ScheduledMessage
+    from app.services.reminder_preferences import REMINDERS
+    from app.tenant import organization_context
+
+    login(ux)
+    with organization_context(ux.org_id):
+        event = Event(title='Summer outing', date=date(2091, 6, 10), external_source='aoc-wordpress',
+                      external_status='publish', external_event_id='42', external_timezone='UTC',
+                      external_start_at=datetime(2091, 6, 10, 20), external_url='https://example.test/event')
+        ux.db.session.add(event)
+        ux.db.session.commit()
+    form = {'section': 'reminders'}
+    for kind, (_, _, _, clock, body) in REMINDERS.items():
+        form.update({f'{kind}_enabled': 'on', f'{kind}_time': clock, f'{kind}_body': body})
+    del form['two_week_enabled']
+    form.update(one_day_time='17:35', one_day_body='{org} invites {first_name} to {event} {when}. {url}')
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    rows = {row.automation_kind: row for row in ScheduledMessage.query.filter_by(organization_id=ux.org_id)}
+    assert set(rows) == {'one_day', 'seven_day', 'day_of'}
+    assert rows['one_day'].scheduled_at == datetime(2091, 6, 9, 17, 35)
+    assert 'invites {first_name} to Summer outing tomorrow.' in rows['one_day'].message_body
+    assert rows['one_day'].message_body.endswith('Reply STOP to unsubscribe.')
+    rows['seven_day'].status = 'cancelled'
+    ux.db.session.commit()
+    del form['one_day_enabled']
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    assert rows['one_day'].status == 'cancelled'
+    form['one_day_enabled'] = 'on'
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 302
+    assert rows['one_day'].status == 'pending' and rows['seven_day'].status == 'cancelled'
+    assert OrganizationSettingsAuditLog.query.filter_by(organization_id=ux.org_id, action='reminders_updated').count() == 3
+    assert ux.db.session.get(Organization, ux.other_id).reminder_preferences is None
+    invalid = form | {'one_day_body': '{event.unknown}'}
+    assert b'unrecognized placeholder' in ux.client.post('/settings/scheduling', data=invalid).data
+    login(ux, role='staff')
+    assert ux.client.post('/settings/scheduling', data=form).status_code == 403

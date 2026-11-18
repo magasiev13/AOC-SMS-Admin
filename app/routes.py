@@ -5840,21 +5840,36 @@ def schedule_preferences():
     organization = _current_organization()
     if not saas_mode_enabled() or current_user.is_platform_admin or organization is None:
         abort(404)
+    from app.services.aoc_event_sync_service import refresh_workspace_reminders
+    from app.services.reminder_preferences import REMINDERS, parse_reminder_preferences, reminder_preferences
+
     zones = sorted(available_timezones())
     if request.method == 'POST':
-        selected = request.form.get('timezone', '').strip()
-        if selected not in zones or len(selected) > 64:
-            flash('Select a listed time zone.', 'error')
-        else:
-            organization.timezone_name = selected
+        organization = Organization.query.filter_by(id=organization.id).populate_existing().with_for_update().one()
+        try:
+            if request.form.get('section') == 'reminders':
+                organization.reminder_preferences = parse_reminder_preferences(request.form)
+                metadata = refresh_workspace_reminders(organization)
+                action = 'reminders_updated'
+            else:
+                selected = request.form.get('timezone', '').strip()
+                if selected not in zones or len(selected) > 64:
+                    raise ValueError('Select a listed time zone.')
+                organization.timezone_name = selected
+                metadata = {'timezone': selected}
+                action = 'updated'
             db.session.add(OrganizationSettingsAuditLog(
                 organization_id=organization.id, actor_user_id=current_user.id,
-                category='scheduling', action='updated', metadata_json=json.dumps({'timezone': selected}),
+                category='scheduling', action=action, metadata_json=json.dumps(metadata),
             ))
             db.session.commit()
             flash('Scheduling preferences saved.', 'success')
             return redirect(url_for('main.schedule_preferences'))
-    return render_template('settings/scheduling.html', zones=zones, selected=workspace_timezone_name())
+        except ValueError as error:
+            db.session.rollback()
+            flash(str(error), 'error')
+    return render_template('settings/scheduling.html', zones=zones, selected=workspace_timezone_name(),
+                           definitions=REMINDERS, preferences=reminder_preferences(organization))
 
 
 @bp.route('/settings/test-recipients', methods=['GET', 'POST'])

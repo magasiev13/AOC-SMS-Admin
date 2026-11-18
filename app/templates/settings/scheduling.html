@@ -9,6 +9,25 @@
         {% for zone in zones %}<option value="{{ zone }}"{% if selected == zone %} selected{% endif %}>{{ zone }}</option>{% endfor %}
     </select>
     <p class="form-text">Applies to message times and new schedules. Previously scheduled sends keep their instant.</p>
-    <button class="btn btn-primary" type="submit">Save preferences</button>
+    <button class="btn btn-primary" type="submit">Save time zone</button>
+</form>
+<form class="workspace-panel p-3 mt-3" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="section" value="reminders">
+    <h2 class="h5">WordPress event reminders</h2>
+    <p>Saving updates upcoming reminders for published events. Individually skipped reminders stay skipped.</p>
+    <p class="form-text">Use {first_name}, {org}, {event}, {when}, {event_time} or {url}. Each message includes the unsubscribe instruction.</p>
+    {% for kind, spec in definitions.items() %}
+    {% set pref = preferences[kind] %}
+    <fieldset class="mb-4">
+        <legend class="h6">{{ spec[1] }}</legend>
+        <label class="form-check mb-2"><input type="checkbox" class="form-check-input" name="{{ kind }}_enabled"{% if pref.enabled %} checked{% endif %}> Send this reminder</label>
+        <label class="form-label" for="{{ kind }}_time">Send time ({{ selected }})</label>
+        <input type="time" class="form-control mb-2" name="{{ kind }}_time" id="{{ kind }}_time" required value="{{ pref.time }}">
+        <label class="form-label" for="{{ kind }}_body">Message</label>
+        <textarea class="form-control" id="{{ kind }}_body" name="{{ kind }}_body" rows="2" maxlength="1600" required>{{ pref.body }}</textarea>
+    </fieldset>
+    {% endfor %}
+    <button class="btn btn-primary" type="submit">Save reminders</button>
 </form>
 {% endblock %}

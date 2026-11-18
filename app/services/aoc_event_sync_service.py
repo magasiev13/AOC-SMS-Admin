@@ -23,6 +23,7 @@ from app.models import (
     ScheduledMessage,
     utc_now,
 )
+from app.services.reminder_preferences import REMINDERS, TOKEN, reminder_preferences
 from app.services.provider_secret_service import decrypt_provider_secret, encrypt_provider_secret
 from app.tenant import organization_context, without_tenant_scope
 from app.utils import normalize_phone, normalize_sms_body, validate_phone
@@ -39,7 +40,8 @@ AOC_UNSUBSCRIBE_FOOTER = "\n\nReply STOP to unsubscribe."
 ACTIVE_BOOKING_STATUSES = {"active", "approved", "pending", "reserved", "submitted", "completed", "paid"}
 CANCELLED_BOOKING_STATUSES = {"cancelled", "canceled", "rejected", "deleted", "inactive"}
 PENDING_AUTO_STATUSES = {"pending"}
-EVENT_REMINDER_KINDS = ("two_week", "seven_day", "one_day", "day_of")
+EVENT_REMINDER_KINDS = tuple(REMINDERS)
+DISABLED_REMINDER_REASON = "Disabled by workspace reminder preferences."
 LEGACY_EVENT_REMINDER_KINDS = ("invite",)
 
 
@@ -314,7 +316,8 @@ def _process_event_sync_payload_for_organization(
     if source not in WORDPRESS_EVENT_SYNC_SOURCES:
         raise AocEventSyncPayloadError(f"Unsupported event sync source {source!r}.")
 
-    organization = _organization_for_id(organization_id)
+    # Serialize preference edits and webhook updates before either path locks a schedule.
+    organization = Organization.query.filter_by(id=organization_id).populate_existing().with_for_update().one()
     received_at_utc = _as_utc_naive(received_at)
     summary: dict[str, Any] = {
         "organization_id": organization.id,
@@ -577,20 +580,26 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
     organization = _organization_for_id(event.organization_id)
     sender = "AOC" if organization.slug == "armenians-of-colorado" else organization.name
     zone = workspace_timezone(organization)
-    reminder_specs = (
-        ("two_week", _days_before_scheduled_at(event, 14, zone), _before_event_message(event, sender, "two weeks away")),
-        ("seven_day", _days_before_scheduled_at(event, 7, zone), _before_event_message(event, sender, "one week away")),
-        ("one_day", _days_before_scheduled_at(event, 1, zone), _before_event_message(event, sender, "tomorrow")),
-        ("day_of", _day_of_scheduled_at(event, zone), _day_of_message(event, sender)),
-    )
-
-    for automation_kind, scheduled_at, message_body in reminder_specs:
+    preferences = reminder_preferences(organization)
+    for automation_kind, (days, _, when, _, _) in REMINDERS.items():
+        settings = preferences[automation_kind]
+        scheduled_at = _days_before_scheduled_at(event, days, zone, time.fromisoformat(settings['time']))
+        values = {'org': sender, 'event': event.title, 'when': when, 'url': event.external_url or '',
+                  'first_name': '{first_name}', 'event_time': _event_time_label(event)}
+        body = TOKEN.sub(lambda match: values[match.group(1)], settings['body'])
+        message_body = normalize_sms_body(body.rstrip() + AOC_UNSUBSCRIBE_FOOTER)
         automation_key = _automation_key(event, automation_kind)
         automation_source = _automation_source_for_event(event)
         scheduled = ScheduledMessage.query.filter_by(
             automation_source=automation_source,
             automation_key=automation_key,
-        ).first()
+        ).populate_existing().with_for_update().first()
+        if not settings['enabled']:
+            if scheduled is not None and scheduled.status == 'pending':
+                scheduled.status = 'cancelled'
+                scheduled.error_message = DISABLED_REMINDER_REASON
+                summary["scheduled_cancelled"] += 1
+            continue
         if scheduled_at is None or scheduled_at <= received_at:
             if scheduled is not None and scheduled.status in PENDING_AUTO_STATUSES:
                 scheduled.status = "cancelled"
@@ -598,7 +607,8 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
                 summary["scheduled_cancelled"] += 1
             continue
         if scheduled is not None and scheduled.status not in PENDING_AUTO_STATUSES:
-            continue
+            if scheduled.status != 'cancelled' or scheduled.error_message != DISABLED_REMINDER_REASON:
+                continue
         if scheduled is None:
             scheduled = ScheduledMessage(
                 scheduled_at=scheduled_at,
@@ -622,6 +632,17 @@ def _sync_event_reminders(event: Event, received_at: datetime, summary: dict[str
             scheduled.processing_started_at = None
             scheduled.sent_at = None
             summary["scheduled_updated"] += 1
+
+
+def refresh_workspace_reminders(organization):
+    now = _as_utc_naive(utc_now())
+    summary = {'scheduled_created': 0, 'scheduled_updated': 0, 'scheduled_cancelled': 0}
+    for event in Event.query.filter(
+        Event.organization_id == organization.id, Event.external_source.in_(WORDPRESS_EVENT_SYNC_SOURCES),
+        Event.external_status == 'publish', Event.external_start_at > now,
+    ).order_by(Event.id):
+        _sync_event_reminders(event, now, summary)
+    return summary
 
 
 def _cancel_pending_event_reminders(event: Event) -> int:
@@ -687,35 +708,17 @@ def _event_source_for_booking_source(source: str) -> str:
     return source
 
 
-def _days_before_scheduled_at(event: Event, days_before: int, zone=None) -> datetime | None:
+def _days_before_scheduled_at(event: Event, days_before: int, zone=None, clock=time(hour=9)) -> datetime | None:
     local_start = _event_local_start(event)
     if zone is not None:
         local_start = local_start.astimezone(zone)
     reminder_date = local_start.date() - timedelta(days=days_before)
-    reminder_local = datetime.combine(reminder_date, time(hour=9), tzinfo=local_start.tzinfo)
+    reminder_local = datetime.combine(reminder_date, clock, tzinfo=local_start.tzinfo)
     return _to_utc_naive(reminder_local)
 
 
 def _day_of_scheduled_at(event: Event, zone=None) -> datetime | None:
-    local_start = _event_local_start(event)
-    if zone is not None:
-        local_start = local_start.astimezone(zone)
-    reminder_local = datetime.combine(local_start.date(), time(hour=8), tzinfo=local_start.tzinfo)
-    return _to_utc_naive(reminder_local)
-
-
-def _before_event_message(event: Event, sender: str, timing_label: str) -> str:
-    return normalize_sms_body(
-        f"Hi {{first_name}}, {sender} reminder: {event.title} is {timing_label}. "
-        f"Details and registration: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
-    )
-
-
-def _day_of_message(event: Event, sender: str) -> str:
-    return normalize_sms_body(
-        f"Hi {{first_name}}, {sender} reminder: {event.title} is today at {_event_time_label(event)}. "
-        f"Details: {event.external_url}{AOC_UNSUBSCRIBE_FOOTER}"
-    )
+    return _days_before_scheduled_at(event, 0, zone, time(hour=8))
 
 
 def _event_time_label(event: Event) -> str:
