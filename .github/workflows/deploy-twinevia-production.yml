@@ -53,7 +53,8 @@ jobs:
           retention-days: 7
 
   validate:
-    runs-on: ubuntu-latest
+    # Match the supported Chromium builds in the Playwright lockfile.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
