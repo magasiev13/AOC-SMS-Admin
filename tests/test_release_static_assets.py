@@ -1,4 +1,5 @@
 """Release assets are public and versioned; private release files stay private."""
+import json
 import os
 from pathlib import Path
 import re
@@ -10,6 +11,7 @@ from urllib.parse import parse_qs, urlsplit
 from flask import render_template_string, url_for
 import pytest
 
+from deploy.release_source import application_manifest, manifest_fingerprint, release_identity
 from deploy.static_permissions import expose_release_static
 from tests.test_ux_recovery import ux
 
@@ -130,7 +132,7 @@ def test_web_template_immutable_cache_requires_a_nonempty_version_query(query, e
 
 def test_release_flow_exposes_both_bootstrap_and_candidate_static_after_restriction():
     source = (ROOT / "deploy/release_twinevia_saas.sh").read_text()
-    assert 'sudo install -d -o root -g "${APP_GROUP}" -m 0751 "${RELEASES_DIR}"' in source
+    assert 'sudo chmod u=rwx,g=rx,o-rw "${RELEASES_DIR}"' in source
     assert source.count('/deploy/static_permissions.py" --app-root "${APP_ROOT}"') == 3
     assert source.index('sudo chmod -R u=rwX,g=rX,o= "${pending_release}"') < source.index('--release-root "${pending_release}"')
     assert source.index('sudo chmod -R u=rwX,g=rX,o= "${bootstrap_pending}"') < source.index('--release-root "${bootstrap_dir}"')
@@ -140,12 +142,13 @@ def _historical_static_preparation(entrypoint):
     """Execute the actual pre-activation guards with fake privileged transport."""
     if entrypoint == 'release':
         source = (ROOT / 'deploy/release_twinevia_saas.sh').read_text()
-        block = re.search(
-            r'^if \[\[ -n "\$\{old_release\}" && "\$\{TWINEVIA_INITIALIZE_RUNTIME:-0\}" != "1" \]\]; then\n.*?^fi$',
-            source, re.MULTILINE | re.DOTALL,
-        ).group(0)
-        assert source.index('--release-root "${old_release}"') < source.index('atomic_link "${release_dir}" "${CURRENT_LINK}"')
-        return block
+        guard_start = source.index('if [[ -n "${old_release}"')
+        guard_end = source.index('\nfi', guard_start) + len('\nfi')
+        proof_start = source.index('python3 "${pending_release}/deploy/release_source.py" verify-backup')
+        preparation_end = source.index('\nbackup_archive=', proof_start)
+        assert guard_end < proof_start < source.index('--release-root "${old_release}"') < preparation_end
+        assert preparation_end < source.index('atomic_link "${release_dir}" "${CURRENT_LINK}"')
+        return source[guard_start:guard_end] + '\n' + source[proof_start:preparation_end]
     source = (ROOT / 'deploy/rollback_twinevia_saas.sh').read_text()
     start = source.index('runtime_ctl verify-target --target "${target_release}"')
     block = source[start:source.index('\natomic_link() {', start)]
@@ -153,9 +156,11 @@ def _historical_static_preparation(entrypoint):
     return block
 
 
-@pytest.mark.parametrize('entrypoint', ['release', 'rollback'])
-@pytest.mark.parametrize('verified', [False, True])
-def test_verified_historical_static_is_prepared_before_activation_with_trusted_new_helper(tmp_path, entrypoint, verified):
+@pytest.mark.parametrize('entrypoint,verified,backup_matches', [
+    ('release', False, True), ('release', True, False), ('release', True, True),
+    ('rollback', False, True), ('rollback', True, True),
+])
+def test_verified_historical_static_is_prepared_before_activation_with_trusted_new_helper(tmp_path, entrypoint, verified, backup_matches):
     app_root, release, static_root, private = _restricted_release(tmp_path)
     # This retained source can use schema 032 while predating P1.4. It has no
     # static-permission helper of its own; source/schema guards remain external.
@@ -164,6 +169,20 @@ def test_verified_historical_static_is_prepared_before_activation_with_trusted_n
     migration.write_text('"""Synthetic retained schema 032 fixture."""\n')
     migration.chmod(0o640)
     assert not (release / 'deploy/static_permissions.py').exists()
+    status = tmp_path / 'backup-status.json'
+    target_sha = 'a' * 40
+    (release / 'release.json').write_text(json.dumps({'source_sha': 'b' * 40, 'release_id': release.name}))
+    captured = manifest_fingerprint(application_manifest(release))
+    status.write_text(json.dumps({'application': {
+        **release_identity(release), 'target_source_sha': target_sha, 'content_sha256': captured,
+    }}))
+    if not backup_matches:
+        (static_root / 'css/app.css').chmod(0o600)
+    candidate = app_root / 'releases' / 'candidate'
+    (candidate / 'deploy').mkdir(parents=True)
+    (candidate / 'deploy/release_source.py').symlink_to(ROOT / 'deploy/release_source.py')
+    (candidate / 'app/static').mkdir(parents=True)
+    (candidate / 'app/static/site.css').write_text('body {}')
     before = _modes(app_root)
     calls = tmp_path / 'calls.txt'
     script = tmp_path / 'prepare-historical-static.sh'
@@ -178,6 +197,11 @@ sudo() {
     printf 'schema-doctor\\n' >> "$CALL_LOG"
     return 0
   fi
+  if [[ "$1" == "bash" ]]; then
+    [[ "$2" == "$SOURCE_ROOT/deploy/install_nginx_twinevia.sh" && "$3" == "--confirm-dns-and-certificate-ready" ]]
+    printf 'nginx\\n' >> "$CALL_LOG"
+    return 0
+  fi
   [[ "$1" == "python3.11" ]]
   shift
   [[ "$1" == "$TRUSTED_HELPER" ]]
@@ -190,17 +214,39 @@ sudo() {
         'SOURCE_ROOT': str(ROOT), 'old_release': str(release), 'target_release': str(release),
         'ENV_FILE': str(tmp_path / 'never-read-environment'), 'CALL_LOG': str(calls),
         'VERIFIED': '1' if verified else '0', 'FIXTURE_PYTHON': sys.executable,
+        'pending_release': str(candidate), 'BACKUP_STATUS_FILE': str(status), 'release_sha': target_sha,
+        'TWINEVIA_CONFIGURE_NGINX': '1',
         'TRUSTED_HELPER': str(ROOT / 'deploy/static_permissions.py'),
         '_TWINEVIA_RUNTIME_HELPER': str(ROOT / 'deploy/runtime_control.py'),
     })
     recorded = calls.read_text().splitlines()
-    if not verified:
+    if not verified or not backup_matches:
         assert result.returncode != 0
+        if not backup_matches:
+            assert 'does not match the current running application' in result.stderr
         assert recorded == ['verified-target']
         assert _modes(app_root) == before
     else:
         assert result.returncode == 0, result.stderr
-        assert recorded == ['verified-target'] + (['schema-doctor'] if entrypoint == 'rollback' else []) + ['trusted-static-helper', 'activation-ready']
+        if entrypoint == 'release':
+            assert recorded == ['verified-target', 'trusted-static-helper', 'trusted-static-helper', 'nginx', 'activation-ready']
+            assert manifest_fingerprint(application_manifest(release)) != captured
+        else:
+            assert recorded == ['verified-target', 'schema-doctor', 'trusted-static-helper', 'activation-ready']
         assert all(path.stat().st_mode & stat.S_IXOTH for path in (app_root, app_root / 'releases', release, release / 'app', static_root))
         assert (static_root / 'css/app.css').stat().st_mode & stat.S_IROTH
         assert all(stat.S_IMODE(path.stat().st_mode) == before[path] for path in (*private, migration))
+
+
+@pytest.mark.parametrize('script', ['deploy/deploy_twinevia_saas.sh', 'deploy/install_saas.sh'])
+def test_installed_rollback_has_its_trusted_static_permissions_helper(script):
+    source = (ROOT / script).read_text()
+    operations = re.search(r'for operation_file in ([^;]+); do(.*?)done', source, re.S)
+    assert {'runtime_control.py', 'rollback_twinevia_saas.sh', 'static_permissions.py'} <= set(operations[1].split())
+    assert '"/usr/local/lib/twinevia-saas/${operation_file}"' in operations[2]
+
+
+def test_production_workflow_enables_nginx_configuration_inside_release():
+    source = (ROOT / '.github/workflows/deploy-twinevia-production.yml').read_text()
+    assert re.search(r'sudo TWINEVIA_CONFIGURE_NGINX=1 [^\n]+ /usr/local/bin/deploy_twinevia_saas.sh', source)
+    assert 'install_nginx_twinevia.sh' not in source

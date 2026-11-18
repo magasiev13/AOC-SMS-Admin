@@ -173,7 +173,7 @@ fi
 
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_DEST}"
 sudo install -d -o root -g root -m 0755 /usr/local/lib/twinevia-saas
-for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh; do
+for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh static_permissions.py; do
   sudo install -o root -g root -m 0755 "${REPO_ROOT}/deploy/${operation_file}" "/usr/local/lib/twinevia-saas/${operation_file}"
 done
 sudo install -m 0755 "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_SRC}" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_DEST}"
