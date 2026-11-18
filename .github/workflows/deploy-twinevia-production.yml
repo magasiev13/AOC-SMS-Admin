@@ -375,10 +375,10 @@ jobs:
           done
 
           DBDOCTOR_APP_ROOT="${APP_ROOT}/current"
-          if [ ! -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ]; then
+          if ! sudo -u "${APP_USER}" test -x "${DBDOCTOR_APP_ROOT}/venv/bin/python"; then
             DBDOCTOR_APP_ROOT="${APP_ROOT}"
           fi
-          [ -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ] || fail "Python is missing from both the active release and the legacy bootstrap root."
+          sudo -u "${APP_USER}" test -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" || fail "Python is missing from both the active release and the legacy bootstrap root."
           sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${DBDOCTOR_APP_ROOT}\"; set -a; source \"${APP_ROOT}/.env\"; set +a; TWINEVIA_SAAS_APP_ROOT=\"${DBDOCTOR_APP_ROOT}\" \"${ACTIVE_DBDOCTOR_BIN}\" --doctor" >/dev/null
 
           echo "==> Refresh deploy tooling from repo"
