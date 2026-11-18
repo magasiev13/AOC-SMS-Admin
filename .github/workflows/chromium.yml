@@ -1,0 +1,41 @@
+name: Chromium browser tests
+
+on:
+  pull_request:
+  workflow_call:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    # Match the supported Chromium build in the Playwright lockfile.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Bootstrap project venv
+        run: ./run/setup.sh
+      - name: Install isolated browser test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes redis-server
+      - name: Run browser regression suite
+        run: ./run/test_browser.sh
+      - name: Retain browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twinevia-browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/playwright/report/
+            output/playwright/test-results/
+            output/playwright/infrastructure/
+          if-no-files-found: ignore
+          retention-days: 7
