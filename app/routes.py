@@ -191,6 +191,7 @@ from app.services.recipient_service import (
     dedupe_recipients_by_phone as dedupe_recipients_by_phone_service,
     filter_suppressed_recipients,
     filter_unsubscribed_recipients,
+    current_inbound_opt_out,
     get_suppressed_phone_set,
     get_unsubscribed_phone_set,
 )
@@ -8346,8 +8347,11 @@ def community_list():
     members = query.order_by(order, CommunityMember.id.asc()).offset((page - 1) * per_page).limit(per_page).all()
     phones = [member.phone for member in members]
     unsubscribed_phones = get_unsubscribed_phone_set(phones)
+    inbound_opt_outs = {member_id for (member_id,) in CommunityMember.query.with_entities(CommunityMember.id).filter(
+        CommunityMember.id.in_([member.id for member in members]), current_inbound_opt_out(CommunityMember),
+    ).all()} if members else set()
     return render_template(
-        'community/list.html', members=members, search=search,
+        'community/list.html', members=members, search=search, inbound_opt_outs=inbound_opt_outs,
         unsubscribed_phones=unsubscribed_phones, suppressed_phones=get_suppressed_phone_set(phones),
         permission_statuses=permission_status_by_phone(_current_organization_id(), phones),
         can_review_permission=_current_user_is_workspace_owner(),
@@ -8582,7 +8586,7 @@ def community_unsubscribe(member_id):
     )
     db.session.add(unsubscribe)
     db.session.commit()
-    flash('Member added to unsubscribed list.', 'success')
+    flash('Contact blocked from texts.', 'success')
     return redirect(url_for('main.community_list'))
 
 
@@ -9627,6 +9631,11 @@ def unsubscribed_list():
         default_dir='desc',
     )
     per_page = 50
+    restriction = request.args.get('restriction')
+    if restriction not in ('opted_out', 'blocked'):
+        restriction = 'all'
+    inbound_stop = current_inbound_opt_out(UnsubscribedContact)
+
 
     unsubscribed_query = (
         UnsubscribedContact.query
@@ -9691,6 +9700,12 @@ def unsubscribed_list():
             )
         )
 
+    if restriction == 'opted_out':
+        unsubscribed_query = unsubscribed_query.filter(inbound_stop)
+        suppressed_query = suppressed_query.filter(db.false())
+    elif restriction == 'blocked':
+        unsubscribed_query = unsubscribed_query.filter(~inbound_stop)
+
     unsubscribed_count = unsubscribed_query.count()
     suppressed_count = suppressed_query.count()
     total_count = unsubscribed_count + suppressed_count
@@ -9709,7 +9724,7 @@ def unsubscribed_list():
             resolved_name.label('name'),
             UnsubscribedContact.phone.label('phone'),
             UnsubscribedContact.reason.label('reason'),
-            literal('unsubscribed').label('category'),
+            case((inbound_stop, literal('opted_out')), else_=literal('blocked')).label('category'),
             UnsubscribedContact.source.label('source'),
             UnsubscribedContact.created_at.label('created_at'),
             literal('unsubscribed').label('entry_type'),
@@ -9780,6 +9795,12 @@ def unsubscribed_list():
             )
         )
 
+    if restriction == 'opted_out':
+        unsubscribed_rows = unsubscribed_rows.where(inbound_stop)
+        suppressed_rows = suppressed_rows.where(db.false())
+    elif restriction == 'blocked':
+        unsubscribed_rows = unsubscribed_rows.where(~inbound_stop)
+
     combined_rows = union_all(unsubscribed_rows, suppressed_rows).subquery('suppression_entries')
     normalized_phone = func.replace(
         func.replace(
@@ -9836,7 +9857,7 @@ def unsubscribed_list():
     ]
 
     return render_template(
-        'unsubscribed/list.html',
+        'unsubscribed/list.html', restriction=restriction,
         entries=combined,
         search=search,
         page=page,

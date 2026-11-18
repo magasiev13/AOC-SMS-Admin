@@ -121,3 +121,46 @@ def test_today_projects_scoped_receipts_reminder_cost_and_completed_event_follow
     ux.db.session.commit()
     assert ux.client.get(follow_up).location.endswith(f'/events/{past.id}/feedback/{flow.id}/invite')
     assert m.OutboundRequest.query.count() == 0
+
+
+def test_people_separates_inbound_stop_from_operator_block_and_imported_source_labels(ux):
+    from app.services.recipient_permission_service import record_permission_evidence
+    m = ux.models
+    rows = [
+        ('Inbound contact', '+17205550181', 'inbound'),
+        ('Operator block', '+17205550182', 'community'),
+        ('Imported source', '+17205550183', 'inbound'),
+        ('Previous opt-out', '+17205550184', 'manual'),
+    ]
+    for name, phone, source in rows:
+        ux.db.session.add_all([
+            m.CommunityMember(organization_id=ux.org_id, name=name, phone=phone),
+            m.UnsubscribedContact(organization_id=ux.org_id, phone=phone, source=source),
+        ])
+    record_permission_evidence(ux.org_id, rows[0][1], purpose='all', decision='denied',
+                               source='inbound_stop', evidence_key='verified-stop')
+    record_permission_evidence(ux.org_id, rows[3][1], purpose='all', decision='denied',
+                               source='inbound_stop', evidence_key='prior-stop')
+    record_permission_evidence(ux.org_id, rows[3][1], purpose='all', decision='unknown',
+                               source='inbound_start', evidence_key='later-start')
+    record_permission_evidence(ux.other_id, rows[2][1], purpose='all', decision='denied',
+                               source='inbound_stop', evidence_key='other-tenant-stop')
+    ux.db.session.commit()
+    for role in ('owner', 'staff'):
+        login(ux, role)
+        for i, (name, phone, _) in enumerate(rows):
+            response = ux.client.get('/community', query_string={'view': 'all', 'search': name})
+            assert response.status_code == 200
+            label = 'Opted out' if i == 0 else 'Blocked'
+            assert f'class="people-status">{label}</span>'.encode() in response.data
+            if role == 'staff':
+                assert phone.encode() not in response.data
+        opted = ux.client.get('/unsubscribed?restriction=opted_out')
+        blocks = ux.client.get('/unsubscribed?restriction=blocked')
+        assert opted.status_code == blocks.status_code == 200
+        assert b'Inbound contact' in opted.data and b'Inbound contact' not in blocks.data
+        for name, phone, _ in rows[1:]:
+            assert name.encode() in blocks.data and name.encode() not in opted.data
+            if role == 'staff':
+                assert phone.encode() not in opted.data + blocks.data
+    assert m.UnsubscribedContact.query.count() == 4

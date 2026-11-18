@@ -57,7 +57,7 @@ for (const width of [1440, 390]) {
     }
   });
 
-  test(`opting out leaves contactable view and preserves history at ${width}px`, async ({ page }, testInfo) => {
+  test(`blocking a contact leaves the contactable view and preserves history at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     const name = `Retained opt-out ${width}`;
@@ -77,13 +77,19 @@ for (const width of [1440, 390]) {
     await all.focus();
     await page.keyboard.press('Enter');
     await expect(all).toHaveAttribute('aria-current', 'page');
-    await expect(row).toContainText('Opted out');
+    await expect(row).toContainText('Blocked');
     await page.locator('.collection-panel--search').getByRole('textbox', { name: 'Search Contacts', exact: true }).fill(phone);
     await page.locator('.collection-panel--search').getByRole('textbox', { name: 'Search Contacts', exact: true }).press('Enter');
     await expect(page).toHaveURL(/view=all/);
     await expect(row).toContainText(name);
     await noOverflow(page);
     await page.screenshot({ path: testInfo.outputPath(`retained-optout-${width}.png`), fullPage: false });
+    await page.getByRole('navigation', { name: 'Contact Views' }).getByRole('link', { name: 'Opt-outs & blocks' }).click();
+    const restrictions = page.getByRole('navigation', { name: 'Restriction type' });
+    await restrictions.getByRole('link', { name: 'Other blocks' }).click();
+    await expect(page.locator('.suppression-results-card')).toContainText(name);
+    await restrictions.getByRole('link', { name: 'Inbound opt-outs' }).click();
+    await expect(page.locator('.suppression-results-card')).not.toContainText(name);
     await page.getByRole('navigation', { name: 'Contact Views' }).getByRole('link', { name: 'Contactable', exact: true }).click();
     await expect(page.locator('.collection-panel--results')).not.toContainText(name);
   });
