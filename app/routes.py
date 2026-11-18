@@ -9349,7 +9349,9 @@ def security_events():
 
 
 # Scheduled Messages
-def _apply_scheduled_search_filter(query, search: str):
+def _apply_scheduled_search_filter(query, search: str, schedule_id=None):
+    if schedule_id is not None:
+        query = query.filter(ScheduledMessage.id == schedule_id)
     if not search:
         return query
 
@@ -9397,9 +9399,7 @@ def _cancel_workspace_schedule(schedule):
 def scheduled_list():
     search = request.args.get('search', '').strip()
     now = datetime.utcnow()
-    query = _apply_scheduled_search_filter(ScheduledMessage.query, search)
-    if request.args.get('id', type=int) is not None:
-        query = query.filter(ScheduledMessage.id == request.args.get('id', type=int))
+    query = _apply_scheduled_search_filter(ScheduledMessage.query, search, request.args.get('id', type=int))
 
     pending = query.filter(ScheduledMessage.status == 'pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()
@@ -9568,8 +9568,7 @@ def scheduled_status():
     """API endpoint for polling scheduled message status changes."""
     search = request.args.get('search', '').strip()
     pending = _apply_scheduled_search_filter(
-        ScheduledMessage.query,
-        search
+        ScheduledMessage.query, search, request.args.get('id', type=int),
     ).filter(ScheduledMessage.status == 'pending').all()
     pending_ids = [m.id for m in pending]
     pending_count = len(pending_ids)
