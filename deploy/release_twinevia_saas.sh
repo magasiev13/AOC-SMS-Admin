@@ -82,8 +82,14 @@ release_dir="${RELEASES_DIR}/${release_id}"
 promoted=0
 runtime_quiesced=0
 
-# Keep traversal available to nginx across preparation and bootstrap-only runs.
-sudo install -d -o root -g "${APP_GROUP}" -m 0751 "${RELEASES_DIR}"
+# Keep the release store protected without changing existing nginx traversal
+# while the candidate is prepared and its backup is verified.
+if [[ -d "${RELEASES_DIR}" ]]; then
+  sudo chown root:"${APP_GROUP}" "${RELEASES_DIR}"
+  sudo chmod u=rwx,g=rx,o-rw "${RELEASES_DIR}"
+else
+  sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
+fi
 
 create_bootstrap_release() {
   local bootstrap_id="bootstrap-${BOOTSTRAP_RELEASE_SHA:0:12}"
@@ -135,9 +141,6 @@ fi
 old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
   runtime_ctl verify-target --target "${old_release}" >/dev/null
-  # Older retained releases predate direct nginx static serving. Prepare the
-  # verified fallback before promotion so error recovery keeps assets readable.
-  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${old_release}"
 fi
 if [[ -e "${pending_release}" || -e "${release_dir}" ]]; then
   echo "Release path already exists: ${release_id}" >&2
@@ -229,7 +232,6 @@ sudo rm -rf -- "${verify_cache_dir}"
 sudo install -d -o root -g "${APP_GROUP}" -m 0550 "${pending_release}/instance"
 sudo chown -R root:"${APP_GROUP}" "${pending_release}"
 sudo chmod -R u=rwX,g=rX,o= "${pending_release}"
-sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${pending_release}"
 
 for env_key in \
   APP_BASE_URL \
@@ -299,6 +301,16 @@ python3 "${pending_release}/deploy/release_source.py" verify-backup \
   --app-root "${old_release}" \
   --status "${BACKUP_STATUS_FILE}" \
   --target-source-sha "${release_sha}"
+
+# The captured source identity includes file modes. Compare it before opening
+# the retained fallback's static files or switching nginx to serve them.
+if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${old_release}"
+fi
+sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${pending_release}"
+if [[ "${TWINEVIA_CONFIGURE_NGINX:-0}" == "1" ]]; then
+  sudo bash "${SOURCE_ROOT}/deploy/install_nginx_twinevia.sh" --confirm-dns-and-certificate-ready
+fi
 
 backup_archive="$(BACKUP_STATUS_PATH="${BACKUP_STATUS_FILE}" python3 -c '
 import json
