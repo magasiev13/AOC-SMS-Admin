@@ -3,7 +3,7 @@
     <dt class="col-sm-4">Eligible Recipients</dt><dd class="col-sm-8" data-review="eligible">{{ review.eligible if review else '' }}</dd>
     <dt class="col-sm-4">Excluded Recipients</dt><dd class="col-sm-8" data-review="excluded">{{ review.excluded if review else '' }}</dd>
     <dt class="col-sm-4">Sender</dt><dd class="col-sm-8 text-break" data-review="sender">{{ (review.sender if review else '')|private_text }}</dd>
-    <dt class="col-sm-4">Estimated SMS Units</dt><dd class="col-sm-8" data-review="segments">{{ review.segments if review else '' }}</dd>
+    <dt class="col-sm-4">Estimated SMS Segments</dt><dd class="col-sm-8" data-review="segments">{{ review.segments if review else '' }}</dd>
     <dt class="col-sm-4">Timing</dt><dd class="col-sm-8 text-break" data-review="timing">{{ (review.timing if review else '')|private_text }}</dd>
 </dl>
 <h3 class="h6">Personalized Sample</h3>

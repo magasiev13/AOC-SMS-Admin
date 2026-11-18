@@ -15,3 +15,12 @@
 <span class="badge bg-warning text-dark" title="No current verified permission for this purpose is recorded. This contact is excluded from sends.">Unknown</span>
 {% endif %}
 {%- endmacro %}
+
+{% macro contact_status(status, opted_out, blocked, suppressed) -%}
+{% if opted_out %}<span class="people-status">Opted out</span>
+{% elif blocked %}<span class="people-status">Blocked</span>
+{% elif suppressed %}<span class="people-status">Not deliverable</span>
+{% elif status.decision == 'legacy_compatibility' or status.allowed %}<span class="people-status people-status--eligible">Can text</span>
+{% elif status.reason == 'permission_revoked' or status.decision == 'denied' %}<span class="people-status">Permission declined</span>
+{% else %}<span class="people-status">Needs permission</span>{% endif %}
+{%- endmacro %}

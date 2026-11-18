@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ source.name }} · {{ details.sender }}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/5.3.2/css/bootstrap.min.css', v=app_version) }}">
+</head><body><main class="container py-5"><div class="row justify-content-center"><div class="col-md-7">
+<p class="text-secondary">{{ details.sender }}</p><h1>{{ source.name }}</h1>
+{% if command %}
+<h2 class="h4 mt-4">Confirm from your phone</h2>
+<p>Text this command to <strong>{{ details.number }}</strong> within 15 minutes, from the mobile number you entered.</p>
+<p><a class="btn btn-primary" href="sms:{{ details.number }}?body={{ command|urlencode }}">Open text message</a></p>
+<p class="text-secondary mb-1">Or copy the command into a text</p>
+<p><code class="user-select-all text-body">{{ command }}</code></p>
+{% else %}
+<form method="post" class="my-4">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+{% if error %}<p role="alert" class="text-danger">{{ error }}</p>{% endif %}
+<label class="form-label" for="phone">Your mobile number</label>
+<input id="phone" name="phone" type="tel" autocomplete="tel" class="form-control mb-3" maxlength="30" required>
+<label class="mb-3 d-block"><input type="checkbox" name="consent" value="yes" required> {{ source.disclosure }}</label>
+<p>{{ details.terms }}</p>
+{% if source.purpose == 'event' %}<p>Event registration is separate from text reminder signup.</p>{% endif %}
+<button class="btn btn-primary">Get my confirmation command</button>
+</form>
+{% endif %}
+<p>Help is available at {{ details.help_contact }}.</p>
+<p><a href="{{ details.privacy_url }}">Privacy policy</a> · <a href="{{ details.terms_url }}">SMS terms</a></p>
+</div></div></main></body></html>

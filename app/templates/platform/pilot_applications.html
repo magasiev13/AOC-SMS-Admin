@@ -23,7 +23,7 @@
                 <div>
                     <h2 class="workspace-panel__title">{{ application.business_name }}</h2>
                     <p class="workspace-panel__meta">
-                        {{ application.contact_name }} · {{ application.email }} · submitted {{ application.created_at.strftime('%Y-%m-%d %H:%M') }}
+                        {{ application.contact_name }} · {{ application.email }} · submitted {{ application.created_at.strftime('%Y-%m-%d %H:%M') }} UTC
                     </p>
                 </div>
                 <span class="badge bg-{{ 'success' if application.status == 'approved' else ('secondary' if application.status == 'declined' else 'warning text-dark') }}">

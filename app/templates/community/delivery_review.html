@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Delivery review · {{ product_name }}{% endblock %}
+{% block page_title %}Delivery review{% endblock %}
+{% block content %}
+{% set audience_view = 'review' %}{% set search = '' %}
+{% include 'includes/people_filters.html' %}
+<div class="work-ledger mt-3">
+    <h2>Repeatedly unreachable</h2>
+    <p class="mt-2">These numbers had an unreachable-handset receipt on at least three separate sends in the past 30 days. A review flag does not block texts or change opt-out status.</p>
+    {% for row in rows %}<div class="work-row">
+        <div>{% if contacts.get(row.phone) %}<a href="{{ url_for('main.community_edit', member_id=contacts[row.phone].id) }}"><strong>{{ contacts[row.phone].name or row.phone }}</strong></a>{% if contacts[row.phone].name %}<small>{{ row.phone }}</small>{% endif %}{% else %}<strong>{{ row.phone }}</strong>{% endif %}</div>
+        <span>{{ row.count }} separate sends · Last receipt {{ row.latest|localtime }}</span>
+    </div>{% else %}<p class="work-row">No numbers currently need reachability review.</p>{% endfor %}
+    {% if pages > 1 %}<nav class="mt-3" aria-label="Delivery review pages">{% if page > 1 %}<a rel="prev" href="{{ url_for('main.community_delivery_review', page=page-1) }}">Previous</a>{% endif %} Page {{ page }} of {{ pages }} {% if page < pages %}<a rel="next" href="{{ url_for('main.community_delivery_review', page=page+1) }}">Next</a>{% endif %}</nav>{% endif %}
+</div>
+{% endblock %}

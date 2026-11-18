@@ -13,8 +13,25 @@
     function fingerprint() {
         return JSON.stringify(Array.from(new FormData(form)).filter(([name]) => name !== 'review_token'));
     }
-    function report(message) {
+    function report(message, loginUrl) {
         error.textContent = message;
+        if (loginUrl) {
+            const fallback = new URL(form.dataset.loginUrl, window.location.origin);
+            let destination = fallback;
+            try {
+                const candidate = new URL(loginUrl, window.location.origin);
+                if (candidate.origin === window.location.origin && candidate.pathname === fallback.pathname) {
+                    // Return to the send screen, never a POST-only review URL.
+                    candidate.search = fallback.search;
+                    destination = candidate;
+                }
+            } catch (_) { /* Use the server-rendered sign-in link. */ }
+            const link = document.createElement('a');
+            link.href = destination.href;
+            link.textContent = 'Sign in again';
+            link.className = 'ms-2';
+            error.appendChild(link);
+        }
         error.classList.remove('d-none');
         error.scrollIntoView({ block: 'nearest' });
     }
@@ -35,8 +52,21 @@
         captured = fingerprint();
         try {
             const response = await fetch(form.dataset.reviewUrl, { method: 'POST', body: new FormData(form), headers: { Accept: 'application/json' } });
-            const review = await response.json();
+            const contentType = response.headers.get('content-type') || '';
+            let review = {};
+            if (contentType.includes('application/json') || contentType.includes('+json')) {
+                try { review = await response.json(); } catch (_) { /* Show a useful error below. */ }
+            }
+            if (!review || typeof review !== 'object' || Array.isArray(review)) review = {};
+            if (response.status === 401 || (response.redirected && !contentType.includes('json'))) {
+                report('You were signed out. Sign in again; your message is saved.', review.login_url || form.dataset.loginUrl);
+                return;
+            }
+            if (response.status === 400 && !review.error) {
+                throw new Error('This page has expired. Reload it and review your saved message again.');
+            }
             if (!response.ok) throw new Error(review.error || 'The send review is unavailable. Try again.');
+            if (!review.review_token) throw new Error('The send review is unavailable. Your message has been kept. Reload the page and try again.');
             if (captured !== fingerprint()) throw new Error('The composition changed while preparing the review. Review it again.');
             for (const element of dialog.querySelectorAll('[data-review]')) element.textContent = String(review[element.dataset.review] ?? '');
             form.querySelector('[name="review_token"]').value = review.review_token;

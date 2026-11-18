@@ -7,7 +7,7 @@ test('remembered login is removed on logout and stays signed out in a fresh cont
   await page.getByLabel('Password', { exact: true }).fill('Owner-pass1!');
   await page.getByLabel('Remember me on this device').check();
   await page.getByRole('button', { name: /Sign in to/i }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(/\/home$/);
   await page.waitForLoadState('load');
   expect((await page.context().cookies()).some(cookie => cookie.name === 'remember_token')).toBeTruthy();
   await page.getByRole('button', { name: 'Toggle navigation', exact: true }).click();

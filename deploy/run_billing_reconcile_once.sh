@@ -36,8 +36,8 @@ try:
 
     app = create_app(run_startup_tasks=False, start_scheduler=False)
     with app.app_context():
-        reconcile_billing_subscriptions()
-    sys.exit(0)
+        summary = reconcile_billing_subscriptions()
+    sys.exit(1 if summary['failed'] or summary['usage_periods_failed'] else 0)
 except Exception as exc:
     logging.error('Stripe billing reconciliation failed: %s', exc)
     traceback.print_exc()

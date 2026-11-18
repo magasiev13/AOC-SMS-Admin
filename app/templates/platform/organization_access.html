@@ -12,6 +12,7 @@
 {% endblock %}
 
 {% block page_actions %}
+<a href="{{ url_for('main.platform_consent_sources', organization_id=organization.id) }}" class="btn btn-primary page-action-primary">Review consent sources</a>
 <a href="{{ url_for('main.platform_organizations_list') }}" class="btn btn-outline-secondary">Back to Organizations</a>
 {% endblock %}
 
@@ -74,7 +75,7 @@
                                 </td>
                                 <td>{{ membership.user.email or '-' }}</td>
                                 <td>{{ membership.user.username }}</td>
-                                <td>{{ membership.created_at|localtime('%Y-%m-%d %H:%M') if membership.created_at else '-' }}</td>
+                                <td>{{ membership.created_at|localtime if membership.created_at else '-' }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

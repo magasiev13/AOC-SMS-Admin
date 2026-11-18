@@ -52,8 +52,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  chromium:
+    uses: ./.github/workflows/chromium.yml
+
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -94,26 +97,10 @@ jobs:
         run: |
           ./run/test.sh -q
 
-      - name: Install isolated browser test runtime
+      - name: Install isolated queue test runtime
         run: |
           sudo apt-get update
           sudo apt-get install --yes redis-server
-
-      - name: Run browser regression suite
-        run: |
-          ./run/test_browser.sh
-
-      - name: Retain browser failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: twinevia-browser-failure-${{ github.run_id }}
-          path: |
-            output/playwright/report/
-            output/playwright/test-results/
-            output/playwright/infrastructure/
-          if-no-files-found: ignore
-          retention-days: 7
 
       - name: Run PostgreSQL concurrency and queue recovery checks
         env:
@@ -122,11 +109,15 @@ jobs:
           ./run/test_reliability_postgres.sh
 
   deploy:
+    concurrency:
+      group: twinevia-production-backup-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    needs: [validate, runtime_systemd]
+    needs: [validate, runtime_systemd, chromium]
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -198,27 +189,31 @@ jobs:
           scp -r "${SCP_OPTIONS[@]}" "${SSH_TARGET_VALUE}:${EXPORT_DIR_REMOTE}" output/production-backup/
 
       - name: Upload encrypted off-host backup
+        id: backup_artifact
         uses: actions/upload-artifact@v4
         with:
-          name: twinevia-production-backup-${{ github.run_id }}
+          name: twinevia-production-backup-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/production-backup/**
           if-no-files-found: error
           retention-days: 35
 
-      - name: Download stored encrypted backup
-        uses: actions/download-artifact@v5
-        with:
-          name: twinevia-production-backup-${{ github.run_id }}
-          path: output/production-backup-downloaded
-
-      - name: Verify downloaded backup bytes and identity
+      - name: Read back and verify the uploaded backup
+        id: readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_ARTIFACT_ID: ${{ steps.backup_artifact.outputs.artifact-id }}
+          BACKUP_ARTIFACT_DIGEST: ${{ steps.backup_artifact.outputs.artifact-digest }}
         run: |
           python3 deploy/verify_backup_export.py \
             --expected output/production-backup \
-            --downloaded output/production-backup-downloaded
+            --github-artifact-id "${BACKUP_ARTIFACT_ID}" \
+            --zip-sha256 "${BACKUP_ARTIFACT_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Confirm off-host backup proof
         env:
+          BACKUP_ARTIFACT_ID: ${{ steps.backup_artifact.outputs.artifact-id }}
+          VERIFIED_ARCHIVE_SHA: ${{ steps.readback.outputs.encrypted_sha256 }}
           TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
           TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
         run: |
@@ -236,7 +231,9 @@ jobs:
               --status-file /var/lib/twinevia-saas/backup-status.json \
               --repository "${GITHUB_REPOSITORY}" \
               --run-id "${GITHUB_RUN_ID}" \
-              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}"
+              --artifact-id "${BACKUP_ARTIFACT_ID}" \
+              --encrypted-sha256 "${VERIFIED_ARCHIVE_SHA}" \
+              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
       - name: Deploy
         env:
@@ -364,10 +361,10 @@ jobs:
           done
 
           DBDOCTOR_APP_ROOT="${APP_ROOT}/current"
-          if [ ! -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ]; then
+          if ! sudo -u "${APP_USER}" test -x "${DBDOCTOR_APP_ROOT}/venv/bin/python"; then
             DBDOCTOR_APP_ROOT="${APP_ROOT}"
           fi
-          [ -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" ] || fail "Python is missing from both the active release and the legacy bootstrap root."
+          sudo -u "${APP_USER}" test -x "${DBDOCTOR_APP_ROOT}/venv/bin/python" || fail "Python is missing from both the active release and the legacy bootstrap root."
           sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${DBDOCTOR_APP_ROOT}\"; set -a; source \"${APP_ROOT}/.env\"; set +a; TWINEVIA_SAAS_APP_ROOT=\"${DBDOCTOR_APP_ROOT}\" \"${ACTIVE_DBDOCTOR_BIN}\" --doctor" >/dev/null
 
           echo "==> Refresh deploy tooling from repo"
@@ -376,11 +373,8 @@ jobs:
           sudo install -m 0755 "${APP_ROOT}/bin/twinevia-saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_BIN}"
           sudo install -m 0755 "${APP_ROOT}/bin/saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_ALIAS_BIN}"
 
-          echo "==> Install and verify Twinevia Nginx virtual hosts"
-          sudo bash "${APP_ROOT}/deploy/install_nginx_twinevia.sh" --confirm-dns-and-certificate-ready
-
           echo "==> Deploy latest branch"
-          sudo EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" /usr/local/bin/deploy_twinevia_saas.sh
+          sudo TWINEVIA_CONFIGURE_NGINX=1 EXPECTED_GIT_BRANCH="${REQUIRED_BRANCH}" EXPECTED_GIT_TRACKING_BRANCH="${REQUIRED_TRACKING}" APP_ROOT="${APP_ROOT}" APP_USER="${APP_USER}" /usr/local/bin/deploy_twinevia_saas.sh
 
           echo "==> Runtime state is checked against the declared maintenance policy below"
 
@@ -468,6 +462,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "${SSH_TARGET_VALUE}" \
             sudo -n rm -rf -- \
+              "/var/lib/twinevia-saas/backup-status.json.pending-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
               "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \

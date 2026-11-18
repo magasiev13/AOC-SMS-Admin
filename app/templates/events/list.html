@@ -8,7 +8,7 @@
 {% set can_manage_events = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Events</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Events</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -18,9 +18,18 @@
 {% endblock %}
 
 {% block content %}
-<div class="collection-shell">
+{% set has_past_results = event_view == 'current' and past_count|default(0) > 0 %}
+{% set events_empty_title = ('No Current Events Match' if search else 'No Current Events') if has_past_results else ('No Matching Events' if search else ('No Past or Inactive Events' if event_view == 'past' else 'No Current Events')) %}
+{% set events_empty_body = (('Past or inactive events matching this search: ' if search else 'Past or inactive events: ') ~ past_count ~ '. Review their registrations and feedback.') if has_past_results else ('Try a different search to find an event.' if search else ('Ended, cancelled and inactive events appear here with their registration and feedback history.' if event_view == 'past' else 'Create an event to start collecting registrations.')) %}
+{% set events_empty_href = url_for('main.events_list', view='past', search=search) if has_past_results else (url_for('main.events_list', view=event_view) if search else url_for('main.event_add')) %}
+{% set events_empty_label = 'View Past & Inactive Events' if has_past_results else ('Clear Search' if search else 'Create Event') %}
+<div class="collection-shell events-directory">
+    {% if recent_events %}
+    <section class="work-ledger"><h2>Recent events</h2>
+        {% for item in recent_events %}<div class="work-row"><a href="{{ url_for('main.event_detail', event_id=item.id) }}"><strong>{{ item.title|private_text }}</strong><small>{{ item.date|localdate if item.date else 'Date unavailable' }}</small></a><a href="{{ url_for('event_feedback.follow_up', event_id=item.id) }}">Request feedback →</a></div>{% endfor %}
+    </section>{% endif %}
     <nav class="d-flex flex-wrap gap-2" aria-label="Event view">
-        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'current' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', search=search) }}"{% if event_view == 'current' %} aria-current="page"{% endif %}>Current Events</a>
+        <a class="btn btn-sm {{ 'btn-primary' if event_view == 'current' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', view='current', search=search) }}"{% if event_view == 'current' %} aria-current="page"{% endif %}>Current Events</a>
         <a class="btn btn-sm {{ 'btn-primary' if event_view == 'past' else 'btn-outline-secondary' }}" href="{{ url_for('main.events_list', view='past', search=search) }}"{% if event_view == 'past' %} aria-current="page"{% endif %}>Past &amp; Inactive Events</a>
     </nav>
     <p class="small text-muted mb-0">{{ 'Upcoming, ongoing and undated events appear here. After an event ends, its registrations and feedback remain in Past & Inactive Events.' if event_view == 'current' else 'Open a past event to review registrations or send a follow-up or feedback invitation. Opt-outs still apply.' }}</p>
@@ -110,14 +119,14 @@
                             </a>
                         </td>
                         <td data-sort-value="{{ event.date.isoformat() if event.date else '' }}">
-                            {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}
+                            {{ event.date|localdate if event.date else '-' }}
                         </td>
                         <td data-sort-value="{{ event.contact_count }}">
                             <span class="badge bg-secondary">{{ event.contact_count }} contacts</span>
                             <span class="text-muted small d-block">{{ event.reserved_places }} reserved places</span>
                         </td>
                         <td data-sort-value="{{ event.created_at.isoformat() if event.created_at else '' }}">
-                            {{ event.created_at.strftime('%Y-%m-%d') if event.created_at else '-' }}
+                            {{ event.created_at|localdate if event.created_at else '-' }}
                         </td>
                         <td class="events-actions-cell">
                             <div class="row-actions event-row-actions" data-row-actions data-row-actions-primary="2">
@@ -156,10 +165,10 @@
                         <td colspan="{{ 6 if can_manage_events else 5 }}" class="py-5">
                             {{ ui.empty_state(
                                 'bi-calendar-x',
-                                'No Matching Events' if search else ('No Past or Inactive Events' if event_view == 'past' else 'No Current Events'),
-                                'Try a different search to find an event.' if search else ('Ended, cancelled and inactive events appear here with their registration and feedback history.' if event_view == 'past' else 'Create an event to start collecting registrations.'),
-                                url_for('main.events_list', view=event_view) if search else url_for('main.event_add'),
-                                'Clear Search' if search else 'Create Event'
+                                events_empty_title,
+                                events_empty_body,
+                                events_empty_href,
+                                events_empty_label
                             ) }}
                         </td>
                     </tr>
@@ -188,7 +197,7 @@
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
                         <h6 class="mb-1">{{ (event.title)|private_text }}</h6>
-                        <div class="text-muted small">Date: {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</div>
+                        <div class="text-muted small">Date: {{ event.date|localdate if event.date else '-' }}</div>
                         <div class="text-muted small">Supplied contacts: {{ event.contact_count }}</div>
                         <div class="text-muted small">Reserved places: {{ event.reserved_places }}</div>
                     </div>
@@ -232,10 +241,10 @@
             <div class="py-5">
                 {{ ui.empty_state(
                     'bi-calendar-x',
-                    'No Matching Events' if search else ('No Past or Inactive Events' if event_view == 'past' else 'No Current Events'),
-                    'Try a different search to find an event.' if search else ('Ended, cancelled and inactive events appear here with their registration and feedback history.' if event_view == 'past' else 'Create an event to start collecting registrations.'),
-                    url_for('main.events_list', view=event_view) if search else url_for('main.event_add'),
-                    'Clear Search' if search else 'Create Event'
+                    events_empty_title,
+                    events_empty_body,
+                    events_empty_href,
+                    events_empty_label
                 ) }}
             </div>
         {% endif %}
@@ -254,7 +263,7 @@
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close preview"></button>
         </div>
         <div class="offcanvas-body">
-            <p class="mb-2"><strong>Date:</strong> {{ event.date.strftime('%Y-%m-%d') if event.date else '-' }}</p>
+            <p class="mb-2"><strong>Date:</strong> {{ event.date|localdate if event.date else '-' }}</p>
             <p class="mb-2"><strong>Supplied contacts:</strong> {{ event.contact_count }}</p>
             <p class="mb-2"><strong>Reserved places:</strong> {{ event.reserved_places }}</p>
             <p class="text-muted small mb-0">Preview upcoming registrants, send reminders, or edit details.</p>
@@ -312,154 +321,6 @@
 
 {% block scripts %}
 {% if can_manage_events %}
-<script>
-    let formToSubmit = null;
-    const deleteEventModal = document.getElementById('deleteEventModal');
-
-    if (deleteEventModal) {
-        deleteEventModal.addEventListener('show.bs.modal', function(event) {
-            const button = event.relatedTarget;
-            const eventTitle = button.getAttribute('data-event-title') || 'this event';
-            const formId = button.getAttribute('data-form-id');
-            const registrationCount = button.getAttribute('data-registration-count') || '0';
-
-            document.getElementById('deleteEventName').textContent = eventTitle;
-            document.getElementById('deleteEventImpact').textContent =
-                `Deleting will remove ${registrationCount} registration(s).`;
-            formToSubmit = document.getElementById(formId);
-        });
-
-        const confirmDeleteEventBtn = document.getElementById('confirmDeleteEventBtn');
-        confirmDeleteEventBtn.addEventListener('click', function() {
-            if (formToSubmit) {
-                formToSubmit.submit();
-            }
-        });
-    }
-
-    const selectedCountEl = document.getElementById('selectedCount');
-    const selectAllEvents = document.getElementById('selectAllEvents');
-    const bulkSelectionActions = document.getElementById('bulkSelectionActions');
-    const bulkDeleteForm = document.getElementById('bulkDeleteForm');
-
-    document.querySelectorAll('.event-checkbox[form]').forEach((checkbox) => {
-        checkbox.removeAttribute('form');
-    });
-
-    function isVisible(element) {
-        return element.offsetParent !== null;
-    }
-
-    function getEventCheckboxes() {
-        return Array.from(document.querySelectorAll('.event-checkbox')).filter(isVisible);
-    }
-
-    function getVisibleCheckedEventIds() {
-        return Array.from(new Set(
-            getEventCheckboxes()
-                .filter((box) => box.checked)
-                .map((box) => box.value)
-                .filter(Boolean)
-        ));
-    }
-
-    function syncEventCheckboxes(changedCheckbox) {
-        const eventId = changedCheckbox.dataset.eventId;
-        if (!eventId) return;
-        document
-            .querySelectorAll(`.event-checkbox[data-event-id="${eventId}"]`)
-            .forEach((checkbox) => {
-                checkbox.checked = changedCheckbox.checked;
-            });
-    }
-
-    function updateBulkUi() {
-        if (!selectedCountEl) return;
-        const boxes = getEventCheckboxes();
-        const selected = boxes.filter(b => b.checked).length;
-        selectedCountEl.textContent = selected;
-        if (bulkSelectionActions) {
-            bulkSelectionActions.classList.toggle('is-visible', selected > 0);
-        }
-        if (selectAllEvents) {
-            selectAllEvents.checked = boxes.length > 0 && boxes.every(b => b.checked);
-            selectAllEvents.indeterminate = selected > 0 && selected < boxes.length;
-        }
-    }
-
-    if (selectAllEvents) {
-        selectAllEvents.addEventListener('change', function() {
-            const boxes = getEventCheckboxes();
-            boxes.forEach((box) => {
-                box.checked = selectAllEvents.checked;
-                syncEventCheckboxes(box);
-            });
-            updateBulkUi();
-        });
-    }
-
-    const selectAllBtn = document.getElementById('selectAllBtn');
-    if (selectAllBtn) {
-        selectAllBtn.addEventListener('click', function() {
-            const boxes = getEventCheckboxes();
-            boxes.forEach((box) => {
-                box.checked = true;
-                syncEventCheckboxes(box);
-            });
-            updateBulkUi();
-        });
-    }
-
-    const selectNoneBtn = document.getElementById('selectNoneBtn');
-    if (selectNoneBtn) {
-        selectNoneBtn.addEventListener('click', function() {
-            const boxes = getEventCheckboxes();
-            boxes.forEach((box) => {
-                box.checked = false;
-                syncEventCheckboxes(box);
-            });
-            updateBulkUi();
-        });
-    }
-
-    document.querySelectorAll('.js-select-row').forEach((box) => {
-        box.addEventListener('change', function() {
-            syncEventCheckboxes(box);
-            updateBulkUi();
-        });
-    });
-
-    const bulkDeleteModal = document.getElementById('bulkDeleteModal');
-    if (bulkDeleteModal) {
-        bulkDeleteModal.addEventListener('show.bs.modal', function() {
-            const selected = getEventCheckboxes().filter((box) => box.checked).length;
-            const countEl = document.getElementById('bulkDeleteCount');
-            if (countEl) countEl.textContent = selected;
-        });
-    }
-
-    const confirmBulkDeleteBtn = document.getElementById('confirmBulkDeleteBtn');
-    if (confirmBulkDeleteBtn) {
-        confirmBulkDeleteBtn.addEventListener('click', function() {
-            if (bulkDeleteForm) {
-                const selectedEventIds = getVisibleCheckedEventIds();
-                bulkDeleteForm
-                    .querySelectorAll('input[name="event_ids"]')
-                    .forEach((input) => input.remove());
-                selectedEventIds.forEach((eventId) => {
-                    const hiddenInput = document.createElement('input');
-                    hiddenInput.type = 'hidden';
-                    hiddenInput.name = 'event_ids';
-                    hiddenInput.value = eventId;
-                    bulkDeleteForm.appendChild(hiddenInput);
-                });
-                bulkDeleteForm.submit();
-            }
-        });
-    }
-
-    window.addEventListener('resize', updateBulkUi);
-    updateBulkUi();
-</script>
+<script src="{{ url_for('static', filename='js/pages/events-list.js', v=app_version) }}"></script>
 {% endif %}
 {% endblock %}

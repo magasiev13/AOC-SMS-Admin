@@ -541,7 +541,13 @@ class TestRestartDeployArtifacts(unittest.TestCase):
         self.assertNotIn("codex/saas-pilot-v2", workflow)
         self.assertIn("runtime_control.py check", workflow)
         self.assertIn("runtime_readiness_proof", workflow)
-        self.assertIn("needs: [validate, runtime_systemd]", workflow)
+        self.assertIn("needs: [validate, runtime_systemd, chromium]", workflow)
+        self.assertIn("uses: ./.github/workflows/chromium.yml", workflow)
+        browser_workflow = self._read_repo_file(".github", "workflows", "chromium.yml")
+        self.assertIn("  pull_request:", browser_workflow)
+        self.assertIn("  workflow_call:", browser_workflow)
+        self.assertIn("runs-on: ubuntu-24.04", browser_workflow)
+        self.assertIn("run: ./run/test_browser.sh", browser_workflow)
         self.assertIn("restart-twinevia-saas-services --check", workflow)
         self.assertIn("/usr/local/bin/twinevia-saas-dbdoctor", workflow)
         self.assertIn("deploy_branch:", workflow)
@@ -745,6 +751,34 @@ class TestRestartDeployArtifacts(unittest.TestCase):
             self.assertIn("TWILIO_VALIDATE_INBOUND_SIGNATURE must be 1", script)
             self.assertIn("SECURITY_HEADERS_ENABLED must be 1", script)
             self.assertIn("SECURITY_HSTS_ENABLED must be 1", script)
+
+    def test_workflow_probes_the_doctor_interpreter_as_the_application_user(self) -> None:
+        workflow = self._read_repo_file(".github", "workflows", "deploy-twinevia-production.yml")
+        start = workflow.index('          DBDOCTOR_APP_ROOT="${APP_ROOT}/current"')
+        probe = workflow[start:workflow.index('          sudo -u "${APP_USER}" bash -lc', start)]
+        # The SSH identity cannot traverse the active release. Only the
+        # application identity sees the synthetic executable paths.
+        script = '''set -eu
+fail() { exit 19; }
+sudo() {
+    [[ "$1" == "-u" && "$2" == "$APP_USER" && "$3" == "test" && "$4" == "-x" ]] || exit 20
+    case "$5" in
+        "$APP_ROOT/current/venv/bin/python") [[ "$ACTIVE" == 1 ]] ;;
+        "$APP_ROOT/venv/bin/python") [[ "$BOOTSTRAP" == 1 ]] ;;
+        *) exit 21 ;;
+    esac
+}
+''' + probe + 'echo "$DBDOCTOR_APP_ROOT"'
+        for active, bootstrap, expected, code in (
+            (1, 1, '/fixture/current', 0), (0, 1, '/fixture', 0), (0, 0, '', 19),
+        ):
+            with self.subTest(active=active, bootstrap=bootstrap):
+                result = subprocess.run(['bash', '-c', script], capture_output=True, text=True, env={
+                    'PATH': os.defpath, 'APP_USER': 'fixture-app', 'APP_ROOT': '/fixture',
+                    'ACTIVE': str(active), 'BOOTSTRAP': str(bootstrap),
+                })
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
 
     def test_saas_dbdoctor_wrappers_default_to_canonical_root(self) -> None:
         canonical_wrapper = self._read_repo_file("bin", "twinevia-saas-dbdoctor")

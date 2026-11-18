@@ -1,4 +1,5 @@
 """Event operators see independent bookings and evidence-based communication."""
+from tests.consent_fixtures import historical_signup_contract
 import json
 import io
 from datetime import timedelta
@@ -72,9 +73,10 @@ def test_missing_receipts_never_become_delivered(feedback):
     assert result == {'total': 3, 'accepted': 2, 'delivered': 0, 'submission_failed': 1,
                       'delivery_failed': 0, 'unresolved': 2, 'acceptance_rate': 66.7}
     dashboard = f.client.get('/dashboard')
-    assert b'Provider Acceptance' in dashboard.data
+    assert b'Delivery Confirmed' in dashboard.data
     assert b'Delivery Rate' not in dashboard.data
-    assert b'0 confirmed delivered' in dashboard.data
+    assert b'0 of 3' in dashboard.data and b'0 / 2' in dashboard.data
+    assert b'2 accepted by provider \xc2\xb7 1 not submitted \xc2\xb7 0 not delivered \xc2\xb7 2 no receipt yet' in dashboard.data
     assert b'>Delivered<' not in dashboard.data
 
 
@@ -182,7 +184,7 @@ def test_local_bookings_can_cancel_one_and_explicitly_link_or_unlink(feedback):
 
 def test_reviewed_community_announcement_keeps_event_context_and_audience(feedback):
     f = feedback
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS'] = [f.org.slug]
+    historical_signup_contract(f.org.id, True)
     f.db.session.add(f.m.CommunityMember(organization_id=f.org.id, name='Member', phone='+17205550145'))
     f.db.session.commit()
     form = {'target': 'community', 'context_event_id': f.event.id, 'message_body': 'Join our community event.',

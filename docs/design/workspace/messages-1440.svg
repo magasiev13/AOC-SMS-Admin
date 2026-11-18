@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900" font-family="system-ui, sans-serif" role="img" aria-labelledby="title"><title id="title">Messages at 1440 pixels, illustrative wireframe</title>
+<rect x="0" y="0" width="1440" height="900" fill="#fff"/>
+<rect x="0" y="0" width="238" height="900" fill="#11263b"/>
+<text x="26" y="56" fill="#fff" font-size="30" font-weight="700">Twinevia</text>
+<text x="30" y="126" fill="#fff" font-size="20" font-weight="400">Home</text>
+<rect x="12" y="151" width="214" height="48" fill="#234869"/>
+<text x="30" y="181" fill="#fff" font-size="20" font-weight="700">Messages</text>
+<text x="30" y="236" fill="#fff" font-size="20" font-weight="400">Conversations</text>
+<text x="30" y="291" fill="#fff" font-size="20" font-weight="400">People</text>
+<text x="30" y="346" fill="#fff" font-size="20" font-weight="400">Events</text>
+<text x="30" y="850" fill="#fff" font-size="17" font-weight="400">Settings</text>
+<text x="300" y="92" fill="#1b2738" font-size="48" font-weight="700">Messages</text>
+<rect x="1185" y="54" width="175" height="46" fill="#174bbd"/>
+<text x="1202" y="83" fill="#fff" font-size="18" font-weight="700">New message</text>
+<text x="300" y="160" fill="#1b2738" font-size="23" font-weight="700">On this device</text>
+<rect x="300" y="172" width="1060" height="2" fill="#223950"/>
+<text x="304" y="197" fill="#1b2738" font-size="20" font-weight="700">Unfinished message</text>
+<text x="780" y="197" fill="#465767" font-size="17" font-weight="400">Continue draft</text>
+<rect x="300" y="220" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="262" fill="#1b2738" font-size="23" font-weight="700">Scheduled</text>
+<rect x="300" y="274" width="1060" height="2" fill="#223950"/>
+<text x="304" y="299" fill="#1b2738" font-size="20" font-weight="700">Workshop reminder</text>
+<text x="780" y="299" fill="#465767" font-size="17" font-weight="400">Automatic reminder · Tomorrow, 9:00 AM</text>
+<rect x="300" y="322" width="1060" height="1" fill="#ccd4dc"/>
+<text x="300" y="364" fill="#1b2738" font-size="23" font-weight="700">History</text>
+<rect x="300" y="376" width="1060" height="2" fill="#223950"/>
+<text x="304" y="401" fill="#1b2738" font-size="20" font-weight="700">Doors open at nine</text>
+<text x="780" y="401" fill="#465767" font-size="17" font-weight="400">72 delivered · 1 not delivered</text>
+<rect x="300" y="424" width="1060" height="1" fill="#ccd4dc"/>
+<text x="304" y="449" fill="#1b2738" font-size="20" font-weight="700">Thank you for helping</text>
+<text x="780" y="449" fill="#465767" font-size="17" font-weight="400">31 accepted · no receipt yet</text>
+<rect x="300" y="472" width="1060" height="1" fill="#ccd4dc"/></svg>

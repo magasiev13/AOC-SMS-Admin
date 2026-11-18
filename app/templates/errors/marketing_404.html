@@ -1,0 +1,14 @@
+{% extends "marketing/base.html" %}
+
+{% block title %}Page not found — {{ product_name }}{% endblock %}
+{% block meta_description %}Return to the {{ product_name }} home page.{% endblock %}
+
+{% block content %}
+<header class="page-hero page-hero--split" data-public-not-found>
+    <div><p class="section-kicker">404</p><h1>Page not found</h1></div>
+    <div class="page-hero__copy">
+        <p>This page is unavailable. Check the address or return to the home page.</p>
+        <a class="button button--primary" href="{{ home_url }}">Back to home</a>
+    </div>
+</header>
+{% endblock %}

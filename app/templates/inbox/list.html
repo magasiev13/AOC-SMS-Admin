@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Inbox - {{ product_name }}{% endblock %}
+{% block title %}Conversations - {{ product_name }}{% endblock %}
 
-{% block page_title %}Inbox{% endblock %}
+{% block page_title %}Conversations{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Inbox</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Conversations</span>
 {% endblock %}
 
 {% block page_actions %}
 <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-primary page-action-secondary">
     <i class="bi bi-magic me-1"></i>Automatic Replies
 </a>
-<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-primary page-action-primary">
+<a href="{{ url_for('main.survey_flows_list') }}" class="btn btn-outline-secondary page-action-secondary">
     <i class="bi bi-list-check me-1"></i>Surveys
 </a>
 {% endblock %}
@@ -33,6 +33,12 @@
 </div>
 <div class="row g-3 inbox-layout">
     <div class="col-lg-4 {% if selected_thread and not show_thread_list_only %}d-none d-lg-block{% endif %}" id="inboxThreadsPanel">
+        <nav class="nav nav-pills mb-3" aria-label="Conversation folders">
+            <a class="nav-link{% if not folder %} active{% endif %}" {% if not folder %}aria-current="page"{% endif %}
+               href="{{ url_for('main.inbox_list', search=search) }}">Inbox</a>
+            <a class="nav-link{% if folder %} active{% endif %}" {% if folder %}aria-current="page"{% endif %}
+               href="{{ url_for('main.inbox_list', folder='archived', search=search) }}">Archived</a>
+        </nav>
         {% call ui.collection_search_panel(
             url_for('main.inbox_list'),
             'Search phone or name' if can_view_contact_numbers else 'Search contact names',
@@ -41,6 +47,7 @@
             'Search Inbox',
             'Find the right conversation quickly.'
         ) %}
+        {% if folder %}<input type="hidden" name="folder" value="archived">{% endif %}
         {% if show_thread_list_only %}
         <input type="hidden" name="view" value="threads">
         {% elif selected_thread %}
@@ -56,7 +63,7 @@
                     {% set thread_is_active = selected_thread and thread.id == selected_thread.id %}
                     <div class="list-group-item inbox-thread-item {% if thread_is_active %}active{% endif %}" role="listitem">
                         <a class="text-decoration-none d-block inbox-thread-link"
-                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search) }}"
+                           href="{{ url_for('main.inbox_list', thread=thread.id, search=search, page=page, folder=folder) }}"
                            data-inbox-loading-trigger
                            {% if thread_is_active %}aria-current="page"{% endif %}>
                             <div class="d-flex justify-content-between align-items-center gap-2">
@@ -74,7 +81,7 @@
                                 {{ (thread_display_previews.get(thread.id) or 'No messages yet')|private_text }}
                             </div>
                             <div class="small inbox-thread-time">
-                                {{ thread.last_message_at|localtime('%b %d, %H:%M') }}
+                                {{ thread.last_message_at|localtime }}
                             </div>
                         </a>
                     </div>
@@ -82,9 +89,9 @@
                 {% else %}
                 {{ ui.empty_state(
                     'bi-chat-left-text',
-                    'No Matching Conversations' if search else 'No Conversations Yet',
-                    'Try a different search to find a conversation.' if search else 'Inbound messages appear here when contacts reply.',
-                    primary_href=url_for('main.inbox_list') if search else None,
+                    'No Matching Conversations' if search else ('No Archived Conversations' if folder else 'No Conversations Yet'),
+                    'Try a different search to find a conversation.' if search else ('Archived conversations appear here.' if folder else 'Inbound messages appear here when contacts reply.'),
+                    primary_href=url_for('main.inbox_list', folder=folder) if search else None,
                     primary_label='Clear Search' if search else None
                 ) }}
                 {% endif %}
@@ -97,6 +104,7 @@
                 <div class="inbox-skeleton-line"></div>
                 <div class="inbox-skeleton-line"></div>
             </div>
+            {% include 'includes/collection_pagination.html' %}
         </div>
     </div>
 
@@ -105,12 +113,12 @@
             {% if selected_thread %}
             {% set selected_label = thread_display_names.get(selected_thread.id, selected_thread.contact_name or selected_thread.phone) %}
             <div class="d-lg-none px-3 pt-3">
-                <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search, view='threads') }}#inboxThreadsPanel">
+                <a class="btn btn-sm btn-outline-secondary inbox-back-button" href="{{ url_for('main.inbox_list', search=search, view='threads', page=page, folder=folder) }}#inboxThreadsPanel">
                     <i class="bi bi-arrow-left me-1"></i>Back to Conversations
                 </a>
-                {% if threads|length > 1 %}
+                {% if selected_thread.archived_at %}
                 <p class="small text-muted mt-2 mb-0 inbox-mobile-thread-count">
-                    Viewing 1 of {{ threads|length }} thread{{ '' if threads|length == 1 else 's' }}
+                    Archived conversation
                 </p>
                 {% endif %}
             </div>
@@ -123,49 +131,69 @@
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2 gap-sm-3 inbox-thread-header-actions">
                     <div class="text-muted small inbox-thread-updated">
-                        Last updated {{ selected_thread.last_message_at|localtime('%b %d, %H:%M') }}
+                        Last updated {{ selected_thread.last_message_at|localtime }}
                     </div>
-                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="d-none d-lg-block">
+                    {% if current_user.effective_role in ('admin', 'social_manager') %}
+                    <form method="POST" action="{{ url_for('main.inbox_thread_archive', thread_id=selected_thread.id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <input type="hidden" name="search" value="{{ (search)|private_text }}">
-                        <button class="btn btn-sm btn-soft-danger" type="submit"
-                                data-confirm="Delete this conversation and its messages and survey responses?">
-                            <i class="bi bi-trash me-1"></i>Delete Conversation
+                        <input type="hidden" name="search" value="{{ search|private_text }}">
+                        {% if folder %}<input type="hidden" name="folder" value="archived">{% endif %}
+                        <button class="btn btn-sm btn-outline-secondary" name="action" value="{{ 'restore' if selected_thread.archived_at else 'archive' }}">
+                            {{ 'Restore to Inbox' if selected_thread.archived_at else 'Archive Conversation' }}
                         </button>
                     </form>
+                    {% endif %}
                 </div>
             </div>
-            <div class="px-3 pt-2 d-lg-none">
-                <details class="inbox-mobile-actions">
-                    <summary class="small">Thread Actions</summary>
-                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="mt-2 mb-0">
+            <div class="card-body d-flex flex-column inbox-detail">
+                <details class="inbox-tools mb-3">
+                    <summary>Conversation details</summary>
+                    {% if can_edit_thread_name %}
+                    <form method="POST" action="{{ url_for('main.inbox_thread_update', thread_id=selected_thread.id) }}" class="mb-3">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="search" value="{{ (search)|private_text }}">
-                        <button class="btn btn-sm btn-soft-danger w-100" type="submit"
-                                data-confirm="Delete this conversation and its messages and survey responses?">
-                            <i class="bi bi-trash me-1"></i>Delete Conversation
+                        <label for="threadContactName" class="form-label">Contact Name</label>
+                        <div class="input-group">
+                            <input id="threadContactName" name="contact_name" class="form-control" type="text"
+                                   value="{{ (selected_thread.contact_name or '')|private_text }}" maxlength="100"
+                                   placeholder="Optional display name">
+                            <button class="btn btn-outline-primary" type="submit">
+                                <i class="bi bi-save me-1"></i>Save
+                            </button>
+                        </div>
+                    </form>
+                    {% else %}<p class="small text-muted">An owner must edit this contact name because its saved text includes a protected number.</p>{% endif %}
+
+                    {% if can_delete_inbox %}
+                    <form method="POST" action="{{ url_for('main.inbox_thread_delete', thread_id=selected_thread.id) }}" class="my-3">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="search" value="{{ search|private_text }}">
+                        {% if folder %}<input type="hidden" name="folder" value="archived">{% endif %}
+                        <button class="btn btn-sm btn-soft-danger" type="submit"
+                                data-confirm="Permanently delete this conversation and its messages and survey responses?">
+                            Delete Conversation Permanently
                         </button>
                     </form>
+                        <form id="bulkMessageDeleteForm" method="POST" action="{{ url_for('main.inbox_messages_bulk_delete') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="search" value="{{ (search)|private_text }}">
+                            <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
+                        </form>
+                        <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-2">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="selectAllMessages"
+                                       aria-label="Select all messages on this page">
+                                <label class="form-check-label small" for="selectAllMessages">Select all messages on this page</label>
+                            </div>
+                            <button id="bulkMessageDeleteButton" class="btn btn-sm btn-soft-danger inbox-bulk-delete-btn" type="submit"
+                                    form="bulkMessageDeleteForm" data-confirm="Delete Selected Messages?"
+                                    aria-label="Delete Selected Messages" disabled>
+                                <i class="bi bi-trash me-1"></i>Delete Selected Messages
+                            </button>
+                        </div>
+
+                    {% endif %}
                 </details>
-            </div>
-
-            <div class="card-body d-flex flex-column" style="min-height: 480px;">
-                {% if can_edit_thread_name %}
-                <form method="POST" action="{{ url_for('main.inbox_thread_update', thread_id=selected_thread.id) }}" class="mb-3">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="search" value="{{ (search)|private_text }}">
-                    <label for="threadContactName" class="form-label">Contact Name</label>
-                    <div class="input-group">
-                        <input id="threadContactName" name="contact_name" class="form-control" type="text"
-                               value="{{ (selected_thread.contact_name or '')|private_text }}" maxlength="100"
-                               placeholder="Optional display name">
-                        <button class="btn btn-outline-primary" type="submit">
-                            <i class="bi bi-save me-1"></i>Save
-                        </button>
-                    </div>
-                </form>
-                {% else %}<p class="small text-muted">An owner must edit this contact name because its saved text includes a protected number.</p>{% endif %}
-
                 {% if active_sessions %}
                 <div class="alert alert-info py-2">
                     <i class="bi bi-info-circle me-1"></i>
@@ -182,36 +210,24 @@
                 </div>
                 {% endif %}
 
-                <form id="bulkMessageDeleteForm" method="POST" action="{{ url_for('main.inbox_messages_bulk_delete') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <input type="hidden" name="search" value="{{ (search)|private_text }}">
-                    <input type="hidden" name="thread_id" value="{{ selected_thread.id }}">
-                </form>
-                <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-2">
-                    <div class="form-check mb-0">
-                        <input class="form-check-input" type="checkbox" id="selectAllMessages"
-                               aria-label="Select all messages on this page">
-                        <label class="form-check-label small" for="selectAllMessages">Select all messages on this page</label>
-                    </div>
-                    <button id="bulkMessageDeleteButton" class="btn btn-sm btn-soft-danger inbox-bulk-delete-btn" type="submit"
-                            form="bulkMessageDeleteForm" data-confirm="Delete Selected Messages?"
-                            aria-label="Delete Selected Messages" disabled>
-                        <i class="bi bi-trash me-1"></i>Delete Selected Messages
-                    </button>
-                </div>
-
                 <div id="inboxMessagePane" class="flex-grow-1 overflow-auto border rounded p-3 bg-light-subtle inbox-message-pane">
                     {% if messages %}
-                        {% for message in messages %}
+                        {% for message in messages if message.id not in attached_reactions %}
+                        {% if message.id in opt_outs %}
+                        <div class="inbox-consent-event small text-muted mb-3">
+                            <i class="bi bi-shield-check" aria-hidden="true"></i>
+                            SMS opt-out received · {{ message.body|private_text }} · {{ message.created_at|localtime }}
+                        </div>
+                        {% else %}
                         <div class="d-flex mb-3 inbox-message-row {% if message.direction == 'outbound' %}justify-content-end{% else %}justify-content-start{% endif %}">
                             <div class="d-flex align-items-start inbox-message-row__inner {% if message.direction == 'outbound' %}flex-row-reverse{% endif %}">
-                                <input class="form-check-input js-message-select inbox-message-select" type="checkbox" name="message_ids"
+                                {% if can_delete_inbox %}<input class="form-check-input js-message-select inbox-message-select" type="checkbox" name="message_ids"
                                        value="{{ (message.id)|private_text }}" form="bulkMessageDeleteForm"
-                                       aria-label="Select message {{ (message.id)|private_text }}">
+                                       aria-label="Select message {{ (message.id)|private_text }}">{% endif %}
                                 <div class="p-2 rounded inbox-message-bubble {% if message.direction == 'outbound' %}bg-primary text-white{% else %}bg-white border{% endif %}">
                                     <div class="small mb-1">{{ (message.body)|private_text }}</div>
                                     <div class="small inbox-message-meta {% if message.direction == 'outbound' %}text-white-50{% else %}text-muted{% endif %}">
-                                        {{ (message.direction|capitalize)|private_text }} • {{ (message.created_at|localtime('%b %d, %H:%M'))|private_text }}
+                                        {{ (message.direction|capitalize)|private_text }} • {{ (message.created_at|localtime)|private_text }}
                                         {% if message.matched_keyword %}
                                             {% set keyword_origin = message_keyword_origins.get(message.id, 'unknown') %}
                                             {% if keyword_origin == 'current' %}
@@ -246,6 +262,11 @@
                                             • {{ (delivery_labels.get(message.delivery_status, message.delivery_status))|private_text }}
                                         {% endif %}
                                     </div>
+                                    {% for reaction, label, mark in reaction_marks.get(message.id, []) %}
+                                    <span class="badge rounded-pill text-bg-light mt-1" title="{{ reaction.created_at|localtime }}">
+                                        <span aria-hidden="true">{{ mark }}</span> {{ label }}
+                                    </span>
+                                    {% endfor %}
                                     {% if message.delivery_error %}
                                     <div class="small mt-1 inbox-delivery-error {% if message.direction == 'outbound' %}inbox-delivery-error--on-primary{% endif %}">
                                         Delivery error: {{ (message.delivery_error)|private_text }}
@@ -254,6 +275,7 @@
                                 </div>
                             </div>
                         </div>
+                        {% endif %}
                         {% endfor %}
                     {% else %}
                     <div class="py-4">
@@ -317,102 +339,6 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
-<script>
-    const pane = document.getElementById('inboxMessagePane');
-    if (pane) {
-        pane.scrollTop = pane.scrollHeight;
-    }
-
-    const inboxLayout = document.querySelector('.inbox-layout');
-    const inboxThreadList = document.getElementById('inboxThreadList');
-    const inboxThreadListSkeleton = document.getElementById('inboxThreadListSkeleton');
-    const inboxMessagePane = document.getElementById('inboxMessagePane');
-    const inboxMessagePaneSkeleton = document.getElementById('inboxMessagePaneSkeleton');
-
-    const showInboxLoadingState = () => {
-        if (!inboxLayout) {
-            return;
-        }
-        inboxLayout.classList.add('inbox-layout-loading');
-        if (inboxThreadList && inboxThreadListSkeleton) {
-            inboxThreadList.classList.add('d-none');
-            inboxThreadListSkeleton.classList.remove('d-none');
-        }
-        if (inboxMessagePane && inboxMessagePaneSkeleton) {
-            inboxMessagePane.classList.add('d-none');
-            inboxMessagePaneSkeleton.classList.remove('d-none');
-        }
-    };
-
-    document.querySelectorAll('[data-inbox-loading-trigger]').forEach((trigger) => {
-        trigger.addEventListener('click', showInboxLoadingState);
-    });
-
-    const replyBody = document.getElementById('replyBody');
-    const replyBodyStats = document.getElementById('replyBodyStats');
-    if (replyBody && replyBodyStats && window.TwineviaSmsAnalysis) {
-        const updateReplyStats = () => {
-            const analysis = window.TwineviaSmsAnalysis.analyzeBody(replyBody.value || '');
-            const normalizationNote = analysis.normalizationApplied
-                ? ` Normalizes ${analysis.replacementCount} punctuation/spacing character(s) before send.`
-                : '';
-            replyBodyStats.textContent = `Encoding: ${window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding)}. ${analysis.segmentCount} segment(s). ${analysis.charactersToNextSegment} characters until the next segment.${normalizationNote}`;
-        };
-        replyBody.addEventListener('input', updateReplyStats);
-        updateReplyStats();
-    }
-
-    function bindSelectAll(selectAllId, itemSelector, onSelectAllChange) {
-        const selectAll = document.getElementById(selectAllId);
-        if (!selectAll) {
-            return [];
-        }
-
-        const items = Array.from(document.querySelectorAll(itemSelector));
-        if (!items.length) {
-            selectAll.checked = false;
-            selectAll.disabled = true;
-            return [];
-        }
-
-        selectAll.addEventListener('change', () => {
-            items.forEach((item) => {
-                item.checked = selectAll.checked;
-            });
-            if (onSelectAllChange) {
-                onSelectAllChange();
-            }
-        });
-
-        items.forEach((item) => {
-            item.addEventListener('change', () => {
-                selectAll.checked = items.every((entry) => entry.checked);
-            });
-        });
-
-        return items;
-    }
-
-    const bulkMessageDeleteButton = document.getElementById('bulkMessageDeleteButton');
-    let messageSelectionItems = [];
-    if (bulkMessageDeleteButton) {
-        const syncBulkMessageDeleteState = () => {
-            const hasSelection = messageSelectionItems.some((entry) => entry.checked);
-            bulkMessageDeleteButton.disabled = !hasSelection;
-        };
-        messageSelectionItems = bindSelectAll(
-            'selectAllMessages',
-            '.js-message-select',
-            syncBulkMessageDeleteState
-        );
-        syncBulkMessageDeleteState();
-        messageSelectionItems.forEach((entry) => {
-            entry.addEventListener('change', syncBulkMessageDeleteState);
-        });
-    } else {
-        messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
-    }
-
-</script>
+<script src="{{ url_for('static', filename='js/pages/inbox-list.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/inbox_drafts.js') }}"></script>
 {% endblock %}

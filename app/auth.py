@@ -1,6 +1,6 @@
 from functools import wraps
 
-from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, Response, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from sqlalchemy import func, or_
 
@@ -44,6 +44,8 @@ SUSPENDED_ORGANIZATION_MESSAGE = "Your organization is currently suspended. Cont
 TENANT_ENDPOINT_PREFIXES = (
     "event_feedback.",
     "main.dashboard",
+    "main.workspace_home",
+    "main.workspace_messages",
     "main.setup",
     "main.billing_",
     "main.community_",
@@ -130,7 +132,7 @@ def _setup_endpoint_for_user(user) -> str:
     if getattr(user, "organization_id", None) is None:
         return "main.dashboard"
     if _organization_setup_complete(user):
-        return "main.dashboard"
+        return "main.workspace_home"
     if getattr(user, "organization_role", None) == "owner":
         return "main.setup"
     return "main.setup_pending"
@@ -178,10 +180,17 @@ def _deny_suspended_organization_access():
 
 @login_manager.unauthorized_handler
 def _handle_unauthorized():
+    from app.http_errors import wants_json
     next_url = request.full_path if request.query_string else request.path
+    if request.endpoint == 'main.dashboard_send_review':
+        next_url = url_for('main.dashboard')
     if request.path.startswith("/platform"):
-        return redirect(url_for("auth.platform_login", next=next_url))
-    return redirect(url_for("auth.login", next=next_url))
+        login_url = url_for("auth.platform_login", next=next_url)
+    else:
+        login_url = url_for("auth.login", next=next_url)
+    if wants_json():
+        return jsonify(error='You were signed out. Sign in again; your message is saved.', login_url=login_url), 401
+    return redirect(login_url)
 
 
 def require_roles(*roles):
@@ -605,6 +614,10 @@ def signup():
 @bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    draft_user_id = current_user.id
     logout_and_clear_session(revoke_sessions=True)
+    # Only an explicit sign-out discards browser drafts. Session expiry and
+    # account-security redirects deliberately preserve unsent work.
+    session['clear_send_drafts_for_user_id'] = draft_user_id
     flash("You have been logged out on all devices.", "success")
     return redirect(url_for("auth.login"))

@@ -7,7 +7,15 @@ test('mobile back-to-threads search and refresh retain the conversation list', a
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     await page.goto('/inbox');
+    await expect(page.getByLabel('Send Reply')).toHaveCount(0);
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     await expect(page.getByLabel('Send Reply')).toBeVisible();
+    const composer = page.locator('.inbox-reply-form');
+    await page.getByLabel('Send Reply').focus();
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: testInfo.outputPath('mobile-conversation.png') });
     await page.getByRole('link', { name: 'Back to Conversations', exact: true }).click();
     const search = page.getByRole('textbox', { name: 'Search inbox threads' });
     await expect(search).toBeVisible();

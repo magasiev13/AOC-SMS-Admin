@@ -64,6 +64,7 @@ for (const width of [1440, 390]) {
   test(`message review shows progress and keeps the draft when editing at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await login(page, 'owner@browser.test', 'Owner-pass1!');
+    await page.getByRole('link', { name: 'New message', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Send a Message', exact: true })).toBeVisible();
     const draft = `Review without sending ${width}`;
     await page.getByLabel('Message', { exact: true }).fill(draft);

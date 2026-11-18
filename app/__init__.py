@@ -3,7 +3,6 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, redirect, request
 from flask_sqlalchemy import SQLAlchemy
@@ -543,6 +542,13 @@ def _host_redirect_target(app: Flask, host: str, path: str) -> str | None:
     if host in {public_host, www_host}:
         if _is_public_marketing_path(path) or _is_legacy_public_callback_path(path):
             return None
+        # An unknown public page belongs to the public site's 404 recovery.
+        # Known workspace routes still canonicalize to the application host.
+        if (request.method in {"GET", "HEAD"} and request.url_rule is None
+                and getattr(request.routing_exception, "code", None) == 404
+                and not request.is_json and request.accept_mimetypes.best != "application/json"
+                and not path.startswith("/api/")):
+            return None
         return _configured_host_redirect_url(app_base_url, path)
     if host == app_host and path != "/" and _is_public_marketing_path(path):
         return _configured_host_redirect_url(public_base_url, path)
@@ -666,7 +672,7 @@ def _configure_scheduler(app: Flask, *, start_scheduler: bool) -> None:
                 scheduler_setting,
             )
         else:
-            app.logger.info(
+            app.logger.debug(
                 "Scheduler disabled (SCHEDULER_ENABLED=%s); running web app only.",
                 scheduler_setting,
             )
@@ -706,6 +712,23 @@ def _configure_security_headers(app: Flask) -> None:
 def _build_app() -> Flask:
     app = Flask(__name__)
 
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def expired_page_token(error):
+        from flask import jsonify, render_template, url_for
+        from flask_login import current_user
+        from app.http_errors import wants_json
+        if wants_json():
+            if not current_user.is_authenticated and request.endpoint == 'main.dashboard_send_review':
+                from app.auth import _handle_unauthorized
+                return _handle_unauthorized()
+            return jsonify(error='This page has expired. Reload it and review your saved message again.'), 400
+        return render_template('errors/request.html', error_code=400, heading='This page has expired',
+            explanation='Reload the page or sign in again, then try again.',
+            recovery_url=url_for('main.dashboard') if current_user.is_authenticated else url_for('auth.login'),
+            recovery_label='Reload workspace' if current_user.is_authenticated else 'Sign in'), 400
+
     @app.before_request
     def bound_confidential_review_form():
         # A sealed audience cannot use the compression of the former readable
@@ -731,6 +754,10 @@ def _build_app() -> Flask:
 
     @app.after_request
     def protect_staff_response(response):
+        # This internally marked response contains only owned static error
+        # copy. Loading its user to redact it could repeat the database failure.
+        if getattr(response, '_twinevia_standalone_error', False):
+            return response
         from flask_login import current_user
         if current_user.is_authenticated and request.endpoint != 'static':
             response.headers['Cache-Control'] = 'private, no-store'
@@ -749,10 +776,18 @@ def _build_app() -> Flask:
                 response.set_data(app.json.dumps(redact_private_json(payload)))
         return response
 
+    def asset_version():
+        return str(app.config.get("APP_RELEASE_ID") or os.environ.get("APP_VERSION") or "dev").strip() or "dev"
+
+    @app.url_defaults
+    def version_static_urls(endpoint, values):
+        if endpoint == "static":
+            values.setdefault("v", asset_version())
+
     @app.context_processor
     def inject_app_version():
         return {
-            "app_version": os.environ.get("APP_VERSION", "dev"),
+            "app_version": asset_version(),
             "current_year": datetime.now(timezone.utc).year,
             "product_name": app.config.get("PRODUCT_NAME", "Twinevia"),
             "product_descriptor": app.config.get("PRODUCT_DESCRIPTOR", "Messaging Workspace"),
@@ -760,25 +795,14 @@ def _build_app() -> Flask:
         }
 
     @app.template_filter("localtime")
-    def localtime_filter(utc_dt, fmt="%Y-%m-%d %H:%M"):
-        """Convert UTC datetime to user's local timezone."""
-        if not utc_dt:
-            return "-"
+    def localtime_filter(value):
+        from app.datetime_display import format_datetime
+        return format_datetime(value)
 
-        app_timezone = app.config.get("APP_TIMEZONE", "UTC")
-        client_tz_raw = request.cookies.get("client_timezone", "")
-        client_tz = unquote(client_tz_raw).strip() if client_tz_raw else ""
-        display_tz = client_tz or app_timezone
-
-        try:
-            tz = ZoneInfo(display_tz)
-        except Exception:
-            tz = timezone.utc
-
-        if utc_dt.tzinfo is None:
-            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
-
-        return utc_dt.astimezone(tz).strftime(fmt)
+    @app.template_filter("localdate")
+    def localdate_filter(value):
+        from app.datetime_display import format_date
+        return format_date(value)
 
     from app.config import Config
 
@@ -844,6 +868,9 @@ def _build_app() -> Flask:
     from app import routes
 
     app.register_blueprint(routes.bp)
+
+    from app.account_mail_routes import bp as account_mail_bp
+    app.register_blueprint(account_mail_bp)
 
     from app.event_feedback_routes import bp as event_feedback_bp
     app.register_blueprint(event_feedback_bp)

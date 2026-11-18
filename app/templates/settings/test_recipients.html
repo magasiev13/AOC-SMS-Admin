@@ -115,7 +115,7 @@
                         {% set metadata = entry.metadata_payload %}
                         <section class="workspace-callout">
                             <h3 class="workspace-callout__title">{{ entry.actor_user.username if entry.actor_user else 'System' }}</h3>
-                            <p class="workspace-callout__copy">{{ entry.created_at|localtime('%Y-%m-%d %H:%M') if entry.created_at else '-' }}</p>
+                            <p class="workspace-callout__copy">{{ entry.created_at|localtime if entry.created_at else '-' }}</p>
                             <p class="workspace-callout__copy">
                                 {{ metadata.get('before_count', 0) }} saved
                                 <span class="mx-1">→</span>
@@ -158,67 +158,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-    const testRecipientsForm = document.getElementById('testRecipientsForm');
-    const recipientRows = document.getElementById('recipientRows');
-    const addRecipientRowBtn = document.getElementById('addRecipientRowBtn');
-    const recipientRowTemplate = document.getElementById('recipientRowTemplate');
-    const recipientLimit = Number(testRecipientsForm?.dataset.recipientLimit || 25);
-
-    function refreshRecipientRowIds() {
-        recipientRows.querySelectorAll('.recipient-row').forEach((row, index) => {
-            const labelInput = row.querySelector('[data-recipient-field="label"]');
-            const phoneInput = row.querySelector('[data-recipient-field="phone"]');
-            const labelLabel = row.querySelector('[data-recipient-label="label"]');
-            const phoneLabel = row.querySelector('[data-recipient-label="phone"]');
-
-            if (labelInput && labelLabel) {
-                const labelId = `recipientLabel${index}`;
-                labelInput.id = labelId;
-                labelLabel.setAttribute('for', labelId);
-            }
-
-            if (phoneInput && phoneLabel) {
-                const phoneId = `recipientPhone${index}`;
-                phoneInput.id = phoneId;
-                phoneLabel.setAttribute('for', phoneId);
-            }
-        });
-    }
-
-    function wireRecipientRow(row) {
-        const removeButton = row.querySelector('[data-remove-recipient]');
-        if (!removeButton) {
-            return;
-        }
-        removeButton.addEventListener('click', function () {
-            const rows = recipientRows.querySelectorAll('.recipient-row');
-            if (rows.length <= 1) {
-                row.querySelectorAll('input').forEach((input) => {
-                    input.value = '';
-                });
-                refreshRecipientRowIds();
-                return;
-            }
-            row.remove();
-            refreshRecipientRowIds();
-        });
-    }
-
-    function addRecipientRow() {
-        const rows = recipientRows.querySelectorAll('.recipient-row');
-        if (rows.length >= recipientLimit) {
-            return;
-        }
-        const fragment = recipientRowTemplate.content.cloneNode(true);
-        const row = fragment.querySelector('.recipient-row');
-        wireRecipientRow(row);
-        recipientRows.appendChild(fragment);
-        refreshRecipientRowIds();
-    }
-
-    recipientRows.querySelectorAll('.recipient-row').forEach(wireRecipientRow);
-    refreshRecipientRowIds();
-    addRecipientRowBtn?.addEventListener('click', addRecipientRow);
-</script>
+<script src="{{ url_for('static', filename='js/pages/settings-test-recipients.js', v=app_version) }}"></script>
 {% endblock %}

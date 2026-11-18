@@ -18,8 +18,11 @@ test('unchanged waiting status keeps the page even when another setup step is se
   await login(page, 'customer-managed-owner@browser.test', 'CustomerManaged-pass1!');
   const original = await statusFor(page);
   let checks = 0;
+  let releaseFirst;
+  const firstResponse = new Promise(resolve => { releaseFirst = resolve; });
   await page.route('**/setup/status', async route => {
     checks += 1;
+    if (checks === 1) await firstResponse;
     await route.fulfill({ json: original });
   });
   await page.clock.install();
@@ -29,8 +32,15 @@ test('unchanged waiting status keeps the page even when another setup step is se
   page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations += 1; });
   await page.clock.fastForward(8100);
   await expect.poll(() => checks).toBe(1);
+  // A slow response deliberately spans the next interval. The app must avoid
+  // overlapping requests, then poll again after it has consumed the response.
   await page.clock.fastForward(8100);
-  await expect.poll(() => checks).toBe(2);
+  expect(checks).toBe(1);
+  releaseFirst();
+  await expect.poll(async () => {
+    await page.clock.fastForward(8100);
+    return checks;
+  }).toBe(2);
   expect(await page.evaluate(() => window.setupVisit)).toBe('retained');
   expect(navigations).toBe(0);
   await expect(page.locator('[data-setup-status-update]')).toBeHidden();

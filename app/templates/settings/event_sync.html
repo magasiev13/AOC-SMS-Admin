@@ -21,6 +21,14 @@
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <nav class="d-flex flex-wrap gap-2" aria-label="Integration types"><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'app' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='app') }}">Connected Apps</a><a class="btn btn-sm btn-{{ 'primary' if integration_view.provider == 'wordpress' else 'outline-primary' }}" href="{{ url_for('main.event_sync_settings', provider='wordpress') }}">WordPress</a></nav>
 
+    {% if integration_view.managed_wordpress %}
+    <section class="workspace-panel p-3" aria-label="Managed WordPress connection">
+        <h2 class="h5">Managed WordPress connection</h2>
+        <p>{{ 'Enabled' if integration_view.managed_wordpress.enabled else 'Disabled' }} ·
+           Last successful sync {{ integration_view.managed_wordpress.last_activity|localtime if integration_view.managed_wordpress.last_activity else 'not recorded' }}</p>
+        <code>{{ integration_view.managed_wordpress.endpoint }}</code>
+    </section>
+    {% endif %}
     <div class="workspace-detail-layout">
         <div class="workspace-detail-main">
             <section class="workspace-panel">
@@ -80,9 +88,9 @@
                 </div>
                 <div class="workspace-panel__body">
                     <ul class="workspace-support-list">
-                        <li>Last event: {{ integration_view.last_event_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_event_synced_at else 'None yet' }}</li>
-                        <li>Last registration: {{ integration_view.last_signup_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_signup_synced_at else 'None yet' }}</li>
-                        <li>Last sync report: {{ integration_view.last_reconcile_synced_at|localtime('%Y-%m-%d %H:%M') if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
+                        <li>Last event: {{ integration_view.last_event_synced_at|localtime if integration_view.last_event_synced_at else 'None yet' }}</li>
+                        <li>Last registration: {{ integration_view.last_signup_synced_at|localtime if integration_view.last_signup_synced_at else 'None yet' }}</li>
+                        <li>Last sync report: {{ integration_view.last_reconcile_synced_at|localtime if integration_view.last_reconcile_synced_at else 'None yet' }}</li>
                     </ul>
                     {% if integration_view.last_error_message %}
                     <div class="workspace-callout workspace-callout--warning mt-3">

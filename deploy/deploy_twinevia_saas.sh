@@ -367,7 +367,7 @@ sync_deploy_artifacts() {
 
   echo "==> Syncing SaaS deploy artifacts"
   sudo install -d -o root -g root -m 0755 /usr/local/lib/twinevia-saas
-  for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh; do
+  for operation_file in runtime_control.py runtime_state.sh rollback_twinevia_saas.sh static_permissions.py; do
     sudo install -o root -g root -m 0755 "${APP_ROOT}/deploy/${operation_file}" "/usr/local/lib/twinevia-saas/${operation_file}"
   done
   sudo install -o root -g root -m 0755 "${APP_ROOT}/bin/twinevia-saas-dbdoctor" "${TWINEVIA_SAAS_DBDOCTOR_BIN}"

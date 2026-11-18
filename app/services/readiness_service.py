@@ -280,6 +280,36 @@ def _runtime_unit_facts(app: Flask) -> dict[str, dict[str, Any]]:
     return facts
 
 
+def _billing_reconcile_check(app: Flask) -> ReadinessCheck:
+    """Inspect the last oneshot result; an active timer alone cannot prove health."""
+    command = ('systemctl', 'show', '--no-pager', '--property=LoadState',
+               '--property=Result', '--property=ExecMainStatus',
+               'twinevia-saas-billing-reconcile.service')
+    try:
+        result = subprocess.run(command, capture_output=True, check=False, text=True,
+                                timeout=int(app.config.get('READINESS_SYSTEMCTL_TIMEOUT_SECONDS') or 5))
+    except (OSError, subprocess.TimeoutExpired):
+        return ReadinessCheck('billing_reconcile', False, 'billing reconciliation result could not be inspected')
+    if result.returncode != 0:
+        return ReadinessCheck('billing_reconcile', False, 'systemctl could not inspect billing reconciliation')
+    properties = {}
+    for line in str(result.stdout or '').splitlines():
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        if key in properties:
+            return ReadinessCheck('billing_reconcile', False, 'billing reconciliation result is malformed')
+        properties[key] = value
+    if (not all(properties.get(key) for key in ('LoadState', 'Result', 'ExecMainStatus'))
+            or not str(properties.get('ExecMainStatus', '')).isdigit()):
+        return ReadinessCheck('billing_reconcile', False, 'billing reconciliation result is incomplete or malformed')
+    if properties['LoadState'] != 'loaded':
+        return ReadinessCheck('billing_reconcile', False, 'billing reconciliation service is not loaded')
+    if properties['Result'] != 'success' or int(properties['ExecMainStatus']) != 0:
+        return ReadinessCheck('billing_reconcile', False, 'the last billing reconciliation run failed')
+    return ReadinessCheck('billing_reconcile', True, 'the last billing reconciliation result was successful')
+
+
 def _maintenance_receipt(app: Flask):
     path = str(app.config.get("RUNTIME_MAINTENANCE_FILE") or DEFAULT_MAINTENANCE_FILE)
     release_sha = str(app.config.get("APP_RELEASE_SHA") or "").strip()
@@ -436,6 +466,14 @@ def run_readiness_checks(
                 _restore_drill_check(app),
             )
         )
+        if app.config.get('SAAS_MODE') and not app.debug:
+            billing = _billing_reconcile_check(app)
+            if not billing.ready:
+                # This operational result must not prevent deployment of its
+                # fix, rollback, or verification of a declared timer hold.
+                warnings += (f'Billing reconciliation warning: {billing.detail}.',)
+            if not str(app.config.get('ALERT_WEBHOOK_URL') or '').strip():
+                warnings += ('Alerting not configured: readiness failures cannot be delivered because no alert destination is set.',)
     redis_check, queue_check = _redis_and_queue_checks(app)
     checks.extend((redis_check, queue_check))
     if require_worker:

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title }} | {{ organization.name }}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v=app_version) }}">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='vendor/bootstrap/5.3.2/css/bootstrap.min.css', v=app_version) }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/app.css', v=app_version) }}" rel="stylesheet">
 </head>
 <body class="app-body">
@@ -54,6 +54,7 @@
                         </p>
                         {% endif %}
                         {% else %}
+                        {% for source in signup_sources %}<p><a class="btn btn-primary" href="{{ url_for('main.hosted_signup', organization_slug=organization.slug, source_id=source.id) }}">{{ source.name }}</a></p>{% endfor %}
                         <p>This page documents the public SMS consent path for <strong>{{ sender_name }}</strong>.</p>
                         <p>{{ message_flow }}</p>
                         <div class="border rounded-3 p-3 bg-light mb-3">

@@ -123,6 +123,7 @@ def ensure_legacy_bookings(event):
             comment=registration.booking_comment, external_person_id=registration.external_person_id,
             source_updated_at=registration.external_updated_at, last_received_at=registration.synced_at or utc_now(),
             projection_registration_id=registration.id, legacy_evidence=True,
+            individual_consent_required=registration.individual_consent_required,
             created_at=registration.created_at or utc_now(),
         ))
     db.session.flush()
@@ -211,7 +212,8 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
         raise ValueError('Booking places must be a nonnegative integer.')
     if booking is None:
         booking = EventBooking(organization_id=event.organization_id, event_id=event.id,
-            source=source, source_scope=source_scope, external_booking_id=key)
+            source=source, source_scope=source_scope, external_booking_id=key,
+            individual_consent_required=True if source in {'manual', 'csv_import'} else None)
         db.session.add(booking)
     was_active = booking.is_active
     old_phone = booking.phone
@@ -356,7 +358,7 @@ def _restore_duplicate_event_permission(event, booking):
         retained.append(entry)
     scope_key = f'event:{event.id}'
     status = (_confirmed_signup_status(retained, purpose='event', scope_key=scope_key)
-              if organization_has_confirmed_signup_consent(event.organization_id)
+              if not booking.individual_consent_required and organization_has_confirmed_signup_consent(event.organization_id)
               else _evaluate_permission(retained, purpose='event', scope_key=scope_key))
     if not status.allowed and not (status.decision == 'unknown' and booking.sms_consent is True):
         return
@@ -463,6 +465,9 @@ def reconcile_event_projection(event, *, seed_legacy=True):
         if row is None:
             row = EventRegistration(organization_id=event.organization_id, event_id=event.id, phone=phone)
             db.session.add(row)
+        # A projection rebuilt from imported bookings keeps their consent boundary.
+        # An independently contracted contribution can still qualify this phone.
+        row.individual_consent_required = True if all(item.individual_consent_required for item in bookings) else None
         representative = bookings[0]
         # The destination display follows the latest supplied contact name;
         # each transaction still retains its own original name in the ledger.
@@ -493,7 +498,8 @@ def create_local_booking(event, name, phone, party_size=1, source='manual', exte
         'updated_at': utc_now().isoformat()}, source, utc_now())
     from app.services.aoc_event_sync_service import upsert_community_member_contact
     if booking.phone:
-        upsert_community_member_contact(booking.name, booking.phone)
+        upsert_community_member_contact(booking.name, booking.phone,
+                                        individual_consent_required=bool(booking.individual_consent_required))
     return booking
 
 
@@ -520,7 +526,8 @@ def project_legacy_registration(registration, source_row_id):
         source='legacy_import', source_scope='', external_booking_id=key).first()
     if booking is None:
         booking = EventBooking(organization_id=event.organization_id,event_id=event.id,
-            source='legacy_import',source_scope='',external_booking_id=key)
+            source='legacy_import',source_scope='',external_booking_id=key,
+            individual_consent_required=registration.individual_consent_required)
         db.session.add(booking)
     booking.name = registration.name
     booking.phone = registration.phone

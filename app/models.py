@@ -36,6 +36,7 @@ class AppUser(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), nullable=False, unique=True)
     email = db.Column(db.String(255), nullable=True, index=True)
+    verified_recovery_email = db.Column(db.String(255), nullable=True)
     full_name = db.Column(db.String(120), nullable=True)
     password_hash = db.Column(db.String(255), nullable=False)
     phone = db.Column(db.String(20), nullable=True, index=True)
@@ -77,6 +78,8 @@ class AppUser(UserMixin, db.Model):
     @validates("email")
     def _normalize_email(self, key, value):
         normalized = (value or "").strip().lower()
+        if self.verified_recovery_email and self.verified_recovery_email != normalized:
+            self.verified_recovery_email = None
         return normalized or None
 
     @validates("phone")
@@ -139,6 +142,8 @@ class Organization(db.Model):
     name = db.Column(db.String(120), nullable=False)
     slug = db.Column(db.String(64), nullable=False, unique=True, index=True)
     status = db.Column(db.String(20), nullable=False, default='active')
+    timezone_name = db.Column(db.String(64))
+    reminder_preferences = db.Column(db.JSON)
     billing_offer = db.Column(db.String(30), nullable=False, default='standard')
     billing_offer_version = db.Column(db.String(80), nullable=False, default='legacy-v1')
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
@@ -226,6 +231,7 @@ class OrganizationMembership(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
     role = db.Column(db.String(20), nullable=False, default='staff')
+    reply_notice_email = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)
 
     organization = db.relationship('Organization', back_populates='memberships')
@@ -244,6 +250,23 @@ class OrganizationMembership(db.Model):
 
     def __repr__(self):
         return f'<OrganizationMembership org={self.organization_id} user={self.user_id} role={self.role}>'
+
+
+class AccountMailDelivery(db.Model):
+    """Transactional account mail with immutable destination binding and one send claim."""
+    __tablename__ = 'account_mail_deliveries'
+
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False)
+    identity_digest = db.Column(db.String(64), nullable=False)
+    dedupe_key = db.Column(db.String(100), nullable=False, unique=True)
+    token_digest = db.Column(db.String(64), unique=True, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default='pending', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    next_enqueue_at = db.Column(db.DateTime, nullable=True)
 
 
 class OrganizationInvitation(db.Model):
@@ -308,6 +331,8 @@ class OrganizationSubscription(db.Model):
     checkout_request_session_id = db.Column(db.String(80), nullable=True)
     billing_incident_code = db.Column(db.String(64), nullable=True)
     billing_incident_detail = db.Column(db.Text, nullable=True)
+    stripe_missing_subscription_id = db.Column(db.String(80), nullable=True)
+    stripe_missing_observed_at = db.Column(db.DateTime, nullable=True)
     last_stripe_event_created_at = db.Column(db.DateTime, nullable=True)
     last_stripe_event_id = db.Column(db.String(80), nullable=True)
     status = db.Column(db.String(30), nullable=False, default='incomplete')
@@ -1103,6 +1128,31 @@ class OrganizationUsageBillingPeriod(db.Model):
         return f'<OrganizationUsageBillingPeriod org={self.organization_id} start={self.period_start}>'
 
 
+class ConsentSource(db.Model):
+    __tablename__ = 'consent_sources'
+    id = db.Column(db.Integer, primary_key=True)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False, index=True)
+    kind = db.Column(db.String(24), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    disclosure = db.Column(db.Text, nullable=False)
+    public_details = db.Column(db.JSON)
+    purpose = db.Column(db.String(20), nullable=False)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.id'))
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    attested_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    attested_at = db.Column(db.DateTime, nullable=False, default=utc_now)
+    reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    reviewed_at = db.Column(db.DateTime)
+    withdrawn_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    withdrawn_at = db.Column(db.DateTime)
+    __table_args__ = (
+        db.CheckConstraint("kind IN ('historical', 'import', 'hosted')", name='ck_consent_source_kind'),
+        db.CheckConstraint("status IN ('pending','approved','withdrawn')", name='ck_consent_source_status'),
+        db.CheckConstraint("(purpose = 'community' AND event_id IS NULL) OR "
+                           "(purpose = 'event' AND event_id IS NOT NULL)", name='ck_consent_source_purpose'),
+    )
+
+
 class RecipientPermissionEvidence(db.Model):
     """Retained evidence of permission for one tenant, phone and message purpose.
 
@@ -1154,6 +1204,8 @@ class CommunityMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=True)
+    # A source-scoped import or enrollment has its own individual evidence.
+    individual_consent_required = db.Column(db.Boolean)
     phone = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
     organization = db.relationship('Organization')
@@ -1300,6 +1352,7 @@ class EventRegistration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
+    individual_consent_required = db.Column(db.Boolean)
     external_source = db.Column(db.String(50), nullable=True, index=True)
     external_booking_id = db.Column(db.String(80), nullable=True, index=True)
     external_person_id = db.Column(db.String(80), nullable=True, index=True)
@@ -1436,6 +1489,7 @@ class InboxThread(db.Model):
     contact_name = db.Column(db.String(100), nullable=True)
     unread_count = db.Column(db.Integer, default=0, nullable=False)
     last_message_at = db.Column(db.DateTime, default=utc_now, nullable=False, index=True)
+    archived_at = db.Column(db.DateTime, nullable=True)
     last_message_preview = db.Column(db.Text, nullable=True)
     last_direction = db.Column(db.String(10), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now, nullable=False)

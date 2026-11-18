@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
+{% macro reminder_label(msg) %}
+{% if is_event_reminder is defined and is_event_reminder(msg) %}
+<div class="small">Automatic reminder · {{ msg.automation_kind|replace('_', ' ')|title }}</div>
+{% set est = reminder_estimates.get(msg.id) %}
+{% if est %}<div class="small text-muted">{{ est.recipients }} eligible now · {{ est.segments }} estimated segment{{ 's' if est.segments != 1 }}</div>{% endif %}
+{% endif %}
+{% endmacro %}
+
 {% block title %}Scheduled Messages - {{ product_name }}{% endblock %}
 
 {% block page_title %}Scheduled Messages{% endblock %}
@@ -83,7 +91,7 @@
                         <input class="form-check-input js-select-row" type="checkbox" id="pending-select-{{ msg.id }}" name="pending_ids" value="{{ msg.id }}" aria-label="Select pending message" data-bulk-group="pending" data-record-id="{{ msg.id }}">
                     </td>
                     <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">
-                        <strong>{{ msg.scheduled_at|localtime }}</strong>
+                        <strong>{{ msg.scheduled_at|localtime }}</strong>{{ reminder_label(msg) }}
                     </td>
                     <td data-sort-value="{% if msg.test_mode %}Test{% elif msg.target == 'community' %}Community{% else %}Event{% endif %}">
                         {% if msg.test_mode %}
@@ -102,11 +110,11 @@
                                     aria-controls="scheduledPreview{{ msg.id }}">
                                 <i class="bi bi-layout-sidebar-inset"></i>
                             </button>
-                            <button type="button" class="btn btn-sm btn-outline-warning"
+                            {% if current_user.effective_role == 'admin' %}<button type="button" class="btn btn-sm btn-outline-warning"
                                     data-bs-toggle="modal" data-bs-target="#actionModal"
-                                    data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
-                                <i class="bi bi-x-circle"></i> Cancel
-                            </button>
+                                    data-action="{{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}" data-form-id="cancel-scheduled-{{ msg.id }}">
+                                <i class="bi bi-x-circle"></i> {{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}
+                            </button>{% endif %}
                         </div>
                         <form id="cancel-scheduled-{{ msg.id }}" method="POST" 
                               action="{{ url_for('main.scheduled_cancel', scheduled_id=msg.id) }}" style="display:none;">
@@ -134,7 +142,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>{{ reminder_label(msg) }}
                     <div class="text-muted small">
                         {% if msg.test_mode %}
                         <span class="badge bg-warning text-dark me-1">Test</span>
@@ -151,11 +159,11 @@
                         aria-controls="scheduledPreview{{ msg.id }}">
                     <i class="bi bi-layout-sidebar-inset"></i> Preview
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-warning"
+                {% if current_user.effective_role == 'admin' %}<button type="button" class="btn btn-sm btn-outline-warning"
                         data-bs-toggle="modal" data-bs-target="#actionModal"
-                        data-action="Cancel" data-form-id="cancel-scheduled-{{ msg.id }}">
-                    <i class="bi bi-x-circle"></i> Cancel
-                </button>
+                        data-action="{{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}" data-form-id="cancel-scheduled-{{ msg.id }}">
+                    <i class="bi bi-x-circle"></i> {{ 'Skip reminder' if is_event_reminder is defined and is_event_reminder(msg) else 'Cancel' }}
+                </button>{% endif %}
             </div>
         </div>
         {% endfor %}
@@ -239,7 +247,7 @@
                         <input class="form-check-input js-select-row" type="checkbox" id="past-select-{{ msg.id }}" name="past_ids" value="{{ msg.id }}" aria-label="Select past message" data-bulk-group="past" data-record-id="{{ msg.id }}" data-id="{{ msg.id }}">
                         {% endif %}
                     </td>
-                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}</td>
+                    <td data-sort-value="{{ msg.scheduled_at.isoformat() if msg.scheduled_at else '' }}">{{ msg.scheduled_at|localtime }}{{ reminder_label(msg) }}</td>
                     <td data-sort-value="{{ msg.status or 'sent' }}">
                         {% if msg.status == 'sent' %}
                         <span class="badge bg-success">Sent</span>
@@ -328,7 +336,7 @@
         <div class="card-list-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>
+                    <h6 class="mb-1">{{ msg.scheduled_at|localtime }}</h6>{{ reminder_label(msg) }}
                     <div class="text-muted small">
                         {{ msg.status|capitalize }}
                         <span class="mx-1">·</span>
@@ -471,196 +479,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-    // Modal handling for delete/cancel actions
-    let formToSubmit = null;
-    const actionModal = document.getElementById('actionModal');
-    
-    if (actionModal) {
-        actionModal.addEventListener('show.bs.modal', function(event) {
-            const button = event.relatedTarget;
-            const action = button.getAttribute('data-action') || 'Delete';
-            const formId = button.getAttribute('data-form-id');
-            
-            document.getElementById('actionModalTitle').textContent = action === 'Cancel remaining sends' ? 'Cancel Remaining Sends' : 'Confirm ' + action;
-            document.getElementById('actionModalText').textContent = action === 'Cancel remaining sends' ? 'Stop the remaining sends? Already accepted messages cannot be recalled.' : action + ' this scheduled message?';
-            formToSubmit = document.getElementById(formId);
-        });
-        
-        document.getElementById('confirmActionBtn').addEventListener('click', function() {
-            if (formToSubmit) {
-                formToSubmit.submit();
-            }
-        });
-    }
-    
-    const pendingIdsContainer = document.getElementById('pendingIdsContainer');
-    let currentPendingIds = [];
-    const statusEndpoint = `/scheduled/status${window.location.search || ''}`;
-    if (pendingIdsContainer && pendingIdsContainer.dataset && pendingIdsContainer.dataset.pendingIds) {
-        try {
-            currentPendingIds = JSON.parse(pendingIdsContainer.dataset.pendingIds);
-        } catch (e) {
-            currentPendingIds = [];
-        }
-    }
-    
-    async function checkStatus() {
-        try {
-            const response = await fetch(statusEndpoint);
-            if (!response.ok) return;
-            const data = await response.json();
-            if (!Array.isArray(data.pending_ids)) return;
-            
-            const currentSorted = currentPendingIds.slice().sort((a,b) => a-b).join(',');
-            const newSorted = data.pending_ids.slice().sort((a,b) => a-b).join(',');
-            
-            if (currentSorted !== newSorted) {
-                location.reload();
-            }
-        } catch (e) {
-            console.error('Status check failed:', e);
-        }
-    }
-    
-    if (Array.isArray(currentPendingIds) && currentPendingIds.length > 0) {
-        setTimeout(() => setInterval(checkStatus, 3000), 1000);
-    }
-
-    function setupBulkControls(group) {
-        const selectedCountEl = document.getElementById(`${group}SelectedCount`);
-        const selectAllCheckbox = document.getElementById(`selectAll${group.charAt(0).toUpperCase()}${group.slice(1)}`);
-        const bulkSelectionActions = document.getElementById(`${group}BulkSelectionActions`);
-        const groupSelector = `.js-select-row[data-bulk-group="${group}"]`;
-
-        function getAllGroupCheckboxes() {
-            return Array.from(document.querySelectorAll(groupSelector));
-        }
-
-        function getVisibleGroupCheckboxes() {
-            return getAllGroupCheckboxes().filter(b => b.offsetParent !== null);
-        }
-
-        function setCheckedAcrossDuplicates(sourceCheckbox) {
-            const sourceValue = sourceCheckbox.value;
-            if (!sourceValue) return;
-            getAllGroupCheckboxes()
-                .filter(b => b.value === sourceValue)
-                .forEach(b => {
-                    b.checked = sourceCheckbox.checked;
-                });
-        }
-
-        function setCheckedForVisibleRows(isChecked) {
-            getVisibleGroupCheckboxes().forEach((checkbox) => {
-                checkbox.checked = isChecked;
-                syncGroupCheckboxes(checkbox);
-            });
-        }
-
-        function syncGroupCheckboxes(changedCheckbox) {
-            const recordId = changedCheckbox.dataset.recordId;
-            if (recordId) {
-                document
-                    .querySelectorAll(`.js-select-row[data-bulk-group="${group}"][data-record-id="${recordId}"]`)
-                    .forEach((checkbox) => {
-                        checkbox.checked = changedCheckbox.checked;
-                    });
-                return;
-            }
-            setCheckedAcrossDuplicates(changedCheckbox);
-        }
-
-        function updateBulkUi() {
-            if (!selectedCountEl) return;
-            const boxes = getVisibleGroupCheckboxes();
-            const selected = boxes.filter(b => b.checked).length;
-            selectedCountEl.textContent = selected;
-            if (bulkSelectionActions) {
-                bulkSelectionActions.classList.toggle('is-visible', selected > 0);
-            }
-            if (selectAllCheckbox) {
-                selectAllCheckbox.checked = boxes.length > 0 && boxes.every(b => b.checked);
-                selectAllCheckbox.indeterminate = selected > 0 && selected < boxes.length;
-            }
-        }
-
-        if (selectAllCheckbox) {
-            selectAllCheckbox.addEventListener('change', function() {
-                setCheckedForVisibleRows(selectAllCheckbox.checked);
-                updateBulkUi();
-            });
-        }
-
-        const selectAllBtn = document.getElementById(`${group}SelectAllBtn`);
-        if (selectAllBtn) {
-            selectAllBtn.addEventListener('click', function() {
-                setCheckedForVisibleRows(true);
-                updateBulkUi();
-            });
-        }
-
-        const selectNoneBtn = document.getElementById(`${group}SelectNoneBtn`);
-        if (selectNoneBtn) {
-            selectNoneBtn.addEventListener('click', function() {
-                setCheckedForVisibleRows(false);
-                updateBulkUi();
-            });
-        }
-
-        getAllGroupCheckboxes().forEach((checkbox) => {
-            checkbox.addEventListener('change', function() {
-                syncGroupCheckboxes(checkbox);
-                updateBulkUi();
-            });
-        });
-        window.addEventListener('resize', updateBulkUi);
-        updateBulkUi();
-
-        return {
-            getVisibleCheckedIds() {
-                return Array.from(new Set(
-                    getVisibleGroupCheckboxes()
-                        .filter((box) => box.checked)
-                        .map((box) => box.value)
-                        .filter(Boolean)
-                ));
-            },
-        };
-    }
-
-    const pendingBulkControls = setupBulkControls('pending');
-    const pastBulkControls = setupBulkControls('past');
-
-    function updatePendingBulkCancelSelection() {
-        const ids = pendingBulkControls ? pendingBulkControls.getVisibleCheckedIds() : [];
-        document.getElementById('pendingBulkCancelCount').textContent = ids.length;
-        document.getElementById('pendingBulkCancelIds').value = ids.join(',');
-    }
-
-    // Bulk cancel modal handler for pending messages
-    const pendingBulkCancelModal = document.getElementById('pendingBulkCancelModal');
-    if (pendingBulkCancelModal) {
-        pendingBulkCancelModal.addEventListener('show.bs.modal', function() {
-            updatePendingBulkCancelSelection();
-        });
-    }
-
-    const pendingBulkCancelForm = document.getElementById('pendingBulkCancelForm');
-    if (pendingBulkCancelForm) {
-        pendingBulkCancelForm.addEventListener('submit', function() {
-            updatePendingBulkCancelSelection();
-        });
-    }
-
-    // Bulk delete modal handler for past messages
-    const pastBulkDeleteModal = document.getElementById('pastBulkDeleteModal');
-    if (pastBulkDeleteModal) {
-        pastBulkDeleteModal.addEventListener('show.bs.modal', function() {
-            const ids = pastBulkControls ? pastBulkControls.getVisibleCheckedIds() : [];
-            document.getElementById('pastBulkDeleteCount').textContent = ids.length;
-            document.getElementById('pastBulkDeleteIds').value = ids.join(',');
-        });
-    }
-</script>
+<script src="{{ url_for('static', filename='js/pages/scheduled-list.js', v=app_version) }}"></script>
 {% endblock %}

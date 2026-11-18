@@ -88,10 +88,10 @@ test('public auth surfaces and health respond on the live host', async ({ page }
 
 test('control owner account reaches the live readiness surfaces without mutating state', async ({ page }) => {
   await login(page, ownerUsername, ownerPassword);
-  await expect(page).toHaveURL(/\/(setup|dashboard)(\?|$)/);
+  await expect(page).toHaveURL(/\/(setup|home|dashboard)(\?|$)/);
   await waitForCurrentNavigation(page);
 
-  if (/\/dashboard(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search)) {
+  if (/\/(?:home|dashboard)(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search)) {
     await clickWorkspaceLinkAndExpectOk(page, 'Settings', '/settings');
     await page.locator('.settings-card[href="/billing"]').click();
     await expect(page).toHaveURL(/\/billing$/);
@@ -102,7 +102,7 @@ test('control owner account reaches the live readiness surfaces without mutating
 
   await gotoAndExpectOk(page, '/dashboard');
   await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Send SMS Blast' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Who is it for?' })).toBeVisible();
   await expect(page.getByLabel('Message', { exact: true })).toBeVisible();
   await expect(page.locator('.setup-steps')).toHaveCount(0);
   await expect(page.locator('.workspace-summary__meta')).toHaveCount(0);

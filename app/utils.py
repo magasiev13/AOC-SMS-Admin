@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+import unicodedata
 from collections import Counter
 from datetime import timezone
 from typing import Optional
@@ -169,6 +170,7 @@ def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | No
             "total_segments": 0,
             "encodings": [],
             "per_recipient": [],
+            "special_character": None,
         }
 
     per_recipient: list[dict[str, object]] = []
@@ -176,10 +178,16 @@ def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | No
     min_segments: int | None = None
     max_segments = 0
     encodings: set[str] = set()
+    special_character = None
 
     for recipient in prepared_recipients:
         personalized_body = render_message_template(prepared_body, recipient)
         analysis = analyze_sms_body(personalized_body, apply_normalization=False)
+        if analysis['encoding'] == 'ucs-2' and special_character is None:
+            special_character = next(({
+                'character': char, 'name': unicodedata.name(char, 'UNNAMED UNICODE CHARACTER'),
+                'codepoint': f'U+{ord(char):04X}',
+            } for char in personalized_body if char not in _GSM_7_BASIC_CHARSET and char not in _GSM_7_EXTENDED_CHARSET), None)
         segment_count = int(analysis["segment_count"])
         total_segments += segment_count
         min_segments = segment_count if min_segments is None else min(min_segments, segment_count)
@@ -202,7 +210,51 @@ def analyze_personalized_sms_blast(body: str | None, recipients: list[dict] | No
         "total_segments": total_segments,
         "encodings": sorted(encodings),
         "per_recipient": per_recipient,
+        "special_character": special_character,
     }
+
+
+def _sms_name_metrics(value: str) -> tuple[int, int, bool]:
+    gsm_units = sum(1 if char in _GSM_7_BASIC_CHARSET else
+                    2 if char in _GSM_7_EXTENDED_CHARSET else 0 for char in value)
+    unicode_required = any(char not in _GSM_7_BASIC_CHARSET and
+                           char not in _GSM_7_EXTENDED_CHARSET for char in value)
+    utf16_units = len(value.encode('utf-16-be', errors='surrogatepass')) // 2
+    return gsm_units, utf16_units, unicode_required
+
+
+def _sms_recipient_shape(recipient):
+    return (_sms_name_metrics(render_message_template('{first_name}', recipient)) +
+            _sms_name_metrics(render_message_template('{full_name}', recipient)))
+
+
+def sms_estimate_groups(recipients):
+    """One representative per distinct SMS length/encoding pair for repeated estimates."""
+    representatives = {}
+    counts = Counter()
+    for recipient in recipients:
+        shape = _sms_recipient_shape(recipient)
+        representatives.setdefault(shape, recipient)
+        counts[shape] += 1
+    return [(representative, counts[shape]) for shape, representative in representatives.items()]
+
+
+def build_sms_audience_profile(recipients: list[dict] | None) -> list[dict[str, object]]:
+    """Group rendered name lengths without exposing a contact or its text.
+
+    Keep first/full metrics together: their correlation affects segment totals
+    when a draft uses both tokens. Name text is intentionally not normalized,
+    matching the substitutions made after a message body is normalized.
+    """
+    grouped = Counter(_sms_recipient_shape(recipient) for recipient in recipients or [])
+    return [
+        {
+            'count': count,
+            'first': dict(zip(('gsm_units', 'utf16_units', 'unicode'), key[:3])),
+            'full': dict(zip(('gsm_units', 'utf16_units', 'unicode'), key[3:])),
+        }
+        for key, count in sorted(grouped.items())
+    ]
 
 
 def normalize_phone(phone: object) -> str:
@@ -500,7 +552,7 @@ def _sms_body_metrics(value: str) -> dict[str, object]:
         break
 
     if encoding == "ucs-2":
-        character_units = len(body)
+        character_units = len(body.encode('utf-16-be', errors='surrogatepass')) // 2
         single_segment_limit = 70
         multi_segment_limit = 67
     else:

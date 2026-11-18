@@ -25,4 +25,6 @@ SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
+StateDirectory=twinevia-saas-readiness
+StateDirectoryMode=0700
 ExecStart=__APP_ROOT__/current/deploy/run_readiness_once.sh

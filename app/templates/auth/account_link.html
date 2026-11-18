@@ -1,0 +1,31 @@
+{% extends 'auth/base.html' %}
+{% set title = {'request':'Recover your account', 'verify':'Verify your account email', 'recover':'Reset your password'}[mode] %}
+{% block title %}{{ title }} - {{ product_name }}{% endblock %}
+{% block auth_header %}{% endblock %}
+{% block auth_main_class %}auth-utility-main{% endblock %}
+{% block page_title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="auth-panel auth-panel--utility">
+    <h1 class="h3">{{ title }}</h1>
+    {% if not ready %}<p>Contact your workspace administrator for help recovering access. Email recovery is unavailable.</p>
+    {% else %}
+    <form method="post" class="auth-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if mode == 'request' %}
+        <label for="email">Verified account email</label><input id="email" name="email" class="form-control" type="email" maxlength="255" autocomplete="email" required>
+        <button class="btn btn-primary" type="submit">Request recovery link</button>
+        {% else %}
+        <label for="code">Single-use code from your email</label>
+        <input id="code" name="code" class="form-control" maxlength="43" value="{{ request.form.get('code', '')[:43] if request.method == 'POST' else '' }}" autocomplete="off" required>
+        {% if mode == 'recover' %}
+        <label for="password">New password</label><input class="form-control" type="password" id="password" name="password" autocomplete="new-password" maxlength="1024" required>
+        <label for="confirmation">Confirm new password</label><input class="form-control" type="password" id="confirmation" name="confirmation" autocomplete="new-password" maxlength="1024" required>
+        {% endif %}
+        <button type="submit" class="btn btn-primary">{{ title }}</button>
+        {% endif %}
+    </form>
+    {% endif %}
+    <a class="d-inline-block mt-3" href="{{ url_for('auth.login') }}">Back to sign in</a>
+</section>
+{% endblock %}
+{% block scripts %}{% if mode != 'request' %}<script src="{{ url_for('static', filename='js/account_link.js') }}"></script>{% endif %}{% endblock %}

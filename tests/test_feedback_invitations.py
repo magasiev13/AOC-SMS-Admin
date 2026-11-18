@@ -1,4 +1,5 @@
 """Explicit invitation authority, late binding, holds and submission recovery."""
+from tests.consent_fixtures import historical_signup_contract
 import importlib
 import json
 import logging
@@ -21,7 +22,7 @@ def contact(f, phone='+17205550145', *, event=True):
 
 def setup(f, *, audience='community', timing='now', message_body=None):
     from app.services import feedback_invitation_service as invitations
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug]
+    historical_signup_contract(f.org.id, True)
     flow=create_flow(f)
     row=contact(f,event=audience=='registered_contacts')
     later=f.m.utc_now()+timedelta(days=2)
@@ -292,7 +293,7 @@ def test_concurrent_scheduler_workers_claim_one_invitation(feedback):
 def test_verified_empty_event_can_schedule_for_legitimate_later_registrations(feedback):
     f=feedback
     from app.services import feedback_invitation_service as s
-    f.app.config['COMMUNITY_SIGNUP_CONSENT_ORGANIZATION_SLUGS']=[f.org.slug]
+    historical_signup_contract(f.org.id, True)
     flow=create_flow(f);future=f.m.utc_now()+timedelta(days=2)
     values={'audience_rule':'registered_contacts','timing':'later','timezone':'UTC',
         'schedule_date':future.strftime('%Y-%m-%d'),'schedule_time':future.strftime('%H:%M'),

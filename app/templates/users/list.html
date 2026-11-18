@@ -162,7 +162,7 @@
                             {{ user.phone or '-' }}
                         </td>
                         <td data-sort-value="{{ user.created_at.isoformat() if user.created_at else '' }}">
-                            {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}
+                            {{ user.created_at|localdate if user.created_at else '-' }}
                         </td>
                         <td>
                             <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions>
@@ -224,7 +224,7 @@
                             <span class="badge bg-secondary">You</span>
                             {% endif %}
                         </div>
-                        <div class="text-muted small mt-2">Created {{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</div>
+                        <div class="text-muted small mt-2">Created {{ user.created_at|localdate if user.created_at else '-' }}</div>
                         {% if config.SAAS_MODE and current_user.is_platform_admin %}
                         <div class="text-muted small mt-1">
                             Organization
@@ -303,7 +303,7 @@
                             {{ 'Owner' if invite.role == 'owner' else 'Staff' }}
                         </span>
                     </td>
-                    <td>{{ invite.created_at.strftime('%Y-%m-%d') if invite.created_at else '-' }}</td>
+                    <td>{{ invite.created_at|localdate if invite.created_at else '-' }}</td>
                     <td>
                         <div class="small text-muted">{{ invitation.expires_display or 'No expiry set' }}</div>
                     </td>
@@ -345,7 +345,7 @@
                     </div>
                 </div>
             </div>
-            <div class="small text-muted mt-2">Created {{ invite.created_at.strftime('%Y-%m-%d') if invite.created_at else '-' }}</div>
+            <div class="small text-muted mt-2">Created {{ invite.created_at|localdate if invite.created_at else '-' }}</div>
             <div class="small text-muted mt-1">Expires {{ invitation.expires_display or 'No expiry set' }}</div>
             <div class="row-actions mt-3" data-row-actions>
                 {% if invitation.accept_url %}
@@ -391,28 +391,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-    let userFormToSubmit = null;
-    const deleteUserModal = document.getElementById('deleteUserModal');
-
-    if (deleteUserModal) {
-        deleteUserModal.addEventListener('show.bs.modal', function(event) {
-            const button = event.relatedTarget;
-            const username = button.getAttribute('data-username') || 'this user';
-            const formId = button.getAttribute('data-form-id');
-
-            document.getElementById('deleteUsername').textContent = username;
-            userFormToSubmit = document.getElementById(formId);
-        });
-    }
-
-    const confirmDeleteUserBtn = document.getElementById('confirmDeleteUserBtn');
-    if (confirmDeleteUserBtn) {
-        confirmDeleteUserBtn.addEventListener('click', function() {
-            if (userFormToSubmit) {
-                userFormToSubmit.submit();
-            }
-        });
-    }
-</script>
+<script src="{{ url_for('static', filename='js/pages/users-list.js', v=app_version) }}"></script>
 {% endblock %}

@@ -46,6 +46,16 @@ def contactable_predicate(model):
     return db.and_(*clauses)
 
 
+def _published_event():
+    return db.or_(Event.external_status.is_(None), ~db.func.lower(Event.external_status).in_(
+        ('trash', 'deleted', 'cancelled', 'canceled', 'draft', 'private'),
+    ))
+
+
+def completed_event_predicate(*, now=None):
+    return db.and_(_published_event(), ~current_event_predicate(now=now))
+
+
 def current_event_predicate(*, now=None):
     """Known end times expire precisely; date-only events last their local day."""
     now = as_utc_datetime(now or utc_now())
@@ -58,9 +68,7 @@ def current_event_predicate(*, now=None):
     # is needed for an event to leave the current audience automatically.
     date_current = db.or_(Event.date.is_(None), Event.date >= today)
     return db.and_(
-        db.or_(Event.external_status.is_(None), ~db.func.lower(Event.external_status).in_(
-            ('trash', 'deleted', 'cancelled', 'canceled', 'draft', 'private'),
-        )),
+        _published_event(),
         db.or_(
             db.and_(Event.external_end_at.isnot(None), Event.external_end_at > now.replace(tzinfo=None)),
             db.and_(Event.external_end_at.is_(None), date_current),

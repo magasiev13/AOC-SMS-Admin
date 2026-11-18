@@ -53,6 +53,10 @@ runtime_ctl verify-target --target "${target_release}" >/dev/null
 
 sudo -u "${APP_USER}" bash -lc "set -euo pipefail; cd \"${target_release}\"; set -a; source \"${ENV_FILE}\"; source \"${target_release}/.release.env\"; set +a; ./venv/bin/python -m app.saas_db --doctor"
 
+# Bind this to the physically resolved, trusted running helper, never to code
+# from the historical target. Its public assets must work before activation.
+sudo python3.11 "${_TWINEVIA_RUNTIME_HELPER%/*}/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${target_release}"
+
 atomic_link() {
   local target="$1"
   local link_path="$2"

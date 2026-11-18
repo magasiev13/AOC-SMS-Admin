@@ -10,36 +10,14 @@
 {% endblock %}
 
 {% block content %}
-<div class="workspace-shell">
-    {% if config.SAAS_MODE and current_organization %}
-    <details class="dashboard-overview" id="workspaceOverview">
-    <summary class="btn btn-outline-secondary mb-2">Workspace Status and Usage</summary>
-    {% call ui.workspace_summary(workspace_summary) %}
-    {% if current_user_is_workspace_owner %}
-    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
-    {% endif %}
-    <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
-    {% if current_user_is_workspace_owner and not can_send_messages and current_subscription_view.show_checkout %}
-    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-primary">
-            {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
-        </button>
-    </form>
-    {% endif %}
-    {% endcall %}
-    </details>
-    {% endif %}
-
+<div class="workspace-shell compose-workspace">
     <div class="workspace-command-layout dashboard-layout">
         <div class="workspace-command-main">
 
         <!-- Send SMS Section -->
         <section class="mb-4 dashboard-section dashboard-section-send">
             <div class="send-card">
-                <div class="send-card__header">
-                    <h2 class="h5"><i class="bi bi-send-fill me-2"></i>Write Your Message</h2>
-                </div>
+
                 <div class="send-card__body">
                     {% if composer_event %}<div class="alert alert-info" role="status">
                         <strong>{{ composer_event.title|private_text }}</strong> · {{ 'Contact List Announcement' if selected_target == 'community' else 'Event Registrant Message' }}
@@ -51,37 +29,26 @@
                         <strong>Live SMS is paused.</strong> {{ (send_disabled_reason)|private_text }}
                     </div>
                     {% endif %}
-                    <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}">
+                    <form method="POST" id="sendForm" data-review-url="{{ url_for('main.dashboard_send_review') }}"
+                          data-draft-key="{{ draft_key }}"
+                          data-login-url="{{ url_for('auth.login', next=url_for('main.dashboard')) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="require_review" value="1">
                         <input type="hidden" name="review_token" value="">
                         <input type="hidden" name="request_idempotency_key" value="{{ scheduled_request_idempotency_key }}">
                         {% if context_event_id %}<input type="hidden" name="context_event_id" value="{{ context_event_id }}">{% endif %}
-                        <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+                        <fieldset class="compose-step" id="compose-who">
+                            <legend>Who is it for?</legend>
                         <div class="mb-3">
-                            <label for="message_body" class="form-label">Message</label>
-                            <textarea class="form-control" id="message_body" name="message_body" rows="4"
-                                      placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
-                            <div class="form-text"><span id="charCount">0</span> / 1600 characters. Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</div>
-                            <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
-                            <details class="message-usage mt-2">
-                                <summary>How SMS Usage Is Calculated</summary>
-                                <div class="form-text">Long messages use more than one SMS unit per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
-                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS unit(s) per message · <span id="charsToNextSegment">160</span> characters until the next unit</div>
-                                <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
-                            </details>
-                        </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">Target Audience</label>
                             <div class="form-check">
                                 <input class="form-check-input" type="radio" name="target" id="targetCommunity"
                                        value="community" {% if selected_target != 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetCommunity">
                                     <i class="bi bi-people me-1"></i>Contact List
-                                    <span class="text-muted">(eligible contacts with list permission)</span>
+
                                 </label>
                             </div>
                             <div class="form-check">
@@ -89,12 +56,12 @@
                                        value="event" {% if selected_target == 'event' %}checked{% endif %}>
                                 <label class="form-check-label" for="targetEvent">
                                     <i class="bi bi-calendar-event me-1"></i>Event Registrants
-                                    <span class="text-muted">(registered contacts with permission for this event)</span>
+
                                 </label>
                             </div>
-                            <div class="form-text">
+                            <details class="form-text"><summary>Permission checks</summary>
                                 {% if confirmed_community_signup_consent %}Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
-                            </div>
+                            </details>
                             <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
                         </div>
 
@@ -104,12 +71,33 @@
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
                                 <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
-                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
+                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
                             <div class="form-text">Current events appear by default. <a href="{{ url_for('main.events_list', view='past') }}">Open past events for a follow-up or feedback request.</a></div>
                             {% if selected_past_event %}<p class="small text-info mt-2 mb-0" role="status">Past event follow-up: this sends only to the selected event's eligible contacts. Attendance history does not override opt-outs.</p>{% endif %}
+                        </div>
+
+                        </fieldset>
+                        <fieldset class="compose-step" id="compose-what"><legend>What will you say?</legend>
+                        <div class="mb-3">
+                            <label for="message_body" class="form-label">Message</label>
+                            <textarea class="form-control" id="message_body" name="message_body" rows="4"
+                                      placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
+                            <div class="form-text"><span id="charCount">0</span> / 1600 characters. Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</div>
+                            <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
+                            <div class="alert alert-warning py-2 mt-2 d-none" id="specialCharacterWarning" role="status">
+                                <span id="specialCharacterWarningText"></span>
+                                <button type="button" class="btn btn-sm btn-outline-dark mt-2" id="replaceSpecialCharacters">Replace special characters</button>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="undoSpecialCharacters" hidden>Undo</button>
+                            <details class="message-usage mt-2">
+                                <summary>How SMS Usage Is Calculated</summary>
+                                <div class="form-text">Long messages use more than one SMS segment per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
+                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS segment(s) per message · <span id="charsToNextSegment">160</span> characters until the next segment</div>
+                                <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
+                            </details>
                         </div>
 
                         <div class="mb-3">
@@ -122,6 +110,9 @@
                             </div>
                         </div>
 
+                        </fieldset>
+                        <fieldset class="compose-step" id="compose-when"><legend>When should it go out?</legend>
+                        <p class="form-text">Send after review, or choose a time.</p>
                         <details class="advanced-options mb-3" {% if request.form.get('schedule_later') == 'on' or request.form.get('test_mode') == 'on' %}open{% endif %}>
                             <summary class="advanced-options__summary">
                                 <i class="bi bi-sliders me-2"></i>Delivery Options
@@ -134,9 +125,8 @@
                                             <i class="bi bi-clock me-1"></i><strong>Schedule for Later</strong>
                                         </label>
                                     </div>
-                                    <div class="form-text">
-                                        Schedule sends in your local time ({{ app_timezone }} fallback). Detected timezone:
-                                        <span id="timezoneHint">Unavailable</span>.
+                                    <div class="form-text" id="workspaceScheduleTimezone" data-workspace-timezone="{{ app_timezone }}">
+                                        Times are in {{ workspace_timezone_label }}.
                                     </div>
                                 </div>
 
@@ -144,16 +134,17 @@
                                     <div class="row">
                                         <div class="col-md-6">
                                             <label for="schedule_date" class="form-label">Date</label>
-                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date" value="{{ request.form.get('schedule_date', '') }}">
+                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date" aria-describedby="workspaceScheduleTimezone browserTimezoneNotice" value="{{ request.form.get('schedule_date', '') }}">
                                         </div>
                                         <div class="col-md-6">
                                             <label for="schedule_time" class="form-label">Time</label>
-                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time" value="{{ request.form.get('schedule_time', '') }}">
+                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time" aria-describedby="workspaceScheduleTimezone browserTimezoneNotice" value="{{ request.form.get('schedule_time', '') }}">
                                         </div>
                                     </div>
                                     <div class="form-text">
-                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. Scheduled messages begin processing at or shortly after this time.
+                                        <i class="bi bi-info-circle me-1"></i>Enter workspace time. Scheduled messages begin processing at or shortly after this time.
                                     </div>
+                                    <div class="form-text d-none" id="browserTimezoneNotice" role="status" aria-live="polite"></div>
                                 </div>
 
                                 {% if config.SAAS_MODE %}
@@ -245,7 +236,10 @@
                             </div>
                         </details>
 
-                        <div class="d-grid gap-2">
+                        </fieldset>
+                        <button type="button" class="btn btn-link" id="discardSendDraft">Discard draft</button>
+                        <div class="compose-review-bar">
+                            <div><strong>Estimated usage</strong><span id="composeSegmentTotal" aria-live="polite">0 SMS segments</span><small id="composeCostEstimate" aria-live="polite"></small></div>
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
                                 <i class="bi bi-send-fill me-2"></i>{{ 'Messaging Setup In Progress' if config.SAAS_MODE and current_organization and not can_send_messages else 'Review Message' }}
                             </button>
@@ -260,6 +254,9 @@
         </div>
 
         <aside class="workspace-command-side">
+            <section class="compose-preview" aria-labelledby="compose-preview-title">
+                <h2 id="compose-preview-title">Text preview</h2><p id="composePreviewBody">Your message will appear here.</p>
+            </section>
             {% if config.SAAS_MODE and current_organization and users_missing_email and current_user.is_admin %}
             <div class="workspace-callout workspace-callout--warning" role="alert">
                 <div class="workspace-callout__title">Email Cleanup Needed</div>
@@ -293,6 +290,26 @@
         </aside>
     </div>
 
+        <details class="compose-workspace-details dashboard-overview" id="workspaceOverview">
+            <summary>Workspace activity and usage</summary>
+    {% if config.SAAS_MODE and current_organization %}
+    {% call ui.workspace_summary(workspace_summary) %}
+    {% if current_user_is_workspace_owner %}
+    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
+    {% endif %}
+    <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
+    {% if current_user_is_workspace_owner and not can_send_messages and current_subscription_view.show_checkout %}
+    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+            {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
+        </button>
+    </form>
+    {% endif %}
+    {% endcall %}
+    {% endif %}
+
+        {% include 'includes/workspace_usage.html' %}
         <!-- Stats Row -->
         <section class="mb-4 dashboard-section dashboard-section-stats">
             <div class="row g-3">
@@ -314,11 +331,12 @@
                         <i class="bi bi-send-check-fill stat-card__icon"></i>
                         <div class="stat-card__label">Last Message</div>
                         {% if latest_log %}
-                        <div class="stat-card__value">
-                            {% if latest_log.status == 'processing' %}In progress{% elif latest_log.failure_count == 0 %}Submitted{% else %}Partial{% endif %}
+                        <div class="stat-card__value" data-last-message-delivery>
+                            {{ latest_outcomes.delivered }} of {{ latest_outcomes.total }}
                         </div>
-                        <div class="stat-card__meta">
-                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} provider accepted
+                        <div class="stat-card__meta">recipients delivered</div>
+                        <div class="stat-card__meta" data-last-message-outcomes>
+                            {{ latest_outcomes.accepted }} accepted by provider · {{ latest_outcomes.not_submitted }} not submitted · {{ latest_outcomes.not_delivered }} not delivered · {{ latest_outcomes.no_receipt }} no receipt yet
                         </div>
                         {% else %}
                         <div class="stat-card__value">—</div>
@@ -331,15 +349,12 @@
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Provider Acceptance</div>
-                        {% if success_rate is not none %}
+                        <div class="stat-card__label">Delivery Confirmed</div>
+                        {% if latest_log %}
                         <div class="stat-card__value stat-card__value--rate">
-                            <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
+                            {{ latest_outcomes.delivered }} / {{ latest_outcomes.accepted }}
                         </div>
-                        <div class="stat-card__progress">
-                            <div class="stat-card__progress-bar" style="width: {{ success_rate }}%"></div>
-                        </div>
-                        <div class="stat-card__meta">{{ latest_outcomes.delivered }} confirmed delivered · {{ latest_outcomes.delivery_failed }} delivery failures · {{ latest_outcomes.submission_failed }} submission failures · {{ latest_outcomes.unresolved }} unresolved</div>
+                        <div class="stat-card__meta">Accepted messages with a confirmed delivery receipt</div>
                         {% else %}
                         <div class="stat-card__value">N/A</div>
                         <div class="stat-card__meta">No data yet</div>
@@ -523,7 +538,7 @@
                 <h5 class="section-title"><i class="bi bi-activity"></i> Recent Activity</h5>
                 <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">Message History</a>
             </div>
-            
+
             {% if recent_logs %}
             <div class="activity-timeline">
                 {% for log in recent_logs %}
@@ -531,7 +546,7 @@
                     <div class="activity-item__content">
                         <div class="activity-item__header">
                             <div class="activity-item__title">{{ (log.message_body|private_text)|truncate(60) }}</div>
-                            <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
+                            <span class="activity-item__time">{{ log.created_at|localtime }}</span>
                         </div>
                         <div class="activity-item__meta">
                             <span class="activity-item__badge activity-item__badge--success">
@@ -565,6 +580,7 @@
             {% endif %}
         </section>
         {% endif %}
+        </details>
 </div>
 <div class="modal fade" id="sendReviewModal" tabindex="-1" aria-labelledby="sendReviewTitle" aria-describedby="sendReviewExplanation">
     <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
@@ -579,439 +595,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='js/send_draft.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/chart.js/4.4.1/chart.umd.min.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
-<script>
-    const messageBody = document.getElementById('message_body');
-    const charCount = document.getElementById('charCount');
-    const messageEncoding = document.getElementById('messageEncoding');
-    const segmentCount = document.getElementById('segmentCount');
-    const charsToNextSegment = document.getElementById('charsToNextSegment');
-    const messageNormalizationHint = document.getElementById('messageNormalizationHint');
-    const messageUnitEstimate = document.getElementById('messageUnitEstimate');
-    const targetEvent = document.getElementById('targetEvent');
-    const targetCommunity = document.getElementById('targetCommunity');
-    const eventSelect = document.getElementById('event_id');
-    const eventSelectWrapper = document.getElementById('eventSelectWrapper');
-    const sendForm = document.getElementById('sendForm');
-    const sendBtn = document.getElementById('sendBtn');
-    const sendFormError = document.getElementById('sendFormError');
-    const sendFormStatus = document.getElementById('sendFormStatus');
-    const scheduleLater = document.getElementById('scheduleLater');
-    const scheduleWrapper = document.getElementById('scheduleWrapper');
-    const scheduleDate = document.getElementById('schedule_date');
-    const scheduleTime = document.getElementById('schedule_time');
-    const clientTimezone = document.getElementById('client_timezone');
-    const timezoneHint = document.getElementById('timezoneHint');
-    const testMode = document.getElementById('testMode');
-    const testModeOptions = document.getElementById('testModeOptions');
-    const testRecipientModeOne = document.getElementById('testRecipientModeOne');
-    const testRecipientModeAll = document.getElementById('testRecipientModeAll');
-    const testRecipientPhone = document.getElementById('testRecipientPhone');
-    const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
-    const includeUnsubscribe = document.getElementById('includeUnsubscribe');
-    const unsubscribeFooter = {{ blast_unsubscribe_footer|tojson }};
-    const savedTestRecipientCount = {{ saved_test_recipient_count|int }};
-    const audienceEligibility = document.getElementById('audienceEligibility');
-    let eligibleRecipientCount = null;
-    let audiencePreviewSequence = 0;
-
-    async function refreshAudiencePreview() {
-        const sequence = ++audiencePreviewSequence;
-        if (testMode && testMode.checked) {
-            audienceEligibility.textContent = 'Internal test recipients only. Saved-list membership and opt-outs are checked again at submission.';
-            updateMessageStats();
-            return;
-        }
-        eligibleRecipientCount = null;
-        audienceEligibility.textContent = 'Checking audience eligibility…';
-        updateMessageStats();
-        const params = new URLSearchParams({target: targetEvent.checked ? 'event' : 'community'});
-        if (targetEvent.checked && eventSelect.value) params.set('event_id', eventSelect.value);
-        try {
-            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }} + '?' + params, {headers: {Accept: 'application/json'}});
-            if (!response.ok) throw new Error('Audience preview unavailable');
-            const preview = await response.json();
-            if (sequence !== audiencePreviewSequence) return;
-            eligibleRecipientCount = preview.eligible;
-            audienceEligibility.textContent = `${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
-        } catch (error) {
-            if (sequence !== audiencePreviewSequence) return;
-            audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
-        }
-        updateMessageStats();
-    }
-
-    function getCookieValue(name) {
-        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-        return match ? decodeURIComponent(match[1]) : '';
-    }
-
-    if (clientTimezone) {
-        try {
-            const resolvedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-            clientTimezone.value = resolvedTimezone;
-            if (timezoneHint) {
-                timezoneHint.textContent = resolvedTimezone || 'Unavailable';
-            }
-            if (resolvedTimezone) {
-                const existingTimezone = getCookieValue('client_timezone');
-                if (existingTimezone !== resolvedTimezone) {
-                    document.cookie = `client_timezone=${encodeURIComponent(resolvedTimezone)}; path=/; max-age=31536000; samesite=lax`;
-                    const updatedTimezone = getCookieValue('client_timezone');
-                    if (updatedTimezone === resolvedTimezone) {
-                        window.location.reload();
-                    }
-                }
-            }
-        } catch (e) {
-            clientTimezone.value = '';
-            if (timezoneHint) {
-                timezoneHint.textContent = 'Unavailable';
-            }
-        }
-    }
-
-    function estimatedRecipientCount() {
-        if (testMode && testMode.checked) {
-            if (testRecipientModeOne && testRecipientModeOne.checked) {
-                return testRecipientPhone && testRecipientPhone.value ? 1 : 0;
-            }
-            return savedTestRecipientCount;
-        }
-        return eligibleRecipientCount || 0;
-    }
-
-    function updateMessageStats() {
-        const footer = includeUnsubscribe && includeUnsubscribe.checked ? unsubscribeFooter : '';
-        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
-        const recipientEstimate = estimatedRecipientCount();
-
-        charCount.textContent = messageBody.value.length;
-        if (segmentCount) {
-            segmentCount.textContent = analysis.segmentCount;
-        }
-        if (messageEncoding) {
-            messageEncoding.textContent = window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
-        }
-        if (charsToNextSegment) {
-            charsToNextSegment.textContent = analysis.charactersToNextSegment;
-        }
-        if (messageNormalizationHint) {
-            if (analysis.normalizationApplied) {
-                const segmentNote = analysis.segmentsSaved > 0
-                    ? ` This saves ${analysis.segmentsSaved} SMS unit(s) per recipient.`
-                    : '';
-                messageNormalizationHint.textContent = `Twinevia will simplify ${analysis.replacementCount} punctuation or spacing character(s) before sending.${segmentNote}`;
-            } else {
-                messageNormalizationHint.textContent = `Live preview includes the current STOP footer setting.`;
-            }
-        }
-        if (messageUnitEstimate) {
-            if (!messageBody.value.trim()) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
-            } else if (recipientEstimate > 0 && analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} units for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
-            } else if (analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage appears after you choose an eligible audience.';
-            } else {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
-            }
-        }
-    }
-
-    updateMessageStats();
-    messageBody.addEventListener('input', updateMessageStats);
-
-    function toggleEventSelect() {
-        eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';
-        refreshAudiencePreview();
-    }
-
-    function toggleSchedule() {
-        const isScheduled = scheduleLater.checked;
-        scheduleWrapper.style.display = isScheduled ? 'block' : 'none';
-        scheduleDate.required = isScheduled;
-        scheduleTime.required = isScheduled;
-        if (sendBtn.disabled) return;
-        if (isScheduled) {
-            sendBtn.innerHTML = '<i class="bi bi-clock me-2" aria-hidden="true"></i>Review Schedule';
-        } else {
-            sendBtn.innerHTML = '<i class="bi bi-send-fill me-2" aria-hidden="true"></i>Review Message';
-        }
-    }
-
-    function updateTestModeRecipientControls() {
-        if (!testModeOptions) {
-            return;
-        }
-        const selectingOneRecipient = testRecipientModeOne && testRecipientModeOne.checked;
-        if (singleTestRecipientWrapper) {
-            singleTestRecipientWrapper.style.display = selectingOneRecipient ? 'block' : 'none';
-        }
-        if (testRecipientPhone) {
-            testRecipientPhone.required = Boolean(testMode && testMode.checked && selectingOneRecipient);
-        }
-        updateMessageStats();
-    }
-
-    function toggleTestModeOptions() {
-        if (!testMode || !testModeOptions) {
-            return;
-        }
-        testModeOptions.style.display = testMode.checked ? 'block' : 'none';
-        updateTestModeRecipientControls();
-        refreshAudiencePreview();
-    }
-
-    targetEvent.addEventListener('change', toggleEventSelect);
-    targetCommunity.addEventListener('change', toggleEventSelect);
-    scheduleLater.addEventListener('change', toggleSchedule);
-    if (eventSelect) {
-        eventSelect.addEventListener('change', refreshAudiencePreview);
-    }
-    if (includeUnsubscribe) {
-        includeUnsubscribe.addEventListener('change', updateMessageStats);
-    }
-    if (testMode) {
-        testMode.addEventListener('change', toggleTestModeOptions);
-    }
-    if (testRecipientModeOne) {
-        testRecipientModeOne.addEventListener('change', updateTestModeRecipientControls);
-    }
-    if (testRecipientModeAll) {
-        testRecipientModeAll.addEventListener('change', updateTestModeRecipientControls);
-    }
-    if (testRecipientPhone) {
-        testRecipientPhone.addEventListener('change', updateMessageStats);
-    }
-    toggleEventSelect();
-    toggleSchedule();
-    toggleTestModeOptions();
-
-    function setValidationError(message) {
-        if (!sendFormError) {
-            return;
-        }
-        if (message) {
-            sendFormError.textContent = message;
-            sendFormError.classList.remove('d-none');
-        } else {
-            sendFormError.textContent = '';
-            sendFormError.classList.add('d-none');
-        }
-    }
-
-    function resetValidationState() {
-        messageBody.classList.remove('is-invalid');
-        scheduleDate.classList.remove('is-invalid');
-        scheduleTime.classList.remove('is-invalid');
-        eventSelect.classList.remove('is-invalid');
-        if (testRecipientPhone) {
-            testRecipientPhone.classList.remove('is-invalid');
-        }
-        setValidationError('');
-        if (sendFormStatus) {
-            sendFormStatus.textContent = '';
-        }
-    }
-
-    sendForm.addEventListener('submit', function(event) {
-        resetValidationState();
-        const errors = [];
-
-        if (!messageBody.value.trim()) {
-            errors.push('Message body is required.');
-            messageBody.classList.add('is-invalid');
-        }
-
-        if (targetEvent.checked) {
-            if (!eventSelect.value) {
-                errors.push('Please select an event for the message.');
-                eventSelect.classList.add('is-invalid');
-            }
-        }
-
-        if (scheduleLater.checked) {
-            if (!scheduleDate.value) {
-                errors.push('Schedule date is required when scheduling.');
-                scheduleDate.classList.add('is-invalid');
-            }
-            if (!scheduleTime.value) {
-                errors.push('Schedule time is required when scheduling.');
-                scheduleTime.classList.add('is-invalid');
-            }
-        }
-
-        if (testMode && testMode.checked && testRecipientPhone && testRecipientModeOne && testRecipientModeOne.checked && !testRecipientPhone.value) {
-            errors.push('Choose one saved test recipient before using test mode.');
-            testRecipientPhone.classList.add('is-invalid');
-        }
-
-        if (errors.length > 0) {
-            event.preventDefault();
-            setValidationError(errors[0]);
-            if (sendFormStatus) {
-                sendFormStatus.textContent = 'Please resolve the highlighted errors before sending.';
-            }
-            return;
-        }
-
-        sendBtn.disabled = true;
-        if (scheduleLater.checked) {
-            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scheduling...';
-            if (sendFormStatus) {
-                sendFormStatus.textContent = 'Scheduling your message. Please wait.';
-            }
-        } else {
-            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Sending...';
-            if (sendFormStatus) {
-                sendFormStatus.textContent = 'Sending your message. Please wait.';
-            }
-        }
-    });
-
-    sendForm.addEventListener('input', resetValidationState);
-
-    // ===== Chart.js Initialization =====
-    
-    // Chart data from server
-    const chartData = {{ chart_data|tojson|safe if chart_data else '{}' }};
-    
-    // Delivery Trends Chart (Line/Area)
-    const trendsCtx = document.getElementById('deliveryTrendsChart');
-    if (trendsCtx && chartData.trends) {
-        new Chart(trendsCtx, {
-            type: 'line',
-            data: {
-                labels: chartData.trends.labels,
-                datasets: [
-                    {
-                        label: 'Provider Accepted',
-                        data: chartData.trends.sent,
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointBackgroundColor: '#10b981',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        pointRadius: 4,
-                        pointHoverRadius: 6
-                    },
-                    {
-                        label: 'Submission Failed',
-                        data: chartData.trends.failed,
-                        borderColor: '#ef4444',
-                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointBackgroundColor: '#ef4444',
-                        pointBorderColor: '#fff',
-                        pointBorderWidth: 2,
-                        pointRadius: 4,
-                        pointHoverRadius: 6
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
-                },
-                plugins: {
-                    legend: {
-                        position: 'top',
-                        labels: {
-                            usePointStyle: true,
-                            padding: 20,
-                            font: { size: 12, weight: '500' }
-                        }
-                    },
-                    tooltip: {
-                        backgroundColor: '#1e293b',
-                        titleFont: { size: 13, weight: '600' },
-                        bodyFont: { size: 12 },
-                        padding: 12,
-                        cornerRadius: 8,
-                        displayColors: true
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { display: false },
-                        ticks: { font: { size: 11 }, color: '#64748b' }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(0,0,0,0.05)' },
-                        ticks: { font: { size: 11 }, color: '#64748b', stepSize: 1 }
-                    }
-                }
-            }
-        });
-    } else if (trendsCtx) {
-        // No data - show empty state
-        trendsCtx.parentElement.innerHTML = `
-            <div class="empty-state">
-                <i class="bi bi-graph-up empty-state__icon" aria-hidden="true"></i>
-                <div class="empty-state__title">No Trend Data Yet</div>
-                <div class="empty-state__text">Send messages to see submission trends.</div>
-            </div>
-        `;
-    }
-
-    // Audience Donut Chart
-    const audienceCtx = document.getElementById('audienceChart');
-    if (audienceCtx) {
-        const communityCount = {{ community_count }};
-        const eventCount = {{ event_registration_count }};
-        const unsubCount = {{ unsubscribed_count }};
-        
-        if (communityCount > 0 || eventCount > 0 || unsubCount > 0) {
-            new Chart(audienceCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Contact List', 'Event Contacts', 'Opt-Outs'],
-                    datasets: [{
-                        data: [communityCount, eventCount, unsubCount],
-                        backgroundColor: ['#6366f1', '#8b5cf6', '#e2e8f0'],
-                        borderWidth: 0,
-                        hoverOffset: 8
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    layout: {
-                        padding: 6
-                    },
-                    cutout: '65%',
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            backgroundColor: '#1e293b',
-                            titleFont: { size: 13, weight: '600' },
-                            bodyFont: { size: 12 },
-                            padding: 12,
-                            cornerRadius: 8
-                        }
-                    }
-                }
-            });
-        } else {
-            audienceCtx.parentElement.innerHTML = `
-                <div class="empty-state">
-                    <i class="bi bi-people empty-state__icon" aria-hidden="true"></i>
-                    <div class="empty-state__title">No Recipients Yet</div>
-                    <div class="empty-state__text">Add contacts or registrations to build your audience.</div>
-                    <a href="{{ url_for('main.community_list') }}" class="btn btn-sm btn-outline-primary empty-state__action">Open Contacts</a>
-                </div>
-            `;
-        }
-    }
-</script>
+<script data-settings='{{ dict(footer=blast_unsubscribe_footer, previewUrl=url_for('main.dashboard_audience_preview'), timezone=app_timezone, timezoneLabel=workspace_timezone_label, usage=dict(currency=workspace_usage.currency, rate=workspace_usage.segment_rate, remaining=workspace_usage.remaining_segments, billed=workspace_usage.billed) if workspace_usage else none, chartData=chart_data or {}, communityCount=community_count, eventCount=event_registration_count, unsubCount=unsubscribed_count, contactsUrl=url_for('main.community_list'))|tojson }}' src="{{ url_for('static', filename='js/pages/dashboard.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/send_review.js') }}"></script>
 {% endblock %}

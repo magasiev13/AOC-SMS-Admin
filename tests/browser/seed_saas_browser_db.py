@@ -848,6 +848,50 @@ def main() -> None:
             organization_id=active_org.id, thread_id=reply_thread.id, phone=reply_thread.phone,
             direction='inbound', body='Please confirm the next event.', message_sid='SMbrowserinboundseed', created_at=now,
         ))
+
+        # A separate historical-results fixture leaves the main workspace's
+        # first-send, audience and setup scenarios unchanged. No send is queued.
+        from app.models import MessageLog, MessagingUsageRecord
+        results_org = Organization(name='Message Results Fixture', slug='message-results-fixture', status='active')
+        results_owner = make_user(username='results-owner-browser', email='results-owner@browser.test',
+                                  full_name='Results Owner', phone='+15550001011', password='ResultsOwner-pass1!')
+        results_staff = make_user(username='results-staff-browser', email='results-staff@browser.test',
+                                  full_name='Results Staff', phone='+15550001012', password='ResultsStaff-pass1!',
+                                  role='social_manager')
+        db.session.add_all([results_org, results_owner, results_staff])
+        db.session.flush()
+        db.session.add_all([
+            OrganizationMembership(organization_id=results_org.id, user_id=results_owner.id, role='owner'),
+            OrganizationMembership(organization_id=results_org.id, user_id=results_staff.id, role='staff'),
+            OrganizationSubscription(organization=results_org, status='complimentary', current_period_end=now + timedelta(days=30)),
+            OrganizationMessagingProfile(organization=results_org, status='active', provider_status='active',
+                sender_review_status='approved', twilio_subaccount_sid='ACbrowserresults',
+                messaging_service_sid='MGbrowserresults', phone_number_sid='PNbrowserresults',
+                from_number='+15550001112', consent_acknowledged_at=now),
+        ])
+        results = []
+        for index in range(276):
+            accepted = index < 273
+            name = ('Delivery attention recipient' if index == 270 else
+                    'Second delivery issue' if index == 271 else
+                    'Waiting for receipt' if index == 272 else f'Results contact {index:03d}')
+            row = {'name': name, 'phone': f'+1555001{index:04d}', 'success': accepted,
+                   'status': 'sent' if accepted else 'failed'}
+            if accepted:
+                sid = f'SMbrowserresults{index:04d}'
+                row['sid'] = sid
+                state = 'delivered' if index < 270 else 'undelivered' if index < 272 else 'sent'
+                db.session.add(MessagingUsageRecord(organization_id=results_org.id, message_sid=sid,
+                    delivery_status=state, twilio_message_status=state,
+                    delivery_error_code='30003' if state == 'undelivered' else None,
+                    delivery_error_message=('Provider error 30003' if index == 270 else
+                                            'Unreachable destination handset' if index == 271 else None)))
+            else:
+                row['error'] = 'Provider rejected this synthetic request at submission.'
+            results.append(row)
+        db.session.add(MessageLog(organization_id=results_org.id, target='community', status='sent',
+            message_body='Historical mixed delivery results fixture', total_recipients=276,
+            success_count=273, failure_count=3, details=json.dumps(results), created_at=now))
         db.session.commit()
 
 

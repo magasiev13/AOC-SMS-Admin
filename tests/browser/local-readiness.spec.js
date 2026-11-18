@@ -81,7 +81,7 @@ test('platform admin can review onboarding progress and owner invite access', as
 
 test('owner sees human-readable billing state and pending invite links', async ({ page }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
-  await expect(page.getByRole('heading', { name: 'Send a Message' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Today' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Organizations' })).toHaveCount(0);
   await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
   await expect(page).toHaveURL(/\/settings$/);
@@ -89,7 +89,7 @@ test('owner sees human-readable billing state and pending invite links', async (
   await expect(page).toHaveURL(/\/billing$/);
 
   await expect(page.locator('.badge').filter({ hasText: 'Trial active' }).first()).toBeVisible();
-  await expect(page.locator('.workspace-summary__stat-meta').filter({ hasText: /Ready for owner/ }).first()).toBeVisible();
+  await expect(page.locator('.workspace-summary__stat-meta').filter({ hasText: /Ready for owner|Live messaging in use/ }).first()).toBeVisible();
   await expect(page.getByText('Billing active').first()).toBeVisible();
 
   await page.goto('/users');

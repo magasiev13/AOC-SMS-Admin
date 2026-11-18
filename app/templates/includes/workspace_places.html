@@ -1,0 +1,11 @@
+{% set active_endpoint = request.endpoint or '' %}
+{% set places = [
+    ('Home','main.workspace_home','bi-house', active_endpoint == 'main.workspace_home'),
+    ('Messages','main.workspace_messages','bi-send', active_endpoint == 'main.workspace_messages' or active_endpoint.startswith(('main.dashboard','main.log_','main.logs_','main.scheduled_'))),
+    ('Conversations','main.inbox_list','bi-chat-left-text', active_endpoint.startswith(('main.inbox_','main.keyword_','main.survey_flow'))),
+    ('People','main.community_list','bi-people', active_endpoint.startswith(('main.community_','main.unsubscribed_'))),
+    ('Events','main.events_list','bi-calendar-event', active_endpoint.startswith(('event_feedback.','main.events_','main.event_')) and not active_endpoint.startswith('main.event_sync_'))
+] %}
+{% for label, destination, icon, active in places %}
+<a href="{{ url_for(destination) }}" class="app-nav-link{% if active %} active{% endif %}"{% if active %} aria-current="page"{% endif %}><i class="bi {{ icon }}" aria-hidden="true"></i><span>{{ label }}</span></a>
+{% endfor %}

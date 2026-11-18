@@ -44,6 +44,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     await page.goto('/inbox');
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     const reply = page.getByLabel('Send Reply');
     const draft = `Unsent draft survives updates ${width}`;
     const originalKey = await page.locator('.inbox-reply-form [name="request_idempotency_key"]').inputValue();
@@ -78,6 +79,7 @@ for (const width of [1440, 390]) {
     await page.waitForURL('**/login', { waitUntil: 'domcontentloaded' });
     await login(page, 'staff@browser.test', 'Staff-pass1!');
     await page.goto('/inbox');
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     await expect(page.getByLabel('Send Reply')).toHaveValue('');
   });
 }
@@ -92,6 +94,14 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   await page.getByLabel('Schedule for Later').check();
   await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
   await page.getByLabel('Time', { exact: true }).fill('23:59');
+  const expectedTiming = await page.evaluate(() => {
+    const workspaceZone = document.getElementById('workspaceScheduleTimezone').dataset.workspaceTimezone;
+    if (!workspaceZone) throw new Error('The composer must identify its workspace timezone.');
+    const zone = new Intl.DateTimeFormat('en-US', {
+      timeZone: workspaceZone, timeZoneName: 'short',
+    }).formatToParts(new Date('2099-12-31T12:00:00Z')).find(part => part.type === 'timeZoneName').value;
+    return `Thu, Dec 31, 2099 · 11:59 PM ${zone}`;
+  });
   await page.route('**/dashboard/review', route => route.fulfill({ status: 503, json: { error: 'Controlled review interruption' } }));
   await page.getByRole('button', { name: 'Review Schedule', exact: true }).click();
   await expect(page.locator('#sendFormError')).toHaveText('Controlled review interruption');
@@ -101,7 +111,7 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
   await expect(review).toBeVisible();
   await expect(review.locator('[data-review="audience"]')).toHaveText('Contact List');
-  await expect(review.locator('[data-review="timing"]')).toContainText('2099-12-31');
+  await expect(review.locator('[data-review="timing"]')).toHaveText(expectedTiming);
   await expect(review.locator('[data-review="sample"]')).toContainText('UX reviewed scheduled notice');
   await expect(review).toBeFocused();
   await review.press('Escape');
@@ -128,6 +138,7 @@ test('an accepted reply with a lost redirect retries the original send identity'
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await page.goto('/inbox');
+  await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
   const reply = page.getByLabel('Send Reply');
   const body = 'UX accepted response lost once';
   const originalKey = await page.locator('.inbox-reply-form [name="request_idempotency_key"]').inputValue();

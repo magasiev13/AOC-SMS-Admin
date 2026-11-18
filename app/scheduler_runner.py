@@ -13,11 +13,28 @@ def _handle_shutdown(signum, frame):
     _shutdown_requested = True
 
 
-signal.signal(signal.SIGTERM, _handle_shutdown)
-signal.signal(signal.SIGINT, _handle_shutdown)
+def run_once(app):
+    """Run the timer's recovery and scheduling work with quiet idle summaries."""
+    from app.services.account_mail_service import recover_mail
+    from app.services.automation_outbox_service import recover_automation_replies
+    from app.services.outbound_request_service import reconcile_outbound_requests
+    from app.services.scheduler_service import send_scheduled_messages
+
+    with app.app_context():
+        if app.config.get('SAAS_MODE'):
+            recover_mail()
+            outbound = reconcile_outbound_requests()
+            if any(outbound.values()):
+                app.logger.info('Outbound recovery: %s', outbound)
+            replies = recover_automation_replies()
+            if any(replies.values()):
+                app.logger.info('Automatic reply recovery: %s', replies)
+    send_scheduled_messages(app)
 
 
 def main():
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
     app = create_runtime_app(start_scheduler=True)
 
     while not _shutdown_requested:

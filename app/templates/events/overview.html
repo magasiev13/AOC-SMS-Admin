@@ -12,7 +12,7 @@
         <nav class="event-overview-actions" aria-label="Event Tasks">
             <a class="btn btn-outline-primary" href="#registrations">Review Registrations</a>
             <a class="btn btn-outline-primary" href="#messages">Review Messages{% if communications.attention %} <span class="badge text-bg-warning ms-1">{{ communications.attention|length }} need review</span>{% endif %}</a>
-            <a class="btn btn-outline-primary" href="#feedback">Set Up Feedback</a>
+            {% if event_is_current %}<a class="btn btn-outline-primary" href="#feedback">Set Up Feedback</a>{% else %}<a class="btn btn-primary" href="{{ url_for('event_feedback.follow_up', event_id=event.id) }}">Request feedback</a>{% endif %}
         </nav>
         <dl class="event-overview-next row mb-0">
             <dt class="col-sm-4">Next Scheduled Message</dt><dd class="col-sm-8">{% if communications.next_message %}{{ communications.next_message.label }} · {{ communications.next_message.schedule.scheduled_at|localtime }} · {{ communications.next_message.audience }}{% else %}No pending message for this event{% endif %}</dd>
