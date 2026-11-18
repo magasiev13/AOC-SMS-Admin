@@ -5,5 +5,8 @@ from sqlalchemy import inspect
 
 
 def apply(connection, logger):
+    migration = import_module('app.saas_migrations.035_consent_sources')
     if 'organizations' in inspect(connection).get_table_names():
-        import_module('app.saas_migrations.035_consent_sources').apply(connection, logger)
+        migration.apply(connection, logger)
+    else:
+        migration.add_directory_provenance(connection)

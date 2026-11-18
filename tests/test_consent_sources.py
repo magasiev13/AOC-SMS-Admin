@@ -68,3 +68,26 @@ def test_approval_scope_traceability_replay_and_chronology(ux):
     assert review(ux, source, 'withdraw').status_code == 302
     login(ux)
     assert upload(ux, source.id, row).status_code == 404
+
+
+def test_event_only_import_in_historical_workspace_keeps_its_scope(ux):
+    from tests.consent_fixtures import historical_signup_contract
+    from app.services.recipient_permission_service import recipient_permission_status
+
+    historical_signup_contract(ux.org_id)
+    existing = ux.models.CommunityMember(organization_id=ux.org_id, phone='+17205550110')
+    event = ux.models.Event(organization_id=ux.org_id, title='Workshop')
+    ux.db.session.add_all([existing, event])
+    ux.db.session.commit()
+    login(ux)
+    assert submit_source(ux, purpose='event', event_id=event.id).status_code == 302
+    source = ux.models.ConsentSource.query.filter_by(kind='import').one()
+    login(ux, 'platform')
+    assert review(ux, source).status_code == 302
+    login(ux)
+    phone = '+17205550111'
+    assert upload(ux, source.id, f'New,{phone},event-form-1,2026-01-01T10:00:00Z\n').status_code == 302
+    assert recipient_permission_status(ux.org_id, phone, purpose='event', event_id=event.id).allowed
+    assert not recipient_permission_status(ux.org_id, phone).allowed
+    assert recipient_permission_status(ux.org_id, existing.phone).allowed
+    assert ux.models.EventRegistration.query.count() == 0

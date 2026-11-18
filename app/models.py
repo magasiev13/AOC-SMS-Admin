@@ -1183,6 +1183,8 @@ class CommunityMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     name = db.Column(db.String(100), nullable=True)
+    # A source-scoped import or enrollment has its own individual evidence.
+    individual_consent_required = db.Column(db.Boolean)
     phone = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=utc_now)
     organization = db.relationship('Organization')

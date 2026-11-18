@@ -8479,7 +8479,8 @@ def community_import():
 
                 member = CommunityMember(
                     name=rec['name'],
-                    phone=phone
+                    phone=phone,
+                    individual_consent_required=True,
                 )
                 db.session.add(member)
                 added += 1
