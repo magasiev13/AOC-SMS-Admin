@@ -86,5 +86,5 @@ def test_templates_only_load_external_scripts_and_use_event_listeners():
 
     for path in (Path(__file__).resolve().parents[1] / 'app/templates').rglob('*.html'):
         parser = ScriptPolicy()
-        parser.feed(path.read_text())
+        parser.feed(re.sub(r'{%.*?%}|{#.*?#}', '', path.read_text(), flags=re.DOTALL))
         parser.close()
