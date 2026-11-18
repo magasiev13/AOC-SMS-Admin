@@ -56,6 +56,7 @@ def _signup_audience_phones(organization_id, phones, purpose, event_id):
         return {row[0] for row in EventRegistration.query.with_entities(EventRegistration.phone).filter(
             EventRegistration.organization_id == organization_id,
             EventRegistration.event_id == event_id, EventRegistration.phone.in_(phones),
+            EventRegistration.individual_consent_required.is_not(True),
         ).all()}
     community = {row[0] for row in CommunityMember.query.with_entities(CommunityMember.phone).filter(
         CommunityMember.organization_id == organization_id, CommunityMember.phone.in_(phones),
@@ -63,6 +64,7 @@ def _signup_audience_phones(organization_id, phones, purpose, event_id):
     ).all()}
     community.update(row[0] for row in EventRegistration.query.with_entities(EventRegistration.phone).filter(
         EventRegistration.organization_id == organization_id, EventRegistration.phone.in_(phones),
+        EventRegistration.individual_consent_required.is_not(True),
     ).all())
     return community
 

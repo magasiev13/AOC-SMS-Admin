@@ -8,10 +8,11 @@ from app.models import ConsentSource, Organization, utc_now
 
 def add_directory_provenance(connection):
     inspector = inspect(connection)
-    if inspector.has_table('community_members'):
-        columns = {column['name'] for column in inspector.get_columns('community_members')}
-        if 'individual_consent_required' not in columns:
-            connection.execute(text('ALTER TABLE community_members ADD COLUMN individual_consent_required BOOLEAN'))
+    for table in ('community_members', 'event_registrations', 'event_bookings'):
+        if inspector.has_table(table):
+            columns = {column['name'] for column in inspector.get_columns(table)}
+            if 'individual_consent_required' not in columns:
+                connection.execute(text(f'ALTER TABLE {table} ADD COLUMN individual_consent_required BOOLEAN'))
 
 
 def apply(connection, logger):

@@ -1352,6 +1352,7 @@ class EventRegistration(db.Model):
     event_id = db.Column(db.Integer, db.ForeignKey('events.id'), nullable=False)
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=False)
+    individual_consent_required = db.Column(db.Boolean)
     external_source = db.Column(db.String(50), nullable=True, index=True)
     external_booking_id = db.Column(db.String(80), nullable=True, index=True)
     external_person_id = db.Column(db.String(80), nullable=True, index=True)
