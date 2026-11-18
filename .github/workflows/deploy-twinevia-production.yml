@@ -123,11 +123,15 @@ jobs:
           ./run/test_reliability_postgres.sh
 
   deploy:
+    concurrency:
+      group: twinevia-production-backup-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     needs: [validate, runtime_systemd]
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -199,27 +203,31 @@ jobs:
           scp -r "${SCP_OPTIONS[@]}" "${SSH_TARGET_VALUE}:${EXPORT_DIR_REMOTE}" output/production-backup/
 
       - name: Upload encrypted off-host backup
+        id: backup_artifact
         uses: actions/upload-artifact@v4
         with:
-          name: twinevia-production-backup-${{ github.run_id }}
+          name: twinevia-production-backup-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/production-backup/**
           if-no-files-found: error
           retention-days: 35
 
-      - name: Download stored encrypted backup
-        uses: actions/download-artifact@v5
-        with:
-          name: twinevia-production-backup-${{ github.run_id }}
-          path: output/production-backup-downloaded
-
-      - name: Verify downloaded backup bytes and identity
+      - name: Read back and verify the uploaded backup
+        id: readback
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP_ARTIFACT_ID: ${{ steps.backup_artifact.outputs.artifact-id }}
+          BACKUP_ARTIFACT_DIGEST: ${{ steps.backup_artifact.outputs.artifact-digest }}
         run: |
           python3 deploy/verify_backup_export.py \
             --expected output/production-backup \
-            --downloaded output/production-backup-downloaded
+            --github-artifact-id "${BACKUP_ARTIFACT_ID}" \
+            --zip-sha256 "${BACKUP_ARTIFACT_DIGEST}" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Confirm off-host backup proof
         env:
+          BACKUP_ARTIFACT_ID: ${{ steps.backup_artifact.outputs.artifact-id }}
+          VERIFIED_ARCHIVE_SHA: ${{ steps.readback.outputs.encrypted_sha256 }}
           TWINEVIA_SSH_TARGET: ${{ secrets.TWINEVIA_SSH_TARGET }}
           TWINEVIA_SSH_PORT: ${{ vars.TWINEVIA_SSH_PORT }}
         run: |
@@ -237,7 +245,9 @@ jobs:
               --status-file /var/lib/twinevia-saas/backup-status.json \
               --repository "${GITHUB_REPOSITORY}" \
               --run-id "${GITHUB_RUN_ID}" \
-              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}"
+              --artifact-id "${BACKUP_ARTIFACT_ID}" \
+              --encrypted-sha256 "${VERIFIED_ARCHIVE_SHA}" \
+              --artifact-name "twinevia-production-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
       - name: Deploy
         env:
@@ -466,6 +476,7 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "${SSH_TARGET_VALUE}" \
             sudo -n rm -rf -- \
+              "/var/lib/twinevia-saas/backup-status.json.pending-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-export-${GITHUB_RUN_ID}" \
               "/tmp/twinevia-backup-${GITHUB_RUN_ID}.sh" \
               "/tmp/twinevia-prepare-backup-${GITHUB_RUN_ID}.sh" \
