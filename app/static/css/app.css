@@ -2596,6 +2596,52 @@ h6,
   padding-top: var(--space-3);
 }
 
+.inbox-tools summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.inbox-tools[open] summary {
+  margin-bottom: var(--space-3);
+}
+
+.inbox-detail:not(:has(.inbox-tools[open])) .inbox-message-select {
+  display: none;
+}
+
+.inbox-consent-event {
+  text-align: center;
+}
+
+@media (max-width: 991.98px) {
+  .app-content:has(.inbox-detail) > .context-help,
+  .app-content:has(.inbox-detail) .app-page-header :is(.app-page-actions, .app-breadcrumbs) {
+    display: none;
+  }
+
+  .inbox-detail {
+    padding-bottom: calc(var(--inbox-composer-height, 12rem) + var(--workspace-bottom-nav-height, 0px) + 1rem);
+  }
+
+  .inbox-reply-form {
+    position: fixed;
+    z-index: 8;
+    inset-inline: 0;
+    bottom: max(var(--workspace-bottom-nav-height, env(safe-area-inset-bottom, 0px)), var(--inbox-keyboard-inset, 0px));
+    margin: 0 !important;
+    padding: .5rem 1rem;
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 8%);
+  }
+
+  .inbox-reply-form:has(#replyBody:placeholder-shown) :is(#replyBodyStats, #discardReplyDraft) {
+    display: none;
+  }
+
+  .inbox-reply-form .form-label {
+    margin-bottom: .25rem;
+  }
+}
+
 .inbox-bulk-delete-btn:disabled,
 .inbox-bulk-delete-btn.disabled {
   color: var(--color-text-muted);

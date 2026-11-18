@@ -92,3 +92,20 @@ if (bulkMessageDeleteButton) {
 } else {
     messageSelectionItems = bindSelectAll('selectAllMessages', '.js-message-select');
 }
+
+
+// A software keyboard can shrink the visual viewport without resizing the layout viewport.
+const composer = document.querySelector('.inbox-reply-form');
+if (composer) {
+    const detail = composer.closest('.inbox-detail');
+    const viewport = window.visualViewport;
+    const updateComposer = () => {
+        const inset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+        detail.style.setProperty('--inbox-keyboard-inset', `${inset}px`);
+        detail.style.setProperty('--inbox-composer-height', `${composer.getBoundingClientRect().height}px`);
+    };
+    new ResizeObserver(updateComposer).observe(composer);
+    viewport?.addEventListener('resize', updateComposer);
+    viewport?.addEventListener('scroll', updateComposer);
+    updateComposer();
+}

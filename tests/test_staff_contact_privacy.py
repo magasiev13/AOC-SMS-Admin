@@ -467,6 +467,32 @@ def test_staff_membership_even_with_global_admin_cannot_enumerate_contact_forms(
         assert_no_private_numbers(w, response)
 
 
+def test_inbox_archive_and_permanent_delete_use_tenant_membership(staff_workspace):
+    w = staff_workspace
+    foreign = w.models.InboxThread(organization_id=w.other_id, phone='+16175550109')
+    w.db.session.add(foreign)
+    w.db.session.commit()
+    foreign_id = foreign.id
+    workspace_login(w)
+    archive = f'/inbox/threads/{w.thread_id}/archive'
+    delete = f'/inbox/threads/{w.thread_id}/delete'
+    assert w.client.post(archive, data={'action': 'archive'}).status_code == 302
+    response = w.client.get(f'/inbox?folder=archived&thread={w.thread_id}')
+    assert_no_private_numbers(w, response)
+    assert b'Restore to Inbox' in response.data
+    assert b'Delete Conversation Permanently' not in response.data
+    assert w.client.post(delete).status_code == 403
+    assert w.client.post('/inbox/messages/bulk-delete', data={'thread_id': w.thread_id}).status_code == 403
+    assert w.client.post(f'/inbox/threads/{foreign_id}/archive', data={'action': 'archive'}).status_code == 404
+    workspace_login(w, 'owner')
+    assert w.client.post(f'/inbox/threads/{foreign_id}/delete').status_code == 404
+    assert w.client.post(archive, data={'action': 'restore'}).status_code == 302
+    assert b'Delete Conversation Permanently' in w.client.get(f'/inbox?thread={w.thread_id}').data
+    assert w.client.post(delete).status_code == 302
+    assert w.db.session.get(w.models.InboxThread, w.thread_id) is None
+    assert w.db.session.get(w.models.InboxThread, foreign_id).archived_at is None
+
+
 def test_owner_still_sees_authorized_contact_and_can_export_only_own_tenant(staff_workspace):
     w = staff_workspace
     workspace_login(w, 'owner')

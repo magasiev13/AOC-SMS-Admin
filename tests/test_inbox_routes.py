@@ -333,7 +333,7 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertIn("Jordan Blake", html)
         self.assertIn(thread.phone, html)
 
-    def test_inbox_defaults_to_latest_thread_when_mobile_list_mode_not_requested(self) -> None:
+    def test_inbox_defaults_to_threads_without_reading_a_conversation(self) -> None:
         self._login()
 
         oldest = self._create_thread(phone="+17209990010")
@@ -346,10 +346,9 @@ class TestInboxRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
 
-        self.assertIn(f'value="{newest.id}"', html)
-        self.assertIn('inbox-back-button', html)
-        self.assertIn('view=threads', html)
-        self.assertIn('#inboxThreadsPanel', html)
+        self.assertIn('Select a Conversation', html)
+        self.assertIn(f'thread={newest.id}', html)
+        self.assertNotIn('inbox-back-button', html)
 
     def test_inbox_mobile_list_mode_shows_threads_without_auto_selecting(self) -> None:
         self._login()
@@ -610,7 +609,7 @@ class TestInboxRoutes(unittest.TestCase):
         response_message = self.client.post("/inbox/messages/1/delete", follow_redirects=False)
         self.assertEqual(response_message.status_code, 404)
 
-    def test_social_manager_can_update_and_delete_inbox_records(self) -> None:
+    def test_social_manager_can_update_and_archive_but_cannot_delete_inbox_records(self) -> None:
         thread = self._create_thread(phone="+17205550010")
         message = self._create_message(thread=thread, body="Delete me", direction="inbound")
         second_thread = self._create_thread(phone="+17205550011")
@@ -632,16 +631,27 @@ class TestInboxRoutes(unittest.TestCase):
             data={"thread_id": str(thread.id), "message_ids": [str(message.id)], "search": ""},
             follow_redirects=False,
         )
-        self.assertEqual(response_message_bulk_delete.status_code, 302)
-        self.assertIsNone(self.db.session.get(self.InboxMessage, message.id))
+        self.assertEqual(response_message_bulk_delete.status_code, 403)
+        self.assertIsNotNone(self.db.session.get(self.InboxMessage, message.id))
 
         response_thread_delete = self.client.post(
             f"/inbox/threads/{second_thread.id}/delete",
             data={"search": ""},
             follow_redirects=False,
         )
-        self.assertEqual(response_thread_delete.status_code, 302)
-        self.assertIsNone(self.db.session.get(self.InboxThread, second_thread.id))
+        self.assertEqual(response_thread_delete.status_code, 403)
+        self.assertIsNotNone(self.db.session.get(self.InboxThread, second_thread.id))
+        thread_id = thread.id
+        detail = self.client.get(f"/inbox?thread={thread_id}").get_data(as_text=True)
+        self.assertNotIn("Delete Conversation Permanently", detail)
+        self.assertNotIn("bulkMessageDeleteForm", detail)
+        for _ in range(2):
+            self.client.post(f"/inbox/threads/{thread_id}/archive", data={"action": "archive"})
+        self.assertNotIn(f"thread={thread_id}&amp;", self.client.get("/inbox").get_data(as_text=True))
+        self.assertIn(f"thread={thread_id}&amp;", self.client.get("/inbox?folder=archived").get_data(as_text=True))
+        self.client.post(f"/inbox/threads/{thread_id}/archive", data={"action": "restore"})
+        self.assertIsNone(self.db.session.get(self.InboxThread, thread_id).archived_at)
+        self.assertIsNotNone(self.db.session.get(self.InboxMessage, message.id))
 
     def test_non_privileged_user_cannot_mutate_inbox(self) -> None:
         thread = self._create_thread(phone="+17205550012")
@@ -664,6 +674,42 @@ class TestInboxRoutes(unittest.TestCase):
         )
         self.assertEqual(delete_response.status_code, 403)
 
+    def test_thread_render_marks_reactions_and_consent_without_losing_unmatched_text(self):
+        self._login()
+        thread = self._create_thread(phone="+17205550050")
+        for direction, body in [
+            ("outbound", "Meeting at six"),
+            ("inbound", 'Loved “Meeting at six”'),
+            ("outbound", "Repeated"),
+            ("outbound", "Repeated"),
+            ("inbound", 'Liked "Repeated"'),
+            ("inbound", 'Liked “Something else”'),
+            ("inbound", " stop "),
+        ]:
+            self._create_message(thread=thread, direction=direction, body=body)
+        self.db.session.commit()
+        html = self.client.get(f"/inbox?thread={thread.id}").get_data(as_text=True)
+        self.assertIn('❤️', html)
+        self.assertIn('SMS opt-out received', html)
+        self.assertIn('Liked &#34;Repeated&#34;', html)
+        self.assertIn('Liked “Something else”', html)
+        self.assertNotIn('Loved “Meeting at six”', html)
+        self.assertEqual(self.InboxMessage.query.filter_by(thread_id=thread.id).count(), 7)
+
+    def test_new_inbound_reopens_archive_but_duplicate_delivery_leaves_it_archived(self):
+        from app.services.inbox_service import process_inbound_sms
+        self._login()
+        payload = {"From": "+17205550051", "Body": "Hello", "MessageSid": "SM-archive-test-1"}
+        first = process_inbound_sms(payload)
+        thread_id = first['thread_id']
+        self.client.post(f"/inbox/threads/{thread_id}/archive", data={"action": "archive"})
+        self.assertEqual(process_inbound_sms(payload)['status'], 'duplicate')
+        self.assertIsNotNone(self.db.session.get(self.InboxThread, thread_id).archived_at)
+        process_inbound_sms({**payload, "MessageSid": "SM-archive-test-2"})
+        thread = self.db.session.get(self.InboxThread, thread_id)
+        self.assertIsNone(thread.archived_at)
+        self.assertEqual(thread.unread_count, 1)
+
     def test_inbox_ui_has_single_delete_model(self) -> None:
         self._login()
         thread = self._create_thread(phone="+17205550014")
@@ -673,7 +719,8 @@ class TestInboxRoutes(unittest.TestCase):
         response = self.client.get(f"/inbox?thread={thread.id}")
         self.assertEqual(response.status_code, 200)
         html = response.get_data(as_text=True)
-        self.assertEqual(html.count("Delete Conversation"), 2)  # Desktop and mobile controls use the same action.
+        self.assertEqual(html.count("Delete Conversation Permanently"), 1)
+        self.assertIn("Archive Conversation", html)
         self.assertNotRegex(html, r">(?:\s*<i\b[^>]*></i>)?\s*Delete Selected\s*</(?:button|a)>")
         self.assertIn("Delete Selected Messages", html)
         self.assertIn('id="bulkMessageDeleteButton"', html)

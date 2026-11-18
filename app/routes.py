@@ -136,6 +136,7 @@ from app.services.billing_plans import (
 )
 from app.services.provider_secret_service import decrypt_provider_secret
 from app.services.inbox_service import (
+    conversation_annotations,
     delete_survey_flow_with_dependencies,
     delete_messages_in_thread,
     delete_thread_with_dependencies,
@@ -3394,6 +3395,8 @@ def _parse_survey_preview_indexes(raw_values: list[str], *, question_count: int)
 def _redirect_to_inbox(*, thread_id: int | None = None) -> object:
     search = request.form.get('search', '').strip()
     query_args = {}
+    if request.form.get('folder') == 'archived':
+        query_args['folder'] = 'archived'
     if thread_id:
         query_args['thread'] = thread_id
     if search:
@@ -10035,8 +10038,10 @@ def inbox_list():
     per_page = 50
     selected_thread_id = request.args.get('thread', type=int)
     mobile_view = request.args.get('view', '').strip().lower()
-    show_thread_list_only = mobile_view == 'threads'
-    query = InboxThread.query
+    show_thread_list_only = not selected_thread_id or mobile_view == 'threads'
+    archived = request.args.get('folder') == 'archived'
+    folder = 'archived' if archived else None
+    query = InboxThread.query.filter(InboxThread.archived_at.is_not(None) if archived else InboxThread.archived_at.is_(None))
 
     if search:
         escaped = escape_like(search)
@@ -10062,8 +10067,6 @@ def inbox_list():
         selected_thread = next((thread for thread in threads if thread.id == selected_thread_id), None)
         if selected_thread is None:
             selected_thread = InboxThread.query.filter_by(id=selected_thread_id).first()
-    elif threads and not show_thread_list_only:
-        selected_thread = threads[0]
 
     messages = []
     active_sessions = []
@@ -10096,9 +10099,9 @@ def inbox_list():
         if messages:
             all_messages = InboxMessage.query.filter_by(thread_id=selected_thread.id)
             if all_messages.filter(earlier_than(messages[0])).first() is not None:
-                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, before=messages[0].id)
+                older_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder, before=messages[0].id)
             if all_messages.filter(later_than(messages[-1])).first() is not None:
-                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, after=messages[-1].id)
+                newer_messages_url = url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder, after=messages[-1].id)
         if selected_thread.unread_count and not newer_messages_url:
             mark_thread_read(selected_thread.id)
             selected_thread.unread_count = 0
@@ -10154,8 +10157,11 @@ def inbox_list():
     activity = _inbox_activity_snapshot()
     from app.services.contact_privacy_service import build_thread_display_previews
 
+    reaction_marks, attached_reactions, opt_outs = conversation_annotations(messages)
     return render_template(
         'inbox/list.html',
+        reaction_marks=reaction_marks, attached_reactions=attached_reactions, opt_outs=opt_outs,
+        can_delete_inbox=_can_delete_inbox(), folder=folder,
         threads=threads,
         selected_thread=selected_thread,
         messages=messages,
@@ -10170,14 +10176,14 @@ def inbox_list():
         inbox_status_delivery_version=activity['delivery_version'],
         older_messages_url=older_messages_url,
         newer_messages_url=newer_messages_url,
-        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page) if selected_thread else url_for('main.inbox_list', search=search, page=page, view='threads' if show_thread_list_only else None),
+        latest_messages_url=url_for('main.inbox_list', thread=selected_thread.id, search=search, page=page, folder=folder) if selected_thread else url_for('main.inbox_list', search=search, page=page, folder=folder, view='threads' if show_thread_list_only else None),
         reply_draft_context=hashlib.sha256(f'{_current_organization_id()}:{current_user.id}:{current_user.session_nonce}'.encode()).hexdigest()[:32],
         acknowledged_reply_key=acknowledged_reply_key,
         show_thread_list_only=show_thread_list_only,
         search=search,
         page=page, per_page=per_page, total_count=total_count, total_pages=total_pages,
         pagination_endpoint='main.inbox_list',
-        pagination_args={'search': search, 'view': 'threads' if show_thread_list_only else None,
+        pagination_args={'search': search, 'folder': folder, 'view': 'threads' if show_thread_list_only else None,
                          'thread': selected_thread.id if selected_thread else None},
         pagination_label='Conversation Pagination', pagination_noun='conversations',
         reply_request_key=uuid4().hex,
@@ -10327,18 +10333,52 @@ def inbox_thread_update(thread_id):
     return _redirect_to_inbox(thread_id=thread.id)
 
 
+def _can_delete_inbox() -> bool:
+    if saas_mode_enabled():
+        return _current_user_is_workspace_owner()
+    return current_user.role == 'admin'
+
+
+def _inbox_retention_reason(thread):
+    if SurveySession.query.filter_by(thread_id=thread.id, purpose='event_feedback').first() is not None:
+        return 'This conversation contains retained event feedback. Keep it to preserve that history.'
+    if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
+        OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
+    ).first() is not None:
+        return 'This conversation has an unresolved send request. Resolve it before deleting its history.'
+    return None
+
+
+@bp.route('/inbox/threads/<int:thread_id>/archive', methods=['POST'])
+@login_required
+@require_roles('admin', 'social_manager')
+def inbox_thread_archive(thread_id):
+    thread = _tenant_get_or_404(InboxThread, thread_id)
+    action = request.form.get('action')
+    if action not in {'archive', 'restore'}:
+        abort(400)
+    # Serialize archive with incoming messages. A later inbound reopens the conversation.
+    thread = InboxThread.query.filter_by(id=thread.id).populate_existing().with_for_update().one()
+    if action == 'archive':
+        thread.archived_at = thread.archived_at or utc_now()
+        thread.unread_count = 0
+    else:
+        thread.archived_at = None
+    db.session.commit()
+    flash('Conversation archived.' if action == 'archive' else 'Conversation restored.', 'success')
+    return _redirect_to_inbox()
+
+
 @bp.route('/inbox/threads/<int:thread_id>/delete', methods=['POST'])
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_thread_delete(thread_id):
+    if not _can_delete_inbox():
+        abort(403)
     thread = _tenant_get_or_404(InboxThread, thread_id)
-    if SurveySession.query.filter_by(thread_id=thread.id, purpose='event_feedback').first() is not None:
-        flash('This conversation contains retained event feedback. Keep it to preserve that history.', 'warning')
-        return _redirect_to_inbox(thread_id=thread.id)
-    if saas_mode_enabled() and OutboundRequest.query.filter_by(thread_id=thread.id).filter(
-        OutboundRequest.status.in_(['pending', 'queue_unknown', 'queued', 'processing', 'ambiguous']),
-    ).first() is not None:
-        flash('This conversation has an unresolved send request. Resolve it before deleting the conversation.', 'warning')
+    reason = _inbox_retention_reason(thread)
+    if reason:
+        flash(reason, 'warning')
         return _redirect_to_inbox(thread_id=thread.id)
     result = delete_thread_with_dependencies(thread.id)
     if result is None:
@@ -10361,12 +10401,18 @@ def inbox_thread_delete(thread_id):
 @login_required
 @require_roles('admin', 'social_manager')
 def inbox_messages_bulk_delete():
+    if not _can_delete_inbox():
+        abort(403)
     thread_id = request.form.get('thread_id', type=int)
     if not thread_id:
         flash('Thread is required.', 'error')
         return _redirect_to_inbox()
 
-    _tenant_get_or_404(InboxThread, thread_id)
+    thread = _tenant_get_or_404(InboxThread, thread_id)
+    reason = _inbox_retention_reason(thread)
+    if reason:
+        flash(reason, 'warning')
+        return _redirect_to_inbox(thread_id=thread_id)
     message_ids = _parse_int_ids(request.form.getlist('message_ids'))
     if not message_ids:
         flash('No messages selected.', 'warning')
