@@ -776,6 +776,13 @@
   outline-offset: 2px;
 }
 
+/* Land directly on a section when the browser handles event navigation. */
+@media (scripting: none) {
+  :root:has([data-event-sections]) {
+    scroll-behavior: auto;
+  }
+}
+
 .event-section-panel {
   scroll-margin-top: 6rem;
 }

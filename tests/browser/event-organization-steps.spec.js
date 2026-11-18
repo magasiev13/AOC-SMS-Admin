@@ -243,14 +243,27 @@ test.describe('native HTML fallback', () => {
 
   test('event sections and registration disclosures remain usable without JavaScript', async ({ page }) => {
     await nativeLogin(page, 'owner@browser.test', 'Owner-pass1!', /\/home$/);
-    await page.goto('/events/1#registrations', { waitUntil: 'domcontentloaded' });
+    await page.goto('/events/1#registrations', { waitUntil: 'load' });
     await expect(page.locator('[data-event-panel]:visible')).toHaveCount(4);
+    await expect(page.locator('html')).toHaveCSS('scroll-behavior', 'auto');
+    const navigation = page.getByRole('navigation', { name: 'Event workspace sections' });
+    await navigation.getByRole('link', { name: 'Overview', exact: true }).press('Enter');
+    await expect(page).toHaveURL(/#overview$/);
+    await navigation.getByRole('link', { name: 'Registrations', exact: true }).press('Enter');
+    await expect(page).toHaveURL(/#registrations$/);
     const tools = page.locator('[data-event-registration-tool]').filter({ has: page.locator('summary').filter({ hasText: /^Add Booking$/ }) });
-    await expect(tools.locator('summary')).toBeVisible();
-    // With page JavaScript disabled, the utility-world animation-frame
-    // stability wait cannot settle. Visibility is checked before a native click.
-    await tools.locator('summary').click({ force: true });
-    await expect(tools.getByLabel('Name (Optional)', { exact: true })).toBeVisible();
+    const summary = tools.locator('summary');
+    const name = tools.getByLabel('Name (Optional)', { exact: true });
+    await expect(name).toBeHidden();
+    await expect(summary).toBeVisible();
+    // With page scripts disabled Chromium may suspend the animation frames
+    // used by Playwright's actionability checks. Send a real pointer click.
+    await summary.click({ force: true });
+    await expect(name).toBeVisible();
+    await summary.click({ force: true });
+    await expect(name).toBeHidden();
+    await summary.press('Enter');
+    await expect(name).toBeVisible();
   });
 
   test('the complete organization form and server error links work without JavaScript', async ({ page }) => {
