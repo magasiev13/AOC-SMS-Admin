@@ -20,6 +20,7 @@ class EventBooking(db.Model):
     name = db.Column(db.String(100), nullable=True)
     phone = db.Column(db.String(20), nullable=True, index=True)
     contact_state = db.Column(db.String(16), nullable=False, default='missing')
+    individual_consent_required = db.Column(db.Boolean)
     sms_consent = db.Column(db.Boolean, nullable=True)
     selections_json = db.Column(db.Text, nullable=True)
     comment = db.Column(db.Text, nullable=True)

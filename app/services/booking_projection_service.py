@@ -123,6 +123,7 @@ def ensure_legacy_bookings(event):
             comment=registration.booking_comment, external_person_id=registration.external_person_id,
             source_updated_at=registration.external_updated_at, last_received_at=registration.synced_at or utc_now(),
             projection_registration_id=registration.id, legacy_evidence=True,
+            individual_consent_required=registration.individual_consent_required,
             created_at=registration.created_at or utc_now(),
         ))
     db.session.flush()
@@ -463,6 +464,9 @@ def reconcile_event_projection(event, *, seed_legacy=True):
         if row is None:
             row = EventRegistration(organization_id=event.organization_id, event_id=event.id, phone=phone)
             db.session.add(row)
+        # A projection rebuilt from imported bookings keeps their consent boundary.
+        # An independently contracted contribution can still qualify this phone.
+        row.individual_consent_required = True if all(item.individual_consent_required for item in bookings) else None
         representative = bookings[0]
         # The destination display follows the latest supplied contact name;
         # each transaction still retains its own original name in the ledger.
@@ -520,7 +524,8 @@ def project_legacy_registration(registration, source_row_id):
         source='legacy_import', source_scope='', external_booking_id=key).first()
     if booking is None:
         booking = EventBooking(organization_id=event.organization_id,event_id=event.id,
-            source='legacy_import',source_scope='',external_booking_id=key)
+            source='legacy_import',source_scope='',external_booking_id=key,
+            individual_consent_required=registration.individual_consent_required)
         db.session.add(booking)
     booking.name = registration.name
     booking.phone = registration.phone

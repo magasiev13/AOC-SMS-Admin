@@ -394,6 +394,7 @@ def _import_legacy_rows_into_organization(
         db.session.add(
             CommunityMember(
                 organization_id=organization.id,
+                individual_consent_required=True,
                 name=_row_value(row, "name"),
                 phone=_row_value(row, "phone"),
                 created_at=_parse_datetime(_row_value(row, "created_at")) or utc_now(),
@@ -439,6 +440,7 @@ def _import_legacy_rows_into_organization(
             continue
         imported_registration = EventRegistration(
                 organization_id=organization.id,
+                individual_consent_required=True,
                 event_id=mapped_event_id,
                 name=_row_value(row, "name"),
                 phone=_row_value(row, "phone"),
@@ -1133,7 +1135,7 @@ def sync_legacy_sqlite_snapshot_into_existing_org(
                     "created_at": _parse_datetime(_row_value(row, "created_at")) or utc_now(),
                 }
                 if existing_member is None:
-                    existing_member = CommunityMember(**values)
+                    existing_member = CommunityMember(**values, individual_consent_required=True)
                     db.session.add(existing_member)
                     community_by_phone[phone] = existing_member
                     _record_sync_operation(operations, "community_members", "created")
@@ -1370,7 +1372,7 @@ def sync_legacy_sqlite_snapshot_into_existing_org(
                     "created_at": _parse_datetime(_row_value(row, "created_at")) or utc_now(),
                 }
                 if existing_registration is None:
-                    existing_registration = EventRegistration(**values)
+                    existing_registration = EventRegistration(**values, individual_consent_required=True)
                     db.session.add(existing_registration)
                     event_registrations_by_key[key] = existing_registration
                     _record_sync_operation(operations, "event_registrations", "created")
