@@ -393,6 +393,8 @@ def staff_workspace(tmp_path, monkeypatch, request):
             keyword = models.KeywordAutomationRule(organization_id=org.id, keyword='HELPINFO17205550666', response_body='Call +17205550666 for help')
             db.session.add_all([internal, internal_other, keyword])
             models.InboxMessage.query.filter_by(thread_id=thread.id).one().matched_keyword = keyword.keyword
+            from tests.consent_fixtures import historical_signup_contract
+            historical_signup_contract(org.id)
             db.session.commit()
             yield SimpleNamespace(app=application, db=db, models=models, users=users, org_id=org.id, other_id=other.id,
                 member_id=member.id, event_id=event.id, registration_id=registration.id,

@@ -48,6 +48,10 @@ def _outbound_send_calls(attr_name: str) -> list[tuple[str, int, bool]]:
                 continue
             if _attribute_call_name(node) != attr_name:
                 continue
+            # SMTP.send_message is a standard-library email API with no SMS send kind.
+            if (path == APP_ROOT / 'services' / 'account_mail_service.py'
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == 'smtp_client'):
+                continue
             has_send_kind = any(keyword.arg == "send_kind" for keyword in node.keywords if keyword.arg)
             callsites.append((str(path.relative_to(REPO_ROOT)), node.lineno, has_send_kind))
     return callsites

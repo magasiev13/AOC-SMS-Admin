@@ -97,20 +97,20 @@ def _send(email):
     port = config['ACCOUNT_MAIL_SMTP_PORT']
     options = dict(host=config['ACCOUNT_MAIL_SMTP_HOST'], port=port, timeout=8)
     context = ssl.create_default_context()
-    client = None
+    smtp_client = None
     try:
-        client = smtplib.SMTP_SSL(**options, context=context) if port == 465 else smtplib.SMTP(**options)
+        smtp_client = smtplib.SMTP_SSL(**options, context=context) if port == 465 else smtplib.SMTP(**options)
         if port == 587:
-            client.starttls(context=context)
-        client.login(config['ACCOUNT_MAIL_SMTP_USER'], config['ACCOUNT_MAIL_SMTP_PASSWORD'])
+            smtp_client.starttls(context=context)
+        smtp_client.login(config['ACCOUNT_MAIL_SMTP_USER'], config['ACCOUNT_MAIL_SMTP_PASSWORD'])
     except (OSError, smtplib.SMTPException) as exc:
-        if client:
-            client.close()
+        if smtp_client:
+            smtp_client.close()
         raise BeforeSubmissionError() from exc
     try:
-        client.send_message(email)
+        smtp_client.send_message(email)
     finally:
-        client.close()
+        smtp_client.close()
 
 
 def deliver_mail(organization_id, delivery_id):
