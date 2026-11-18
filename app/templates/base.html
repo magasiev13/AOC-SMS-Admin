@@ -130,7 +130,6 @@
                         <div class="app-page-actions-overflow d-lg-none" data-page-actions-overflow hidden></div>
                     </div>
                 </header>
-                {% if workspace_page_help %}{% include 'includes/context_help.html' %}{% endif %}
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         <div class="app-toast-container">
@@ -159,6 +158,7 @@
                 {% endwith %}
 
                 {% block content %}{% endblock %}
+                {% if workspace_page_help %}{% include 'includes/context_help.html' %}{% endif %}
             </main>
 
             <footer class="app-footer text-center text-muted">

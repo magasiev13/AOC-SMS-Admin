@@ -1,0 +1,5 @@
+<nav class="d-flex flex-wrap gap-2" aria-label="Contact Views">
+    {% for value, label in [('contactable','Contactable'),('all','All Contacts'),('blocked','Opt-outs & blocks')] %}
+    <a class="btn btn-sm {{ 'btn-primary' if audience_view == value else 'btn-outline-secondary' }}" href="{{ url_for('main.unsubscribed_list', search=search) if value == 'blocked' else url_for('main.community_list', view=value, search=search) }}"{% if audience_view == value %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>

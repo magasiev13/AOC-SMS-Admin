@@ -171,6 +171,11 @@ function updateMessageStats() {
             messageUnitEstimate.textContent = 'Personalized SMS estimate is unavailable. Review the message to check its segments.';
         }
     }
+    const segmentTotal = document.getElementById('composeSegmentTotal');
+    if (segmentTotal) segmentTotal.textContent = !draft ? '0 SMS segments' : compositionEstimate
+        ? `${compositionEstimate.total_segments} SMS segments` : 'Checking estimate…';
+    const preview = document.getElementById('composePreviewBody');
+    if (preview) preview.textContent = draft ? [draft, footer].filter(Boolean).join(' ') : 'Your message will appear here.';
     specialCharacterWarning.classList.toggle('d-none', !draft || !usesUnicode);
     const canReplace = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value) !== messageBody.value;
     const unicodeWriting = window.TwineviaSmsAnalysis.usesUnicodeWriting(messageBody.value);

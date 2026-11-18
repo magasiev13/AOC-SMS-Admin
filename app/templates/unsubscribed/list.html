@@ -38,6 +38,8 @@
 {% set blocks_empty_secondary_label = 'Import CSV' if can_manage_unsubscribed and not search else None %}
 <div class="alert alert-success d-none" role="status" aria-live="polite" id="backfillAlert"></div>
 <div class="workspace-shell">
+    {% set audience_view = 'blocked' %}
+    {% include 'includes/people_filters.html' %}
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
 
     <div class="collection-shell">

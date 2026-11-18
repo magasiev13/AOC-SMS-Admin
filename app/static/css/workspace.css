@@ -15,3 +15,36 @@
     .workspace-bottom-nav .app-nav-link.active {color:#164bb1; border-color:currentColor; background:#f4f8ff}
     .work-row {align-items:start; flex-direction:column; gap:.25rem; padding:.85rem 0}
 }
+
+.compose-workspace {padding-bottom:6rem}
+.compose-workspace .send-card {box-shadow:none; border:0; background:transparent}
+.compose-workspace .send-card__body {padding:0}
+.compose-step {padding:0 0 .8rem; margin:0 0 1rem; min-width:0}
+.compose-step legend,.compose-preview h2 {font-size:1.14rem; font-weight:700; padding:.5rem 0; margin:0 0 .8rem; border-bottom:2px solid var(--color-text)}
+.compose-review-bar {position:fixed; right:1.5rem; bottom:1rem; z-index:1020; display:flex; gap:2rem; align-items:center; justify-content:space-between; background:white; border:1px solid var(--color-border-strong); padding:.55rem .8rem; box-shadow:0 4px 12px #12274118}
+.compose-review-bar span {display:block; font-size:.84rem}
+.compose-preview {padding:1rem; background:white; border:1px solid var(--color-border)}
+.compose-preview p {white-space:pre-wrap; overflow-wrap:anywhere; padding:1rem; background:#e8effa; border-radius:.65rem; color:#162840}
+.compose-workspace-details {padding:.8rem 0}
+.people-status {font-size:.82rem; font-weight:600; color:#414e5e}
+.people-status::before {content:''; display:inline-block; width:.45rem; height:.45rem; background:currentColor; border-radius:50%; margin-right:.4rem}
+.people-status--eligible {color:#14614d}
+.people-directory .collection-panel--search,.events-directory .collection-panel--search {border:0; box-shadow:none; background:transparent}
+.people-directory .collection-panel--search .collection-panel__header,.events-directory .collection-panel--search .collection-panel__header {display:none}
+.people-directory .collection-panel--search .collection-panel__body,.events-directory .collection-panel--search .collection-panel__body {padding:0}
+.people-permission-help {margin:.8rem 1rem}
+.people-row {position:relative; padding:.65rem .8rem; min-height:64px}
+.people-row .form-check-input {margin-right:4.75rem}
+.people-row-menu>summary {position:absolute; right:.7rem; top:.6rem; padding:.6rem .15rem; color:#234774; font-size:.84rem}
+@media (max-width:991.98px) {
+    .compose-workspace .workspace-command-side:has(.compose-preview:only-child),.compose-preview {display:none}
+    .compose-review-bar {left:0; right:0; bottom:var(--workspace-bottom-nav-height); gap:.5rem; border-width:1px 0 0}
+    .compose-review-bar .btn {width:auto; min-width:8rem; padding:.65rem}
+    .compose-review-bar span {font-variant-numeric:tabular-nums}
+    .compose-workspace .send-card {margin:0}
+    .compose-step {margin-bottom:.5rem}
+    .compose-step .form-text,.compose-step .form-label {font-size:.86rem}
+    .compose-step .advanced-options {margin-bottom:.5rem!important}
+    .people-directory .collection-panel--search {position:sticky; top:0; z-index:3; background:var(--color-bg)}
+    .workspace-tenant .app-content {scroll-padding-bottom:var(--workspace-bottom-nav-height)}
+}

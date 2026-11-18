@@ -46,6 +46,19 @@ def index(event_id):
                            page=page, pages=pages, total=count, **_display_context())
 
 
+@bp.get('/events/<int:event_id>/feedback/follow-up')
+@login_required
+@require_roles('admin', 'social_manager')
+def follow_up(event_id):
+    event = _event(event_id)
+    flows = feedback_query(event).filter_by(is_active=True).limit(2).all()
+    if len(flows) == 1:
+        return redirect(url_for('event_feedback.invite', event_id=event.id, survey_id=flows[0].id))
+    if not flows:
+        return redirect(url_for('event_feedback.create', event_id=event.id))
+    return redirect(url_for('event_feedback.index', event_id=event.id))
+
+
 @bp.route('/events/<int:event_id>/feedback/new', methods=['GET', 'POST'])
 @login_required
 @require_roles('admin', 'social_manager')

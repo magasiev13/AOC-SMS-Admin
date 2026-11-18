@@ -14,7 +14,7 @@
         {% for row in reminders %}<a class="work-row" href="{{ url_for('main.scheduled_list', id=row.schedule.id) }}"><strong>{{ row.schedule.message_body|private_text|truncate(90) }}</strong><span>{{ row.schedule.scheduled_at|localtime }} · {{ row.audience }} eligible · estimated {{ row.segments }} SMS segments</span></a>
         {% else %}<p class="work-row">No upcoming automatic reminders.</p>{% endfor %}
     </section>
-    {% if recent_event %}<section><h2>Recent event</h2><a class="work-row" href="{{ url_for('event_feedback.index', event_id=recent_event.id) }}"><strong>{{ recent_event.title|private_text }}</strong><span>{{ recent_event.date|localdate }} · Prepare feedback →</span></a></section>{% endif %}
+    {% if recent_event %}<section><h2>Recent event</h2><a class="work-row" href="{{ url_for('event_feedback.follow_up', event_id=recent_event.id) }}"><strong>{{ recent_event.title|private_text }}</strong><span>{{ recent_event.date|localdate }} · Prepare feedback →</span></a></section>{% endif %}
     {% if workspace_usage %}<section><h2>This billing period</h2>{% include 'includes/workspace_usage.html' %}</section>{% endif %}
 </div>
 {% endblock %}

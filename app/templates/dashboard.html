@@ -10,36 +10,14 @@
 {% endblock %}
 
 {% block content %}
-<div class="workspace-shell">
-    {% if config.SAAS_MODE and current_organization %}
-    <details class="dashboard-overview" id="workspaceOverview">
-    <summary class="btn btn-outline-secondary mb-2">Workspace Status and Usage</summary>
-    {% call ui.workspace_summary(workspace_summary) %}
-    {% if current_user_is_workspace_owner %}
-    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
-    {% endif %}
-    <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
-    {% if current_user_is_workspace_owner and not can_send_messages and current_subscription_view.show_checkout %}
-    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-primary">
-            {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
-        </button>
-    </form>
-    {% endif %}
-    {% endcall %}
-    </details>
-    {% endif %}
-
+<div class="workspace-shell compose-workspace">
     <div class="workspace-command-layout dashboard-layout">
         <div class="workspace-command-main">
 
         <!-- Send SMS Section -->
         <section class="mb-4 dashboard-section dashboard-section-send">
             <div class="send-card">
-                <div class="send-card__header">
-                    <h2 class="h5"><i class="bi bi-send-fill me-2"></i>Write Your Message</h2>
-                </div>
+
                 <div class="send-card__body">
                     {% if composer_event %}<div class="alert alert-info" role="status">
                         <strong>{{ composer_event.title|private_text }}</strong> · {{ 'Contact List Announcement' if selected_target == 'community' else 'Event Registrant Message' }}
@@ -61,6 +39,48 @@
                         {% if context_event_id %}<input type="hidden" name="context_event_id" value="{{ context_event_id }}">{% endif %}
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+                        <fieldset class="compose-step" id="compose-who">
+                            <legend>Who is it for?</legend>
+                        <div class="mb-3">
+
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="target" id="targetCommunity"
+                                       value="community" {% if selected_target != 'event' %}checked{% endif %}>
+                                <label class="form-check-label" for="targetCommunity">
+                                    <i class="bi bi-people me-1"></i>Contact List
+
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="target" id="targetEvent"
+                                       value="event" {% if selected_target == 'event' %}checked{% endif %}>
+                                <label class="form-check-label" for="targetEvent">
+                                    <i class="bi bi-calendar-event me-1"></i>Event Registrants
+
+                                </label>
+                            </div>
+                            <details class="form-text"><summary>Permission checks</summary>
+                                {% if confirmed_community_signup_consent %}Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
+                            </details>
+                            <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
+                        </div>
+
+                        <div class="mb-3" id="eventSelectWrapper" style="display: none;">
+                            <label for="event_id" class="form-label">Select Event</label>
+                            <select class="form-select" id="event_id" name="event_id">
+                                <option value="">-- Select an event --</option>
+                                {% for event in events %}
+                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
+                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Current events appear by default. <a href="{{ url_for('main.events_list', view='past') }}">Open past events for a follow-up or feedback request.</a></div>
+                            {% if selected_past_event %}<p class="small text-info mt-2 mb-0" role="status">Past event follow-up: this sends only to the selected event's eligible contacts. Attendance history does not override opt-outs.</p>{% endif %}
+                        </div>
+
+                        </fieldset>
+                        <fieldset class="compose-step" id="compose-what"><legend>What will you say?</legend>
                         <div class="mb-3">
                             <label for="message_body" class="form-label">Message</label>
                             <textarea class="form-control" id="message_body" name="message_body" rows="4"
@@ -80,45 +100,6 @@
                             </details>
                         </div>
 
-                    {% include "includes/workspace_usage.html" %}
-                        <div class="mb-3">
-                            <label class="form-label">Target Audience</label>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="target" id="targetCommunity"
-                                       value="community" {% if selected_target != 'event' %}checked{% endif %}>
-                                <label class="form-check-label" for="targetCommunity">
-                                    <i class="bi bi-people me-1"></i>Contact List
-                                    <span class="text-muted">(eligible contacts with list permission)</span>
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="target" id="targetEvent"
-                                       value="event" {% if selected_target == 'event' %}checked{% endif %}>
-                                <label class="form-check-label" for="targetEvent">
-                                    <i class="bi bi-calendar-event me-1"></i>Event Registrants
-                                    <span class="text-muted">(registered contacts with permission for this event)</span>
-                                </label>
-                            </div>
-                            <div class="form-text">
-                                {% if confirmed_community_signup_consent %}Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
-                            </div>
-                            <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
-                        </div>
-
-                        <div class="mb-3" id="eventSelectWrapper" style="display: none;">
-                            <label for="event_id" class="form-label">Select Event</label>
-                            <select class="form-select" id="event_id" name="event_id">
-                                <option value="">-- Select an event --</option>
-                                {% for event in events %}
-                                <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
-                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <div class="form-text">Current events appear by default. <a href="{{ url_for('main.events_list', view='past') }}">Open past events for a follow-up or feedback request.</a></div>
-                            {% if selected_past_event %}<p class="small text-info mt-2 mb-0" role="status">Past event follow-up: this sends only to the selected event's eligible contacts. Attendance history does not override opt-outs.</p>{% endif %}
-                        </div>
-
                         <div class="mb-3">
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" name="include_unsubscribe" id="includeUnsubscribe" {% if request.method != 'POST' or request.form.get('include_unsubscribe') == 'on' %}checked{% endif %}>
@@ -129,6 +110,9 @@
                             </div>
                         </div>
 
+                        </fieldset>
+                        <fieldset class="compose-step" id="compose-when"><legend>When should it go out?</legend>
+                        <p class="form-text">Send after review, or choose a time.</p>
                         <details class="advanced-options mb-3" {% if request.form.get('schedule_later') == 'on' or request.form.get('test_mode') == 'on' %}open{% endif %}>
                             <summary class="advanced-options__summary">
                                 <i class="bi bi-sliders me-2"></i>Delivery Options
@@ -252,11 +236,13 @@
                             </div>
                         </details>
 
-                        <div class="d-grid gap-2">
+                        </fieldset>
+                        <button type="button" class="btn btn-link" id="discardSendDraft">Discard draft</button>
+                        <div class="compose-review-bar">
+                            <div><strong>Estimated usage</strong><span id="composeSegmentTotal" aria-live="polite">0 SMS segments</span></div>
                             <button type="submit" class="btn btn-primary btn-lg" id="sendBtn" {% if config.SAAS_MODE and current_organization and not can_send_messages %}disabled{% endif %}>
                                 <i class="bi bi-send-fill me-2"></i>{{ 'Messaging Setup In Progress' if config.SAAS_MODE and current_organization and not can_send_messages else 'Review Message' }}
                             </button>
-                            <button type="button" class="btn btn-outline-secondary" id="discardSendDraft">Discard draft</button>
                             {% if config.SAAS_MODE and current_organization and not can_send_messages %}
                             <div class="form-text text-center">You can draft a message while setup is in progress. Live sending becomes available when setup is complete.</div>
                             {% endif %}
@@ -268,6 +254,9 @@
         </div>
 
         <aside class="workspace-command-side">
+            <section class="compose-preview" aria-labelledby="compose-preview-title">
+                <h2 id="compose-preview-title">Text preview</h2><p id="composePreviewBody">Your message will appear here.</p>
+            </section>
             {% if config.SAAS_MODE and current_organization and users_missing_email and current_user.is_admin %}
             <div class="workspace-callout workspace-callout--warning" role="alert">
                 <div class="workspace-callout__title">Email Cleanup Needed</div>
@@ -301,6 +290,29 @@
         </aside>
     </div>
 
+        <details class="compose-workspace-details">
+            <summary>Workspace activity and usage</summary>
+    {% if config.SAAS_MODE and current_organization %}
+    <details class="dashboard-overview" id="workspaceOverview">
+    <summary class="btn btn-outline-secondary mb-2">Workspace Status and Usage</summary>
+    {% call ui.workspace_summary(workspace_summary) %}
+    {% if current_user_is_workspace_owner %}
+    <a href="{{ url_for('main.billing_overview') }}" class="btn btn-outline-secondary">Billing</a>
+    {% endif %}
+    <a href="{{ url_for('main.inbox_list') }}" class="btn btn-outline-secondary">Inbox</a>
+    {% if current_user_is_workspace_owner and not can_send_messages and current_subscription_view.show_checkout %}
+    <form method="POST" action="{{ url_for('main.billing_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+            {{ 'Activate Subscription' if not current_subscription_view.is_complimentary else 'Review Billing' }}
+        </button>
+    </form>
+    {% endif %}
+    {% endcall %}
+    </details>
+    {% endif %}
+
+        {% include 'includes/workspace_usage.html' %}
         <!-- Stats Row -->
         <section class="mb-4 dashboard-section dashboard-section-stats">
             <div class="row g-3">
@@ -529,7 +541,7 @@
                 <h5 class="section-title"><i class="bi bi-activity"></i> Recent Activity</h5>
                 <a href="{{ url_for('main.logs_list') }}" class="btn btn-sm btn-outline-primary">Message History</a>
             </div>
-            
+
             {% if recent_logs %}
             <div class="activity-timeline">
                 {% for log in recent_logs %}
@@ -571,6 +583,7 @@
             {% endif %}
         </section>
         {% endif %}
+        </details>
 </div>
 <div class="modal fade" id="sendReviewModal" tabindex="-1" aria-labelledby="sendReviewTitle" aria-describedby="sendReviewExplanation">
     <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">

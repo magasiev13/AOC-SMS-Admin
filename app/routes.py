@@ -5112,7 +5112,7 @@ def dashboard():
             if test_mode:
                 flash('No internal test recipients were resolved for this test send.', 'error')
             else:
-                flash('No eligible recipients were found. Review permission, unsubscribe, and suppression records.', 'error')
+                flash('No contacts can receive this message. Review permission, opt-outs and blocked numbers.', 'error')
             return render_dashboard()
 
         blast_estimate = analyze_personalized_sms_blast(final_message, recipient_data)
@@ -8511,9 +8511,12 @@ def events_list():
         )
 
     past_count = query.filter(~predicate).count()
-    events = query.filter(~predicate if event_view == 'past' else predicate).order_by(Event.date.desc()).all()
+    events = query.filter(~predicate if event_view == 'past' else predicate).order_by(
+        Event.date.desc() if event_view == 'past' else Event.date.asc().nullslast(), Event.id).all()
+    recent = query.filter(~predicate).order_by(Event.date.desc(), Event.id.desc()).limit(3).all() if (
+        not search and 'view' not in request.args) else []
     return render_template('events/list.html', events=events, search=search, event_view=event_view,
-                           past_count=past_count)
+                           past_count=past_count, recent_events=recent)
 
 
 @bp.route('/events/add', methods=['GET', 'POST'])
@@ -9007,7 +9010,7 @@ def logs_list():
             'MessageLog list query failed due to schema mismatch: %s',
             exc,
         )
-        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        flash('Message history is temporarily unavailable. Try again later.', 'error')
         logs = []
         total_count = 0
         page = total_pages = 1
@@ -9046,7 +9049,7 @@ def log_detail(log_id):
             'MessageLog detail query failed due to schema mismatch: %s',
             exc,
         )
-        flash('Logs are temporarily unavailable due to a schema mismatch.', 'error')
+        flash('Message history is temporarily unavailable. Try again later.', 'error')
         return redirect(url_for('main.logs_list'))
 
     details = _parse_message_log_details(log.details)

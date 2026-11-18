@@ -4,7 +4,7 @@
 
 {% block title %}Contacts - {{ product_name }}{% endblock %}
 
-{% block page_title %}Contacts{% endblock %}
+{% block page_title %}People{% endblock %}
 
 {% set can_manage_community = current_user.is_admin %}
 {% set can_review_permission = can_review_permission and not confirmed_signup_consent %}
@@ -51,12 +51,8 @@
 {% set contacts_empty_secondary_href = url_for('main.community_import') if can_manage_community else None %}
 {% set contacts_empty_secondary_label = 'Import CSV' if can_manage_community else None %}
 {% endif %}
-<div class="collection-shell">
-    <nav class="d-flex flex-wrap gap-2" aria-label="Contact Views">
-        <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'contactable' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', search=search) }}"{% if audience_view == 'contactable' %} aria-current="page"{% endif %}>Contactable</a>
-        <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'all' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', view='all', search=search) }}"{% if audience_view == 'all' %} aria-current="page"{% endif %}>All Contacts</a>
-    </nav>
-    <p class="small text-muted mb-0">{% if audience_view == 'contactable' %}Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts.{% if not confirmed_signup_consent %} Sending still requires SMS permission.{% endif %}{% else %}All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.{% endif %}</p>
+<div class="collection-shell people-directory">
+    {% include 'includes/people_filters.html' %}
     {% call ui.collection_search_panel(
         url_for('main.community_list'),
         'Search by name or phone' if can_view_contact_numbers else 'Search by name',
@@ -66,11 +62,6 @@
         'Find contacts and review their messaging permission.',
         'communityTable'
     ) %}<input type="hidden" name="view" value="{{ audience_view }}">{% endcall %}
-    {% if confirmed_signup_consent %}
-    <p class="small text-muted mb-0">Newsletter, event and in-person sign-ups include community SMS consent, as confirmed by the organization. Explicit opt-outs remain excluded.</p>
-    {% elif config.SAAS_MODE %}
-    <p class="small text-muted mb-0">Saving a phone number does not establish SMS permission. Community SMS permission is separate from event updates. {{ 'Review the evidence for each contact before sending.' if can_review_permission else 'Ask a workspace owner to review contacts with unknown permission.' }}</p>
-    {% endif %}
 
 <div class="card app-card collection-panel collection-panel--results">
     {% if members and can_manage_community %}
@@ -141,7 +132,7 @@
                         <td data-sort-value="{{ (member.name or '')|private_text }}">{{ contact_label(member.name, member.id) }}</td>
                         {% if can_view_contact_numbers %}<td data-sort-value="{{ member.phone }}"><code>{{ member.phone }}</code></td>{% endif %}
                         <td data-sort-value="{{ 'Unsubscribed' if is_unsubscribed else permission_statuses[member.phone].decision }}">
-                            {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}
+                            {{ permissions.contact_status(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones) }}
                             {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         </td>
                         <td data-sort-value="{{ member.created_at.isoformat() if member.created_at else '' }}">
@@ -226,14 +217,11 @@
         {% if members %}
             {% for member in members %}
             {% set is_unsubscribed = member.phone in unsubscribed_phones %}
-            <div class="card-list-item">
+            <div class="card-list-item people-row">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
                         <h6 class="mb-1">{{ contact_label(member.name, member.id) }}</h6>
-                        {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ member.phone }}</code></div>{% endif %}
-                        <div class="small mt-1">SMS permission: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
-                        {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
-                        <div class="text-muted small">Added {{ member.created_at|localdate if member.created_at else '-' }}</div>
+                        <div class="small mt-1">{{ permissions.contact_status(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones) }}</div>
                     </div>
                     {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
@@ -241,7 +229,9 @@
                     {% endif %}
                 </div>
                 {% if can_manage_community %}
-                <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions data-row-actions-primary="2">
+                <details class="people-row-menu"><summary>Actions</summary>
+                    <div class="d-flex flex-wrap gap-2 py-2">
+                    {% if can_review_permission %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a>{% endif %}
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
                             data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
@@ -264,7 +254,7 @@
                             data-member-name="{{ (member.name)|private_text }}" data-form-id="delete-member-{{ member.id }}">
                         <i class="bi bi-trash"></i> Delete
                     </button>
-                </div>
+                </div></details>
                 {% endif %}
             </div>
             {% endfor %}
@@ -282,6 +272,13 @@
             </div>
         {% endif %}
     </div>
+    <details class="people-permission-help"><summary>How contact permission works</summary>    <p class="small text-muted mb-0">{% if audience_view == 'contactable' %}Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts.{% if not confirmed_signup_consent %} Sending still requires SMS permission.{% endif %}{% else %}All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.{% endif %}</p>
+    {% if confirmed_signup_consent %}
+    <p class="small text-muted mb-0">Newsletter, event and in-person sign-ups include community SMS consent, as confirmed by the organization. Explicit opt-outs remain excluded.</p>
+    {% elif config.SAAS_MODE %}
+    <p class="small text-muted mb-0">Saving a phone number does not establish SMS permission. Community SMS permission is separate from event updates. {{ 'Review the evidence for each contact before sending.' if can_review_permission else 'Ask a workspace owner to review contacts with unknown permission.' }}</p>
+    {% endif %}
+</details>
     {% if members %}
     <div class="card-footer d-flex flex-wrap justify-content-between align-items-center gap-3">
         <span>Showing {{ (page - 1) * per_page + 1 }}–{{ (page - 1) * per_page + members|length }} of {{ total_count }} contacts. Selection applies to this page.</span>

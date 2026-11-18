@@ -4,9 +4,6 @@
 {% set is_security = endpoint.startswith('main.security_events') %}
 {% set is_users = endpoint.startswith('main.users_') %}
 {% set is_settings = endpoint == 'main.settings_home' or endpoint.startswith('main.event_sync_') or endpoint.startswith('main.test_recipients_') or endpoint.startswith('main.billing_') or endpoint.startswith('main.team_') or is_users or is_security %}
-{% set is_events = endpoint.startswith('event_feedback.') or endpoint.startswith('main.events_') or (endpoint.startswith('main.event_') and not endpoint.startswith('main.event_sync_')) %}
-{% set is_automations = endpoint.startswith('main.keyword_rule') or endpoint.startswith('main.survey_flow') %}
-{% set is_history = endpoint.startswith('main.logs_') or endpoint.startswith('main.log_') %}
 {% set group_label_class = 'text-body-secondary' if mobile_navigation else 'text-white-50' %}
 {% macro navigation_link(label, destination, icon, active=false) -%}
 <a class="app-nav-link{% if active %} active{% endif %}" href="{{ url_for(destination) }}"{% if active %} aria-current="page"{% endif %}>
