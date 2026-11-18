@@ -29,6 +29,7 @@ async function waitForSavedReply(page, width, text) {
   // Chromium supports Secure cookies on HTTP loopback; APIRequestContext
   // correctly omits them there. Exercise the real browser's signed-in path.
   await page.goto(url);
+  await page.locator('.inbox-thread-link').filter({ hasText: `Feedback respondent ${width}` }).click();
   await expect(page).not.toHaveURL(/\/login(?:\?|$)/);
   await expect.poll(async () => {
     await page.reload();

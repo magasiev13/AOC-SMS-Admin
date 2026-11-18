@@ -44,6 +44,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     await page.goto('/inbox');
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     const reply = page.getByLabel('Send Reply');
     const draft = `Unsent draft survives updates ${width}`;
     const originalKey = await page.locator('.inbox-reply-form [name="request_idempotency_key"]').inputValue();
@@ -78,6 +79,7 @@ for (const width of [1440, 390]) {
     await page.waitForURL('**/login', { waitUntil: 'domcontentloaded' });
     await login(page, 'staff@browser.test', 'Staff-pass1!');
     await page.goto('/inbox');
+    await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
     await expect(page.getByLabel('Send Reply')).toHaveValue('');
   });
 }
@@ -136,6 +138,7 @@ test('an accepted reply with a lost redirect retries the original send identity'
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await page.goto('/inbox');
+  await page.locator('.inbox-thread-link').filter({ hasText: 'Maya Chen' }).click();
   const reply = page.getByLabel('Send Reply');
   const body = 'UX accepted response lost once';
   const originalKey = await page.locator('.inbox-reply-form [name="request_idempotency_key"]').inputValue();
