@@ -4428,6 +4428,86 @@ def _create_send_review(form):
     }
 
 
+@bp.get('/messages')
+@login_required
+def workspace_messages():
+    """Page a combined schedule and dispatch index before loading message bodies."""
+    from app.services.event_workspace_service import REMINDER_LABELS, submission_outcomes
+    def index_query(model, timestamp, kind):
+        query = model.query.with_entities(model.id.label('id'), timestamp.label('activity_at'),
+                                          literal(kind).label('kind'))
+        return _tenant_bulk_filter(query, model)
+
+    logs = index_query(MessageLog, MessageLog.created_at, 'log')
+    schedules = index_query(ScheduledMessage, ScheduledMessage.scheduled_at, 'schedule').filter(
+        ScheduledMessage.message_log_id.is_(None))
+    timeline = logs.union_all(schedules).subquery()
+    index = db.session.query(timeline)
+    per_page = 50
+    pages = max(1, (index.count() + per_page - 1) // per_page)
+    page = min(pages, max(1, request.args.get('page', 1, type=int)))
+    entries = index.order_by(timeline.c.activity_at.desc(), timeline.c.kind,
+                             timeline.c.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+    log_ids = [entry.id for entry in entries if entry.kind == 'log']
+    schedule_ids = [entry.id for entry in entries if entry.kind == 'schedule']
+    logs_by_id = {log.id: log for log in MessageLog.query.filter(MessageLog.id.in_(log_ids)).all()}
+    schedules_by_id = {row.id: row for row in ScheduledMessage.query.filter(ScheduledMessage.id.in_(schedule_ids)).all()}
+    linked = {row.message_log_id: row for row in ScheduledMessage.query.filter(ScheduledMessage.message_log_id.in_(log_ids)).all()}
+    rows = []
+    for entry in entries:
+        log = logs_by_id.get(entry.id) if entry.kind == 'log' else None
+        schedule = linked.get(entry.id) if entry.kind == 'log' else schedules_by_id.get(entry.id)
+        record = log or schedule
+        if record is None:
+            continue
+        state = (record.status or 'sent').capitalize()
+        if schedule and not log and schedule.status == 'pending':
+            state = 'Scheduled'
+        rows.append({'body': record.message_body, 'time': entry.activity_at, 'state': state,
+                     'reminder': bool(schedule and schedule.automation_kind in REMINDER_LABELS),
+                     'outcome': submission_outcomes(log) if log else None,
+                     'url': url_for('main.log_detail', log_id=log.id) if log else
+                            url_for('main.scheduled_list', id=schedule.id)})
+    return render_template('workspace/messages.html', rows=rows, page=page, pages=pages)
+
+
+@bp.get('/home')
+@login_required
+def workspace_home():
+    from app.models import MessagingUsageRecord
+    from app.services.event_workspace_service import REMINDER_LABELS
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    organization = _current_organization()
+    failed = MessagingUsageRecord.query.filter(
+        MessagingUsageRecord.organization_id == _current_organization_id(),
+        MessagingUsageRecord.direction == 'outbound',
+        MessagingUsageRecord.created_at >= now - timedelta(days=7),
+        MessagingUsageRecord.delivery_status.in_(('failed', 'undelivered', 'canceled')),
+    ).count() if organization else 0
+    held = ScheduledMessage.query.filter_by(status='held').order_by(ScheduledMessage.scheduled_at).limit(5).all()
+    upcoming = ScheduledMessage.query.filter(
+        ScheduledMessage.status == 'pending', ScheduledMessage.automation_kind.in_(REMINDER_LABELS),
+        ScheduledMessage.scheduled_at >= now,
+    ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).limit(3).all()
+    reminders = []
+    audiences = {}
+    for item in upcoming:
+        audience_key = (item.target, item.event_id)
+        if audience_key not in audiences:
+            groups = _load_blast_target_recipients(target=item.target, event_id=item.event_id,
+                                                   test_mode=False, test_recipient_data=None)
+            audiences[audience_key], _ = _prepare_sendable_blast_recipients(
+                groups, apply_opt_out_filters=True, target=item.target, event_id=item.event_id)
+        recipients = audiences[audience_key]
+        estimate = analyze_personalized_sms_blast(item.message_body, recipients)
+        reminders.append({'schedule': item, 'audience': len(recipients), 'segments': estimate['total_segments']})
+    recent = events_query(current_only=False).filter(~current_event_predicate()).order_by(
+        Event.date.desc(), Event.id.desc()).first()
+    return render_template('workspace/home.html', failed=failed, held=held, reminders=reminders,
+                           unread=InboxThread.query.filter(InboxThread.unread_count > 0).count(),
+                           recent_event=recent, workspace_usage=workspace_usage_summary(organization))
+
+
 @bp.route('/dashboard/review', methods=['POST'])
 @login_required
 @require_roles('admin', 'social_manager')
@@ -9190,6 +9270,8 @@ def scheduled_list():
     search = request.args.get('search', '').strip()
     now = datetime.utcnow()
     query = _apply_scheduled_search_filter(ScheduledMessage.query, search)
+    if request.args.get('id', type=int) is not None:
+        query = query.filter(ScheduledMessage.id == request.args.get('id', type=int))
 
     pending = query.filter(ScheduledMessage.status == 'pending').order_by(ScheduledMessage.scheduled_at).all()
     past = query.filter(ScheduledMessage.status != 'pending').order_by(ScheduledMessage.scheduled_at.desc()).limit(50).all()

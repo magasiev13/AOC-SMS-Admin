@@ -1,0 +1,17 @@
+.workspace-places .app-nav-link {display:flex; align-items:center; gap:.8rem; margin-bottom:.25rem}
+.work-ledger {max-width:68rem}
+.work-ledger section {margin-bottom:2rem}
+.work-ledger h2 {font-size:1.16rem; margin:0; padding:.6rem 0; border-bottom:2px solid var(--color-text)}
+.work-row {display:flex; align-items:center; justify-content:space-between; gap:1.3rem; padding:1rem .2rem; margin:0; border-bottom:1px solid var(--color-border); text-decoration:none; color:var(--color-text); overflow-wrap:anywhere}
+.work-row:is(a):hover {background:var(--color-surface-muted)}
+.work-row small,.work-row span {display:block; font-size:.88rem; color:#46576c}
+.work-row strong {font-weight:650}
+.work-row small {margin-top:.2rem}
+@media (max-width:991.98px) {
+    .workspace-tenant {--workspace-bottom-nav-height:calc(64px + env(safe-area-inset-bottom, 0px)); padding-bottom:var(--workspace-bottom-nav-height)}
+    .workspace-bottom-nav {position:fixed; inset:auto 0 0; z-index:1025; height:var(--workspace-bottom-nav-height); padding-bottom:env(safe-area-inset-bottom, 0px); display:grid; grid-template-columns:1fr 1fr 1.25fr 1fr 1fr; background:white; border-top:1px solid var(--color-border-strong)}
+    .workspace-bottom-nav .app-nav-link {display:flex; flex-flow:column; align-items:center; justify-content:center; gap:3px; margin:0; padding:4px 1px; color:#41516a; font-size:.67rem; border-radius:0; border-top:3px solid transparent; min-width:0}
+    .workspace-bottom-nav .app-nav-link i {font-size:1.16rem}
+    .workspace-bottom-nav .app-nav-link.active {color:#164bb1; border-color:currentColor; background:#f4f8ff}
+    .work-row {align-items:start; flex-direction:column; gap:.25rem; padding:.85rem 0}
+}

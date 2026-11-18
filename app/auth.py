@@ -44,6 +44,8 @@ SUSPENDED_ORGANIZATION_MESSAGE = "Your organization is currently suspended. Cont
 TENANT_ENDPOINT_PREFIXES = (
     "event_feedback.",
     "main.dashboard",
+    "main.workspace_home",
+    "main.workspace_messages",
     "main.setup",
     "main.billing_",
     "main.community_",
@@ -130,7 +132,7 @@ def _setup_endpoint_for_user(user) -> str:
     if getattr(user, "organization_id", None) is None:
         return "main.dashboard"
     if _organization_setup_complete(user):
-        return "main.dashboard"
+        return "main.workspace_home"
     if getattr(user, "organization_role", None) == "owner":
         return "main.setup"
     return "main.setup_pending"

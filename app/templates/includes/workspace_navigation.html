@@ -25,24 +25,9 @@
         {{ navigation_link('Security', 'main.security_events', 'bi-shield-lock', is_security) }}
     </div>
 </div>
-{% else %}
-<div class="app-nav-group w-100" role="group" aria-label="Messaging">
-    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">Messaging</div>
-    <div class="nav flex-column gap-1">
-        {{ navigation_link('Send a Message', 'main.dashboard', 'bi-send', endpoint in ('main.dashboard', 'main.dashboard_send_review', 'main.dashboard_audience_preview')) }}
-        {{ navigation_link('Inbox', 'main.inbox_list', 'bi-chat-left-text', endpoint.startswith('main.inbox_')) }}
-        {{ navigation_link('Automations', 'main.keyword_rules_list', 'bi-magic', is_automations) }}
-        {{ navigation_link('Scheduled Messages', 'main.scheduled_list', 'bi-clock', endpoint.startswith('main.scheduled_')) }}
-        {{ navigation_link('Message History', 'main.logs_list', 'bi-journal-text', is_history) }}
-    </div>
-</div>
-<div class="app-nav-group w-100" role="group" aria-label="Contacts &amp; Events">
-    <div class="app-nav-group-label small fw-semibold px-3 mt-2 mb-1 {{ group_label_class }}">Contacts &amp; Events</div>
-    <div class="nav flex-column gap-1">
-        {{ navigation_link('Contacts', 'main.community_list', 'bi-people', endpoint.startswith('main.community_')) }}
-        {{ navigation_link('Events', 'main.events_list', 'bi-calendar-event', is_events) }}
-        {{ navigation_link('Opt-Outs & Blocks', 'main.unsubscribed_list', 'bi-person-x', endpoint.startswith('main.unsubscribed_')) }}
-    </div>
+{% elif not mobile_navigation %}
+<div class="app-nav-group w-100 workspace-places" role="group" aria-label="Workspace navigation">
+    {% include 'includes/workspace_places.html' %}
 </div>
 {% endif %}
 <div class="app-nav-group w-100" role="group" aria-label="{{ 'Help' if platform_user else 'Workspace' }}">

@@ -10,13 +10,14 @@
     <link href="{{ url_for('static', filename='vendor/bootstrap-icons/1.11.1/font/bootstrap-icons.css', v=app_version) }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/app.css', v=app_version) }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/ui-system.css', v=app_version) }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/workspace.css', v=app_version) }}" rel="stylesheet">
 </head>
-<body class="app-body">
+<body class="app-body{% if not current_user.is_platform_admin %} workspace-tenant{% endif %}">
     <a href="#main-content" class="visually-hidden-focusable position-absolute top-0 start-0 m-2 btn btn-primary">Skip to Content</a>
     {% set platform_user = current_user.is_authenticated and current_user.is_platform_admin %}
     {% set workspace_settings_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and config.SAAS_MODE %}
     {% set legacy_admin_tools_visible = current_user.is_authenticated and not platform_user and current_user.is_admin and not config.SAAS_MODE %}
-    {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.dashboard') %}
+    {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.workspace_home') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
             <a class="app-sidebar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
@@ -166,6 +167,11 @@
         </div>
     </div>
 
+    {% if not platform_user %}
+    <nav class="workspace-bottom-nav d-lg-none" aria-label="Workspace navigation">
+        {% include 'includes/workspace_places.html' %}
+    </nav>
+    {% endif %}
     <script src="{{ url_for('static', filename='vendor/bootstrap/5.3.2/js/bootstrap.bundle.min.js', v=app_version) }}"></script>
     <script src="{{ url_for('static', filename='js/table_sort.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
