@@ -3312,6 +3312,10 @@ a:focus-visible {
   height: 250px;
 }
 
+.chart-container canvas {
+  max-width: 100%;
+}
+
 .chart-container--sm {
   height: 200px;
   padding: var(--space-2);
@@ -3392,6 +3396,7 @@ a:focus-visible {
 
 .activity-item__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-2);
@@ -3399,6 +3404,7 @@ a:focus-visible {
 }
 
 .activity-item__title {
+  overflow-wrap: anywhere;
   font-weight: 600;
   color: var(--color-text);
   font-size: var(--font-size-2);
