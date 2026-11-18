@@ -115,7 +115,7 @@
                         {% set metadata = entry.metadata_payload %}
                         <section class="workspace-callout">
                             <h3 class="workspace-callout__title">{{ entry.actor_user.username if entry.actor_user else 'System' }}</h3>
-                            <p class="workspace-callout__copy">{{ entry.created_at|localtime('%Y-%m-%d %H:%M') if entry.created_at else '-' }}</p>
+                            <p class="workspace-callout__copy">{{ entry.created_at|localtime if entry.created_at else '-' }}</p>
                             <p class="workspace-callout__copy">
                                 {{ metadata.get('before_count', 0) }} saved
                                 <span class="mx-1">→</span>

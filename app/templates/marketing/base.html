@@ -7,7 +7,7 @@
     <meta name="description" content="{% block meta_description %}Managed business texting with accountable delivery, replies, and compliance support.{% endblock %}">
     <title>{% block title %}Twinevia{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='brand-mark.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/marketing.css') }}">
     {% block head %}{% endblock %}
   </head>

@@ -135,7 +135,7 @@
                                             {% for event in events %}
                                             <option value="{{ event.id }}"
                                                     {% if (existing_event_id_value|string) == (event.id|string) %}selected{% endif %}>
-                                                {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %}
+                                                {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %}
                                             </option>
                                             {% endfor %}
                                         </select>

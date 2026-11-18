@@ -74,7 +74,7 @@
                                 </td>
                                 <td>{{ membership.user.email or '-' }}</td>
                                 <td>{{ membership.user.username }}</td>
-                                <td>{{ membership.created_at|localtime('%Y-%m-%d %H:%M') if membership.created_at else '-' }}</td>
+                                <td>{{ membership.created_at|localtime if membership.created_at else '-' }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

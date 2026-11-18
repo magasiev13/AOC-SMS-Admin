@@ -4,12 +4,22 @@ const { login, installFailureDiagnostics, attachFailureDiagnostics } = require('
 test.beforeEach(async ({ page }) => installFailureDiagnostics(page));
 test.afterEach(async ({ page }, info) => attachFailureDiagnostics(page, info));
 
+function workspaceDateTime(instant, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short',
+  }).formatToParts(instant).map(part => [part.type, part.value]));
+  return `${parts.weekday}, ${parts.month} ${parts.day}, ${parts.year} · ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${parts.timeZoneName}`;
+}
+
 for (const width of [1440, 390]) {
   test(`company event bookings and deliberate invitation at ${width}px`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await login(page, 'owner@browser.test', 'Owner-pass1!');
+    const workspaceTimezone = await page.locator('#workspaceScheduleTimezone').getAttribute('data-workspace-timezone');
+    expect(workspaceTimezone).toBeTruthy();
     await page.goto('/events/add');
     await page.getByLabel('Event Title').fill(`Company workshop ${width}`);
     await page.getByLabel('Date (optional)').fill('2030-12-04');
@@ -67,11 +77,17 @@ for (const width of [1440, 390]) {
     await page.getByLabel('Time', { exact: true }).fill('10:30');
     await page.getByLabel('Timezone', { exact: true }).fill('America/Denver');
     await page.getByRole('button', { name: 'Review Invitation', exact: true }).click();
-    await expect(page.locator('[data-review="timing"]')).toContainText('2030-12-05');
-    await expect(page.locator('[data-review="timing"]')).toContainText('America/Denver');
+    // Denver is UTC-07:00 on this December date. Render that exact instant in
+    // the workspace zone; the chosen scheduling fields must remain untouched.
+    const expectedTiming = workspaceDateTime(new Date('2030-12-05T10:30:00-07:00'), workspaceTimezone);
+    await expect(page.locator('[data-review="timing"]')).toHaveText(expectedTiming);
+    await expect(page.locator('input[name="schedule_date"]')).toHaveValue('2030-12-05');
+    await expect(page.locator('input[name="schedule_time"]')).toHaveValue('10:30');
+    await expect(page.locator('input[name="timezone"]')).toHaveValue('America/Denver');
     await page.getByRole('button', { name: 'Confirm Invitation Schedule', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Invitations', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: /Invitation #.*Event Registrants/ }).first()).toBeVisible();
+    await expect(page.getByText(expectedTiming, { exact: true })).toBeVisible();
     await page.goto(eventPath);
     await expect(page.locator('#messages')).toContainText('Feedback Invitation');
     await expect(page.locator('#overview')).toContainText('Feedback Invitation');

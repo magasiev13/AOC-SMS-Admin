@@ -59,7 +59,6 @@
                         <input type="hidden" name="review_token" value="">
                         <input type="hidden" name="request_idempotency_key" value="{{ scheduled_request_idempotency_key }}">
                         {% if context_event_id %}<input type="hidden" name="context_event_id" value="{{ context_event_id }}">{% endif %}
-                        <input type="hidden" name="client_timezone" id="client_timezone">
                         <div id="sendFormError" class="validation-message validation-message--error d-none" role="alert" aria-live="assertive"></div>
                         <div id="sendFormStatus" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
                         <div class="mb-3">
@@ -68,14 +67,20 @@
                                       placeholder="Enter your message..." required maxlength="1600">{{ request.form.get('message_body', feedback_invitation or '') }}</textarea>
                             <div class="form-text"><span id="charCount">0</span> / 1600 characters. Personalize with <code>{first_name}</code> or <code>{full_name}</code>.</div>
                             <div class="form-text" id="messageUnitEstimate" aria-live="polite"></div>
+                            <div class="alert alert-warning py-2 mt-2 d-none" id="specialCharacterWarning" role="status">
+                                <span id="specialCharacterWarningText"></span>
+                                <button type="button" class="btn btn-sm btn-outline-dark mt-2" id="replaceSpecialCharacters">Replace special characters</button>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary mt-2" id="undoSpecialCharacters" hidden>Undo</button>
                             <details class="message-usage mt-2">
                                 <summary>How SMS Usage Is Calculated</summary>
-                                <div class="form-text">Long messages use more than one SMS unit per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
-                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS unit(s) per message · <span id="charsToNextSegment">160</span> characters until the next unit</div>
+                                <div class="form-text">Long messages use more than one SMS segment per recipient. Some symbols and emoji also increase usage. Your final review shows the estimate after recipient checks and personalization.</div>
+                                <div class="form-text">Encoding: <span id="messageEncoding">GSM-7</span> · <span id="segmentCount">0</span> SMS segment(s) per message · <span id="charsToNextSegment">160</span> characters until the next segment</div>
                                 <div class="form-text" id="messageNormalizationHint" aria-live="polite"></div>
                             </details>
                         </div>
 
+                    {% include "includes/workspace_usage.html" %}
                         <div class="mb-3">
                             <label class="form-label">Target Audience</label>
                             <div class="form-check">
@@ -106,7 +111,7 @@
                                 <option value="">-- Select an event --</option>
                                 {% for event in events %}
                                 <option value="{{ event.id }}" data-recipient-count="{{ event_recipient_counts.get(event.id, 0) }}" {% if selected_event_id == event.id %}selected{% endif %}>
-                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date.strftime('%Y-%m-%d') }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
+                                    {{ (event.title)|private_text }}{% if event.date %} ({{ event.date|localdate }}){% endif %} - {{ event_recipient_counts.get(event.id, 0) }} contactable{% if selected_past_event and selected_past_event.id == event.id %} · Past event follow-up{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
@@ -136,9 +141,8 @@
                                             <i class="bi bi-clock me-1"></i><strong>Schedule for Later</strong>
                                         </label>
                                     </div>
-                                    <div class="form-text">
-                                        Schedule sends in your local time ({{ app_timezone }} fallback). Detected timezone:
-                                        <span id="timezoneHint">Unavailable</span>.
+                                    <div class="form-text" id="workspaceScheduleTimezone" data-workspace-timezone="{{ app_timezone }}">
+                                        Times are in {{ workspace_timezone_label }}.
                                     </div>
                                 </div>
 
@@ -146,16 +150,17 @@
                                     <div class="row">
                                         <div class="col-md-6">
                                             <label for="schedule_date" class="form-label">Date</label>
-                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date" value="{{ request.form.get('schedule_date', '') }}">
+                                            <input type="date" class="form-control" id="schedule_date" name="schedule_date" aria-describedby="workspaceScheduleTimezone browserTimezoneNotice" value="{{ request.form.get('schedule_date', '') }}">
                                         </div>
                                         <div class="col-md-6">
                                             <label for="schedule_time" class="form-label">Time</label>
-                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time" value="{{ request.form.get('schedule_time', '') }}">
+                                            <input type="time" class="form-control" id="schedule_time" name="schedule_time" aria-describedby="workspaceScheduleTimezone browserTimezoneNotice" value="{{ request.form.get('schedule_time', '') }}">
                                         </div>
                                     </div>
                                     <div class="form-text">
-                                        <i class="bi bi-info-circle me-1"></i>Enter your local time. Scheduled messages begin processing at or shortly after this time.
+                                        <i class="bi bi-info-circle me-1"></i>Enter workspace time. Scheduled messages begin processing at or shortly after this time.
                                     </div>
+                                    <div class="form-text d-none" id="browserTimezoneNotice" role="status" aria-live="polite"></div>
                                 </div>
 
                                 {% if config.SAAS_MODE %}
@@ -317,11 +322,12 @@
                         <i class="bi bi-send-check-fill stat-card__icon"></i>
                         <div class="stat-card__label">Last Message</div>
                         {% if latest_log %}
-                        <div class="stat-card__value">
-                            {% if latest_log.status == 'processing' %}In progress{% elif latest_log.failure_count == 0 %}Submitted{% else %}Partial{% endif %}
+                        <div class="stat-card__value" data-last-message-delivery>
+                            {{ latest_outcomes.delivered }} of {{ latest_outcomes.total }}
                         </div>
-                        <div class="stat-card__meta">
-                            {{ latest_log.success_count }}/{{ latest_log.total_recipients }} provider accepted
+                        <div class="stat-card__meta">recipients delivered</div>
+                        <div class="stat-card__meta" data-last-message-outcomes>
+                            {{ latest_outcomes.accepted }} accepted by provider · {{ latest_outcomes.not_submitted }} not submitted · {{ latest_outcomes.not_delivered }} not delivered · {{ latest_outcomes.no_receipt }} no receipt yet
                         </div>
                         {% else %}
                         <div class="stat-card__value">—</div>
@@ -334,15 +340,12 @@
                 <div class="col-sm-6 col-xl-3">
                     <div class="stat-card stat-card--info h-100">
                         <i class="bi bi-check-circle-fill stat-card__icon"></i>
-                        <div class="stat-card__label">Provider Acceptance</div>
-                        {% if success_rate is not none %}
+                        <div class="stat-card__label">Delivery Confirmed</div>
+                        {% if latest_log %}
                         <div class="stat-card__value stat-card__value--rate">
-                            <span class="stat-card__percentage">{{ success_rate|int }}</span><span class="stat-card__percent-sign">%</span>
+                            {{ latest_outcomes.delivered }} / {{ latest_outcomes.accepted }}
                         </div>
-                        <div class="stat-card__progress">
-                            <div class="stat-card__progress-bar" style="width: {{ success_rate }}%"></div>
-                        </div>
-                        <div class="stat-card__meta">{{ latest_outcomes.delivered }} confirmed delivered · {{ latest_outcomes.delivery_failed }} delivery failures · {{ latest_outcomes.submission_failed }} submission failures · {{ latest_outcomes.unresolved }} unresolved</div>
+                        <div class="stat-card__meta">Accepted messages with a confirmed delivery receipt</div>
                         {% else %}
                         <div class="stat-card__value">N/A</div>
                         <div class="stat-card__meta">No data yet</div>
@@ -534,7 +537,7 @@
                     <div class="activity-item__content">
                         <div class="activity-item__header">
                             <div class="activity-item__title">{{ (log.message_body|private_text)|truncate(60) }}</div>
-                            <span class="activity-item__time">{{ log.created_at|localtime('%b %d, %H:%M') }}</span>
+                            <span class="activity-item__time">{{ log.created_at|localtime }}</span>
                         </div>
                         <div class="activity-item__meta">
                             <span class="activity-item__badge activity-item__badge--success">
@@ -583,7 +586,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/send_draft.js') }}"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/chart.js/4.4.1/chart.umd.min.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script>
     const messageBody = document.getElementById('message_body');
@@ -593,6 +596,12 @@
     const charsToNextSegment = document.getElementById('charsToNextSegment');
     const messageNormalizationHint = document.getElementById('messageNormalizationHint');
     const messageUnitEstimate = document.getElementById('messageUnitEstimate');
+    const specialCharacterWarning = document.getElementById('specialCharacterWarning');
+    const specialCharacterWarningText = document.getElementById('specialCharacterWarningText');
+    const replaceSpecialCharacters = document.getElementById('replaceSpecialCharacters');
+    const undoSpecialCharacters = document.getElementById('undoSpecialCharacters');
+    let replacementUndo = null;
+    let applyingReplacement = false;
     const targetEvent = document.getElementById('targetEvent');
     const targetCommunity = document.getElementById('targetCommunity');
     const eventSelect = document.getElementById('event_id');
@@ -605,8 +614,7 @@
     const scheduleWrapper = document.getElementById('scheduleWrapper');
     const scheduleDate = document.getElementById('schedule_date');
     const scheduleTime = document.getElementById('schedule_time');
-    const clientTimezone = document.getElementById('client_timezone');
-    const timezoneHint = document.getElementById('timezoneHint');
+    const browserTimezoneNotice = document.getElementById('browserTimezoneNotice');
     const testMode = document.getElementById('testMode');
     const testModeOptions = document.getElementById('testModeOptions');
     const testRecipientModeOne = document.getElementById('testRecipientModeOne');
@@ -615,88 +623,117 @@
     const singleTestRecipientWrapper = document.getElementById('singleTestRecipientWrapper');
     const includeUnsubscribe = document.getElementById('includeUnsubscribe');
     const unsubscribeFooter = {{ blast_unsubscribe_footer|tojson }};
-    const savedTestRecipientCount = {{ saved_test_recipient_count|int }};
     const audienceEligibility = document.getElementById('audienceEligibility');
     let eligibleRecipientCount = null;
     let audiencePreviewSequence = 0;
+    let audiencePreviewTimer;
+    let audiencePreviewController;
+    let audienceSelectionKey = null;
+    let audienceProfile = null;
+    let compositionEstimate = null;
+    let compositionPreviewPending = false;
 
-    async function refreshAudiencePreview() {
-        const sequence = ++audiencePreviewSequence;
-        if (testMode && testMode.checked) {
-            audienceEligibility.textContent = 'Internal test recipients only. Saved-list membership and opt-outs are checked again at submission.';
+    function audienceSelection() {
+        const selection = new URLSearchParams({
+            audience_profile: '1',
+            csrf_token: sendForm.elements.namedItem('csrf_token').value,
+            target: targetEvent.checked ? 'event' : 'community',
+        });
+        if (targetEvent.checked) selection.set('event_id', eventSelect.value);
+        if (testMode?.checked) {
+            selection.set('test_mode', 'on');
+            selection.set('test_recipient_selection_mode', testRecipientModeAll?.checked ? 'all' : 'one');
+            for (const field of ['test_recipient_id', 'test_recipient_phone']) {
+                const input = sendForm.elements.namedItem(field);
+                if (input && !testRecipientModeAll?.checked) selection.set(field, input.value);
+            }
+        }
+        return selection;
+    }
+
+    function refreshAudiencePreview() {
+        const selection = audienceSelection();
+        const key = selection.toString();
+        // Message, whitespace, STOP footer and timing edits stay in the browser.
+        // Only audience selection changes require another eligibility/profile read.
+        if (key === audienceSelectionKey) {
             updateMessageStats();
             return;
         }
+        audienceSelectionKey = key;
+        const sequence = ++audiencePreviewSequence;
+        clearTimeout(audiencePreviewTimer);
+        audiencePreviewController?.abort();
+        audienceProfile = null;
+        compositionEstimate = null;
         eligibleRecipientCount = null;
+        compositionPreviewPending = true;
         audienceEligibility.textContent = 'Checking audience eligibility…';
         updateMessageStats();
-        const params = new URLSearchParams({target: targetEvent.checked ? 'event' : 'community'});
-        if (targetEvent.checked && eventSelect.value) params.set('event_id', eventSelect.value);
+        audiencePreviewTimer = setTimeout(() => loadAudiencePreview(sequence, selection), 750);
+    }
+
+    async function loadAudiencePreview(sequence, selection) {
+        audiencePreviewController = new AbortController();
         try {
-            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }} + '?' + params, {headers: {Accept: 'application/json'}});
+            const response = await fetch({{ url_for('main.dashboard_audience_preview')|tojson }}, {
+                method: 'POST',
+                body: selection,
+                signal: audiencePreviewController.signal,
+                headers: { Accept: 'application/json' },
+            });
             if (!response.ok) throw new Error('Audience preview unavailable');
             const preview = await response.json();
             if (sequence !== audiencePreviewSequence) return;
             eligibleRecipientCount = preview.eligible;
-            audienceEligibility.textContent = `${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
+            audienceProfile = preview.profile;
+            const audienceNote = testMode?.checked ? 'Internal test recipients only. ' : '';
+            audienceEligibility.textContent = `${audienceNote}${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
         } catch (error) {
-            if (sequence !== audiencePreviewSequence) return;
+            if (sequence !== audiencePreviewSequence || error.name === 'AbortError') return;
             audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
         }
+        compositionPreviewPending = false;
         updateMessageStats();
     }
 
-    function getCookieValue(name) {
-        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-        return match ? decodeURIComponent(match[1]) : '';
-    }
-
-    if (clientTimezone) {
+    if (browserTimezoneNotice) {
         try {
             const resolvedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-            clientTimezone.value = resolvedTimezone;
-            if (timezoneHint) {
-                timezoneHint.textContent = resolvedTimezone || 'Unavailable';
+            const workspaceTimezone = {{ app_timezone|tojson }};
+            const workspaceTimezoneLabel = {{ workspace_timezone_label|tojson }};
+            const canonicalWorkspaceTimezone = new Intl.DateTimeFormat('en-US', { timeZone: workspaceTimezone }).resolvedOptions().timeZone;
+            if (resolvedTimezone && resolvedTimezone !== canonicalWorkspaceTimezone) {
+                browserTimezoneNotice.textContent = `Your browser uses ${resolvedTimezone}. Enter ${workspaceTimezoneLabel} workspace time for this schedule.`;
+                browserTimezoneNotice.classList.remove('d-none');
             }
-            if (resolvedTimezone) {
-                const existingTimezone = getCookieValue('client_timezone');
-                if (existingTimezone !== resolvedTimezone) {
-                    document.cookie = `client_timezone=${encodeURIComponent(resolvedTimezone)}; path=/; max-age=31536000; samesite=lax`;
-                    const updatedTimezone = getCookieValue('client_timezone');
-                    if (updatedTimezone === resolvedTimezone) {
-                        window.location.reload();
-                    }
-                }
-            }
-        } catch (e) {
-            clientTimezone.value = '';
-            if (timezoneHint) {
-                timezoneHint.textContent = 'Unavailable';
-            }
-        }
-    }
-
-    function estimatedRecipientCount() {
-        if (testMode && testMode.checked) {
-            if (testRecipientModeOne && testRecipientModeOne.checked) {
-                return testRecipientPhone && testRecipientPhone.value ? 1 : 0;
-            }
-            return savedTestRecipientCount;
-        }
-        return eligibleRecipientCount || 0;
+        } catch (_) { /* The named workspace zone above still applies. */ }
     }
 
     function updateMessageStats() {
         const footer = includeUnsubscribe && includeUnsubscribe.checked ? unsubscribeFooter : '';
-        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${messageBody.value || ''}${footer}`);
-        const recipientEstimate = estimatedRecipientCount();
+        const draft = window.TwineviaSmsAnalysis.trimDraft(messageBody.value);
+        const analysis = window.TwineviaSmsAnalysis.analyzeBody(`${draft}${footer}`);
+        compositionEstimate = audienceProfile === null ? null : window.TwineviaSmsAnalysis.estimateAudience(messageBody.value, audienceProfile, { footer });
+        const recipientEstimate = eligibleRecipientCount || 0;
+        const minimum = compositionEstimate?.min_segment_count;
+        const maximum = compositionEstimate?.max_segment_count;
+        const each = minimum === maximum ? String(minimum) : `${minimum}–${maximum}`;
+        const special = compositionEstimate?.special_character || window.TwineviaSmsAnalysis.specialCharacter(messageBody.value);
+        const usesUnicode = compositionEstimate ? compositionEstimate.encodings.includes('ucs-2') : analysis.encoding === 'ucs-2';
+        const characterName = special ? `${special.name || `Unicode character “${special.character}”`} (${special.codepoint})` : 'Personalized contact names';
+        const reason = compositionEstimate && recipientEstimate === 0
+            ? 'No eligible recipients were found for this audience.'
+            : (usesUnicode
+                ? `${characterName} ${special ? 'uses' : 'use'} Unicode SMS, which fits fewer characters per segment.`
+                : (maximum > 1 ? 'Message length requires multiple SMS segments.' : 'Message length fits one SMS segment per recipient.'));
 
         charCount.textContent = messageBody.value.length;
         if (segmentCount) {
-            segmentCount.textContent = analysis.segmentCount;
+            segmentCount.textContent = compositionEstimate ? each : (compositionPreviewPending ? '…' : analysis.segmentCount);
         }
         if (messageEncoding) {
-            messageEncoding.textContent = window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
+            messageEncoding.textContent = compositionEstimate ? compositionEstimate.encodings.map(window.TwineviaSmsAnalysis.formatEncodingLabel).join(' / ') : window.TwineviaSmsAnalysis.formatEncodingLabel(analysis.encoding);
         }
         if (charsToNextSegment) {
             charsToNextSegment.textContent = analysis.charactersToNextSegment;
@@ -704,7 +741,7 @@
         if (messageNormalizationHint) {
             if (analysis.normalizationApplied) {
                 const segmentNote = analysis.segmentsSaved > 0
-                    ? ` This saves ${analysis.segmentsSaved} SMS unit(s) per recipient.`
+                    ? ` This saves ${analysis.segmentsSaved} SMS segment(s) per recipient.`
                     : '';
                 messageNormalizationHint.textContent = `Twinevia will simplify ${analysis.replacementCount} punctuation or spacing character(s) before sending.${segmentNote}`;
             } else {
@@ -712,20 +749,60 @@
             }
         }
         if (messageUnitEstimate) {
-            if (!messageBody.value.trim()) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
-            } else if (recipientEstimate > 0 && analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = `Estimated SMS usage: ${recipientEstimate * analysis.segmentCount} units for about ${recipientEstimate} recipients. Confirm the final estimate in your review.`;
-            } else if (analysis.segmentCount > 0) {
-                messageUnitEstimate.textContent = 'Estimated SMS usage appears after you choose an eligible audience.';
+            delete messageUnitEstimate.dataset.totalSegments;
+            if (!draft) {
+                messageUnitEstimate.textContent = '0 segments each × 0 recipients = 0';
+            } else if (compositionEstimate) {
+                messageUnitEstimate.dataset.totalSegments = String(compositionEstimate.total_segments);
+                messageUnitEstimate.textContent = `${each} segments each × ${recipientEstimate} recipients = ${compositionEstimate.total_segments}. ${reason}`;
+            } else if (compositionPreviewPending) {
+                messageUnitEstimate.textContent = 'Calculating personalized SMS segments…';
             } else {
-                messageUnitEstimate.textContent = 'Estimated SMS usage: 0 units';
+                messageUnitEstimate.textContent = 'Personalized SMS estimate is unavailable. Review the message to check its segments.';
             }
         }
+        specialCharacterWarning.classList.toggle('d-none', !draft || !usesUnicode);
+        const canReplace = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value) !== messageBody.value;
+        const unicodeWriting = window.TwineviaSmsAnalysis.usesUnicodeWriting(messageBody.value);
+        replaceSpecialCharacters.hidden = !canReplace;
+        specialCharacterWarningText.textContent = `${reason} ${unicodeWriting
+            ? 'This message uses Unicode letters. Its text is preserved; Unicode SMS fits fewer characters per segment and may use more segments.'
+            : (canReplace
+                ? 'Replace simplifies punctuation and removes emoji and pictographic symbols from this draft. You can undo the replacement until your next edit.'
+                : 'This may come from personalized contact names; the draft replacement does not change contact names.')}`;
     }
 
     updateMessageStats();
-    messageBody.addEventListener('input', updateMessageStats);
+    messageBody.addEventListener('input', () => {
+        if (!applyingReplacement) {
+            replacementUndo = null;
+            undoSpecialCharacters.hidden = true;
+        }
+        updateMessageStats();
+    });
+    sendForm.addEventListener('input', refreshAudiencePreview);
+    sendForm.addEventListener('change', refreshAudiencePreview);
+    replaceSpecialCharacters.addEventListener('click', () => {
+        replacementUndo = messageBody.value;
+        messageBody.value = window.TwineviaSmsAnalysis.replaceSpecialCharacters(messageBody.value);
+        applyingReplacement = true;
+        messageBody.dispatchEvent(new Event('input', { bubbles: true }));
+        messageBody.dispatchEvent(new Event('change', { bubbles: true }));
+        applyingReplacement = false;
+        undoSpecialCharacters.hidden = false;
+        messageBody.focus();
+    });
+    undoSpecialCharacters.addEventListener('click', () => {
+        if (replacementUndo === null) return;
+        messageBody.value = replacementUndo;
+        replacementUndo = null;
+        applyingReplacement = true;
+        messageBody.dispatchEvent(new Event('input', { bubbles: true }));
+        messageBody.dispatchEvent(new Event('change', { bubbles: true }));
+        applyingReplacement = false;
+        undoSpecialCharacters.hidden = true;
+        messageBody.focus();
+    });
 
     function toggleEventSelect() {
         eventSelectWrapper.style.display = targetEvent.checked ? 'block' : 'none';

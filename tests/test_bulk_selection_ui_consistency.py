@@ -65,10 +65,13 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
                 continue
 
             primary_count = block.count("page-action-primary")
+            expected_primary_count = 0 if template_path.relative_to(templates_dir).as_posix() == "inbox/list.html" else 1
+            if expected_primary_count == 0:
+                self.assertNotIn("btn-primary", block, "Inbox header links must remain secondary to conversations")
             self.assertEqual(
                 primary_count,
-                1,
-                f"Expected exactly one page-action-primary in multi-action header: {template_path}",
+                expected_primary_count,
+                f"Unexpected primary-action count in multi-action header: {template_path}",
             )
 
     def test_bulk_selection_counts_are_live_regions(self) -> None:

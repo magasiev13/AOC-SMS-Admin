@@ -92,6 +92,14 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   await page.getByLabel('Schedule for Later').check();
   await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
   await page.getByLabel('Time', { exact: true }).fill('23:59');
+  const expectedTiming = await page.evaluate(() => {
+    const workspaceZone = document.getElementById('workspaceScheduleTimezone').dataset.workspaceTimezone;
+    if (!workspaceZone) throw new Error('The composer must identify its workspace timezone.');
+    const zone = new Intl.DateTimeFormat('en-US', {
+      timeZone: workspaceZone, timeZoneName: 'short',
+    }).formatToParts(new Date('2099-12-31T12:00:00Z')).find(part => part.type === 'timeZoneName').value;
+    return `Thu, Dec 31, 2099 · 11:59 PM ${zone}`;
+  });
   await page.route('**/dashboard/review', route => route.fulfill({ status: 503, json: { error: 'Controlled review interruption' } }));
   await page.getByRole('button', { name: 'Review Schedule', exact: true }).click();
   await expect(page.locator('#sendFormError')).toHaveText('Controlled review interruption');
@@ -101,7 +109,7 @@ test('mobile composer presents a deliberate review and named scheduled preview',
   const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
   await expect(review).toBeVisible();
   await expect(review.locator('[data-review="audience"]')).toHaveText('Contact List');
-  await expect(review.locator('[data-review="timing"]')).toContainText('2099-12-31');
+  await expect(review.locator('[data-review="timing"]')).toHaveText(expectedTiming);
   await expect(review.locator('[data-review="sample"]')).toContainText('UX reviewed scheduled notice');
   await expect(review).toBeFocused();
   await review.press('Escape');

@@ -464,7 +464,15 @@ class TestLogsRoutes(unittest.TestCase):
         self.assertIsNotNone(log)
         self.assertEqual(log.message_body, '"Hello" - team...')
         self.assertEqual(mock_queue.enqueue.call_args.args[4], '"Hello" - team...')
-        self.assertIn("Estimated billing", response.get_data(as_text=True))
+        # The saved request's banner is the one confirmation. Normalization
+        # still applies to both persisted and queued message content.
+        from html import unescape
+        from app.models import OutboundRequest
+        from app.services.outbound_request_service import request_status_message
+        rendered = unescape(response.get_data(as_text=True))
+        saved = OutboundRequest.query.filter_by(message_log_id=log.id).one()
+        self.assertNotIn("Estimated billing", rendered)
+        self.assertEqual(rendered.count(request_status_message(saved)), 1)
 
     def test_dashboard_schedule_stores_normalized_message_body(self) -> None:
         self._grant_broadcast_permission('+15551234570')

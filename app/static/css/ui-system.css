@@ -79,6 +79,7 @@
   display: grid;
   gap: var(--space-3);
   min-width: min(100%, 18rem);
+  max-width: 100%;
 }
 
 .workspace-summary__badges,
@@ -113,6 +114,33 @@
 
 .workspace-summary__stats--3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Five and six facts fill complete rows at each workspace breakpoint. */
+@media (min-width: 992px) {
+  .workspace-summary__stats--5 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .workspace-summary__stats--5 > .workspace-summary__stat {
+    grid-column: span 2;
+  }
+  .workspace-summary__stats--5 > .workspace-summary__stat:nth-last-child(-n+2) {
+    grid-column: span 3;
+  }
+  .workspace-summary__stats--6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 991.98px) {
+  .workspace-summary__stats--5 > .workspace-summary__stat:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.workspace-summary__stats--5 > .workspace-summary__stat,
+.workspace-summary__stats--6 > .workspace-summary__stat {
+  min-width: 0;
 }
 
 .workspace-summary__stat {

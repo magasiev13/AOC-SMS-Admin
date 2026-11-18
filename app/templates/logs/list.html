@@ -10,11 +10,9 @@
 {% endblock %}
 
 {% block page_actions %}
-{% if logs and current_user.is_admin %}
-<button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
-    <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
-</button>
-{% endif %}
+<a href="{{ url_for('main.dashboard') }}" class="btn btn-primary page-action-primary">
+    <i class="bi bi-send me-1"></i>Compose Message
+</a>
 {% endblock %}
 
 {% block content %}
@@ -90,13 +88,10 @@
                     <td data-sort-value="{{ log.total_recipients or 0 }}">
                         <div class="mb-1">
                             <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
-                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
+                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Submission failed' if log.status == 'failed' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent')))) }}
                             </span>
                         </div>
-                        <span class="text-success">{{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }}</span>
-                        {% if log.failure_count > 0 %}
-                        / <span class="text-danger">{{ log.failure_count }} failed</span>
-                        {% endif %}
+                        {% with outcome=history_results[log.id] %}{% include 'includes/message_result_counts.html' %}{% endwith %}
                     </td>
                     <td>
                         <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions>
@@ -154,10 +149,11 @@
                         </div>
                         <div class="mt-1">
                             <span class="badge text-wrap text-start bg-{% if log.status in ['processing', 'ambiguous'] %}warning text-dark{% elif log.status == 'failed' %}danger{% elif log.status == 'cancelled' %}secondary{% else %}success{% endif %}">
-                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}
+                                {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Cancelled' if log.status == 'cancelled' else ('Submission failed' if log.status == 'failed' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent')))) }}
                             </span>
                         </div>
                         <div class="text-muted small">{{ (log.message_body|private_text)[:50] }}{% if (log.message_body|private_text)|length > 50 %}...{% endif %}</div>
+                        {% with outcome=history_results[log.id] %}{% include 'includes/message_result_counts.html' %}{% endwith %}
                     </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
@@ -185,6 +181,14 @@
         {% endif %}
     </div>
     {% include 'includes/collection_pagination.html' %}
+    {% if logs and current_user.is_admin %}
+    <details class="m-3" data-history-maintenance>
+        <summary class="small text-muted">History maintenance</summary>
+        <button type="button" class="btn btn-sm btn-outline-danger mt-2" data-bs-toggle="modal" data-bs-target="#clearLogsModal">
+            <i class="bi bi-trash me-1"></i>{{ 'Clear Removable History' if config.SAAS_MODE else 'Clear All Logs' }}
+        </button>
+    </details>
+    {% endif %}
 </div>
 </div>
 
@@ -197,8 +201,8 @@
         </div>
         <div class="offcanvas-body">
             <p class="mb-2"><strong>Target:</strong> {{ log.target }}</p>
-            <p class="mb-2"><strong>Status:</strong> {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent')) }}</p>
-            <p class="mb-2"><strong>Results:</strong> {{ log.success_count }} {{ 'accepted' if config.SAAS_MODE else 'sent' }} / {{ log.failure_count }} failed</p>
+            <p class="mb-2"><strong>Status:</strong> {{ 'Acceptance unresolved' if log.status == 'ambiguous' else ('Submission failed' if log.status == 'failed' else ('Provider accepted' if config.SAAS_MODE and log.status == 'sent' else (log.status or 'sent'))) }}</p>
+            {% with outcome=history_results[log.id] %}{% include 'includes/message_result_counts.html' %}{% endwith %}
             <p class="mb-0"><strong>Message:</strong> {{ (log.message_body)|private_text }}</p>
         </div>
     </div>

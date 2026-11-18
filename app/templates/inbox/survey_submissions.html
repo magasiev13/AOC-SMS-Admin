@@ -146,7 +146,7 @@
                                     <code>{{ row.phone }}</code>
                                 </td>{% endif %}
                                 <td data-sort-value="{{ row.submitted_at_iso }}">
-                                    {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}
+                                    {{ row.submitted_at|localtime }}
                                 </td>
                                 <td data-sort-value="{{ (row.answers_preview)|private_text }}">
                                     <div class="survey-answer-preview">{{ (row.answers_preview or '-')|private_text }}</div>
@@ -190,7 +190,7 @@
                                 <h6 class="mb-1">{{ (row.display_name)|private_text }}</h6>
                                 {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ row.phone }}</code></div>{% endif %}
                                 <div class="text-muted small mt-2">
-                                    Latest: {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}
+                                    Latest: {{ row.submitted_at|localtime }}
                                 </div>
                                 <div class="text-muted small mt-1 survey-answer-preview">
                                     {{ (row.answers_preview or '-')|private_text }}
@@ -257,7 +257,7 @@
         </div>
         <div class="offcanvas-body survey-submission-panel">
             {% if can_view_contact_numbers %}<p class="mb-2"><strong>Phone:</strong> <code>{{ row.phone }}</code></p>{% endif %}
-            <p class="mb-2"><strong>Latest submission:</strong> {{ row.submitted_at|localtime('%b %d, %Y %H:%M') }}</p>
+            <p class="mb-2"><strong>Latest submission:</strong> {{ row.submitted_at|localtime }}</p>
             <p class="mb-3"><strong>Total submissions:</strong> {{ row.submission_count }}</p>
 
             <h6 class="mb-2">Latest Answers</h6>
@@ -277,7 +277,7 @@
             <h6 class="mb-2">Previous Submissions</h6>
             {% for previous in row_history %}
             <div class="survey-submission-history-item">
-                <div class="small text-muted mb-2">{{ previous.submitted_at|localtime('%b %d, %Y %H:%M') }}</div>
+                <div class="small text-muted mb-2">{{ previous.submitted_at|localtime }}</div>
                 {% for qa in previous.qa_pairs %}
                 <div class="survey-submission-qa">
                     <div class="survey-submission-qa__prompt">{{ (qa.prompt)|private_text }}</div>

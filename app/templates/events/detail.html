@@ -32,7 +32,7 @@
 <div class="workspace-shell event-workspace" data-event-sections>
     {% if not event_is_current %}<div class="alert alert-info" role="status">This event is outside the current audience. Its registrations and feedback are kept for review or follow-up. Opt-outs and blocks still apply.</div>{% endif %}
     <section class="event-summary" aria-label="Event Summary">
-        <p class="event-summary__date"><i class="bi bi-calendar-event me-1" aria-hidden="true"></i>{{ event.date.strftime('%b %d, %Y') if event.date else 'Date not set' }}</p>
+        <p class="event-summary__date"><i class="bi bi-calendar-event me-1" aria-hidden="true"></i>{{ event.date|localdate if event.date else 'Date not set' }}</p>
         <div class="workspace-summary__stats workspace-summary__stats--4" aria-label="Workspace highlights">
             {% for stat in surface_view.stats %}<div class="workspace-summary__stat">
                 <div class="workspace-summary__stat-label">{{ stat.label|private_text }}</div>

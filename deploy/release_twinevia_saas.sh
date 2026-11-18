@@ -82,7 +82,14 @@ release_dir="${RELEASES_DIR}/${release_id}"
 promoted=0
 runtime_quiesced=0
 
-sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
+# Keep the release store protected without changing existing nginx traversal
+# while the candidate is prepared and its backup is verified.
+if [[ -d "${RELEASES_DIR}" ]]; then
+  sudo chown root:"${APP_GROUP}" "${RELEASES_DIR}"
+  sudo chmod u=rwx,g=rx,o-rw "${RELEASES_DIR}"
+else
+  sudo install -d -o root -g "${APP_GROUP}" -m 0750 "${RELEASES_DIR}"
+fi
 
 create_bootstrap_release() {
   local bootstrap_id="bootstrap-${BOOTSTRAP_RELEASE_SHA:0:12}"
@@ -117,6 +124,7 @@ create_bootstrap_release() {
     sudo chmod -R u=rwX,g=rX,o= "${bootstrap_pending}"
     sudo mv "${bootstrap_pending}" "${bootstrap_dir}"
   fi
+  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${bootstrap_dir}"
   atomic_link "${bootstrap_dir}" "${CURRENT_LINK}"
   atomic_link "${bootstrap_dir}" "${PREVIOUS_LINK}"
   echo "Created recoverable bootstrap release ${bootstrap_id}."
@@ -293,6 +301,16 @@ python3 "${pending_release}/deploy/release_source.py" verify-backup \
   --app-root "${old_release}" \
   --status "${BACKUP_STATUS_FILE}" \
   --target-source-sha "${release_sha}"
+
+# The captured source identity includes file modes. Compare it before opening
+# the retained fallback's static files or switching nginx to serve them.
+if [[ -n "${old_release}" && "${TWINEVIA_INITIALIZE_RUNTIME:-0}" != "1" ]]; then
+  sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${old_release}"
+fi
+sudo python3.11 "${SOURCE_ROOT}/deploy/static_permissions.py" --app-root "${APP_ROOT}" --release-root "${pending_release}"
+if [[ "${TWINEVIA_CONFIGURE_NGINX:-0}" == "1" ]]; then
+  sudo bash "${SOURCE_ROOT}/deploy/install_nginx_twinevia.sh" --confirm-dns-and-certificate-ready
+fi
 
 backup_archive="$(BACKUP_STATUS_PATH="${BACKUP_STATUS_FILE}" python3 -c '
 import json

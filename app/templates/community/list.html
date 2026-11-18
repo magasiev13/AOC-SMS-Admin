@@ -7,6 +7,7 @@
 {% block page_title %}Contacts{% endblock %}
 
 {% set can_manage_community = current_user.is_admin %}
+{% set can_review_permission = can_review_permission and not confirmed_signup_consent %}
 
 {% block breadcrumbs %}
 <a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Contacts</span>
@@ -55,7 +56,7 @@
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'contactable' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', search=search) }}"{% if audience_view == 'contactable' %} aria-current="page"{% endif %}>Contactable</a>
         <a class="btn btn-sm {{ 'btn-primary' if audience_view == 'all' else 'btn-outline-secondary' }}" href="{{ url_for('main.community_list', view='all', search=search) }}"{% if audience_view == 'all' %} aria-current="page"{% endif %}>All Contacts</a>
     </nav>
-    <p class="small text-muted mb-0">{{ 'Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts. Sending still requires SMS permission.' if audience_view == 'contactable' else 'All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.' }}</p>
+    <p class="small text-muted mb-0">{% if audience_view == 'contactable' %}Contactable excludes opted-out and blocked numbers. Their records remain in All Contacts.{% if not confirmed_signup_consent %} Sending still requires SMS permission.{% endif %}{% else %}All Contacts includes retained opt-outs and blocked numbers. Showing a record here does not make it eligible to receive messages.{% endif %}</p>
     {% call ui.collection_search_panel(
         url_for('main.community_list'),
         'Search by name or phone' if can_view_contact_numbers else 'Search by name',
@@ -144,7 +145,7 @@
                             {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
                         </td>
                         <td data-sort-value="{{ member.created_at.isoformat() if member.created_at else '' }}">
-                            {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}
+                            {{ member.created_at|localdate if member.created_at else '-' }}
                         </td>
                         {% if can_manage_community %}
                         <td class="community-actions-cell">
@@ -152,7 +153,7 @@
                                 <button type="button" class="btn btn-sm btn-outline-primary" aria-label="Preview Contact" title="Preview"
                                         data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
                                         data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
-                                        data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
+                                        data-member-joined="{{ member.created_at|localdate if member.created_at else '-' }}"
                                         data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                                         {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                                     <i class="bi bi-layout-sidebar-inset"></i>
@@ -232,7 +233,7 @@
                         {% if can_view_contact_numbers %}<div class="text-muted small"><code>{{ member.phone }}</code></div>{% endif %}
                         <div class="small mt-1">SMS permission: {{ permissions.permission_badge(permission_statuses[member.phone], is_unsubscribed, member.phone in suppressed_phones, 'Active') }}</div>
                         {% if can_review_permission %}<div><a class="small" href="{{ url_for('main.community_permission_review', member_id=member.id) }}">Review Permission</a></div>{% endif %}
-                        <div class="text-muted small">Added {{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}</div>
+                        <div class="text-muted small">Added {{ member.created_at|localdate if member.created_at else '-' }}</div>
                     </div>
                     {% if can_manage_community %}
                     <input class="form-check-input member-checkbox js-select-row" type="checkbox" name="member_ids"
@@ -244,7 +245,7 @@
                     <button type="button" class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="offcanvas" data-bs-target="#memberPreview" aria-controls="memberPreview"
                             data-member-name="{{ (member.name or 'Contact Preview')|private_text }}" {% if can_view_contact_numbers %}data-member-phone="{{ member.phone }}"{% endif %}
-                            data-member-joined="{{ member.created_at.strftime('%Y-%m-%d') if member.created_at else '-' }}"
+                            data-member-joined="{{ member.created_at|localdate if member.created_at else '-' }}"
                             data-member-status="{{ 'Blocked' if is_unsubscribed else ('Blocked' if member.phone in suppressed_phones else ('Granted' if permission_statuses[member.phone].allowed else permission_statuses[member.phone].decision|capitalize)) }}"
                             {% if can_review_permission %}data-member-review="{{ url_for('main.community_permission_review', member_id=member.id) }}"{% endif %}>
                         <i class="bi bi-layout-sidebar-inset"></i> Preview

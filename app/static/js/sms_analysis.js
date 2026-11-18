@@ -146,10 +146,86 @@
     return String(encoding || '').toLowerCase() === 'ucs-2' ? 'UCS-2' : 'GSM-7';
   }
 
+  function trimDraft(body = '') {
+    // Match Python str.strip() in _send_review_intent, including NEL and
+    // separator controls, while preserving BOM (which JavaScript trim removes).
+    return body.replace(/^[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+|[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/g, '');
+  }
+
+  function estimateAudience(body = '', profile = [], { footer = '' } = {}) {
+    const empty = { min_segment_count: 0, max_segment_count: 0, total_segments: 0, encodings: [], special_character: null };
+    const draft = trimDraft(body);
+    if (!draft || !profile.length) return empty;
+    const prepared = normalizeBody(draft).normalizedBody + footer;
+    const tokens = { first: 0, full: 0 };
+    const literal = prepared.replace(/\{(name|first_name|full_name)\}/gi, (_, token) => {
+      tokens[token.toLowerCase() === 'first_name' ? 'first' : 'full'] += 1;
+      return '';
+    });
+    const literalMetrics = bodyMetrics(literal);
+    let minimum = Infinity;
+    let maximum = 0;
+    const encodings = new Set();
+    let total = 0;
+    for (const bucket of profile) {
+      const unicode = literalMetrics.encoding === 'ucs-2' ||
+        (tokens.first > 0 && bucket.first.unicode) || (tokens.full > 0 && bucket.full.unicode);
+      const encoding = unicode ? 'ucs-2' : 'gsm-7';
+      const metric = unicode ? 'utf16_units' : 'gsm_units';
+      const units = (unicode ? literal.length : literalMetrics.charactersUsed) +
+        tokens.first * bucket.first[metric] + tokens.full * bucket.full[metric];
+      const singleLimit = unicode ? 70 : 160;
+      const multiLimit = unicode ? 67 : 153;
+      const segments = units === 0 ? 0 : (units <= singleLimit ? 1 : Math.ceil(units / multiLimit));
+      minimum = Math.min(minimum, segments);
+      maximum = Math.max(maximum, segments);
+      encodings.add(encoding);
+      total += segments * bucket.count;
+    }
+    return {
+      min_segment_count: minimum, max_segment_count: maximum,
+      total_segments: total, encodings: Array.from(encodings).sort(),
+      special_character: specialCharacter(literal),
+    };
+  }
+
+  function specialCharacter(body = '') {
+    for (const character of normalizeBody(body).normalizedBody) {
+      if (!GSM_7_BASIC_CHARSET.has(character) && !GSM_7_EXTENDED_CHARSET.has(character)) {
+        const names = { '🙂': 'SLIGHTLY SMILING FACE', '😀': 'GRINNING FACE', '🎉': 'PARTY POPPER' };
+        return { character, codepoint: `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`,
+          ...(names[character] ? { name: names[character] } : {}) };
+      }
+    }
+    return null;
+  }
+
+  function usesUnicodeWriting(body = '') {
+    const letters = Array.from(normalizeBody(body).normalizedBody).filter(character => /\p{L}/u.test(character));
+    const unicodeLetters = letters.filter(character => !GSM_7_BASIC_CHARSET.has(character) && !GSM_7_EXTENDED_CHARSET.has(character));
+    return letters.length > 0 && unicodeLetters.length / letters.length >= 0.2;
+  }
+
+  function replaceSpecialCharacters(body = '') {
+    // Never transliterate or replace written language with question marks.
+    // A substantial Unicode passage should keep even its punctuation intact.
+    if (usesUnicodeWriting(body)) return body;
+    const normalized = normalizeBody(body).normalizedBody;
+    const withoutPictures = normalized
+      .replace(/[0-9#*]\uFE0F?\u20E3/gu, '')
+      .replace(/(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier})[\uFE0E\uFE0F]?\p{Emoji_Modifier}?[\u{E0020}-\u{E007F}]*(?:\u200D(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier})[\uFE0E\uFE0F]?\p{Emoji_Modifier}?[\u{E0020}-\u{E007F}]*)*/gu, '');
+    return withoutPictures === normalized ? normalized : withoutPictures.replace(/[ \t]{2,}/g, ' ').trim();
+  }
+
   window.TwineviaSmsAnalysis = {
     analyzeBody,
     bodyMetrics,
     formatEncodingLabel,
     normalizeBody,
+    specialCharacter,
+    replaceSpecialCharacters,
+    usesUnicodeWriting,
+    estimateAudience,
+    trimDraft,
   };
 })();

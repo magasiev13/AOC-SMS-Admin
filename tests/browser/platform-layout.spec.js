@@ -60,21 +60,24 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
   const pageActionHeight = await elementHeight(page.getByRole('link', { name: 'Add Organization' }));
   expect(pageActionHeight).toBeGreaterThanOrEqual(44);
 
-  const firstRow = page.locator('.platform-directory__row').first();
-  await expect(firstRow.getByText('Primary contact:')).toHaveCount(0);
-  await expect(firstRow.getByText('Owner status')).toHaveCount(0);
+  // Newer synthetic workspaces can have complimentary billing. Keep the
+  // access and messaging checks on this established billed fixture.
+  const fixtureRow = page.locator('.platform-directory__row').filter({ hasText: 'Northstar Fitness' }).first();
+  await expect(fixtureRow.getByText('Northstar Fitness', { exact: true })).toBeVisible();
+  await expect(fixtureRow.getByText('Primary contact:')).toHaveCount(0);
+  await expect(fixtureRow.getByText('Owner status')).toHaveCount(0);
 
-  const accessHref = await firstRow.locator('a[href*="/access"]').first().getAttribute('href');
-  const messagingHref = await firstRow.locator('a[href*="/messaging"]').first().getAttribute('href');
+  const accessHref = await fixtureRow.locator('a[href*="/access"]').first().getAttribute('href');
+  const messagingHref = await fixtureRow.locator('a[href*="/messaging"]').first().getAttribute('href');
   expect(accessHref).toBeTruthy();
   expect(messagingHref).toBeTruthy();
 
-  await expect(firstRow.getByRole('link', { name: 'Access' })).toBeVisible();
-  await expect(firstRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
-  await expect(firstRow.getByRole('button', { name: 'More Actions' })).toBeVisible();
-  await expect(firstRow.getByText('Manage Access')).toHaveCount(0);
-  await expect(firstRow.getByText('Manage provider')).toHaveCount(0);
-  await expect(firstRow.getByText('View checklist')).toHaveCount(0);
+  await expect(fixtureRow.getByRole('link', { name: 'Access' })).toBeVisible();
+  await expect(fixtureRow.getByRole('link', { name: /Messaging|Set up provider/ })).toBeVisible();
+  await expect(fixtureRow.getByRole('button', { name: 'More Actions' })).toBeVisible();
+  await expect(fixtureRow.getByText('Manage Access')).toHaveCount(0);
+  await expect(fixtureRow.getByText('Manage provider')).toHaveCount(0);
+  await expect(fixtureRow.getByText('View checklist')).toHaveCount(0);
 
   const suspendedRow = page.locator('.platform-directory__row').filter({ hasText: 'Suspended Bakery' }).first();
   await expect(suspendedRow).toBeVisible();
@@ -85,8 +88,8 @@ test('platform admin desktop surfaces use the shared shell and aligned actions',
     await expect(checklistSummaries.first()).toHaveText('Checklist');
   }
 
-  const primaryActionHeight = await elementHeight(firstRow.locator('.row-actions__primary .btn').first());
-  const overflowToggleHeight = await elementHeight(firstRow.locator('.row-actions__overflow-toggle').first());
+  const primaryActionHeight = await elementHeight(fixtureRow.locator('.row-actions__primary .btn').first());
+  const overflowToggleHeight = await elementHeight(fixtureRow.locator('.row-actions__overflow-toggle').first());
   expect(Math.abs(primaryActionHeight - overflowToggleHeight)).toBeLessThanOrEqual(1);
 
   await page.getByRole('link', { name: 'Add Organization' }).click();

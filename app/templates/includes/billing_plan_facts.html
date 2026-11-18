@@ -1,8 +1,9 @@
 <div class="billing-plan-facts" aria-label="Billing plan details">
     <div>
         <span>Plan</span>
-        <strong>{{ subscription_view.plan_name }}{% if subscription_view.plan_price_label %} · {{ subscription_view.plan_price_label }}{% endif %}</strong>
+        <strong>{{ subscription_view.plan_name }}{% if subscription_view.plan_price_label and not subscription_view.is_complimentary %} · {{ subscription_view.plan_price_label }}{% endif %}</strong>
     </div>
+    {% if subscription_view.usage_billed %}
     <div>
         <span>Included usage</span>
         <strong>{{ subscription_view.included_segments_label }} SMS segments</strong>
@@ -11,6 +12,12 @@
         <span>Overage</span>
         <strong>{{ subscription_view.overage_rate_label }} per segment</strong>
     </div>
+    {% else %}
+    <div>
+        <span>Usage</span>
+        <strong>Not billed by Twinevia</strong>
+    </div>
+    {% endif %}
     <div>
         <span>Setup fee</span>
         <strong>{{ subscription_view.activation_label }}</strong>
