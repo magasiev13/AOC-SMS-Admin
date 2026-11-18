@@ -165,3 +165,22 @@ def test_new_manual_number_never_inherits_an_old_directory_contract(ux):
     assert recipient_permission_status(ux.org_id, retained.phone).allowed
     assert ux.client.post(f'/community/{retained.id}/edit', data=dict(name='Corrected', phone='+17205550114')).status_code == 302
     assert not recipient_permission_status(ux.org_id, '+17205550114').allowed
+
+
+def test_manual_and_csv_booking_do_not_grant_permission_to_new_numbers(ux):
+    from tests.consent_fixtures import historical_signup_contract
+    from app.services.recipient_permission_service import recipient_permission_status
+
+    historical_signup_contract(ux.org_id)
+    event = ux.models.Event(organization_id=ux.org_id, title='Workshop')
+    ux.db.session.add(event)
+    ux.db.session.commit()
+    login(ux)
+    first, second = '+17205550115', '+17205550116'
+    assert ux.client.post(f'/events/{event.id}/register', data=dict(name='Manual', phone=first)).status_code == 302
+    file = io.BytesIO(f'Imported,{second}\n'.encode())
+    assert ux.client.post(f'/events/{event.id}/import', data={'file':(file, 'roster.csv')}).status_code == 302
+    for phone in [first, second]:
+        assert ux.models.EventRegistration.query.filter_by(event_id=event.id, phone=phone).count() == 1
+        assert not recipient_permission_status(ux.org_id, phone, purpose='event', event_id=event.id).allowed
+        assert not recipient_permission_status(ux.org_id, phone).allowed

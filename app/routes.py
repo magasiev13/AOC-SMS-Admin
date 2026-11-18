@@ -9045,8 +9045,6 @@ def event_register(event_id):
         booking_spaces = 0
     from app.services.booking_projection_service import create_local_booking
     create_local_booking(event, name, phone, party_size=booking_spaces)
-    if normalized_phone and validate_phone(normalized_phone):
-        upsert_community_member_contact(name, normalized_phone)
     db.session.commit()
     
     flash('Booking added. Eligible contact numbers are counted once for event messaging.', 'success')
@@ -9123,7 +9121,7 @@ def event_import_registrations(event_id):
 
         for rec in parsed:
             phone = rec['phone']
-            upsert_community_member_contact(rec['name'], phone)
+            upsert_community_member_contact(rec['name'], phone, individual_consent_required=True)
 
             # Check if already registered for this event
             existing = EventRegistration.query.filter_by(event_id=event_id, phone=phone).first()

@@ -552,14 +552,15 @@ def _record_booking_withdrawal(
         )
 
 
-def upsert_community_member_contact(name: str | None, phone: str) -> CommunityMember:
+def upsert_community_member_contact(name: str | None, phone: str, *, individual_consent_required=False) -> CommunityMember:
     normalized_phone = normalize_phone(phone)
     if not validate_phone(normalized_phone):
         raise AocEventSyncPayloadError(f"Community member phone {phone!r} is invalid.")
 
     community_member = CommunityMember.query.filter_by(phone=normalized_phone).first()
     if community_member is None:
-        community_member = CommunityMember(name=name, phone=normalized_phone)
+        community_member = CommunityMember(name=name, phone=normalized_phone,
+                                           individual_consent_required=individual_consent_required)
         db.session.add(community_member)
     elif not community_member.name and name:
         community_member.name = name

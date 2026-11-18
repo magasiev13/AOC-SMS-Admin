@@ -212,7 +212,8 @@ def upsert_booking(event, payload, source, received_at, source_scope='', source_
         raise ValueError('Booking places must be a nonnegative integer.')
     if booking is None:
         booking = EventBooking(organization_id=event.organization_id, event_id=event.id,
-            source=source, source_scope=source_scope, external_booking_id=key)
+            source=source, source_scope=source_scope, external_booking_id=key,
+            individual_consent_required=True if source in {'manual', 'csv_import'} else None)
         db.session.add(booking)
     was_active = booking.is_active
     old_phone = booking.phone
@@ -357,7 +358,7 @@ def _restore_duplicate_event_permission(event, booking):
         retained.append(entry)
     scope_key = f'event:{event.id}'
     status = (_confirmed_signup_status(retained, purpose='event', scope_key=scope_key)
-              if organization_has_confirmed_signup_consent(event.organization_id)
+              if not booking.individual_consent_required and organization_has_confirmed_signup_consent(event.organization_id)
               else _evaluate_permission(retained, purpose='event', scope_key=scope_key))
     if not status.allowed and not (status.decision == 'unknown' and booking.sms_consent is True):
         return
@@ -497,7 +498,8 @@ def create_local_booking(event, name, phone, party_size=1, source='manual', exte
         'updated_at': utc_now().isoformat()}, source, utc_now())
     from app.services.aoc_event_sync_service import upsert_community_member_contact
     if booking.phone:
-        upsert_community_member_contact(booking.name, booking.phone)
+        upsert_community_member_contact(booking.name, booking.phone,
+                                        individual_consent_required=bool(booking.individual_consent_required))
     return booking
 
 
