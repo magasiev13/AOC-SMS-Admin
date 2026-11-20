@@ -592,7 +592,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/send_draft.js') }}"></script>
+<script src="{{ url_for('static', filename='js/send_draft.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='vendor/chart.js/4.4.1/chart.umd.min.js', v=app_version) }}"></script>
 <script src="{{ url_for('static', filename='js/sms_analysis.js') }}"></script>
 <script data-settings='{{ dict(footer=blast_unsubscribe_footer, previewUrl=url_for('main.dashboard_audience_preview'), timezone=app_timezone, timezoneLabel=workspace_timezone_label, usage=dict(currency=workspace_usage.currency, rate=workspace_usage.segment_rate, remaining=workspace_usage.remaining_segments, billed=workspace_usage.billed) if workspace_usage else none, chartData=chart_data or {}, communityCount=community_count, eventCount=event_registration_count, unsubCount=unsubscribed_count, contactsUrl=url_for('main.community_list'))|tojson }}' src="{{ url_for('static', filename='js/pages/dashboard.js', v=app_version) }}"></script>

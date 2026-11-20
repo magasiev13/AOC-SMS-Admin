@@ -1,5 +1,7 @@
 {% set sent_draft_key = session.get('clear_send_draft_key') %}
+{% if sent_draft_key or accepted_draft_key %}
+<script {% if sent_draft_key %}data-draft-key="{{ sent_draft_key }}"{% endif %} {% if accepted_draft_key %}data-accepted-draft-key="{{ accepted_draft_key }}"{% endif %} src="{{ url_for('static', filename='js/pages/includes-clear-sent-draft.js', v=app_version) }}"></script>
+{% endif %}
 {% if sent_draft_key %}
-<script data-draft-key="{{ sent_draft_key }}" src="{{ url_for('static', filename='js/pages/includes-clear-sent-draft.js', v=app_version) }}"></script>
 {% set consumed_sent_draft_key = session.pop('clear_send_draft_key', None) %}
 {% endif %}

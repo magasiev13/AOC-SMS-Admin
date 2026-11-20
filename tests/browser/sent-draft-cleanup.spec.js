@@ -56,3 +56,56 @@ for (const width of [390, 1440]) {
     });
   }
 }
+
+test('an accepted send preserves a replacement draft from another tab', async ({ page, context }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  const message = page.getByLabel('Message', { exact: true });
+  await message.fill('Original internal test message');
+  await page.locator('.advanced-options__summary').click();
+  await page.getByLabel('Test Mode', { exact: true }).check();
+  await page.locator('#testRecipientPhone').selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Review Message', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Review Message' })).toBeVisible();
+
+  const second = await context.newPage();
+  await second.goto('/dashboard');
+  const otherMessage = second.getByLabel('Message', { exact: true });
+  await expect(otherMessage).toHaveValue('Original internal test message');
+  await otherMessage.fill('A newer draft for later');
+  await confirmSendReview(page);
+  await expect(page).toHaveURL(/\/logs\/\d+$/);
+  await second.reload();
+  await expect(otherMessage).toHaveValue('A newer draft for later');
+});
+
+
+test('a committed schedule clears its draft even if a late response restores the previous session cookie', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/dashboard');
+  const form = page.locator('#sendForm');
+  const draftKey = await form.getAttribute('data-draft-key');
+  await page.getByLabel('Message', { exact: true }).fill('Scheduled during a late audience preview');
+  await page.locator('.advanced-options__summary').click();
+  await page.getByLabel('Test Mode', { exact: true }).check();
+  await page.locator('#testRecipientPhone').selectOption({ index: 1 });
+  await page.getByLabel('Schedule for Later').check();
+  await page.getByLabel('Date', { exact: true }).fill('2099-12-31');
+  await page.getByLabel('Time', { exact: true }).fill('23:59');
+  await page.getByRole('button', { name: 'Review Schedule', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Review Message' })).toBeVisible();
+  const before = (await context.cookies(page.url())).filter(cookie => cookie.name === 'session');
+  expect(before.length).toBe(1);
+  const fields = await form.evaluate(element => Object.fromEntries(new FormData(element)));
+
+  // Split the actual POST and GET so the stale cookie reliably arrives between them.
+  const accepted = await context.request.post('/dashboard', { form: fields, maxRedirects: 0 });
+  expect(accepted.status()).toBe(302);
+  const destination = accepted.headers().location;
+  expect(destination).toBe('/scheduled#sent-draft-' + fields.draft_revision);
+  await context.addCookies(before);
+  await page.goto(destination);
+  await expect(page).toHaveURL(/\/scheduled$/);
+  expect(await page.evaluate(key => localStorage.getItem(key), draftKey)).toBeNull();
+});
