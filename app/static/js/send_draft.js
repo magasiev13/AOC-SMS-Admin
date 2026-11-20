@@ -9,18 +9,38 @@
     const fields = ['message_body', 'target', 'event_id', 'schedule_later',
         'schedule_date', 'schedule_time', 'include_unsubscribe'];
     const message = form.elements.namedItem('message_body');
+    const revision = document.createElement('input');
+    revision.type = 'hidden';
+    revision.name = 'draft_revision';
+    form.appendChild(revision);
+    let lastContent = null;
+    function composition() {
+        const draft = {};
+        for (const name of fields) {
+            const field = form.elements.namedItem(name);
+            if (field) draft[name] = field.type === 'checkbox' ? field.checked : field.value;
+        }
+        return draft;
+    }
     function save() {
         try {
             if (!message.value.trim()) {
-                localStorage.removeItem(key);
+                if (revision.value && JSON.parse(localStorage.getItem(key))?.revision === revision.value) {
+                    localStorage.removeItem(key);
+                }
+                lastContent = null;
+                revision.value = '';
                 return;
             }
-            const draft = {};
-            for (const name of fields) {
-                const field = form.elements.namedItem(name);
-                if (field) draft[name] = field.type === 'checkbox' ? field.checked : field.value;
-            }
+            const draft = composition();
+            const content = JSON.stringify(draft);
+            // Unchanged controls in this tab must not overwrite another tab's edits.
+            if (content === lastContent) return;
+            draft.revision = Array.from(crypto.getRandomValues(new Uint8Array(16)),
+                byte => byte.toString(16).padStart(2, '0')).join('');
             localStorage.setItem(key, JSON.stringify(draft));
+            revision.value = draft.revision;
+            lastContent = content;
         } catch (_) {
             // Storage can be disabled. Keep the current form usable and intact.
         }
@@ -55,13 +75,19 @@
             const advanced = form.querySelector('.advanced-options');
             if (advanced) advanced.open = true;
         }
+        if (/^[0-9a-f]{32}$/.test(draft.revision || '')) {
+            revision.value = draft.revision;
+            lastContent = JSON.stringify(composition());
+        }
         refresh();
     }
     form.addEventListener('input', save);
     form.addEventListener('change', save);
     form.addEventListener('submit', save, true);
     document.getElementById('discardSendDraft')?.addEventListener('click', () => {
+        const discardedRevision = revision.value;
         form.reset();
+        revision.value = discardedRevision;
         message.value = '';
         form.elements.namedItem('target').value = 'community';
         for (const name of ['event_id', 'schedule_date', 'schedule_time']) {
@@ -75,7 +101,6 @@
         const reviewToken = form.elements.namedItem('review_token');
         if (reviewToken) reviewToken.value = '';
         document.getElementById('sendFormError')?.classList.add('d-none');
-        try { localStorage.removeItem(key); } catch (_) { /* Storage is optional. */ }
         refresh();
         message.focus();
     });
