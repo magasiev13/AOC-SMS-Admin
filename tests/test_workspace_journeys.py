@@ -34,6 +34,71 @@ def test_timeline_scopes_schedules_and_combines_dispatched_reminders(ux):
     assert ux.client.get('/home').status_code in (302, 403)
 
 
+def test_upcoming_sends_prioritize_pending_across_types_and_link_to_scoped_details(ux):
+    m = ux.models
+    session = ux.db.session
+    session.get(m.Organization, ux.org_id).timezone_name = 'America/Denver'
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    due = datetime(now.year + 1, 11, 21, 17, 30)
+    event = m.Event(organization_id=ux.org_id, title='November workshop', date=due.date())
+    session.add(event)
+    session.flush()
+
+    def schedule(body, when, *, org=None, target='community', **values):
+        row = m.ScheduledMessage(organization_id=org or ux.org_id, message_body=body,
+                                 scheduled_at=when, target=target, **values)
+        session.add(row)
+        return row
+
+    schedule('Canceled earlier date', due - timedelta(hours=2), status='cancelled')
+    schedule('Missed send time', now - timedelta(days=1))
+    foreign = schedule('Foreign announcement', due - timedelta(hours=1), org=ux.other_id)
+    session.commit()
+    login(ux)
+    empty = ux.client.get('/home').data
+    assert b'Scheduled messages</h2>' in empty and b'No upcoming sends.' in empty
+    assert b'href="/scheduled">View all scheduled messages' in empty
+
+    feedback = schedule('Workshop feedback', due + timedelta(hours=2), target='event', event_id=event.id,
+                        automation_source='feedback_invitation', automation_kind='feedback_invitation')
+    announcement = schedule('Member announcement +17205550988', due)
+    reminder = schedule('Workshop reminder', due + timedelta(hours=1), automation_source='event_sync',
+                        automation_kind='one_day')
+    session.commit()
+    three = ux.client.get('/home').data
+    assert b'View all scheduled messages' in three and b'No upcoming sends.' not in three
+
+    fourth = schedule('Future test message', due + timedelta(days=10), test_mode=True)
+    session.commit()
+    for role in ('owner', 'staff'):
+        login(ux, role)
+        page = ux.client.get('/home')
+        assert page.status_code == 200
+        home = page.data
+        assert home.index(b'Member announcement') < home.index(b'Workshop reminder') < home.index(b'Workshop feedback')
+        for text in (b'Community broadcast', '10:30 AM MST · Pending'.encode(), b'Automatic reminder', b'Feedback invitation',
+                     b'November workshop', b'View all scheduled messages'):
+            assert text in home
+        for text in (b'Foreign announcement', b'Canceled earlier date', b'Missed send time', b'Future test message'):
+            assert text not in home
+        for row in (announcement, reminder, feedback):
+            assert f'href="/scheduled?id={row.id}"'.encode() in home
+        assert f'href="/scheduled?id={fourth.id}"'.encode() not in home
+        timeline = ux.client.get('/messages').data
+        assert timeline.index(b'Member announcement') < timeline.index(b'Workshop reminder') < timeline.index(b'Workshop feedback')
+        assert timeline.index(b'Workshop feedback') < timeline.index(b'Future test message') < timeline.index(b'Canceled earlier date')
+        assert b'Test send' in timeline and b'Foreign announcement' not in timeline
+        assert f'href="/scheduled?id={announcement.id}"'.encode() in timeline
+        focused = ux.client.get('/scheduled', query_string={'id': announcement.id})
+        assert focused.status_code == 200
+        assert b'Member announcement' in focused.data and b'Workshop feedback' not in focused.data
+        assert b'Foreign announcement' not in ux.client.get('/scheduled', query_string={'id': foreign.id}).data
+        for html in (home, timeline, focused.data):
+            assert (b'+17205550988' in html) == (role == 'owner')
+    assert announcement.status == 'pending' and announcement.attempt_count == 0
+    assert m.MessageDispatchAttempt.query.count() == 0
+
+
 def test_reachability_review_counts_unique_sends_and_expires_without_changing_permission(ux):
     from app.services.reachability_review_service import repeated_unreachable_contacts
     m = ux.models

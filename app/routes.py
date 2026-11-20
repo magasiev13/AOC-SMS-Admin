@@ -4317,25 +4317,37 @@ def _send_draft_key():
     return f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
 
 
+def _scheduled_send_label(schedule):
+    from app.services.feedback_invitation_service import SOURCE as feedback_source
+
+    if schedule.test_mode:
+        return 'Test send'
+    if is_event_reminder(schedule):
+        return 'Automatic reminder'
+    if schedule.automation_source == feedback_source:
+        return 'Feedback invitation'
+    return 'Event message' if schedule.target == 'event' else 'Community broadcast'
+
+
 @bp.get('/messages')
 @login_required
 def workspace_messages():
     """Page a combined schedule and dispatch index before loading message bodies."""
     from app.services.delivery_status_service import batch_message_results
-    def index_query(model, timestamp, kind):
+    def index_query(model, timestamp, kind, pending):
         query = model.query.with_entities(model.id.label('id'), timestamp.label('activity_at'),
-                                          literal(kind).label('kind'))
+                                          literal(kind).label('kind'), pending.label('pending'))
         return _tenant_bulk_filter(query, model)
 
-    logs = index_query(MessageLog, MessageLog.created_at, 'log')
-    schedules = index_query(ScheduledMessage, ScheduledMessage.scheduled_at, 'schedule').filter(
+    logs = index_query(MessageLog, MessageLog.created_at, 'log', literal(False))
+    schedules = index_query(ScheduledMessage, ScheduledMessage.scheduled_at, 'schedule', ScheduledMessage.status == 'pending').filter(
         ScheduledMessage.message_log_id.is_(None))
     timeline = logs.union_all(schedules).subquery()
     index = db.session.query(timeline)
     per_page = 50
     pages = max(1, (index.count() + per_page - 1) // per_page)
     page = min(pages, max(1, request.args.get('page', 1, type=int)))
-    upcoming = timeline.c.activity_at >= datetime.now(timezone.utc).replace(tzinfo=None)
+    upcoming = db.and_(timeline.c.pending, timeline.c.activity_at >= datetime.now(timezone.utc).replace(tzinfo=None))
     entries = index.order_by(case((upcoming, 0), else_=1), case((upcoming, timeline.c.activity_at)).asc(),
                              timeline.c.activity_at.desc(), timeline.c.kind, timeline.c.id.desc()).offset(
                                  (page - 1) * per_page).limit(per_page).all()
@@ -4356,7 +4368,7 @@ def workspace_messages():
         if schedule and not log and schedule.status == 'pending':
             state = 'Scheduled'
         rows.append({'body': record.message_body, 'time': entry.activity_at, 'state': state,
-                     'reminder': bool(schedule and is_event_reminder(schedule)),
+                     'schedule_label': _scheduled_send_label(schedule) if schedule else None,
                      'outcome': outcomes.get(log.id) if log else None,
                      'url': url_for('main.log_detail', log_id=log.id) if log else
                             url_for('main.scheduled_list', id=schedule.id)})
@@ -4367,9 +4379,6 @@ def workspace_messages():
 @login_required
 def workspace_home():
     from app.models import MessagingUsageRecord
-    from app.services.aoc_event_sync_service import (
-        AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE, EVENT_REMINDER_KINDS, LEGACY_EVENT_REMINDER_KINDS,
-    )
     from app.services.usage_summary_service import estimated_send_overage
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     organization = _current_organization()
@@ -4382,18 +4391,17 @@ def workspace_home():
     held = ScheduledMessage.query.filter_by(status='held').order_by(ScheduledMessage.scheduled_at).limit(5).all()
     upcoming = ScheduledMessage.query.filter(
         ScheduledMessage.status == 'pending',
-        ScheduledMessage.automation_source.in_((AOC_AUTOMATION_SOURCE, EVENT_SYNC_AUTOMATION_SOURCE)),
-        ScheduledMessage.automation_kind.in_(EVENT_REMINDER_KINDS + LEGACY_EVENT_REMINDER_KINDS),
         ScheduledMessage.scheduled_at >= now,
     ).order_by(ScheduledMessage.scheduled_at, ScheduledMessage.id).limit(3).all()
     usage = workspace_usage_summary(organization)
     estimates = _automatic_reminder_estimates(upcoming)
-    reminders = [{'schedule': item, **estimates[item.id],
-                  'overage': estimated_send_overage(usage, estimates[item.id]['segments'])}
-                 for item in upcoming if item.id in estimates]
+    for estimate in estimates.values():
+        estimate['overage'] = estimated_send_overage(usage, estimate['segments'])
+    sends = [{'schedule': item, 'label': _scheduled_send_label(item), 'estimate': estimates.get(item.id)}
+             for item in upcoming]
     recent = events_query(current_only=False).filter(completed_event_predicate()).order_by(
         Event.date.desc(), Event.id.desc()).first()
-    return render_template('workspace/home.html', failed=failed, held=held, reminders=reminders,
+    return render_template('workspace/home.html', failed=failed, held=held, sends=sends,
                            unread=InboxThread.query.filter(InboxThread.unread_count > 0, InboxThread.archived_at.is_(None)).count(),
                            recent_event=recent, workspace_usage=usage)
 
@@ -9938,7 +9946,6 @@ def unsubscribed_import():
         try:
             file, content, error_response = _read_uploaded_csv_text(
                 template_name='unsubscribed/import.html',
-                template_context={'surface_view': _suppression_form_surface_view(mode='import')},
             )
             if error_response is not None:
                 return error_response
