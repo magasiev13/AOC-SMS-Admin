@@ -2152,7 +2152,7 @@ h6,
   display: none;
 }
 
-.survey-flows-cards .card-list-item {
+.survey-flows-cards :is(.card-list-item, code) {
   overflow-wrap: anywhere;
 }
 
