@@ -78,7 +78,8 @@ function refreshAudiencePreview() {
     compositionEstimate = null;
     eligibleRecipientCount = null;
     compositionPreviewPending = true;
-    audienceEligibility.textContent = 'Checking audience eligibility…';
+    audienceEligibility.hidden = true;
+    audienceEligibility.textContent = '';
     updateMessageStats();
     audiencePreviewTimer = setTimeout(() => loadAudiencePreview(sequence, selection), 750);
 }
@@ -98,10 +99,11 @@ async function loadAudiencePreview(sequence, selection) {
         eligibleRecipientCount = preview.eligible;
         audienceProfile = preview.profile;
         const audienceNote = testMode?.checked ? 'Internal test recipients only. ' : '';
-        audienceEligibility.textContent = `${audienceNote}${preview.eligible} eligible recipient(s); ${preview.excluded} excluded by permission, opt-out, suppression or duplicate checks. Eligibility is checked again before sending.`;
+        const recipientLabel = preview.eligible === 1 ? 'recipient' : 'recipients';
+        audienceEligibility.textContent = `${audienceNote}${preview.eligible} eligible ${recipientLabel} · ${preview.excluded} excluded`;
+        audienceEligibility.hidden = false;
     } catch (error) {
         if (sequence !== audiencePreviewSequence || error.name === 'AbortError') return;
-        audienceEligibility.textContent = 'Audience preview is unavailable. Eligibility will be checked before this request is saved.';
     }
     compositionPreviewPending = false;
     updateMessageStats();

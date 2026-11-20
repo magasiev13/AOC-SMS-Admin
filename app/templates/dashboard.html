@@ -59,10 +59,7 @@
 
                                 </label>
                             </div>
-                            <details class="form-text"><summary>Permission checks</summary>
-                                {% if confirmed_community_signup_consent %}Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.{% else %}Permission is checked for this purpose. Directory records alone do not authorize a broadcast.{% endif %}
-                            </details>
-                            <div class="form-text" id="audienceEligibility" role="status" aria-live="polite">Checking audience eligibility…</div>
+                            <div class="form-text" id="audienceEligibility" role="status" aria-live="polite" hidden></div>
                         </div>
 
                         <div class="mb-3" id="eventSelectWrapper" style="display: none;">
@@ -585,7 +582,7 @@
 <div class="modal fade" id="sendReviewModal" tabindex="-1" aria-labelledby="sendReviewTitle" aria-describedby="sendReviewExplanation">
     <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
         <div class="modal-header"><h2 class="modal-title h5" id="sendReviewTitle">Review Message</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close Review"></button></div>
-        <div class="modal-body">
+        <div class="modal-body" tabindex="0" role="region" aria-label="Message review details">
             <p id="sendReviewExplanation">Check the audience, timing and personalized sample before confirming.</p>
             {% include 'send/review_details.html' %}
         </div>

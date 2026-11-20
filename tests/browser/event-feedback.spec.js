@@ -1,6 +1,6 @@
 const { test, expect, request: requestFactory } = require('@playwright/test');
 const { createHmac } = require('node:crypto');
-const { login, installFailureDiagnostics, attachFailureDiagnostics } = require('./helpers');
+const { login, installFailureDiagnostics, attachFailureDiagnostics, waitForRenderedDocument } = require('./helpers');
 
 test.beforeEach(async ({ page }) => installFailureDiagnostics(page));
 test.afterEach(async ({ page }, testInfo) => attachFailureDiagnostics(page, testInfo));
@@ -36,6 +36,75 @@ async function waitForSavedReply(page, width, text) {
     return (await page.locator('.inbox-message-bubble').allTextContents()).some(body => body.includes(text));
   }, { timeout: 15000 }).toBe(true);
 }
+
+test('event feedback keeps its help aligned and separated when the viewport changes', async ({ page }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  await page.goto('/events/1/feedback');
+  await page.getByRole('link', { name: 'Create Feedback', exact: true }).first().click();
+  await expect(page.getByRole('heading', { name: 'Create Event Feedback', exact: true })).toBeVisible();
+  const formPanel = page.locator('.workspace-panel').filter({ has: page.getByLabel('Feedback Name') });
+  const guidance = page.locator('[data-context-help]');
+  const header = page.locator('.app-page-header');
+  await page.getByLabel('Feedback Name').fill('Feedback draft');
+  for (const width of [390, 930, 1440]) {
+    await page.setViewportSize({ width, height: 840 });
+    for (const open of [true, false]) {
+      await guidance.locator('summary').press('Enter');
+      expect(await guidance.evaluate(details => details.open)).toBe(open);
+      const [formBox, helpBox, headerBox] = await Promise.all([
+        formPanel.boundingBox(), guidance.boundingBox(), header.boundingBox(),
+      ]);
+      expect(helpBox.y - formBox.y - formBox.height).toBeGreaterThanOrEqual(16);
+      for (const box of [helpBox, headerBox]) {
+        expect(box.x).toBeCloseTo(formBox.x, 0);
+        expect(box.width).toBeCloseTo(formBox.width, 0);
+      }
+    }
+  }
+  await expect(page.getByLabel('Feedback Name')).toHaveValue('Feedback draft');
+});
+
+test('long event names and feedback keywords keep phone controls reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  const title = 'AutumnCommunityFoundationPartnerAppreciationGathering';
+  const feedbackName = 'CommunityFoundationPartnerAppreciationGatheringFeedback';
+  const keyword = 'PARTNERSANDCOMMUNITYRESEARCHSURVEY2026';
+  await page.goto('/events/add');
+  await page.getByLabel('Event Title').fill(title);
+  await page.getByRole('button', { name: 'Create Event', exact: true }).click();
+  const eventPath = new URL(page.url()).pathname;
+  await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
+  await waitForRenderedDocument(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.goto('/events');
+  const card = page.locator('.card-list-item').filter({ hasText: title });
+  const view = card.getByRole('link', { name: 'View', exact: true });
+  const fits = await view.evaluate(link => link.getBoundingClientRect().right <= window.innerWidth);
+  expect(fits).toBe(true);
+  await view.click();
+  await expect(page).toHaveURL(url => url.pathname === eventPath);
+  await page.goto(eventPath + '/feedback/new');
+  await page.getByLabel('Feedback Name').fill(feedbackName);
+  await page.getByLabel('Reply Keyword').fill(keyword);
+  await page.getByRole('button', { name: 'Create Feedback', exact: true }).click();
+  await expect(page.getByRole('heading', { name: feedbackName, exact: true })).toBeVisible();
+  await expect(page.locator('code').filter({ hasText: keyword })).toBeVisible();
+  await waitForRenderedDocument(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  for (const label of await page.locator('[aria-label="Feedback progress"] dt').all()) {
+    expect(await label.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+  const detailPath = new URL(page.url()).pathname;
+  await login(page, 'staff@browser.test', 'Staff-pass1!');
+  await page.goto('/inbox/surveys');
+  await waitForRenderedDocument(page);
+  const surveyCard = page.locator('.survey-flows-cards .card-list-item').filter({ hasText: feedbackName });
+  await expect(surveyCard.locator('code')).toHaveText(keyword);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await surveyCard.getByRole('link', { name: 'Submissions' }).click();
+  await expect(page).toHaveURL(url => url.pathname === detailPath);
+});
 
 for (const width of [1440, 390]) {
   test(`event feedback keeps attendance separate and staff numbers private at ${width}px`, async ({ page }, testInfo) => {

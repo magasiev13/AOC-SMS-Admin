@@ -119,6 +119,24 @@ test('saved-test-recipient composer and review use the same personalized total',
   await expect(review.locator('[data-review="eligible"]')).toHaveText('2');
 });
 
+test('an unavailable audience preview leaves the audience picker quiet and review usable', async ({ page }) => {
+  await login(page, 'owner@browser.test', 'Owner-pass1!');
+  // A session redirect or proxy can return HTML where a preview expects JSON.
+  await page.route('**/dashboard/audience-preview', route =>
+    route.fulfill({ contentType: 'text/html', body: '<html></html>' }));
+  await page.goto('/dashboard');
+  await page.getByLabel('Message', { exact: true }).fill('Review this audience');
+  await expect(page.locator('#messageUnitEstimate')).toContainText('Review the message to check its segments.');
+  const audiencePicker = page.locator('#compose-who');
+  await expect(audiencePicker.getByText('Permission checks', { exact: true })).toHaveCount(0);
+  await expect(audiencePicker.locator('#audienceEligibility')).toBeHidden();
+  await expect(audiencePicker).not.toContainText('Audience preview is unavailable');
+
+  await page.getByRole('button', { name: 'Review Message', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Review Message', exact: true });
+  await expect(review.locator('[data-review="eligible"]')).toHaveText(/^[1-9]\d*$/);
+});
+
 test('editing after a large sealed review keeps the preview within ordinary form limits', async ({ page }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   await page.goto('/dashboard');

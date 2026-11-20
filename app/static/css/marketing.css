@@ -829,6 +829,7 @@ main:focus {
 }
 
 .offer-ledger strong {
+  display: block;
   font-family: var(--display);
   font-size: clamp(1.65rem, 2.25vw, 2.4rem);
   font-weight: 650;

@@ -334,10 +334,14 @@ def test_confirmed_signup_workspace_does_not_require_individual_reapproval_in_co
     ux.db.session.add(ux.models.CommunityMember(organization_id=ux.org_id, phone='+17205550824', name='Confirmed signup'))
     ux.db.session.commit()
     login(ux)
-    assert b'Existing signups do not need individual reapproval' in ux.client.get('/dashboard').data
+    composer = ux.client.get('/dashboard')
+    assert composer.status_code == 200
+    assert b'Permission checks' not in composer.data
+    assert b'Existing signups do not need individual reapproval' not in composer.data
     response = ux.client.post('/dashboard/review', data=review_fields())
     assert response.status_code == 200 and response.get_json()['eligible'] == 1
-    assert 'Existing signups do not need individual reapproval' in response.get_json()['audience_policy']
+    assert response.get_json()['excluded'] == 0
+    assert 'Existing signups do not need individual reapproval' not in response.get_data(as_text=True)
 
 
 @pytest.mark.parametrize('change', [{'message_body': 'Changed body'}, {'target': 'event', 'event_id': '999'}, {'schedule_later': 'on', 'schedule_date': '2099-12-31', 'schedule_time': '23:59'}, {'request_idempotency_key': 'different-form-key'}])

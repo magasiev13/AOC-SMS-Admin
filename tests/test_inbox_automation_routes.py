@@ -238,7 +238,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
-        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b'aria-label="Add Survey"', response.data)
         self.assertIn(b"workspace-form-layout", response.data)
         self.assertIsNone(self.SurveyFlow.query.filter_by(trigger_keyword="HELP").first())
 
@@ -283,7 +283,7 @@ class TestInboxAutomationRouteValidation(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"already used by a keyword automation", response.data)
-        self.assertIn(b"workspace-summary", response.data)
+        self.assertIn(b'aria-label="Edit Survey"', response.data)
         self.assertIn(b"workspace-form-layout", response.data)
 
         refreshed = self.db.session.get(self.SurveyFlow, survey.id)

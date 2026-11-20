@@ -3,10 +3,10 @@
 {% block page_title %}Monthly usage report{% endblock %}
 {% block breadcrumbs %}<a href="{{ url_for('main.billing_overview') }}">Billing</a> / Usage{% endblock %}
 {% block content %}
-<form class="d-flex align-items-end gap-2 mb-3" method="get">
+<form class="d-flex flex-wrap align-items-end gap-2 mb-3" method="get">
     <div><label class="form-label" for="month">Billing month (UTC)</label>
     <input class="form-control" type="month" id="month" name="month" value="{{ month }}" max="{{ current_month }}" required></div>
-    <button class="btn btn-primary" type="submit">View month</button>
+    <button class="btn btn-primary text-nowrap" type="submit">View month</button>
 </form>
 <section class="workspace-panel p-3">
     <h2 class="h5">Outbound messages</h2>

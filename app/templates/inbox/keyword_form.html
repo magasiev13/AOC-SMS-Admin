@@ -1,66 +1,34 @@
-{% extends "base.html" %}
-{% import "includes/ui_macros.html" as ui %}
+{% extends "workspace_form.html" %}
 
 {% set is_edit = rule is not none %}
 {% set keyword_value = form_data.keyword if form_data else (rule.keyword if rule else '') %}
 {% set response_value = form_data.response_body if form_data else (rule.response_body if rule else '') %}
 {% set active_value = form_data.is_active if form_data else (rule.is_active if rule else True) %}
+{% set form_title = ('Edit' if is_edit else 'Add') ~ ' Automatic Reply' %}
+{% set parent_label = 'Automatic Replies' %}
+{% set parent_url = url_for('main.keyword_rules_list') %}
+{% set submit_label = 'Save' %}
+{% set form_note = 'Inactive rules stay saved but do not reply to inbound messages.' %}
+{% set form_class = 'automation-form automation-form--keyword' %}
 
-{% block title %}{{ 'Edit' if is_edit else 'Add' }} Automatic Reply - {{ product_name }}{% endblock %}
+{% block form_fields %}
+<div class="mb-3">
+    <label for="keyword" class="form-label">Keyword</label>
+    <input type="text" class="form-control" id="keyword" name="keyword" value="{{ keyword_value }}"
+           maxlength="40" placeholder="e.g. HELP" required>
+    <div class="form-text">Exact match and case-insensitive. Multi-word keywords are allowed.</div>
+</div>
 
-{% block page_title %}{{ 'Edit' if is_edit else 'Add' }} Automatic Reply{% endblock %}
+<div class="mb-3">
+    <label for="response_body" class="form-label">Auto-reply message</label>
+    <textarea class="form-control" id="response_body" name="response_body" rows="4" maxlength="1600"
+              placeholder="Enter the SMS reply..." required>{{ response_value }}</textarea>
+    <div class="form-text" id="keywordResponseStats" aria-live="polite"></div>
+</div>
 
-{% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <a href="{{ url_for('main.keyword_rules_list') }}">Automatic Replies</a> / <span>{{ 'Edit' if is_edit else 'Add' }}</span>
-{% endblock %}
-
-{% block content %}
-<div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div class="workspace-form-layout workspace-form-layout--centered">
-        <div class="workspace-form-main">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">{{ 'Edit' if is_edit else 'Add' }} Automatic Reply</h2>
-                        <p class="workspace-panel__meta">Set the exact trigger and the SMS reply this rule should send back.</p>
-                    </div>
-                </div>
-                <form method="POST" class="automation-form automation-form--keyword">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="workspace-panel__body">
-                        <div class="mb-3">
-                            <label for="keyword" class="form-label">Keyword</label>
-                            <input type="text" class="form-control" id="keyword" name="keyword" value="{{ keyword_value }}"
-                                   maxlength="40" placeholder="e.g. HELP" required>
-                            <div class="form-text">Exact match and case-insensitive. Multi-word keywords are allowed.</div>
-                        </div>
-
-                        <div class="mb-3">
-                            <label for="response_body" class="form-label">Auto-reply message</label>
-                            <textarea class="form-control" id="response_body" name="response_body" rows="4" maxlength="1600"
-                                      placeholder="Enter the SMS reply..." required>{{ response_value }}</textarea>
-                            <div class="form-text" id="keywordResponseStats" aria-live="polite"></div>
-                        </div>
-
-                        <div class="form-check mb-0">
-                            <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
-                            <label class="form-check-label" for="is_active">Active</label>
-                        </div>
-                    </div>
-                    <div class="workspace-panel__footer">
-                        <div class="text-muted small">Inactive rules stay saved but do not reply to inbound messages.</div>
-                        <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save me-1"></i>Save
-                            </button>
-                            <a href="{{ url_for('main.keyword_rules_list') }}" class="btn btn-outline-secondary">Cancel</a>
-                        </div>
-                    </div>
-                </form>
-            </section>
-        </div>
-    </div>
+<div class="form-check mb-0">
+    <input class="form-check-input" type="checkbox" id="is_active" name="is_active" {% if active_value %}checked{% endif %}>
+    <label class="form-check-label" for="is_active">Active</label>
 </div>
 {% endblock %}
 

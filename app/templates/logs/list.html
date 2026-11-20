@@ -6,7 +6,7 @@
 {% block page_title %}Message History{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Message History</span>
+<a href="{{ url_for('main.workspace_messages') }}">Messages</a> / <span>Message History</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -21,12 +21,11 @@
 <div class="collection-shell">
     {{ ui.collection_search_panel(
         url_for('main.logs_list'),
-        'Search logs',
-        search,
-        'Search logs',
-        'Search Message History',
-        'Track delivery history and recent sends in one place.',
-        'logsTable'
+        'Search message, audience or event',
+        value=search,
+        aria_label='Search message history by message, audience or event',
+        target_ids='logsTable',
+        compact=true
     ) }}
 
 <div class="card app-card collection-panel collection-panel--results">

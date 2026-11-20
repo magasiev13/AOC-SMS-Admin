@@ -6,7 +6,7 @@
 {% block page_title %}Automatic Replies{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Automations</span> / <span>Automatic Replies</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Automations</span> / <span>Automatic Replies</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -22,15 +22,14 @@
 
 {% block content %}
 <div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div class="collection-shell">
         {{ ui.collection_search_panel(
             url_for('main.keyword_rules_list'),
-            'Search Automatic Replies',
+            'Search keyword or reply text',
             value=search,
-            aria_label='Search Automatic Replies',
-            title='Search',
-            meta='Filter by keyword or reply copy.'
+            aria_label='Search automatic replies by keyword or reply text',
+            meta=(rules|length ~ ' ' ~ ('reply' if rules|length == 1 else 'replies')),
+            compact=true
         ) }}
 
         <section class="collection-panel collection-panel--results">
@@ -134,7 +133,6 @@
                 ) }}
                 {% endif %}
             </div>
-            {{ ui.collection_footer(rules|length, 'rule') }}
         </section>
     </div>
 </div>

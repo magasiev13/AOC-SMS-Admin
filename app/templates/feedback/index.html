@@ -18,7 +18,7 @@
         {% if flows %}
         <div class="card-list">
             {% for flow in flows %}
-            <article class="card-list-item">
+            <article class="card-list-item text-break">
                 <h3 class="h6 mb-2"><a href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">{{ feedback_display(flow.name) }}</a></h3>
                 <div class="d-flex flex-wrap align-items-center gap-2"><span class="badge bg-{{ 'success' if flow.is_active else 'secondary' }}">{{ 'Active' if flow.is_active else 'Paused' }}</span><span class="small text-muted">Keyword <code>{{ feedback_display(flow.trigger_keyword) }}</code> · {{ flow.questions|length }} questions</span></div>
                 <a class="btn btn-sm btn-outline-primary mt-3" href="{{ url_for('event_feedback.detail', event_id=event.id, survey_id=flow.id) }}">View Responses and Invitation</a>

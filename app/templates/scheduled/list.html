@@ -14,7 +14,7 @@
 {% block page_title %}Scheduled Messages{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Scheduled Messages</span>
+<a href="{{ url_for('main.workspace_messages') }}">Messages</a> / <span>Scheduled Messages</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -28,12 +28,11 @@
 <div class="collection-shell">
     {{ ui.collection_search_panel(
         url_for('main.scheduled_list'),
-        'Search scheduled messages',
-        search,
-        'Search scheduled messages',
-        'Search Scheduled Messages',
-        'Review upcoming messages and past send results.',
-        'scheduledTables,scheduledPastTable'
+        'Search message, audience or event',
+        value=search,
+        aria_label='Search scheduled messages by message, audience or event',
+        target_ids='scheduledTables,scheduledPastTable',
+        compact=true
     ) }}
 
 {% if pending %}

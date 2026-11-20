@@ -68,7 +68,7 @@ for (const width of [1440, 390]) {
     await page.getByRole('button', { name: 'Add Contact', exact: true }).click();
     const row = (width === 390 ? page.locator('.card-list-item') : page.locator('#communityTable tbody.table-data tr')).filter({ hasText: name });
     await expect(row).toBeVisible();
-    if (width === 390) await row.locator('.people-row-menu > summary').click();
+    if (width === 390) await row.getByRole('button', { name: 'Actions', exact: true }).click();
     else await row.getByRole('button', { name: 'More Actions', exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
     await row.getByRole('button', { name: /Block Contact/ }).click();

@@ -55,6 +55,10 @@ class AppUser(UserMixin, db.Model):
         db.Index('ux_users_email_lower', db.func.lower(email), unique=True),
     )
 
+    @property
+    def display_name(self) -> str:
+        return (self.full_name or '').strip() or self.username
+
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
 

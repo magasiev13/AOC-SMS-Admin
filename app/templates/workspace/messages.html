@@ -11,7 +11,7 @@
     {% endif %}
     <section><h2>Message timeline</h2>
         {% for row in rows %}<a class="work-row" href="{{ row.url }}">
-            <div><strong>{{ row.body|private_text|truncate(110) }}</strong><small>{{ row.time|localtime }}{% if row.reminder %} · Automatic reminder{% endif %}</small></div>
+            <div><strong>{{ row.body|private_text|truncate(110) }}</strong><small>{{ row.time|localtime }}{% if row.schedule_label %} · {{ row.schedule_label }}{% endif %}</small></div>
             <span>{% if row.outcome %}{{ row.outcome.delivered }} delivered · {{ row.outcome.not_delivered }} not delivered{% if row.outcome.not_submitted %} · {{ row.outcome.not_submitted }} not submitted{% endif %}{% if row.outcome.no_receipt %} · {{ row.outcome.no_receipt }} no receipt yet{% endif %}{% if row.outcome.acceptance_unresolved %} · {{ row.outcome.acceptance_unresolved }} acceptance unresolved{% endif %}{% else %}{{ row.state }}{% endif %}</span>
         </a>{% else %}<p class="work-row">Your scheduled and sent messages will appear here.</p>{% endfor %}
     </section>

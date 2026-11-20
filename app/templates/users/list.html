@@ -1,15 +1,17 @@
 {% extends "base.html" %}
 {% import "includes/ui_macros.html" as ui %}
 
-{% block title %}Users - {{ product_name }}{% endblock %}
+{% set workspace_team = config.SAAS_MODE and not current_user.is_platform_admin %}
+{% set directory_title = 'Team access' if workspace_team else 'Users' %}
+{% block title %}{{ directory_title }} - {{ product_name }}{% endblock %}
 
-{% block page_title %}Users{% endblock %}
+{% block page_title %}{{ directory_title }}{% endblock %}
 
 {% block breadcrumbs %}
 {% if current_user.is_platform_admin %}
 <a href="{{ url_for('main.platform_home') }}">Platform</a> / <span>Users</span>
 {% else %}
-<a href="{{ url_for('main.dashboard') }}">Workspace</a> / <span>Users</span>
+<a href="{{ url_for('main.settings_home' if workspace_team else 'main.dashboard') }}">{{ 'Settings' if workspace_team else 'Workspace' }}</a> / <span>{{ directory_title }}</span>
 {% endif %}
 {% endblock %}
 
@@ -68,13 +70,13 @@
 {% endcall %}
 {% endif %}
 <div class="card app-card collection-panel collection-panel--results">
-    <div class="table-responsive d-none d-lg-block">
+    <div class="table-responsive d-none d-xl-block">
         <table class="table table-hover mb-0" data-sortable="client">
             <thead class="table-light">
                 <tr>
                     <th data-sort-type="string">
-                        <button type="button" class="sort-button" data-sort-key="username">
-                            <span>Username</span>
+                        <button type="button" class="sort-button" data-sort-key="name">
+                            <span>{{ 'Team member' if workspace_team else 'Name' }}</span>
                             <span class="sort-indicator" aria-hidden="true"></span>
                         </button>
                     </th>
@@ -117,8 +119,11 @@
                 {% if users %}
                     {% for user in users %}
                     <tr>
-                        <td data-sort-value="{{ user.username }}">
-                            {{ user.username }}
+                        <td data-sort-value="{{ user.display_name }}">
+                            <strong>{{ user.display_name }}</strong>
+                            {% if user.display_name != user.username %}
+                            <div class="small text-muted">{{ user.username }}</div>
+                            {% endif %}
                             {% if current_user.id == user.id %}
                                 <span class="badge bg-secondary ms-2">You</span>
                             {% endif %}
@@ -166,12 +171,12 @@
                         </td>
                         <td>
                             <div class="d-flex flex-wrap gap-1 row-actions" data-row-actions>
-                                <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="Edit user">
+                                <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="Edit user {{ user.display_name }}">
                                     <i class="bi bi-pencil"></i> Edit
                                 </a>
-                                <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete user"
+                                <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete user {{ user.display_name }}"
                                         data-bs-toggle="modal" data-bs-target="#deleteUserModal"
-                                        data-username="{{ user.username }}"
+                                        data-display-name="{{ user.display_name }}" data-username="{{ user.username }}"
                                         data-form-id="delete-user-{{ user.id }}"
                                         {% if current_user.id == user.id %}disabled{% endif %}>
                                     <i class="bi bi-trash"></i> Delete
@@ -200,14 +205,17 @@
             </tbody>
         </table>
     </div>
-    <div class="card-list d-lg-none">
+    <div class="card-list team-directory-cards d-xl-none">
         {% if users %}
             {% for user in users %}
             {% set organization_view = user_organization_views.get(user.id) if config.SAAS_MODE and current_user.is_platform_admin else none %}
             <div class="card-list-item">
                 <div class="d-flex justify-content-between align-items-start gap-2">
                     <div>
-                        <h6 class="mb-1">{{ user.username }}</h6>
+                        <h3 class="h6 mb-1">{{ user.display_name }}</h3>
+                        {% if user.display_name != user.username %}
+                        <div class="small text-muted">{{ user.username }}</div>
+                        {% endif %}
                         <div class="d-flex flex-wrap gap-2 mt-2">
                             <span class="badge bg-{{ 'dark' if user.is_platform_admin else ('primary' if user.is_admin else 'info') }}">
                                 {% if user.is_platform_admin %}
@@ -247,12 +255,12 @@
                     </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-3 row-actions" data-row-actions>
-                    <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="Edit user">
+                    <a href="{{ url_for('main.users_edit', user_id=user.id) }}" class="btn btn-sm btn-outline-secondary" aria-label="Edit user {{ user.display_name }}">
                         <i class="bi bi-pencil"></i> Edit
                     </a>
-                    <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete user"
+                    <button type="button" class="btn btn-sm btn-outline-danger" aria-label="Delete user {{ user.display_name }}"
                             data-bs-toggle="modal" data-bs-target="#deleteUserModal"
-                            data-username="{{ user.username }}"
+                            data-display-name="{{ user.display_name }}" data-username="{{ user.username }}"
                             data-form-id="delete-user-{{ user.id }}"
                             {% if current_user.id == user.id %}disabled{% endif %}>
                         <i class="bi bi-trash"></i> Delete
@@ -273,7 +281,7 @@
         {% endif %}
     </div>
     {% if users %}
-    {{ ui.collection_footer(users|length, 'user') }}
+    {{ ui.collection_footer(users|length, 'team member' if workspace_team else 'user') }}
     {% endif %}
 </div>
 
@@ -282,7 +290,7 @@
     <div class="card-header">
         <h6 class="mb-0"><i class="bi bi-envelope-paper me-2"></i>Pending Invitations</h6>
     </div>
-    <div class="table-responsive d-none d-lg-block">
+    <div class="table-responsive d-none d-xl-block">
         <table class="table mb-0">
             <thead class="table-light">
                 <tr>
@@ -331,7 +339,7 @@
             </tbody>
         </table>
     </div>
-    <div class="card-list d-lg-none">
+    <div class="card-list team-directory-cards d-xl-none">
         {% for invitation in pending_invitations %}
         {% set invite = invitation.invitation %}
         <div class="card-list-item">
@@ -371,15 +379,15 @@
 {% endif %}
 </div>
 
-<div class="modal fade" id="deleteUserModal" tabindex="-1">
+<div class="modal fade" id="deleteUserModal" aria-labelledby="deleteUserTitle" tabindex="-1">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Confirm Delete</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <h2 class="modal-title h5" id="deleteUserTitle">Delete user</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                Delete <strong id="deleteUsername"></strong>?
+                Delete <strong id="deleteUserName"></strong><span id="deleteUserLogin" class="text-muted"></span>?
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>

@@ -10,9 +10,20 @@
         {% for msg in held %}<a class="work-row" href="{{ url_for('main.scheduled_list', id=msg.id) }}"><strong>Held for review</strong><span>{{ msg.message_body|private_text|truncate(100) }} →</span></a>{% endfor %}
         {% if not unread and not failed and not held %}<p class="work-row">You're caught up.</p>{% endif %}
     </section>
-    <section><h2>Upcoming automatic reminders</h2>
-        {% for row in reminders %}<a class="work-row" href="{{ url_for('main.scheduled_list', id=row.schedule.id) }}"><strong>{{ row.schedule.message_body|private_text|truncate(90) }}</strong><span>{{ row.schedule.scheduled_at|localtime }} · {{ row.recipients }} eligible · estimated {{ row.segments }} SMS segment{{ '' if row.segments == 1 else 's' }}{% if row.overage %} · {{ row.overage }} extra at today’s allowance{% elif workspace_usage and not workspace_usage.billed %} · Not billed by Twinevia{% endif %}</span></a>
-        {% else %}<p class="work-row">No upcoming automatic reminders.</p>{% endfor %}
+    <section aria-labelledby="scheduled-messages"><h2 id="scheduled-messages">Scheduled messages</h2>
+        {% for row in sends %}
+        <a class="work-row" href="{{ url_for('main.scheduled_list', id=row.schedule.id) }}">
+            <div>
+                <strong>{{ row.schedule.message_body|private_text|truncate(90) }}</strong>
+                <small>{{ row.label }}{% if row.schedule.event %} · {{ row.schedule.event.title|private_text }}{% endif %}</small>
+            </div>
+            <div>
+                <span>{{ row.schedule.scheduled_at|localtime }} · Pending</span>
+                {% if row.estimate %}<small>{{ row.estimate.recipients }} eligible · estimated {{ row.estimate.segments }} SMS segment{{ '' if row.estimate.segments == 1 else 's' }}{% if row.estimate.overage %} · {{ row.estimate.overage }} extra at today’s allowance{% elif workspace_usage and not workspace_usage.billed %} · Not billed by Twinevia{% endif %}</small>{% endif %}
+            </div>
+        </a>
+        {% else %}<p class="work-row">No upcoming sends.</p>{% endfor %}
+        <a class="d-inline-block mt-2" href="{{ url_for('main.scheduled_list') }}">View all scheduled messages</a>
     </section>
     {% if recent_event %}<section><h2>Recent event</h2><a class="work-row" href="{{ url_for('event_feedback.follow_up', event_id=recent_event.id) }}"><strong>{{ recent_event.title|private_text }}</strong><span>{{ recent_event.date|localdate }} · Prepare feedback →</span></a></section>{% endif %}
     {% if workspace_usage %}<section><h2>This billing period</h2>{% include 'includes/workspace_usage.html' %}</section>{% endif %}
