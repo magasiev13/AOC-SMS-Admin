@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}{{ form_title }} - {{ product_name }}{% endblock %}
+{% block page_title %}{{ form_title }}{% endblock %}
+{% block breadcrumbs %}
+<a class="workspace-form-back" href="{{ parent_url }}">
+    <i class="bi bi-arrow-left" aria-hidden="true"></i><span>{{ parent_label }}</span>
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="workspace-form-layout workspace-shell--form">
+    <div class="workspace-panel">
+        <form method="POST" aria-label="{{ form_title }}"{% if form_class %} class="{{ form_class }}"{% endif %}{% if form_encoding %} enctype="{{ form_encoding }}"{% endif %}>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% block form_body %}
+            <div class="workspace-panel__body">
+                {% block form_fields %}{% endblock %}
+            </div>
+            {% endblock %}
+            <div class="workspace-panel__footer">
+                {% if form_note %}<p class="small text-muted mb-0">{{ form_note }}</p>{% endif %}
+                <div class="workspace-form-actions">
+                    <button type="submit" class="btn btn-primary">{{ submit_label }}</button>
+                    <a href="{{ cancel_url or parent_url }}" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -23,7 +23,7 @@ if (deleteEventModal) {
 }
 
 const selectedCountEl = document.getElementById('selectedCount');
-const selectAllEvents = document.getElementById('selectAllEvents');
+const selectPageBoxes = document.querySelectorAll('[data-select-page]');
 const bulkSelectionActions = document.getElementById('bulkSelectionActions');
 const bulkDeleteForm = document.getElementById('bulkDeleteForm');
 
@@ -66,29 +66,17 @@ function updateBulkUi() {
     if (bulkSelectionActions) {
         bulkSelectionActions.classList.toggle('is-visible', selected > 0);
     }
-    if (selectAllEvents) {
+    for (const selectAllEvents of selectPageBoxes) {
         selectAllEvents.checked = boxes.length > 0 && boxes.every(b => b.checked);
         selectAllEvents.indeterminate = selected > 0 && selected < boxes.length;
     }
 }
 
-if (selectAllEvents) {
+for (const selectAllEvents of selectPageBoxes) {
     selectAllEvents.addEventListener('change', function() {
         const boxes = getEventCheckboxes();
         boxes.forEach((box) => {
             box.checked = selectAllEvents.checked;
-            syncEventCheckboxes(box);
-        });
-        updateBulkUi();
-    });
-}
-
-const selectAllBtn = document.getElementById('selectAllBtn');
-if (selectAllBtn) {
-    selectAllBtn.addEventListener('click', function() {
-        const boxes = getEventCheckboxes();
-        boxes.forEach((box) => {
-            box.checked = true;
             syncEventCheckboxes(box);
         });
         updateBulkUi();

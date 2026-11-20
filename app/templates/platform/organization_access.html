@@ -67,7 +67,7 @@
                         <tbody>
                             {% for membership in joined_memberships %}
                             <tr>
-                                <td>{{ membership.user.full_name or membership.user.username }}</td>
+                                <td>{{ membership.user.display_name }}</td>
                                 <td>
                                     <span class="badge bg-{{ 'primary' if membership.role == 'owner' else 'info' }}">
                                         {{ 'Owner' if membership.role == 'owner' else 'Staff' }}

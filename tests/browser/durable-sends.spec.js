@@ -33,7 +33,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.setViewportSize(viewport);
     await login(page, 'owner@browser.test', 'Owner-pass1!');
     await page.goto('/dashboard');
-    await expect(page.locator('#audienceEligibility')).toContainText('eligible recipient(s)');
+    await expect(page.locator('#audienceEligibility')).toHaveText(/\d+ eligible recipients? · \d+ excluded/);
     const body = `Durable browser broadcast ${viewport.width}`;
     await page.getByLabel('Message', { exact: true }).fill(body);
     const key = await page.locator('#sendForm input[name="request_idempotency_key"]').inputValue();

@@ -6,7 +6,7 @@
 {% block page_title %}Surveys{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Automations</span> / <span>Surveys</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Automations</span> / <span>Surveys</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -20,19 +20,18 @@
 
 {% block content %}
 <div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
     <div class="collection-shell">
         {{ ui.collection_search_panel(
             url_for('main.survey_flows_list'),
-            'Search Surveys',
+            'Search name, keyword or message',
             value=search,
-            aria_label='Search Surveys',
-            title='Search',
-            meta='Filter by survey name, trigger keyword, or message copy.'
+            aria_label='Search surveys by name, keyword or message',
+            meta=(surveys|length ~ ' ' ~ ('survey' if surveys|length == 1 else 'surveys') ~ ' · ' ~ (surveys|selectattr('is_active')|list|length) ~ ' active'),
+            compact=true
         ) }}
 
-        <section class="collection-panel collection-panel--results survey-flows-results-panel{% if surveys %} survey-flows-results-panel--with-actions{% endif %}">
-            <div class="table-responsive d-none d-lg-block survey-flows-table-wrapper{% if surveys %} survey-flows-table-wrapper--with-actions{% endif %}">
+        <section class="collection-panel collection-panel--results survey-flows-results-panel">
+            <div class="table-responsive survey-flows-table-wrapper">
                 <table class="table table-hover mb-0">
                     <thead class="table-light">
                         <tr>
@@ -110,7 +109,7 @@
                     </tbody>
                 </table>
             </div>
-            <div class="card-list d-lg-none">
+            <div class="card-list survey-flows-cards">
                 {% if surveys %}
                     {% for survey in surveys %}
                     <div class="card-list-item">
@@ -169,7 +168,6 @@
                 ) }}
                 {% endif %}
             </div>
-            {{ ui.collection_footer(surveys|length, 'survey') }}
         </section>
     </div>
 </div>

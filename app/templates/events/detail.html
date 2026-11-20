@@ -7,7 +7,7 @@
 {% block page_title %}{{ (event.title)|private_text }}{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
+<a href="{{ url_for('main.workspace_home') }}">Home</a> /
 <a href="{{ url_for('main.events_list') }}">Events</a> /
 <span>{{ (event.title)|private_text }}</span>
 {% endblock %}

@@ -20,7 +20,7 @@
     {% set home_url = url_for('main.platform_home') if platform_user else url_for('main.workspace_home') %}
     <div class="app-shell">
         <aside class="app-sidebar d-none d-lg-flex flex-column">
-            <a class="app-sidebar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
+            <a class="app-sidebar-brand" href="{{ home_url }}">
                 <span class="brand-icon">
                     <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                 </span>
@@ -64,7 +64,7 @@
         <div class="app-main">
             <nav class="app-topbar navbar navbar-light d-lg-none">
                 <div class="container-fluid">
-                    <a class="navbar-brand" href="{{ home_url }}" aria-label="{{ product_name }}">
+                    <a class="navbar-brand" href="{{ home_url }}">
                         <span class="brand-icon brand-icon--sm">
                             <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                         </span>

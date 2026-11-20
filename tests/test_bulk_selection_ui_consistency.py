@@ -76,8 +76,7 @@ class TestBulkSelectionUiConsistency(unittest.TestCase):
 
     def test_bulk_selection_counts_are_live_regions(self) -> None:
         checks = [
-            ("app/templates/community/list.html", "selectedCount"),
-            ("app/templates/events/list.html", "selectedCount"),
+            ("app/templates/includes/ui_macros.html", "selectedCount"),
             ("app/templates/unsubscribed/list.html", "selectedCount"),
             ("app/templates/scheduled/list.html", "pendingSelectedCount"),
             ("app/templates/scheduled/list.html", "pastSelectedCount"),

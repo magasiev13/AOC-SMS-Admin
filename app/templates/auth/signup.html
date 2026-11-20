@@ -10,7 +10,7 @@
 {% set signup_current_step = 2 if request.method == 'POST' and (request.form.get('username') or request.form.get('password') or request.form.get('confirm_password')) else 1 %}
 <section class="auth-surface auth-surface--split auth-surface--signup">
     <div class="auth-story">
-        <a class="auth-brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+        <a class="auth-brand" href="{{ url_for('auth.login') }}">
             <span class="brand-icon">
                 <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
             </span>
@@ -46,7 +46,7 @@
 
     <div class="auth-panel auth-panel--wide">
         <div class="auth-panel__header">
-            <a class="auth-brand auth-panel__brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+            <a class="auth-brand auth-panel__brand" href="{{ url_for('auth.login') }}">
                 <span class="brand-icon">
                     <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
                 </span>

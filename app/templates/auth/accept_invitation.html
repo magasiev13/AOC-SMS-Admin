@@ -9,7 +9,7 @@
 {% block content %}
 <section class="auth-surface auth-surface--utility">
     <div class="auth-story auth-story--compact">
-        <a class="auth-brand" href="{{ url_for('auth.login') }}" aria-label="{{ product_name }}">
+        <a class="auth-brand" href="{{ url_for('auth.login') }}">
             <span class="brand-icon">
                 <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
             </span>
