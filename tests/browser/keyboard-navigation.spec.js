@@ -3,21 +3,26 @@ const { login } = require('./helpers');
 
 test.use({ viewport: { width: 390, height: 844 } });
 
-test('public navigation closes with Escape and keeps keyboard focus on Menu', async ({ page }) => {
+function tabToNextLink(browserName) {
+  // The default macOS WebKit configuration includes links with Option+Tab.
+  return browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
+}
+
+test('public navigation closes with Escape and keeps keyboard focus on Menu', async ({ page, browserName }) => {
   await page.goto('/');
   const menu = page.locator('.mobile-menu summary');
   await expect(menu).toHaveText('Menu');
   await menu.focus();
   await menu.press('Enter');
   const navigation = page.getByRole('navigation', { name: 'Mobile navigation' });
-  await page.keyboard.press('Tab');
+  await page.keyboard.press(tabToNextLink(browserName));
   await expect(navigation.getByRole('link', { name: 'Features' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(navigation).toBeHidden();
   await expect(menu).toBeFocused();
 });
 
-test('workspace navigation releases the page on tab exit or a switch to desktop', async ({ page }) => {
+test('workspace navigation releases the page on tab exit or a switch to desktop', async ({ page, browserName }) => {
   await login(page, 'owner@browser.test', 'Owner-pass1!');
   const toggle = page.getByRole('button', { name: 'Toggle navigation' });
   const menu = page.locator('#appMobileNav');
@@ -26,7 +31,7 @@ test('workspace navigation releases the page on tab exit or a switch to desktop'
   const last = menu.getByRole('button', { name: 'Sign Out Everywhere' });
   await expect(last).toBeVisible();
   await last.focus();
-  await page.keyboard.press('Tab');
+  await page.keyboard.press(tabToNextLink(browserName));
   await expect(page.getByRole('link', { name: 'New message', exact: true })).toBeFocused();
   await expect(menu).toBeHidden();
 

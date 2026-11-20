@@ -4310,9 +4310,6 @@ def _create_send_review(form):
         'sample': render_message_template(intent['message_body'], recipients[0]),
         'segments': estimate['total_segments'], 'timing': timing,
         'confirmation_label': 'Confirm Schedule' if intent['schedule_later'] else ('Confirm Test Send' if intent['test_mode'] else 'Confirm Send'),
-        'audience_policy': ('Contact-list signup permission is confirmed for this workspace. Existing signups do not need individual reapproval; STOP and suppression rules still apply.'
-                            if intent['target'] == 'community' and organization_has_confirmed_signup_consent(_current_organization_id()) else
-                            'Current recipient eligibility is checked for this message purpose.'),
     }
 
 

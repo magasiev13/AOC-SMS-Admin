@@ -2152,6 +2152,10 @@ h6,
   display: none;
 }
 
+.survey-flows-cards .card-list-item {
+  overflow-wrap: anywhere;
+}
+
 @container survey-results (min-width: 65rem) {
   .survey-flows-table-wrapper {
     display: block;
@@ -3880,20 +3884,23 @@ code {
   }
 }
 
-/* Keep a primary action and its disclosure together when the header collapses. */
+/* Size header actions to their labels. A disclosure or a lone action uses the same row. */
+.app-page-actions[data-page-actions]:not(:has(.app-page-actions-inline > *)) {
+  display: none;
+}
 @media (max-width: 991.98px) {
-  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) {
+  .app-page-actions:has(> .app-page-actions-inline > :only-child) {
     flex-flow: row wrap;
     align-items: center;
   }
 
-  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) .app-page-actions-inline {
+  .app-page-actions:has(> .app-page-actions-inline > :only-child) .app-page-actions-inline {
     width: auto;
     min-width: 0;
     max-width: 100%;
   }
 
-  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) .app-page-actions-inline > *,
+  .app-page-actions:has(> .app-page-actions-inline > :only-child) .app-page-actions-inline > *,
   .app-page-actions-toggle:not([hidden]) {
     flex: 0 1 auto;
     min-width: 0;
@@ -3903,13 +3910,13 @@ code {
 }
 
 @media (min-width: 640px) and (max-width: 991.98px) {
-  .app-page-header:has(.app-page-actions-toggle:not([hidden])) {
+  .app-page-header:has(.app-page-actions-inline > :only-child) {
     flex-direction: row;
     justify-content: space-between;
     align-items: flex-start;
   }
 
-  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) {
+  .app-page-actions:has(> .app-page-actions-inline > :only-child) {
     width: auto;
     max-width: 65%;
     justify-content: flex-end;

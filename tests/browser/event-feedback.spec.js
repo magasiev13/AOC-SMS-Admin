@@ -95,6 +95,15 @@ test('long event names and feedback keywords keep phone controls reachable', asy
   for (const label of await page.locator('[aria-label="Feedback progress"] dt').all()) {
     expect(await label.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   }
+  const detailPath = new URL(page.url()).pathname;
+  await login(page, 'staff@browser.test', 'Staff-pass1!');
+  await page.goto('/inbox/surveys');
+  await waitForRenderedDocument(page);
+  const surveyCard = page.locator('.survey-flows-cards .card-list-item').filter({ hasText: feedbackName });
+  await expect(surveyCard.locator('code')).toHaveText(keyword);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await surveyCard.getByRole('link', { name: 'Submissions' }).click();
+  await expect(page).toHaveURL(url => url.pathname === detailPath);
 });
 
 for (const width of [1440, 390]) {

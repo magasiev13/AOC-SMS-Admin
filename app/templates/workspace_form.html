@@ -13,9 +13,11 @@
     <div class="workspace-panel">
         <form method="POST" aria-label="{{ form_title }}"{% if form_class %} class="{{ form_class }}"{% endif %}{% if form_encoding %} enctype="{{ form_encoding }}"{% endif %}>
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% block form_body %}
             <div class="workspace-panel__body">
                 {% block form_fields %}{% endblock %}
             </div>
+            {% endblock %}
             <div class="workspace-panel__footer">
                 {% if form_note %}<p class="small text-muted mb-0">{{ form_note }}</p>{% endif %}
                 <div class="workspace-form-actions">

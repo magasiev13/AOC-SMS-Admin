@@ -186,7 +186,7 @@ test('workspace forms share a title, return link and first-field alignment', asy
     ['/events/add', 'Events', 'Event Title'],
     ['/events/1/feedback/new', 'Acme Spring Launch · Feedback', 'Feedback Name'],
     ['/inbox/keywords/add', 'Automatic Replies', 'Keyword'],
-    ['/team/invite', 'Users', 'Email'],
+    ['/team/invite', 'Team access', 'Email'],
     ['/unsubscribed/add', 'Opt-Outs & Blocks', 'Name (Optional)'],
     ['/unsubscribed/import', 'Opt-Outs & Blocks', 'Upload CSV'],
   ];
