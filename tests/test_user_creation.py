@@ -58,6 +58,14 @@ class TestUserCreationMustChangePassword(unittest.TestCase):
             follow_redirects=False,
         )
 
+    def test_display_name_trims_names_and_falls_back_to_sign_in(self) -> None:
+        user = self.AppUser(username="legacy-account")
+        for full_name in (None, "", " \t "):
+            user.full_name = full_name
+            self.assertEqual(user.display_name, "legacy-account")
+        user.full_name = "  Alex Rivera  "
+        self.assertEqual(user.display_name, "Alex Rivera")
+
     def test_unchecked_must_change_password_creates_user_without_flag(self) -> None:
         self._login()
         response = self.client.post(

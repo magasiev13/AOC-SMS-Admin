@@ -44,8 +44,7 @@
             'Search phone or name' if can_view_contact_numbers else 'Search contact names',
             search,
             'Search inbox threads',
-            'Search Inbox',
-            'Find the right conversation quickly.'
+            compact=true
         ) %}
         {% if folder %}<input type="hidden" name="folder" value="archived">{% endif %}
         {% if show_thread_list_only %}

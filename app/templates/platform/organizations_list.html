@@ -23,7 +23,7 @@
     </section>
 
     {% if organization_rows %}
-    <div class="d-none d-lg-block">
+    <div class="d-none d-xl-block">
         <section class="platform-directory platform-directory--organizations" aria-label="Organization directory">
             <div class="platform-directory__header" aria-hidden="true">
                 <div>Organization</div>
@@ -145,7 +145,7 @@
         </section>
     </div>
 
-    <div class="card-list platform-directory-mobile d-lg-none">
+    <div class="card-list platform-directory-mobile d-xl-none">
         {% for row in organization_rows %}
         {% set organization = row.organization %}
         {% set onboarding = row.onboarding %}

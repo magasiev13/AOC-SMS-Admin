@@ -26,73 +26,46 @@ document.getElementById('confirmDeleteBtn').addEventListener('click', function()
 });
 
 const bulkDeleteForm = document.getElementById('bulkDeleteForm');
-const selectAllMembers = document.getElementById('selectAllMembers');
+const selectPageBoxes = document.querySelectorAll('[data-select-page]');
+const memberBoxes = Array.from(document.querySelectorAll('.member-checkbox'));
+const formBoxes = memberBoxes.filter(box => box.form === bulkDeleteForm);
 const selectedCountEl = document.getElementById('selectedCount');
-const bulkDeleteBtn = document.getElementById('bulkDeleteBtn');
 const bulkSelectionActions = document.getElementById('bulkSelectionActions');
-function isElementVisible(element) {
-    if (!element) return false;
-    if (element.offsetParent !== null) return true;
-    return element.getClientRects().length > 0;
-}
-
-function getMemberCheckboxes() {
-    return Array.from(document.querySelectorAll('.member-checkbox'))
-        .filter(isElementVisible);
-}
 
 function updateBulkUi() {
     if (!selectedCountEl) return;
-    const boxes = getMemberCheckboxes();
-    const selected = boxes.filter(b => b.checked).length;
+    const selected = formBoxes.filter(box => box.checked).length;
     selectedCountEl.textContent = selected;
-    if (bulkSelectionActions) {
-        bulkSelectionActions.classList.toggle('is-visible', selected > 0);
-    }
-
-    if (selectAllMembers) {
-        selectAllMembers.checked = boxes.length > 0 && boxes.every(b => b.checked);
-        selectAllMembers.indeterminate = selected > 0 && selected < boxes.length;
+    bulkSelectionActions.classList.toggle('is-visible', selected > 0);
+    for (const box of selectPageBoxes) {
+        box.checked = selected > 0 && selected === formBoxes.length;
+        box.indeterminate = selected > 0 && selected < formBoxes.length;
     }
 }
 
-if (selectAllMembers) {
-    selectAllMembers.addEventListener('change', function() {
-        const boxes = getMemberCheckboxes();
-        boxes.forEach(b => { b.checked = selectAllMembers.checked; });
-        updateBulkUi();
-    });
+function selectPage(checked) {
+    for (const box of memberBoxes) box.checked = checked;
+    updateBulkUi();
 }
 
-const selectAllBtn = document.getElementById('selectAllBtn');
-if (selectAllBtn) {
-    selectAllBtn.addEventListener('click', function() {
-        const boxes = getMemberCheckboxes();
-        boxes.forEach(b => { b.checked = true; });
-        updateBulkUi();
-    });
+for (const box of selectPageBoxes) {
+    box.addEventListener('change', () => selectPage(box.checked));
 }
+document.getElementById('selectNoneBtn')?.addEventListener('click', () => selectPage(false));
 
-const selectNoneBtn = document.getElementById('selectNoneBtn');
-if (selectNoneBtn) {
-    selectNoneBtn.addEventListener('click', function() {
-        const boxes = getMemberCheckboxes();
-        boxes.forEach(b => { b.checked = false; });
-        updateBulkUi();
-    });
-}
-
-document.addEventListener('change', function(event) {
-    if (event.target && event.target.classList.contains('member-checkbox')) {
-        updateBulkUi();
+document.addEventListener('change', event => {
+    if (!event.target.matches('.member-checkbox')) return;
+    // Both layouts represent the same contact. Only the table input submits its ID.
+    for (const box of memberBoxes) {
+        if (box.value === event.target.value) box.checked = event.target.checked;
     }
+    updateBulkUi();
 });
 
 const bulkDeleteModal = document.getElementById('bulkDeleteModal');
 if (bulkDeleteModal) {
     bulkDeleteModal.addEventListener('show.bs.modal', function() {
-        const boxes = getMemberCheckboxes();
-        const selected = boxes.filter(b => b.checked).length;
+        const selected = formBoxes.filter(box => box.checked).length;
         const countEl = document.getElementById('bulkDeleteCount');
         if (countEl) countEl.textContent = selected;
     });

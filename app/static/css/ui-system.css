@@ -32,6 +32,13 @@
   max-width: 50rem;
 }
 
+/* Workspace names and titles can be entered without spaces. */
+.app-page-title,
+.app-breadcrumbs,
+.workspace-summary__body {
+  overflow-wrap: anywhere;
+}
+
 .workspace-summary__eyebrow {
   margin: 0;
   color: var(--color-text-muted);
@@ -204,9 +211,30 @@
   gap: var(--space-4);
 }
 
-.workspace-form-layout--centered {
-  max-width: 52rem;
+/* Keep form titles, validation, fields and page guidance on the same column. */
+.app-content:has(> .workspace-shell--form) > :is(.app-page-header, .alert, .workspace-shell--form, .context-help) {
+  width: min(100%, 52rem);
   margin-inline: auto;
+}
+
+.app-content:has(> .workspace-shell--form) > .app-page-header {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.app-breadcrumbs .workspace-form-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding-inline: 0;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.workspace-shell--form.workspace-form-layout .workspace-panel__footer {
+  display: grid;
+  justify-content: start;
 }
 
 .workspace-panel {
@@ -245,6 +273,51 @@
 
 .workspace-panel__body--dense {
   padding: var(--space-3) var(--space-4);
+}
+
+.member-account-section,
+.member-password-fields {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.member-account-section + .member-account-section,
+.member-password-settings {
+  border-top: 1px solid var(--color-border);
+}
+
+.member-account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.member-access-check {
+  align-self: center;
+}
+
+.team-directory-cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  overflow-wrap: anywhere;
+}
+
+.member-password-settings {
+  padding-inline: var(--space-4);
+}
+
+.member-password-settings > summary {
+  padding-block: .85rem;
+  color: var(--color-primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.member-password-settings > h2 {
+  padding-block: var(--space-4) var(--space-3);
+}
+
+.member-password-fields {
+  padding-bottom: var(--space-4);
 }
 
 .workspace-panel__footer {
@@ -402,6 +475,25 @@
   min-height: 48px;
 }
 
+.collection-search-compact .form-control,
+.collection-search-compact button {
+  min-height: 44px;
+}
+
+.collection-search-compact button {
+  min-width: 44px;
+  justify-content: center;
+}
+
+.collection-search-compact button:focus-visible {
+  z-index: 5;
+  outline: 2px solid var(--color-primary-strong);
+}
+
+.collection-search-compact + .inbox-threads-card {
+  margin-top: var(--space-3);
+}
+
 .collection-filters-form {
   display: grid;
   gap: var(--space-3);
@@ -518,6 +610,7 @@
 
 /* Task guidance stays close to the work and opens only when requested. */
 .context-help {
+  margin-top: var(--space-4);
   margin-bottom: 1.25rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);

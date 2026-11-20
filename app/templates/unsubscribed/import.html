@@ -1,53 +1,16 @@
-{% extends "base.html" %}
-{% import "includes/ui_macros.html" as ui %}
+{% extends "workspace_form.html" %}
 
-{% block title %}Import Blocked Numbers - {{ product_name }}{% endblock %}
+{% set form_title = 'Import Blocked Numbers' %}
+{% set parent_label = 'Opt-Outs & Blocks' %}
+{% set parent_url = url_for('main.unsubscribed_list') %}
+{% set submit_label = 'Import Blocks' %}
+{% set form_note = 'Duplicate phone numbers are skipped during import.' %}
+{% set form_encoding = 'multipart/form-data' %}
 
-{% block page_title %}Import Blocked Numbers{% endblock %}
-
-{% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> /
-<a href="{{ url_for('main.unsubscribed_list') }}">Opt-Outs &amp; Blocks</a> /
-<span>Import CSV</span>
-{% endblock %}
-
-{% block page_actions %}
-<a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Back
-</a>
-{% endblock %}
-
-{% block content %}
-<div class="workspace-shell">
-    {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div class="workspace-form-layout workspace-form-layout--centered">
-        <div class="workspace-form-main">
-            <section class="workspace-panel">
-                <div class="workspace-panel__header">
-                    <div>
-                        <h2 class="workspace-panel__title">Import Blocked Numbers</h2>
-                        <p class="workspace-panel__meta">Upload a CSV of phone numbers that should not receive messages.</p>
-                    </div>
-                </div>
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="workspace-panel__body">
-                        <div class="mb-0">
-                            <label for="file" class="form-label">Upload CSV</label>
-                            <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
-                            <div class="form-text mt-2">Supports phone only, name plus phone, or first, last, and phone.</div>
-                        </div>
-                    </div>
-                    <div class="workspace-panel__footer">
-                        <div class="text-muted small">Duplicate phone numbers are skipped during import.</div>
-                        <div class="workspace-form-actions">
-                            <button type="submit" class="btn btn-primary">Import Blocks</button>
-                            <a href="{{ url_for('main.unsubscribed_list') }}" class="btn btn-outline-secondary">Cancel</a>
-                        </div>
-                    </div>
-                </form>
-            </section>
-        </div>
-    </div>
+{% block form_fields %}
+<div class="mb-0">
+    <label for="file" class="form-label">Upload CSV</label>
+    <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+    <div class="form-text mt-2">Supports phone only, name plus phone, or first, last, and phone.</div>
 </div>
 {% endblock %}

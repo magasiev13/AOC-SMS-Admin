@@ -3,7 +3,7 @@
 {% block page_title %}Review Held Invitation{% endblock %}
 {% block content %}
 <section class="workspace-panel"><div class="workspace-panel__body">
-    <h2 class="h5">{{ feedback_display(event.title) }} · Invitation #{{ invitation.id }}</h2>
+    <h2 class="h5 text-break">{{ feedback_display(event.title) }} · Invitation #{{ invitation.id }}</h2>
     <p role="status">{{ feedback_display(invitation.hold_reason) }}</p>
     {% if review %}
         {% include 'send/review_details.html' %}

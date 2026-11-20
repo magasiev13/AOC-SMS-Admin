@@ -56,7 +56,8 @@
 </section>
 {%- endmacro %}
 
-{% macro collection_search_panel(action, placeholder, value='', aria_label='', title='Search', meta=None, target_ids='') -%}
+{% macro collection_search_panel(action, placeholder, value='', aria_label='', title='Search', meta=None, target_ids='', compact=false) -%}
+{% if not compact %}
 <section class="collection-panel collection-panel--search">
     <div class="collection-panel__header">
         <div>
@@ -67,26 +68,34 @@
         </div>
     </div>
     <div class="collection-panel__body">
-        <form method="GET" class="filter-bar" action="{{ action }}"{% if target_ids %} data-table-loading-target="{{ target_ids }}"{% endif %}>
+{% endif %}
+        <form method="GET" class="filter-bar{% if compact %} collection-panel--search collection-search-compact{% endif %}" action="{{ action }}"
+              {% if compact %}role="search" aria-label="{{ aria_label or placeholder }}"{% endif %}
+              {% if target_ids %}data-table-loading-target="{{ target_ids }}"{% endif %}>
             <div class="flex-grow-1">
                 <div class="input-group">
-                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    {% if not compact %}<span class="input-group-text"><i class="bi bi-search" aria-hidden="true"></i></span>{% endif %}
                     <input
                         type="text"
                         class="form-control"
                         name="search"
                         placeholder="{{ placeholder }}"
                         aria-label="{{ aria_label or placeholder }}"
+                        {% if compact %}enterkeyhint="search"{% endif %}
                         value="{{ value }}"
                     >
+                    {% if compact %}
+                    <button type="submit" class="input-group-text" aria-label="Search"><i class="bi bi-search" aria-hidden="true"></i></button>
+                    {% endif %}
                 </div>
             </div>
-            {% if caller is defined %}
-            {{ caller() }}
-            {% endif %}
+            {% if caller is defined %}{{ caller() }}{% endif %}
+            {% if compact and meta %}<span class="small text-muted">{{ meta }}</span>{% endif %}
         </form>
+{% if not compact %}
     </div>
 </section>
+{% endif %}
 {%- endmacro %}
 
 {% macro collection_filters_panel(action, title='Filters', meta=None, target_ids='') -%}
@@ -129,4 +138,23 @@
 <div class="collection-panel__footer text-muted">
     Showing {{ count }} {{ noun }}{{ '' if count == 1 else 's' }}
 </div>
+{%- endmacro %}
+
+{% macro directory_selection(delete_action) -%}
+    <div class="directory-selection">
+        <label class="directory-select-page d-lg-none">
+            <input class="form-check-input m-0" type="checkbox" data-select-page>
+            Select This Page
+        </label>
+        <div class="bulk-selection-actions" id="bulkSelectionActions">
+            <span role="status" aria-live="polite" aria-atomic="true"><span id="selectedCount">0</span> selected</span>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="selectNoneBtn">Clear selection</button>
+            <button type="button" class="btn btn-sm btn-outline-danger" id="bulkDeleteBtn" data-bs-toggle="modal" data-bs-target="#bulkDeleteModal">
+                Delete Selected
+            </button>
+        </div>
+        <form id="bulkDeleteForm" method="POST" action="{{ delete_action }}" style="display:none;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </form>
+    </div>
 {%- endmacro %}

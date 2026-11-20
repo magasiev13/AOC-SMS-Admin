@@ -11,7 +11,7 @@
 {% set can_manage_unsubscribed = current_user.is_admin %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Send a Message</a> / <span>Opt-Outs &amp; Blocks</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <span>Opt-Outs &amp; Blocks</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -90,7 +90,7 @@
                 {% endif %}
             </div>
 
-            <div class="table-responsive d-none d-lg-block suppression-table-wrapper">
+            <div class="table-responsive d-none d-xl-block">
                 <table class="table table-hover table-sticky-header mb-0 table-loading" id="unsubscribedTable" data-sortable="server" data-sort-default="created_at" data-sort-default-dir="desc">
                     <thead class="table-light">
                         <tr>
@@ -218,7 +218,7 @@
                 </table>
             </div>
 
-            <div class="card-list d-lg-none">
+            <div class="card-list d-xl-none">
                 {% if entries %}
                     {% for entry in entries %}
                     <div class="card-list-item">

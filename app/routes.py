@@ -2256,7 +2256,7 @@ def _organization_joined_memberships(organization: Organization) -> list[Organiz
     memberships.sort(
         key=lambda membership: (
             0 if membership.role == 'owner' else 1,
-            (membership.user.full_name or membership.user.username or '').lower(),
+            membership.user.display_name.casefold(),
             membership.id,
         )
     )
@@ -2653,38 +2653,12 @@ def _organization_meta_items(organization: Organization | None) -> list[str]:
     return []
 
 
-def _community_form_surface_view(member: CommunityMember | None) -> dict:
-    return _surface_view(
-        eyebrow='Community',
-        title='Edit community member' if member is not None else 'Add community member',
-        copy='Save a contact who should be available for workspace sends.',
-        meta=_organization_meta_items(_current_organization()),
-    )
-
-
 def _community_import_surface_view() -> dict:
     return _surface_view(
         eyebrow='Community',
         title='Import community members',
         copy='Upload a CSV of contacts and add them in one pass.',
         meta=_organization_meta_items(_current_organization()),
-    )
-
-
-def _event_form_surface_view(event: Event | None) -> dict:
-    organization = _current_organization()
-    return _surface_view(
-        eyebrow='Events',
-        title='Edit event' if event is not None else 'Create event',
-        copy='Save the event record used for registrations and event-based sends.',
-        meta=_organization_meta_items(organization),
-        stats=[
-            _surface_stat(
-                'Date',
-                format_date(event.date if event is not None else None, missing='Not set'),
-                'Event schedule',
-            )
-        ] if event is not None else [],
     )
 
 
@@ -2754,59 +2728,6 @@ def _log_detail_surface_view(log: MessageLog, details: list[dict]) -> dict:
     return view
 
 
-def _keyword_rules_surface_view(rules: list[KeywordAutomationRule], *, search: str) -> dict:
-    return _surface_view(
-        eyebrow='Automations',
-        title='Keyword rules',
-        copy='Manage inbound auto-replies and keep trigger coverage easy to scan.',
-        meta=_organization_meta_items(_current_organization()),
-        stats=[
-            _surface_stat('Rules', len(rules), 'Saved keyword triggers'),
-            _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
-        ],
-    )
-
-
-def _keyword_rule_form_surface_view(rule: KeywordAutomationRule | None) -> dict:
-    return _surface_view(
-        eyebrow='Automations',
-        title='Edit keyword rule' if rule is not None else 'Add keyword rule',
-        copy='Set the trigger phrase and the SMS reply sent back automatically.',
-        meta=_organization_meta_items(_current_organization()),
-    )
-
-
-def _survey_flows_surface_view(surveys: list[SurveyFlow], *, search: str) -> dict:
-    active_count = sum(1 for survey in surveys if survey.is_active)
-    return _surface_view(
-        eyebrow='Automations',
-        title='Survey automation overview',
-        copy='Review survey triggers, question counts, and submission paths from one list.',
-        meta=_organization_meta_items(_current_organization()),
-        stats=[
-            _surface_stat('Flows', len(surveys), 'Saved surveys'),
-            _surface_stat('Active', active_count, 'Ready to collect replies'),
-            _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
-        ],
-    )
-
-
-def _survey_form_surface_view(survey: SurveyFlow | None) -> dict:
-    stats: list[dict] = []
-    if survey is not None:
-        stats.extend([
-            _surface_stat('Questions', len(survey.questions), 'Current prompts'),
-            _surface_stat('Status', 'Active' if survey.is_active else 'Inactive', 'Trigger state'),
-        ])
-    return _surface_view(
-        eyebrow='Automations',
-        title='Edit survey flow' if survey is not None else 'Add survey flow',
-        copy='Define the trigger keyword, prompts, and optional event sync for this workflow.',
-        meta=_organization_meta_items(_current_organization()),
-        stats=stats,
-    )
-
-
 def _survey_submissions_surface_view(
     survey: SurveyFlow,
     *,
@@ -2838,20 +2759,6 @@ def _suppression_list_surface_view(*, total_count: int, search: str) -> dict:
             _surface_stat('Entries', total_count, 'Combined unsubscribed and suppressed'),
             _surface_stat('Search', 'Active' if search else 'All', 'Current filter'),
         ],
-    )
-
-
-def _suppression_form_surface_view(*, mode: str) -> dict:
-    copy = (
-        'Upload a CSV of contacts that should stay off send lists.'
-        if mode == 'import'
-        else 'Add a contact to keep future sends from reaching that number.'
-    )
-    return _surface_view(
-        eyebrow='Suppression',
-        title='Import suppression contacts' if mode == 'import' else 'Add to suppression',
-        copy=copy,
-        meta=_organization_meta_items(_current_organization()),
     )
 
 
@@ -2988,32 +2895,6 @@ def _settings_cards(include_billing: bool) -> list[dict[str, str]]:
             },
         )
     return cards
-
-
-def _user_form_surface_view(user: AppUser | None) -> dict:
-    platform_account_form = saas_mode_enabled() and current_user.is_platform_admin and (user is None or user.is_platform_admin)
-    entity_label = 'Platform admin' if platform_account_form else 'User'
-    scope_label = 'Platform' if current_user.is_platform_admin else 'Workspace'
-    copy = (
-        'Manage sign-in, access scope, and account security for this admin account.'
-        if platform_account_form
-        else 'Manage sign-in, workspace role, and security details for this account.'
-    )
-    return _surface_view(
-        eyebrow=f'{scope_label} users',
-        title=f'Edit {entity_label}' if user is not None else f'Create {entity_label}',
-        copy=copy,
-        meta=_organization_meta_items(_current_organization()),
-    )
-
-
-def _team_invite_surface_view() -> dict:
-    return _surface_view(
-        eyebrow='Workspace users',
-        title='Invite team member',
-        copy='Send access to an owner or staff account and keep billing access limited to owners.',
-        meta=_organization_meta_items(_current_organization()),
-    )
 
 
 def _workspace_summary_view(
@@ -4025,7 +3906,6 @@ def _render_community_form(*, member: CommunityMember | None, field_errors: dict
         member=member,
         form_values=form_values,
         field_errors=field_errors or {},
-        surface_view=_community_form_surface_view(member),
     )
 
 
@@ -4043,7 +3923,6 @@ def _render_event_form(*, event: Event | None):
     return render_template(
         'events/form.html',
         event=event,
-        surface_view=_event_form_surface_view(event),
     )
 
 
@@ -4051,15 +3930,11 @@ def _render_user_form(*, user: AppUser | None):
     return render_template(
         'users/form.html',
         user=user,
-        surface_view=_user_form_surface_view(user),
     )
 
 
 def _render_team_invite_form():
-    return render_template(
-        'users/invite_form.html',
-        surface_view=_team_invite_surface_view(),
-    )
+    return render_template('users/invite_form.html')
 
 
 def _render_keyword_form(*, rule: KeywordAutomationRule | None, form_data: dict | None):
@@ -4067,7 +3942,6 @@ def _render_keyword_form(*, rule: KeywordAutomationRule | None, form_data: dict 
         'inbox/keyword_form.html',
         rule=rule,
         form_data=form_data,
-        surface_view=_keyword_rule_form_surface_view(rule),
     )
 
 
@@ -4077,22 +3951,15 @@ def _render_survey_form(*, survey: SurveyFlow | None, form_data: dict | None):
         survey=survey,
         form_data=form_data,
         events=_survey_form_events(),
-        surface_view=_survey_form_surface_view(survey),
     )
 
 
 def _render_unsubscribed_form():
-    return render_template(
-        'unsubscribed/form.html',
-        surface_view=_suppression_form_surface_view(mode='add'),
-    )
+    return render_template('unsubscribed/form.html')
 
 
 def _render_unsubscribed_import():
-    return render_template(
-        'unsubscribed/import.html',
-        surface_view=_suppression_form_surface_view(mode='import'),
-    )
+    return render_template('unsubscribed/import.html')
 
 
 # Health check endpoint
@@ -4816,7 +4683,6 @@ def dashboard():
             'draft_key': _send_draft_key(),
             'a2p_status_view': a2p_status_view,
             'can_send_messages': can_send_messages,
-            'confirmed_community_signup_consent': organization_has_confirmed_signup_consent(_current_organization_id()),
             'send_disabled_reason': send_disabled_reason,
             'workspace_summary': _workspace_summary_view(
                 organization=organization,
@@ -5354,7 +5220,7 @@ def users_list():
                 .filter(OrganizationMembership.organization_id == organization_id)
             )
 
-    users = query.order_by(AppUser.username).all()
+    users = sorted(query.all(), key=lambda user: (user.display_name.casefold(), user.username.casefold()))
     user_organization_views = (
         {user.id: _platform_user_organization_view(user) for user in users}
         if saas_mode_enabled() and current_user.is_platform_admin
@@ -10777,7 +10643,6 @@ def keyword_rules_list():
         'inbox/keywords_list.html',
         rules=rules,
         search=search,
-        surface_view=_keyword_rules_surface_view(rules, search=search),
     )
 
 
@@ -10899,7 +10764,6 @@ def survey_flows_list():
         'inbox/surveys_list.html',
         surveys=surveys,
         search=search,
-        surface_view=_survey_flows_surface_view(surveys, search=search),
     )
 
 

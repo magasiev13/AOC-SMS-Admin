@@ -164,6 +164,14 @@ function initMobileNav() {
         document.body.classList.toggle('app-mobile-nav-open', isOpen);
         syncOffset();
     };
+    const closeNav = () => {
+        if (!document.body.classList.contains('app-mobile-nav-open')) return;
+        if (mobileNav.classList.contains('collapsing')) {
+            mobileNav.addEventListener('shown.bs.collapse', () => collapseInstance.hide(), { once: true });
+        } else {
+            collapseInstance.hide();
+        }
+    };
 
     mobileNav.addEventListener('show.bs.collapse', () => syncBodyState(true));
     mobileNav.addEventListener('hide.bs.collapse', () => syncBodyState(false));
@@ -175,11 +183,13 @@ function initMobileNav() {
         if (event.key !== 'Escape' || !document.body.classList.contains('app-mobile-nav-open')) return;
         event.preventDefault();
         restoreToggleFocus = true;
-        if (mobileNav.classList.contains('collapsing')) {
-            mobileNav.addEventListener('shown.bs.collapse', () => collapseInstance.hide(), { once: true });
-        } else {
-            collapseInstance.hide();
-        }
+        closeNav();
+    });
+    topbar.addEventListener('focusout', event => {
+        if (event.relatedTarget && !topbar.contains(event.relatedTarget)) closeNav();
+    });
+    window.matchMedia('(min-width: 992px)').addEventListener('change', event => {
+        if (event.matches) closeNav();
     });
     mobileNav.addEventListener('click', (event) => {
         if (event.target === mobileNav) {

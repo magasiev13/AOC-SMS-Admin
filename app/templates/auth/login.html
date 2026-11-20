@@ -10,7 +10,7 @@
 {% block content %}
 <section class="auth-surface auth-surface--split">
     <div class="auth-story">
-        <a class="auth-brand" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}" aria-label="{{ product_name }}">
+        <a class="auth-brand" href="{{ url_for('auth.platform_login' if is_platform else 'auth.login') }}">
             <span class="brand-icon">
                 <img class="brand-icon__image" src="{{ url_for('static', filename='brand-mark.svg', v=app_version) }}" alt="" aria-hidden="true">
             </span>

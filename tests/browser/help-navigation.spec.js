@@ -68,7 +68,7 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole('heading', { name: 'Send a Message', exact: true })).toBeVisible();
     const draft = `Review without sending ${width}`;
     await page.getByLabel('Message', { exact: true }).fill(draft);
-    await expect(page.locator('#audienceEligibility')).toContainText('eligible recipient(s)');
+    await expect(page.locator('#audienceEligibility')).toHaveText(/\d+ eligible recipients? · \d+ excluded/);
     let resumeReview;
     const waitForReview = new Promise(resolve => { resumeReview = resolve; });
     await page.route('**/dashboard/review', async route => {
@@ -84,6 +84,15 @@ for (const width of [1440, 390]) {
     await expect(review).toBeVisible();
     await expect(review.getByRole('button', { name: 'Confirm Send', exact: true })).toBeVisible();
     await expect(review.locator('[data-review="eligible"]')).not.toHaveText('0');
+    if (width === 390) {
+      await expect(review).toBeFocused();
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Tab');
+      const details = review.getByRole('region', { name: 'Message review details' });
+      await expect(details).toBeFocused();
+      await details.press('PageDown');
+      await expect.poll(() => details.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    }
     await review.getByRole('button', { name: 'Edit Message', exact: true }).click();
     await expect(review).not.toBeVisible();
     await expect(page.getByLabel('Message', { exact: true })).toHaveValue(draft);

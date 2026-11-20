@@ -6,7 +6,7 @@
 {% block page_title %}Test Recipients{% endblock %}
 
 {% block breadcrumbs %}
-<a href="{{ url_for('main.dashboard') }}">Dashboard</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>Test Recipients</span>
+<a href="{{ url_for('main.workspace_home') }}">Home</a> / <a href="{{ url_for('main.settings_home') }}">Settings</a> / <span>Test Recipients</span>
 {% endblock %}
 
 {% block page_actions %}
@@ -15,10 +15,30 @@
 </a>
 {% endblock %}
 
+{% macro recipient_row(label='', phone='') -%}
+<div class="border rounded-3 p-3 recipient-row">
+    <div class="recipient-fields">
+        <div>
+            <label class="form-label" data-recipient-label="label">Label</label>
+            <input class="form-control" type="text" data-recipient-field="label" name="recipient_label[]"
+                   maxlength="120" value="{{ label }}" placeholder="Board chair, IT admin, Ops lead">
+        </div>
+        <div>
+            <label class="form-label" data-recipient-label="phone">Phone</label>
+            <input class="form-control" type="tel" data-recipient-field="phone" name="recipient_phone[]"
+                   value="{{ phone }}" placeholder="+15551234567" inputmode="tel">
+        </div>
+        <button type="button" class="btn btn-outline-danger" data-remove-recipient>
+            <i class="bi bi-trash me-1"></i>Remove
+        </button>
+    </div>
+</div>
+{%- endmacro %}
+
 {% block content %}
 <div class="workspace-shell">
     {% call ui.workspace_summary(surface_view) %}{% endcall %}
-    <div class="workspace-detail-layout">
+    <div class="workspace-detail-layout test-recipients-layout">
         <div class="workspace-detail-main">
             <section class="workspace-panel">
                 <div class="workspace-panel__header">
@@ -34,39 +54,7 @@
                     <div class="workspace-panel__body">
                         <div class="vstack gap-3" id="recipientRows">
                             {% for row in recipient_rows %}
-                            <div class="border rounded-3 p-3 recipient-row">
-                                <div class="row g-3 align-items-end">
-                                    <div class="col-md-5">
-                                        <label class="form-label" data-recipient-label="label">Label</label>
-                                        <input
-                                            class="form-control"
-                                            type="text"
-                                            data-recipient-field="label"
-                                            name="recipient_label[]"
-                                            maxlength="120"
-                                            value="{{ row.label }}"
-                                            placeholder="Board chair, IT admin, Ops lead"
-                                        >
-                                    </div>
-                                    <div class="col-md-5">
-                                        <label class="form-label" data-recipient-label="phone">Phone</label>
-                                        <input
-                                            class="form-control"
-                                            type="tel"
-                                            data-recipient-field="phone"
-                                            name="recipient_phone[]"
-                                            value="{{ row.phone }}"
-                                            placeholder="+15551234567"
-                                            inputmode="tel"
-                                        >
-                                    </div>
-                                    <div class="col-md-2 d-grid">
-                                        <button type="button" class="btn btn-outline-danger" data-remove-recipient>
-                                            <i class="bi bi-trash me-1"></i>Remove
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
+                            {{ recipient_row(row.label, row.phone) }}
                             {% endfor %}
                         </div>
                     </div>
@@ -136,23 +124,7 @@
     </div>
 
     <template id="recipientRowTemplate">
-        <div class="border rounded-3 p-3 recipient-row">
-            <div class="row g-3 align-items-end">
-                <div class="col-md-5">
-                    <label class="form-label" data-recipient-label="label">Label</label>
-                    <input class="form-control" type="text" data-recipient-field="label" name="recipient_label[]" maxlength="120" placeholder="Board chair, IT admin, Ops lead">
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label" data-recipient-label="phone">Phone</label>
-                    <input class="form-control" type="tel" data-recipient-field="phone" name="recipient_phone[]" placeholder="+15551234567" inputmode="tel">
-                </div>
-                <div class="col-md-2 d-grid">
-                    <button type="button" class="btn btn-outline-danger" data-remove-recipient>
-                        <i class="bi bi-trash me-1"></i>Remove
-                    </button>
-                </div>
-            </div>
-        </div>
+        {{ recipient_row() }}
     </template>
 </div>
 {% endblock %}

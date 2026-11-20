@@ -47,6 +47,22 @@ async function centerDelta(container) {
   });
 }
 
+test('compact platform directory keeps organization details and actions accessible at 1024px', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await login(page, 'platform@browser.test', 'Platform-pass1!');
+  await page.goto('/platform/organizations');
+  const card = page.locator('.platform-org-card').filter({ hasText: 'Suspended Bakery' });
+  const checklist = card.locator('.platform-inline-details');
+  await checklist.locator('summary').click();
+  await expect(checklist.getByText('Organization created', { exact: true })).toBeVisible();
+  const more = card.getByRole('button', { name: 'More Actions' });
+  await more.click();
+  await expect(card.getByRole('button', { name: 'Reactivate' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await card.getByRole('link', { name: 'Access', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Manage Access', exact: true })).toBeVisible();
+});
+
 test('platform admin desktop surfaces use the shared shell and aligned actions', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1100 });
   await login(page, 'platform@browser.test', 'Platform-pass1!');
