@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
-from flask import Flask, abort, redirect, request
+from flask import Flask, abort, has_request_context, redirect, request
+from flask.sessions import SecureCookieSessionInterface
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import IntegrityError
 from flask_wtf import CSRFProtect
@@ -709,8 +710,18 @@ def _configure_security_headers(app: Flask) -> None:
         return response
 
 
+class _WorkspaceSessionInterface(SecureCookieSessionInterface):
+    def should_set_cookie(self, app, session):
+        # A background estimate can finish after a successful send. Refreshing
+        # an unchanged cookie would replace the newer confirmation and flashes.
+        if has_request_context() and request.endpoint == 'main.dashboard_audience_preview' and not session.modified:
+            return False
+        return super().should_set_cookie(app, session)
+
+
 def _build_app() -> Flask:
     app = Flask(__name__)
+    app.session_interface = _WorkspaceSessionInterface()
 
     from flask_wtf.csrf import CSRFError
 
@@ -767,9 +778,10 @@ def _build_app() -> Flask:
             return response
         from flask import session
         # Flash data is also stored in the browser's signed (readable) session.
-        if session.get('_flashes'):
-            session['_flashes'] = [(category, redact_phone_numbers(message))
-                                   for category, message in session['_flashes']]
+        if flashes := session.get('_flashes'):
+            redacted = [(category, redact_phone_numbers(message)) for category, message in flashes]
+            if redacted != flashes:
+                session['_flashes'] = redacted
         if response.is_json and not response.is_streamed:
             payload = response.get_json(silent=True)
             if payload is not None:
