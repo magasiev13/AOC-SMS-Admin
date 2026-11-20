@@ -368,6 +368,10 @@ sendForm.addEventListener('submit', function(event) {
         return;
     }
 
+    // The confirmed POST is navigating away. An estimate is no longer needed.
+    clearTimeout(audiencePreviewTimer);
+    ++audiencePreviewSequence;
+    audiencePreviewController?.abort();
     sendBtn.disabled = true;
     if (scheduleLater.checked) {
         sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scheduling...';

@@ -42,22 +42,31 @@ test('event feedback keeps its help aligned and separated when the viewport chan
   await page.goto('/events/1/feedback');
   await page.getByRole('link', { name: 'Create Feedback', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: 'Create Event Feedback', exact: true })).toBeVisible();
-  const formPanel = page.locator('.workspace-panel').filter({ has: page.getByLabel('Feedback Name') });
   const guidance = page.locator('[data-context-help]');
-  const header = page.locator('.app-page-header');
   await page.getByLabel('Feedback Name').fill('Feedback draft');
   for (const width of [390, 930, 1440]) {
     await page.setViewportSize({ width, height: 840 });
     for (const open of [true, false]) {
       await guidance.locator('summary').press('Enter');
-      expect(await guidance.evaluate(details => details.open)).toBe(open);
-      const [formBox, helpBox, headerBox] = await Promise.all([
-        formPanel.boundingBox(), guidance.boundingBox(), header.boundingBox(),
-      ]);
-      expect(helpBox.y - formBox.y - formBox.height).toBeGreaterThanOrEqual(16);
-      for (const box of [helpBox, headerBox]) {
-        expect(box.x).toBeCloseTo(formBox.x, 0);
-        expect(box.width).toBeCloseTo(formBox.width, 0);
+      // Keyboard focus can scroll the page during resize. Read all viewport
+      // coordinates in one browser task so they share the same scroll position.
+      const layout = await guidance.evaluate(details => {
+        const main = details.closest('main');
+        const form = main.querySelector('.workspace-form-layout .workspace-panel').getBoundingClientRect();
+        const header = main.querySelector('.app-page-header').getBoundingClientRect();
+        const help = details.getBoundingClientRect();
+        return {
+          open: details.open,
+          gap: help.top - form.bottom,
+          form: { left: form.left, right: form.right },
+          aligned: [header, help].map(box => ({ left: box.left, right: box.right })),
+        };
+      });
+      expect(layout.open).toBe(open);
+      expect(layout.gap).toBeGreaterThanOrEqual(16);
+      for (const box of layout.aligned) {
+        expect(box.left).toBeCloseTo(layout.form.left, 0);
+        expect(box.right).toBeCloseTo(layout.form.right, 0);
       }
     }
   }

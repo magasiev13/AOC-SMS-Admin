@@ -4317,6 +4317,17 @@ def _send_draft_key():
     return f'twinevia:send-draft:{current_user.id}:{_current_organization_id()}'
 
 
+def _redirect_after_saved_composition(endpoint, **values):
+    revision = request.form.get('draft_revision', '')
+    if re.fullmatch(r'[0-9a-f]{32}', revision):
+        # Only a committed request (or its verified idempotent replay) reaches
+        # this redirect. Its fragment is tab-local and never sent in a GET.
+        return redirect(url_for(endpoint, _anchor=f'sent-draft-{revision}', **values))
+    # A previously loaded composer can still submit an unversioned draft.
+    session['clear_send_draft_key'] = _send_draft_key()
+    return redirect(url_for(endpoint, **values))
+
+
 def _scheduled_send_label(schedule):
     from app.services.feedback_invitation_service import SOURCE as feedback_source
 
@@ -4845,7 +4856,7 @@ def dashboard():
             if existing_request is not None:
                 db.session.commit()
                 if existing_request.message_log_id:
-                    return redirect(url_for('main.log_detail', log_id=existing_request.message_log_id))
+                    return _redirect_after_saved_composition('main.log_detail', log_id=existing_request.message_log_id)
                 flash(request_status_message(existing_request), 'warning')
                 return redirect(url_for('main.logs_list'))
         
@@ -4940,7 +4951,7 @@ def dashboard():
                             )
                             return render_dashboard()
                         flash('This message was already scheduled. Reusing the existing schedule.', 'warning')
-                        return redirect(url_for('main.scheduled_list'))
+                        return _redirect_after_saved_composition('main.scheduled_list')
                 pending_schedule_limit = int(
                     current_app.config.get('SCHEDULED_MAX_PENDING_PER_ORGANIZATION', 25) or 25
                 )
@@ -4984,9 +4995,8 @@ def dashboard():
                     scheduled_estimate['max_segment_count'],
                     scheduled_estimate['total_segments'],
                 )
-                session['clear_send_draft_key'] = _send_draft_key()
                 flash(f'Message scheduled for {format_datetime(scheduled_utc)}. {_format_blast_estimate_summary(scheduled_estimate)}', 'success')
-                return redirect(url_for('main.scheduled_list'))
+                return _redirect_after_saved_composition('main.scheduled_list')
                 
             except ValueError as e:
                 flash(f'Invalid date/time format: {e}', 'error')
@@ -5052,8 +5062,7 @@ def dashboard():
                 return render_dashboard()
             if created:
                 enqueue_outbound_request(saved_request)
-            session['clear_send_draft_key'] = _send_draft_key()
-            return redirect(url_for('main.log_detail', log_id=saved_request.message_log_id))
+            return _redirect_after_saved_composition('main.log_detail', log_id=saved_request.message_log_id)
 
         send_fingerprint = build_blast_send_fingerprint(
             organization_id=_current_organization_id() if saas_mode_enabled() else None,
@@ -9235,6 +9244,7 @@ def log_detail(log_id):
 
     return render_template(
         'logs/detail.html',
+        accepted_draft_key=_send_draft_key(),
         log=log,
         details=details,
         suppression_status=suppression_status,
@@ -9429,6 +9439,7 @@ def scheduled_list():
 
     return render_template(
         'scheduled/list.html',
+        accepted_draft_key=_send_draft_key(),
         pending=pending,
         past=past,
         now=now,

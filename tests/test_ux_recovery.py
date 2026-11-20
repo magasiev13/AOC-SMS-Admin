@@ -83,6 +83,38 @@ def login(ux, role='owner'):
     assert response.status_code == 302
 
 
+@pytest.mark.parametrize('role', ['owner', 'staff'])
+def test_audience_preview_preserves_concurrent_confirmation_and_auth_changes(ux, role):
+    login(ux, role)
+    assert ux.client.get('/home').status_code == 200
+    cookie = ux.app.config['SESSION_COOKIE_NAME']
+
+    # Model a preview that started before the final schedule POST returned.
+    with ux.client.session_transaction() as browser_session:
+        browser_session['_flashes'] = [('info', 'Earlier notice')]
+    preview_client = ux.app.test_client()
+    preview_client.set_cookie(cookie, ux.client.get_cookie(cookie).value)
+    with ux.client.session_transaction() as browser_session:
+        browser_session['_flashes'] = [('success', 'Message scheduled')]
+    response = preview_client.post('/dashboard/audience-preview', data={
+        'target': 'community', 'audience_profile': '1',
+    })
+    assert response.status_code == 200
+    assert not any(item.startswith(f'{cookie}=') for item in response.headers.getlist('Set-Cookie'))
+    assert b'Message scheduled' in ux.client.get('/home').data
+    home = ux.client.get('/home')
+    assert any(item.startswith(f'{cookie}=') for item in home.headers.getlist('Set-Cookie'))
+
+    # A real account change on the same endpoint must still replace the cookie.
+    ux.db.session.get(ux.models.Organization, ux.org_id).status = 'suspended'
+    ux.db.session.commit()
+    denied = preview_client.get('/dashboard/audience-preview')
+    assert denied.status_code == 302
+    assert any(item.startswith(f'{cookie}=') for item in denied.headers.getlist('Set-Cookie'))
+    with preview_client.session_transaction() as browser_session:
+        assert '_user_id' not in browser_session
+
+
 @pytest.mark.parametrize('phone', ['', 'not a phone', '+17205550801'])
 def test_contact_validation_preserves_raw_fields_and_creates_nothing(ux, phone):
     ux.db.session.add(ux.models.CommunityMember(organization_id=ux.org_id, phone='+17205550801', name='Existing'))

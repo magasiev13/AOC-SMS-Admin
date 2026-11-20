@@ -235,7 +235,8 @@ def enforce_account_security():
                 return _deny_suspended_organization_access()
 
     # Keep idle timeout enforcement active by using permanent sessions.
-    session.permanent = True
+    if not session.permanent:
+        session.permanent = True
 
     if current_user.must_change_password:
         allowed_endpoints = {
