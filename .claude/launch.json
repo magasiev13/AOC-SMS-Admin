@@ -1,0 +1,10 @@
+{
+  "version": "0.0.1",
+  "autoVerify": true,
+  "configurations": [
+    {
+      "name": "Twinevia demo",
+      "url": "http://127.0.0.1:5011"
+    }
+  ]
+}
