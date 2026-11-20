@@ -3909,6 +3909,25 @@ code {
   }
 }
 
+@media (max-width: 639.98px) {
+  /* Keep the primary action beside its disclosure, even with wider system fonts. */
+  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, max-content));
+    align-items: stretch;
+  }
+
+  .app-page-actions-overflow {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 359.98px) {
+  .app-page-actions:has(> .app-page-actions-toggle:not([hidden])) :is(.app-page-actions-inline > .btn, .app-page-actions-toggle) {
+    padding-inline: .375rem;
+  }
+}
+
 @media (min-width: 640px) and (max-width: 991.98px) {
   .app-page-header:has(.app-page-actions-inline > :only-child) {
     flex-direction: row;
